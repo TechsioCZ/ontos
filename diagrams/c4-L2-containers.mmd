@@ -1,0 +1,18 @@
+flowchart TB
+  app[TERP Application Runtime\nUltraModern.js + MicroVerticals\nUI + actions + command handlers + Core]
+  workers[TERP Worker Runtime\noutbox + projections + imports/exports]
+  pg[(Postgres\ncanonical operational truth)]
+  neo[(Neo4j\ngraph projection)]
+  sp[(SpiceDB\nauthorization graph)]
+  obj[(Object Storage\nfile blobs)]
+  ext[External systems\naccounting, banks, reservation web, e-shop, Pulsar]
+
+  app <--> pg
+  app <--> sp
+  app --> obj
+  app --> ext
+  app --> workers
+  workers <--> pg
+  workers --> neo
+  workers --> ext
+  workers --> obj

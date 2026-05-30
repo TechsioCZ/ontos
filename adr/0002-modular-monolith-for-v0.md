@@ -1,0 +1,19 @@
+# ADR-0002: V0 uses a modular monolith, not microservices
+
+Status: Proposed
+
+## Context
+
+The team is small, the delivery timeline is constrained, and the domain is still being discovered. Distributed services would increase deployment, debugging, schema evolution, observability, and operational complexity before the product has stable boundaries.
+
+## Decision
+
+TERP V0 will be implemented as a TypeScript modular monolith/modulith using UltraModern.js MicroVerticals. Module boundaries are internal package/runtime boundaries, not network boundaries.
+
+## Consequences
+
+Local development, transactions, refactoring, and deployment remain simpler. Hot paths can be extracted later based on measurement. The architecture must still enforce module boundaries through manifests, dependency rules, tests, and review.
+
+## Risks
+
+A modular monolith can degrade into a big ball of mud if boundaries are not enforced. The MicroVertical manifest and dependency rules are therefore not optional.

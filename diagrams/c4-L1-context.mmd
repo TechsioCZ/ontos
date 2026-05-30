@@ -1,0 +1,23 @@
+flowchart LR
+  users[Customer business users]
+  internal[Internal operator users]
+  acct[Accountants]
+  admin[Admins]
+  terp[TERP]
+  accsw[Accounting software]
+  bank[Banks / statement files]
+  resweb[Reservation website]
+  shop[E-shop / Medusa / Helios bridge]
+  pulsar[Pulsar Solutions / machine signals]
+  storage[Object storage]
+
+  users --> terp
+  internal --> terp
+  acct --> terp
+  admin --> terp
+  terp --> accsw
+  bank --> terp
+  resweb --> terp
+  shop --> terp
+  pulsar --> terp
+  terp --> storage

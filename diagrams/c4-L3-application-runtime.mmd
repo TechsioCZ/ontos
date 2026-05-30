@@ -1,0 +1,15 @@
+flowchart TB
+  shell[Application Shell]
+  mvrt[MicroVertical Runtime]
+  core[Core Runtime Services]
+  actions[Action Execution Pipeline]
+  mvs[Business MicroVertical Packages]
+  ds[Design System]
+
+  shell --> ds
+  shell --> mvrt
+  mvrt --> mvs
+  mvs --> actions
+  actions --> core
+  mvs --> core
+  core --> shell

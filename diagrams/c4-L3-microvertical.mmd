@@ -1,0 +1,21 @@
+flowchart TB
+  manifest[Module Manifest]
+  ui[UI routes / components / state]
+  actions[Actions]
+  handlers[Command handlers]
+  domain[Domain tables / migrations]
+  ontology[Entity and relation declarations]
+  perms[Permissions and policy hooks]
+  proj[Search/report/projection descriptors]
+  tests[Fixtures and tests]
+
+  manifest --> ui
+  manifest --> actions
+  manifest --> ontology
+  manifest --> perms
+  manifest --> proj
+  actions --> handlers
+  handlers --> domain
+  handlers --> ontology
+  tests --> manifest
+  tests --> handlers
