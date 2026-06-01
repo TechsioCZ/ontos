@@ -1,3 +1,6 @@
+# Entity Model
+
+```mermaid
 flowchart LR
   dt[Domain table row]
   er[Entity Registry row]
@@ -14,3 +17,4 @@ flowchart LR
   edge --> neo
   er --> neo
   er --> search
+```

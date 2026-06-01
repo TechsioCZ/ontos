@@ -1,3 +1,6 @@
+# C4 L1 Context
+
+```mermaid
 flowchart LR
   users[Customer business users]
   internal[Internal operator users]
@@ -21,3 +24,4 @@ flowchart LR
   shop --> ontos
   pulsar --> ontos
   ontos --> storage
+```

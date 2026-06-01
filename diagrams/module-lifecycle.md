@@ -1,3 +1,6 @@
+# Module Lifecycle
+
+```mermaid
 stateDiagram-v2
   [*] --> Active
   Active --> ReadOnly
@@ -10,3 +13,4 @@ stateDiagram-v2
   Deprecated --> Archived
   Suspended --> Archived
   Quarantined --> Archived
+```

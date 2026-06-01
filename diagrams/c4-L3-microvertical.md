@@ -1,3 +1,6 @@
+# C4 L3 Microvertical
+
+```mermaid
 flowchart TB
   manifest[Module Manifest]
   ui[UI routes / components / state]
@@ -19,3 +22,4 @@ flowchart TB
   handlers --> ontology
   tests --> manifest
   tests --> handlers
+```

@@ -2,7 +2,7 @@
 
 This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. OntOS MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
 
-Mermaid diagram sources are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
+Mermaid Markdown diagrams are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
 
 ## Level 1 — System Context
 

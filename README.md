@@ -21,7 +21,7 @@ The most important correction in this version is the MicroVertical model. An Ont
 13. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap.
 14. `13_GRILL_QUESTIONS.md` — questions the agent should use to challenge the architecture.
 15. `adr/` — decision records. These are proposed decisions, not sacred law.
-16. `diagrams/` — Mermaid source diagrams. They are separate so the prose stays readable.
+16. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
 17. `appendix/` — source grounding and evidence notes.
 
 ## Core thesis

@@ -1,6 +1,6 @@
 # OntOS Architecture Pack v3 — Single File
 
-This file is a concatenation of the primary Markdown documents. Mermaid diagram sources are available in the ZIP under `diagrams/`.
+This file is a concatenation of the primary Markdown documents. Mermaid Markdown diagrams are available in the ZIP under `diagrams/`.
 
 
 ---
@@ -32,7 +32,7 @@ The most important correction in this version is the MicroVertical model. An Ont
 13. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap.
 14. `13_GRILL_QUESTIONS.md` — questions the agent should use to challenge the architecture.
 15. `adr/` — decision records. These are proposed decisions, not sacred law.
-16. `diagrams/` — Mermaid source diagrams. They are separate so the prose stays readable.
+16. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
 17. `appendix/` — source grounding and evidence notes.
 
 ## Core thesis
@@ -345,7 +345,7 @@ The PoC should validate the stack and the boundaries, not implement the whole ER
 
 This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. OntOS MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
 
-Mermaid diagram sources are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
+Mermaid Markdown diagrams are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
 
 ## Level 1 — System Context
 

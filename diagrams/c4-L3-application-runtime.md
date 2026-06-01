@@ -1,3 +1,6 @@
+# C4 L3 Application Runtime
+
+```mermaid
 flowchart TB
   shell[Application Shell]
   mvrt[MicroVertical Runtime]
@@ -13,3 +16,4 @@ flowchart TB
   actions --> core
   mvs --> core
   core --> shell
+```

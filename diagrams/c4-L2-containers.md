@@ -1,3 +1,6 @@
+# C4 L2 Containers
+
+```mermaid
 flowchart TB
   app[OntOS Application Runtime\nUltraModern.js + MicroVerticals\nUI + actions + command handlers + Core]
   workers[OntOS Worker Runtime\noutbox + projections + imports/exports]
@@ -16,3 +19,4 @@ flowchart TB
   workers --> neo
   workers --> ext
   workers --> obj
+```

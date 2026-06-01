@@ -1,3 +1,6 @@
+# Runtime Action Flow
+
+```mermaid
 sequenceDiagram
   participant UI as UI/API/Import
   participant App as OntOS Application Runtime
@@ -17,3 +20,4 @@ sequenceDiagram
   App-->>UI: response
   W->>PG: claim outbox messages
   W->>Proj: update projections / exports
+```
