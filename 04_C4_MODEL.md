@@ -1,26 +1,26 @@
 # C4 model
 
-This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. TERP MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
+This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. OntOS MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
 
 Mermaid diagram sources are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
 
 ## Level 1 — System Context
 
-TERP is an ERP and operational ontology system used by internal operator users, customer users, accountants, administrators, and later external operational roles. V0 focuses on ERP delivery for multi-company property/rental operations and accounting handoff. The same foundations support internal dogfooding and later e-commerce/manufacturing extensions.
+OntOS is an ERP and operational ontology system used by internal operator users, customer users, accountants, administrators, and later external operational roles. V0 focuses on ERP delivery for multi-company property/rental operations and accounting handoff. The same foundations support internal dogfooding and later e-commerce/manufacturing extensions.
 
-The external systems around TERP are accounting software, bank statement sources, the customer’s reservation website, object storage, e-shop systems, and future specialist systems such as Pulsar Solutions for machine/predictive maintenance signals.
+The external systems around OntOS are accounting software, bank statement sources, the customer’s reservation website, object storage, e-shop systems, and future specialist systems such as Pulsar Solutions for machine/predictive maintenance signals.
 
-The system boundary is important. TERP owns operational context, workflows, documents, relationships, audit, billing drafts/issued invoices, and ERP reporting. It does not replace statutory accounting software, e-commerce storefronts, or specialist machine-prediction platforms.
+The system boundary is important. OntOS owns operational context, workflows, documents, relationships, audit, billing drafts/issued invoices, and ERP reporting. It does not replace statutory accounting software, e-commerce storefronts, or specialist machine-prediction platforms.
 
 ## Level 2 — Containers
 
-### TERP Application Runtime
+### OntOS Application Runtime
 
 This is the main jointly deployable application. It hosts the application shell, all active MicroVertical UI, all MicroVertical actions and command handlers, and Core runtime capabilities. In implementation it may expose HTTP routes, pages, server functions, API endpoints, or framework-specific handlers, but those are implementation surfaces inside the same application container.
 
 This container is where the MicroVertical concept lives. Each MicroVertical contributes UI, actions, backend behavior, domain model declarations, migrations, tests, and descriptors through its manifest.
 
-### TERP Worker Runtime
+### OntOS Worker Runtime
 
 The worker runtime processes asynchronous work: outbox dispatch, Neo4j projection, search projection, reporting refreshes, import/export processing, scheduled reminders, and later integration jobs. It should share code/contracts with the application runtime but it is operationally separate so that long-running or retryable work does not block user-facing actions.
 
@@ -38,13 +38,13 @@ SpiceDB stores authorization relationships and answers permission questions. It 
 
 ### Object Storage
 
-Object storage stores file blobs. TERP keeps document metadata, ownership, permissions, relations, timeline, and audit in Postgres.
+Object storage stores file blobs. OntOS keeps document metadata, ownership, permissions, relations, timeline, and audit in Postgres.
 
 ### External Systems
 
 External systems include accounting software, banks/statement files, reservation web, e-shop/Medusa/Helios bridge, and future Pulsar integration. Integrations should normally be mediated by outbox/import/export workers rather than inline calls in user-facing command handlers.
 
-## Level 3 — TERP Application Runtime components
+## Level 3 — OntOS Application Runtime components
 
 ### Application Shell
 

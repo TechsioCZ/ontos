@@ -1,4 +1,4 @@
-# TERP Architecture Pack v3 — Single File
+# OntOS Architecture Pack v3 — Single File
 
 This file is a concatenation of the primary Markdown documents. Mermaid diagram sources are available in the ZIP under `diagrams/`.
 
@@ -9,11 +9,11 @@ This file is a concatenation of the primary Markdown documents. Mermaid diagram 
 <!-- Source file: README.md -->
 
 
-# TERP Architecture Pack v3 — `/grill-with-docs` input
+# OntOS Architecture Pack v3 — `/grill-with-docs` input
 
-This pack is a working architecture dossier for TERP. It is intentionally written as input for a technical architecture grilling session and for a coding agent. It consolidates the current business context, delivery constraints, architectural decisions, MicroVertical semantics, C4 views, ADRs, glossary, V0 scope, roadmap, and open questions.
+This pack is a working architecture dossier for OntOS. It is intentionally written as input for a technical architecture grilling session and for a coding agent. It consolidates the current business context, delivery constraints, architectural decisions, MicroVertical semantics, C4 views, ADRs, glossary, V0 scope, roadmap, and open questions.
 
-The most important correction in this version is the MicroVertical model. A TERP MicroVertical is not a frontend module plus a separate BFF/backend service. A MicroVertical is a unified vertical slice inside one jointly deployable UltraModern.js application. It owns its UI, routes, state, actions, command handlers, domain tables, entity declarations, relation declarations, migrations, tests, and projection descriptors. The TERP Core sits alongside the MicroVerticals as system infrastructure: authentication integration, authorization adapter, module runtime, entity registry, relation registry, audit, events, outbox, documents, search, and projection interfaces.
+The most important correction in this version is the MicroVertical model. An OntOS MicroVertical is not a frontend module plus a separate BFF/backend service. A MicroVertical is a unified vertical slice inside one jointly deployable UltraModern.js application. It owns its UI, routes, state, actions, command handlers, domain tables, entity declarations, relation declarations, migrations, tests, and projection descriptors. The OntOS Core sits alongside the MicroVerticals as system infrastructure: authentication integration, authorization adapter, module runtime, entity registry, relation registry, audit, events, outbox, documents, search, and projection interfaces.
 
 ## Recommended reading order
 
@@ -26,7 +26,7 @@ The most important correction in this version is the MicroVertical model. A TERP
 7. `06_CORE_KERNEL.md` — what belongs in Core and what must stay out.
 8. `07_RUNTIME_CONSISTENCY_MODEL.md` — actions, commands, audit, events, outbox, workers.
 9. `08_CANONICAL_ENTITY_MODEL.md` — domain tables, entity registry, relation types, Neo4j projection.
-10. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, TERP policy layer.
+10. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, OntOS Policy Layer.
 11. `10_DATA_STORAGE_AND_PROJECTIONS.md` — Postgres, Neo4j, search, object storage, projection lag.
 12. `11_V0_SCOPE_AND_MODULES.md` — concrete V0 functional scope and modules.
 13. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap.
@@ -37,7 +37,7 @@ The most important correction in this version is the MicroVertical model. A TERP
 
 ## Core thesis
 
-TERP V0 is a delivery-bound ERP system implemented as a TypeScript modular monolith built on UltraModern.js MicroVerticals. The long-term direction is a temporal company ontology system, but V0 must first deliver concrete ERP functionality: multi-company structure, property registry, long-term rental, short-term rental, billing, accounting handoff, documents, permissions, audit, and reporting.
+OntOS V0 is a delivery-bound ERP system implemented as a TypeScript modular monolith built on UltraModern.js MicroVerticals. The long-term direction is a temporal company ontology system, but V0 must first deliver concrete ERP functionality: multi-company structure, property registry, long-term rental, short-term rental, billing, accounting handoff, documents, permissions, audit, and reporting.
 
 The architecture optimizes for a small team, heavy coding-agent usage, fast prototyping, production delivery by the end of 2026, and future extensibility without premature distributed-systems complexity.
 
@@ -49,7 +49,7 @@ The architecture optimizes for a small team, heavy coding-agent usage, fast prot
 
 # Agent brief for `/grill-with-docs`
 
-You are reviewing the TERP architecture before implementation. Treat this as an architecture grilling session, not a documentation summarization task.
+You are reviewing the OntOS architecture before implementation. Treat this as an architecture grilling session, not a documentation summarization task.
 
 ## Goal of the grilling session
 
@@ -59,7 +59,7 @@ The project will likely start with a throwaway PoC. The documents in this pack s
 
 ## Important correction to preserve
 
-Do not model TERP as a separate Web App container and BFF/API container where MicroVerticals live only in one of them. That is not the intended MicroVertical concept.
+Do not model OntOS as a separate Web App container and BFF/API container where MicroVerticals live only in one of them. That is not the intended MicroVertical concept.
 
 A MicroVertical is a unified vertical slice inside a jointly deployable UltraModern.js application. It includes frontend and backend concerns together: UI, routes, components, state, actions, command handlers, domain code, migrations, tests, and metadata. Core services are outside ordinary business MicroVerticals and provide the platform capabilities that all MicroVerticals use.
 
@@ -71,9 +71,9 @@ A separate worker runtime may exist for outbox processing, projections, imports,
 - Product AI is not part of V0 delivery. AI may be heavily used in development, but user-facing AI, autonomous agents, process autodiscovery, and vibemodule are later capabilities.
 - The V0 must satisfy the 2026 ERP delivery obligation, including short-term rental, long-term rental, billing, accounting workflow/export, documents, roles/permissions, audit, reporting, and multi-company foundations.
 - Internal dogfooding should begin early with clients, projects, tickets, documents, and invoice drafts.
-- The current intended stack is UltraModern.js + MicroVerticals, existing design system, Postgres, Neo4j, SpiceDB, and BetterAuth.
-- Neo4j should be challenged as a projection/read model, not assumed as the canonical transactional ERP store.
-- SpiceDB should be challenged as the authorization graph, not the company ontology graph.
+- The current intended stack is UltraModern.js + MicroVerticals, existing design system, Postgres, SpiceDB, BetterAuth, and possibly Neo4j.
+- Neo4j should be treated as an optional projection/read model, not assumed as mandatory V0 infrastructure or the canonical transactional ERP store.
+- SpiceDB is foundation-level authorization infrastructure and should be challenged as the authorization graph, not the company ontology graph.
 - Postgres should be challenged as canonical operational truth, but any alternative must explain billing, audit, exports, migrations, and committed delivery.
 
 ## What to grill first
@@ -101,7 +101,7 @@ Produce a structured critique with: confirmed decisions, contested decisions, un
 
 # Context and constraints
 
-TERP is being shaped from a concrete customer delivery and a broader product opportunity. The immediate customer need is a committed ERP for a property/rental business context. The long-term product direction is a reusable ERP and company ontology platform that can serve the internal operator, the current customer’s multiple companies, and future larger customers.
+OntOS is being shaped from a concrete customer delivery and a broader product opportunity. The immediate customer need is a committed ERP for a property/rental business context. The long-term product direction is a reusable ERP and company ontology platform that can serve the internal operator, the current customer’s multiple companies, and future larger customers.
 
 ## Delivery context
 
@@ -113,7 +113,7 @@ The customer delivery materials create hard delivery constraints. The committed 
 
 ## Product context
 
-The broader TERP ambition is not to write a one-off ERP for one customer. The intended long-term category is a temporal company ontology system with ERP MicroVerticals as the first application layer. Important business objects should be addressable entities; relationships should be typed, auditable, and time-aware; and future modules should be easier to add because they plug into the same Core.
+The broader OntOS ambition is not to write a one-off ERP for one customer. The intended long-term category is a temporal company ontology system with ERP MicroVerticals as the first application layer. Important business objects should be addressable entities; relationships should be typed, auditable, and time-aware; and future modules should be easier to add because they plug into the same Core.
 
 This long-term direction must not distort V0. V0 is not the vibemodule, not an AI assistant, not an autonomous-agent platform, and not a full manufacturing/machine-prediction system. V0 must first prove that the Core and MicroVertical architecture can deliver concrete ERP functionality without becoming a fragile bespoke system.
 
@@ -125,9 +125,9 @@ Heavy coding-agent usage changes implementation throughput but does not remove t
 
 ## Current intended stack
 
-The intended PoC stack is UltraModern.js with MicroVerticals, an existing design system, Postgres, Neo4j, SpiceDB, and BetterAuth. This is not yet a final architecture. The PoC should validate the combination and reveal which parts are overkill, unsafe, or misaligned.
+The intended PoC stack is UltraModern.js with MicroVerticals, an existing design system, Postgres, SpiceDB, BetterAuth, and possibly Neo4j. This is not yet a final architecture. The PoC should validate the combination and reveal which parts are overkill, unsafe, or misaligned.
 
-The stack division is currently understood as follows. UltraModern.js provides the unified application runtime and MicroVertical structure. The design system provides UI consistency. Postgres is canonical operational storage. Neo4j is a graph projection/read model for ontology exploration and relationship traversal. SpiceDB is the authorization graph. BetterAuth is authentication/session DX.
+The stack division is currently understood as follows. UltraModern.js provides the unified application runtime and MicroVertical structure. The design system provides UI consistency. Postgres is canonical operational storage. SpiceDB is the authorization graph. BetterAuth is authentication/session DX. Neo4j may be added as a graph projection/read model for ontology exploration and relationship traversal once typed relations justify it.
 
 ## V0 non-goals
 
@@ -145,19 +145,19 @@ Some of those capabilities must be prepared for architecturally. For example, ac
 
 This glossary is part of the architecture. Terms should not be treated as cosmetic. If two people use the same word differently, the architecture will drift.
 
-## TERP
+## OntOS
 
-TERP is the working name for the system. In V0 it is a delivery-bound ERP with platform-shaped foundations. In the long-term vision it becomes a temporal company ontology system with ERP MicroVerticals as the first application layer.
+OntOS is the canonical name for the system. In V0 it is a delivery-bound ERP with platform-shaped foundations. In the long-term vision it becomes a temporal company ontology system with ERP MicroVerticals as the first application layer.
 
-## TERP Core
+## OntOS Core
 
-TERP Core is the set of system capabilities that ordinary business MicroVerticals depend on. It is not itself a business MicroVertical. It includes authentication integration, principal context, authorization adapter, policy layer, module runtime, entity registry, relation registry, audit, events, outbox, document metadata services, search interfaces, reporting foundations, and projection interfaces.
+OntOS Core is the set of system capabilities that ordinary business MicroVerticals depend on. It is not itself a business MicroVertical. It includes authentication integration, principal context, authorization adapter, policy layer, module runtime, entity registry, relation registry, audit, events, outbox, document metadata services, search interfaces, reporting foundations, and projection interfaces.
 
 Core is not meant to be disabled per tenant in the same way business MicroVerticals can be. Some Core capabilities may have configuration or feature flags, but the kernel-level concepts are part of the runtime contract.
 
 ## MicroVertical
 
-A MicroVertical is a unified vertical slice of business capability inside the jointly deployable TERP application. A MicroVertical contains its frontend and backend parts together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, entity declarations, relation declarations, permissions, report descriptors, search descriptors, and projection descriptors.
+A MicroVertical is a unified vertical slice of business capability inside the jointly deployable OntOS application. A MicroVertical contains its frontend and backend parts together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, entity declarations, relation declarations, permissions, report descriptors, search descriptors, and projection descriptors.
 
 A MicroVertical is not a microservice in V0. It is a module boundary inside a modular monolith. Its purpose is to keep domain slices cohesive and independently understandable without introducing distributed-system overhead.
 
@@ -171,13 +171,13 @@ A System Module is a Core capability described with a manifest-like structure fo
 
 A Module Manifest is the declarative contract of a MicroVertical or System Module. It declares module identity, version, dependencies, owned entity types, relation types, actions, permissions, UI contributions, migrations, report descriptors, search descriptors, and projection handlers. The manifest is the primary artifact that allows the runtime, tooling, coding agents, and later Forge/vibemodule functionality to reason about a module.
 
-## TERP Application Runtime
+## OntOS Application Runtime
 
-The TERP Application Runtime is the main deployable application container. It includes the app shell, MicroVertical UI, server-side module actions, command handlers, Core services, and HTTP/API entrypoints. It should not be modeled as a separate Web App plus BFF for architecture purposes, because MicroVerticals intentionally combine frontend and backend concerns into a single vertical slice.
+The OntOS Application Runtime is the main deployable application container. It includes the app shell, MicroVertical UI, server-side module actions, command handlers, Core services, and HTTP/API entrypoints. It should not be modeled as a separate Web App plus BFF for architecture purposes, because MicroVerticals intentionally combine frontend and backend concerns into a single vertical slice.
 
-## TERP Worker Runtime
+## OntOS Worker Runtime
 
-The TERP Worker Runtime is a separate process or set of processes for asynchronous work: outbox processing, Neo4j projections, search projections, reporting refreshes, import/export tasks, scheduled jobs, and future integration workers. It consumes events/outbox messages emitted by the application runtime. It should not own canonical business state except for controlled state transitions related to its work, such as marking an export as completed.
+The OntOS Worker Runtime is a separate process or set of processes for asynchronous work: outbox processing, Neo4j projections, search projections, reporting refreshes, import/export tasks, scheduled jobs, and future integration workers. It consumes events/outbox messages emitted by the application runtime. It should not own canonical business state except for controlled state transitions related to its work, such as marking an export as completed.
 
 ## Action
 
@@ -235,27 +235,47 @@ A Tenant is the top-level isolation boundary for a customer or internal operatin
 
 ## Legal Entity
 
-A Legal Entity is a company/SRO/SPV/accounting-client inside a tenant. Many permissions, modules, invoices, documents, and reports are scoped to legal entities.
+A Legal Entity is a managed accounting or operating company inside a tenant. It may own, operate, bill, report, or account for parts of the business. External organizations are Parties unless the tenant manages them as part of its own operating structure.
+
+## Party
+
+A Party is a real-world person or organization OntOS deals with. A Party may be a guest, tenant, supplier, accountant office, external management company, owned company, contact person, or commercial counterparty.
+
+## Counterparty
+
+A Counterparty is a Party in a commercial or contractual relationship with a managed Legal Entity. Counterparties can include tenants, guests, suppliers, external managers, corporate buyers, wholesalers, or accounting offices.
 
 ## Principal
 
-A Principal is an actor that can be authenticated or represented in audit and authorization: user, agent, service account, integration, or system. In V0 agent principals may exist as foundations, but autonomous agent behavior is not product scope.
+A Principal is an actor that can authenticate, invoke actions, or appear in audit and authorization: internal staff, external manager staff, accountants, guests with portal access, integrations, service accounts, agents, or the system itself. In V0 agent principals may exist as foundations, but autonomous agent behavior is not product scope.
+
+## External Operator
+
+An External Operator is a Party outside the tenant's managed legal-entity structure that receives scoped operational access, such as an external property manager or external accountant.
+
+## Ownership Assignment
+
+An Ownership Assignment is a temporal relation stating which Legal Entity owns a property, property complex, building, or unit/space for a period. V0 tracks simple validity intervals and audit metadata, not full bitemporal ownership history.
+
+## Management Assignment
+
+A Management Assignment is a temporal relation stating which Party or External Operator manages a property, property complex, building, or unit/space for a period. It is not itself an access grant; access is granted through SpiceDB.
 
 ## BetterAuth
 
-BetterAuth is the proposed authentication/session layer. It owns login/session mechanics and maps authenticated users into TERP principals. It should not be treated as the complete fine-grained authorization system.
+BetterAuth is the proposed authentication/session layer. It owns login/session mechanics and maps authenticated users into OntOS principals. It should not be treated as the complete fine-grained authorization system.
 
 ## SpiceDB
 
-SpiceDB is the proposed authorization graph. It models relationships and answers permission questions. It is not the business ontology graph.
+SpiceDB is the authorization graph. It models relationships and answers permission questions. It is not the business ontology graph.
 
-## TERP Policy Layer
+## OntOS Policy Layer
 
-The TERP Policy Layer handles business conditions that are not pure relationship-based authorization: module state, locked accounting period, invoice already exported, amount thresholds, approval requirements, document sensitivity, and risk conditions.
+The OntOS Policy Layer handles business conditions that are not pure relationship-based authorization: module state, locked accounting period, invoice already exported, amount thresholds, approval requirements, document sensitivity, and risk conditions.
 
 ## Neo4j Projection
 
-Neo4j stores a graph projection of registered entities and typed relationships for graph traversal, impact analysis, visual exploration, and future semantic/AI context. It is not the canonical ERP store in V0.
+Neo4j Projection is an optional graph projection of registered entities and typed relationships for graph traversal, impact analysis, visual exploration, and future semantic/AI context. It is not the canonical ERP store in V0 and is not required for canonical entity and relation storage.
 
 ## Forge
 
@@ -273,7 +293,7 @@ Vibemodule is a future user-facing capability where new modules can be generated
 
 # Architecture overview
 
-TERP V0 should be understood as a jointly deployable, modular application with strong vertical slices. Each business MicroVertical includes UI and backend behavior together, while Core provides common runtime capabilities. This architecture is deliberately different from a split frontend/BFF/backend model where vertical cohesion is lost across layers.
+OntOS V0 should be understood as a jointly deployable, modular application with strong vertical slices. Each business MicroVertical includes UI and backend behavior together, while Core provides common runtime capabilities. This architecture is deliberately different from a split frontend/BFF/backend model where vertical cohesion is lost across layers.
 
 ## Architectural position
 
@@ -287,7 +307,7 @@ The system is not an AI product in V0. It should be designed so AI can later con
 
 ## Runtime shape
 
-The main TERP Application Runtime contains the application shell, all active MicroVertical UI and server logic, and Core runtime capabilities. The Worker Runtime is separate and processes asynchronous work. Postgres stores canonical state. Neo4j stores a graph projection. SpiceDB stores authorization relationships. Object storage stores file blobs. External accounting systems, reservation web, banks, e-shop, and Pulsar integrations sit outside TERP.
+The main OntOS Application Runtime contains the application shell, all active MicroVertical UI and server logic, and Core runtime capabilities. The Worker Runtime is separate and processes asynchronous work. Postgres stores canonical state. Neo4j stores a graph projection. SpiceDB stores authorization relationships. Object storage stores file blobs. External accounting systems, reservation web, banks, e-shop, and Pulsar integrations sit outside OntOS.
 
 This separation is important. MicroVertical cohesion is preserved inside the application runtime. Operational simplicity is preserved by avoiding distributed MicroVertical services. Asynchronous work is isolated in workers because projections, exports, imports, notifications, and long-running tasks should not block user-facing command execution.
 
@@ -307,7 +327,7 @@ This means the system tolerates projection lag. A reservation created in Postgre
 
 ## Permissions
 
-Authentication and authorization are separate. BetterAuth handles authentication and sessions. A TERP principal registry maps authenticated subjects into principals. SpiceDB answers relationship-based permission checks. The TERP Policy Layer evaluates business conditions that are not purely relational.
+Authentication and authorization are separate. BetterAuth handles authentication and sessions. An OntOS principal registry maps authenticated subjects into principals. SpiceDB answers relationship-based permission checks. The OntOS Policy Layer evaluates business conditions that are not purely relational.
 
 Search and graph views must be permission-aware. The system should avoid per-result SpiceDB checks for large result sets unless scoped and cached. V0 should combine coarse permission projections with explicit checks for sensitive entities.
 
@@ -323,27 +343,27 @@ The PoC should validate the stack and the boundaries, not implement the whole ER
 
 # C4 model
 
-This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. TERP MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
+This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. OntOS MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
 
 Mermaid diagram sources are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
 
 ## Level 1 — System Context
 
-TERP is an ERP and operational ontology system used by internal operator users, customer users, accountants, administrators, and later external operational roles. V0 focuses on ERP delivery for multi-company property/rental operations and accounting handoff. The same foundations support internal dogfooding and later e-commerce/manufacturing extensions.
+OntOS is an ERP and operational ontology system used by internal operator users, customer users, accountants, administrators, and later external operational roles. V0 focuses on ERP delivery for multi-company property/rental operations and accounting handoff. The same foundations support internal dogfooding and later e-commerce/manufacturing extensions.
 
-The external systems around TERP are accounting software, bank statement sources, the customer’s reservation website, object storage, e-shop systems, and future specialist systems such as Pulsar Solutions for machine/predictive maintenance signals.
+The external systems around OntOS are accounting software, bank statement sources, the customer’s reservation website, object storage, e-shop systems, and future specialist systems such as Pulsar Solutions for machine/predictive maintenance signals.
 
-The system boundary is important. TERP owns operational context, workflows, documents, relationships, audit, billing drafts/issued invoices, and ERP reporting. It does not replace statutory accounting software, e-commerce storefronts, or specialist machine-prediction platforms.
+The system boundary is important. OntOS owns operational context, workflows, documents, relationships, audit, billing drafts/issued invoices, and ERP reporting. It does not replace statutory accounting software, e-commerce storefronts, or specialist machine-prediction platforms.
 
 ## Level 2 — Containers
 
-### TERP Application Runtime
+### OntOS Application Runtime
 
 This is the main jointly deployable application. It hosts the application shell, all active MicroVertical UI, all MicroVertical actions and command handlers, and Core runtime capabilities. In implementation it may expose HTTP routes, pages, server functions, API endpoints, or framework-specific handlers, but those are implementation surfaces inside the same application container.
 
 This container is where the MicroVertical concept lives. Each MicroVertical contributes UI, actions, backend behavior, domain model declarations, migrations, tests, and descriptors through its manifest.
 
-### TERP Worker Runtime
+### OntOS Worker Runtime
 
 The worker runtime processes asynchronous work: outbox dispatch, Neo4j projection, search projection, reporting refreshes, import/export processing, scheduled reminders, and later integration jobs. It should share code/contracts with the application runtime but it is operationally separate so that long-running or retryable work does not block user-facing actions.
 
@@ -361,13 +381,13 @@ SpiceDB stores authorization relationships and answers permission questions. It 
 
 ### Object Storage
 
-Object storage stores file blobs. TERP keeps document metadata, ownership, permissions, relations, timeline, and audit in Postgres.
+Object storage stores file blobs. OntOS keeps document metadata, ownership, permissions, relations, timeline, and audit in Postgres.
 
 ### External Systems
 
 External systems include accounting software, banks/statement files, reservation web, e-shop/Medusa/Helios bridge, and future Pulsar integration. Integrations should normally be mediated by outbox/import/export workers rather than inline calls in user-facing command handlers.
 
-## Level 3 — TERP Application Runtime components
+## Level 3 — OntOS Application Runtime components
 
 ### Application Shell
 
@@ -415,11 +435,11 @@ A code-level view should be created only after the PoC establishes the actual Ul
 
 # MicroVerticals
 
-This document defines MicroVerticals as they are intended for TERP. It supersedes any wording that implied a MicroVertical is only a frontend module or that the architecture is naturally split into web and BFF containers.
+This document defines MicroVerticals as they are intended for OntOS. It supersedes any wording that implied a MicroVertical is only a frontend module or that the architecture is naturally split into web and BFF containers.
 
 ## Definition
 
-A TERP MicroVertical is a unified vertical business slice inside one jointly deployable application. It owns both user-facing and server-side behavior for a bounded business capability. It is designed to be understood, generated, tested, activated, and evolved as one unit.
+An OntOS MicroVertical is a unified vertical business slice inside one jointly deployable application. It owns both user-facing and server-side behavior for a bounded business capability. It is designed to be understood, generated, tested, activated, and evolved as one unit.
 
 A MicroVertical should normally contain:
 
@@ -443,7 +463,7 @@ They are not separate microservices in V0. They are not only UI modules. They ar
 
 ## Why this model matters
 
-Traditional layered architecture often splits a feature across frontend, backend, database, permissions, jobs, and reporting folders. That makes it easy for a feature to become cross-layer scattered. TERP needs the opposite: each business capability should have a cohesive home so that humans and coding agents can reason about the whole feature.
+Traditional layered architecture often splits a feature across frontend, backend, database, permissions, jobs, and reporting folders. That makes it easy for a feature to become cross-layer scattered. OntOS needs the opposite: each business capability should have a cohesive home so that humans and coding agents can reason about the whole feature.
 
 A MicroVertical therefore packages the things that change together. The short-term rental slice owns reservation UI and reservation command handling together. The long-term rental slice owns lease contract UI and lease command handling together. The billing slice owns invoice actions and invoice UI together.
 
@@ -527,7 +547,7 @@ Core is the reason MicroVerticals can be cohesive without becoming isolated. It 
 | Outbox | Yes | Side-effect dispatch must be consistent. |
 | Document metadata foundation | Yes | Documents must link to any entity. |
 | Search interface | Yes | Search spans modules and permissions. |
-| Neo4j projection interface | Yes | Graph projection spans modules. |
+| Graph projection interface | Yes | Graph projection may span modules even if Neo4j is introduced later. |
 
 ## What does not belong in Core
 
@@ -559,7 +579,7 @@ The Core should not be a showcase for every future ambition. It should be small,
 
 # Runtime and consistency model
 
-TERP should use an action-driven core with evented side effects. This avoids the main failure mode of naive event-driven ERP architecture: business state changing unpredictably through subscriber chains.
+OntOS should use an action-driven core with evented side effects. This avoids the main failure mode of naive event-driven ERP architecture: business state changing unpredictably through subscriber chains.
 
 ## Write flow
 
@@ -617,7 +637,7 @@ The runtime should avoid unbounded relation expansion, unbounded synchronous sub
 
 # Canonical entity model
 
-TERP needs both strong domain modeling and universal cross-module linking. The chosen model is explicit Postgres domain tables plus a central entity registry and typed relation edges.
+OntOS needs both strong domain modeling and universal cross-module linking. The chosen model is explicit Postgres domain tables plus a central entity registry and typed relation edges.
 
 ## Why not generic JSON/EAV
 
@@ -675,9 +695,9 @@ If Neo4j is unavailable or stale, canonical ERP operations should continue. Grap
 
 The first entity catalog should include Core entities, property entities, rental entities, billing entities, accounting workflow entities, document entities, facility entities, and internal dogfood entities.
 
-Core: tenant, legal entity, org unit, principal, user, agent placeholder, module installation.
+Core: tenant, legal entity, party, counterparty, external operator, org unit, principal, user, agent placeholder, module installation.
 
-Property/rental: property, building, unit, contact, lease contract, reservation, guest/contact, service ticket.
+Property/rental: property, property complex, building, unit/space, contact, lease contract, reservation, guest/contact, ownership assignment, management assignment, service ticket. Capacity allocation contract is a future commercial-rights pattern unless a concrete V0 customer workflow requires it.
 
 Billing/accounting: invoice draft, invoice, payment, supplier invoice or cost record, accounting export batch.
 
@@ -693,33 +713,33 @@ Internal dogfood: client, project, ticket, invoice draft, document.
 
 # Authentication and authorization model
 
-TERP should separate authentication, principal modeling, relationship authorization, and business policy.
+OntOS should separate authentication, principal modeling, relationship authorization, and business policy.
 
 ## Authentication
 
-BetterAuth is the proposed authentication/session layer. Its responsibility is login, sessions, authentication methods, and developer experience around user authentication. TERP should not make BetterAuth the only source of business authorization semantics.
+BetterAuth is the proposed authentication/session layer. Its responsibility is login, sessions, authentication methods, and developer experience around user authentication. OntOS should not make BetterAuth the only source of business authorization semantics.
 
-An authenticated BetterAuth user is mapped to a TERP principal. The TERP principal is the identity used in audit, authorization, and action execution.
+An authenticated BetterAuth user is mapped to an OntOS principal. The OntOS principal is the identity used in audit, authorization, and action execution.
 
 ## Principal model
 
-A principal is an actor in the system. The principal kind can be user, agent, service account, integration, or system. V0 may only use human users and basic integration/service principals in production, but the model should include agent principals as a foundation.
+A principal is an actor in the system. The principal kind can be internal user, external operator user, guest user, agent, service account, integration, or system. V0 may only use human users and basic integration/service principals in production, but the model should include agent principals as a foundation.
 
 Agent principals do not imply autonomous agent product features in V0. They simply keep the actor model future-proof and make it possible to audit system/non-human actions consistently.
 
 ## Tenant and legal-entity context
 
-Every action and read should execute inside a tenant context. Many actions also execute inside a legal-entity context. Tenant is the top-level isolation boundary. Legal entity is the company/SRO/SPV/accounting-client scope inside the tenant.
+Every action and read should execute inside a tenant context. Many actions also execute inside a legal-entity context. Tenant is the top-level isolation boundary. Legal entity is the managed accounting or operating company scope inside the tenant. External managers, guests, accountants, suppliers, and other counterparties are Parties or Principals with scoped access; they are not automatically tenant legal entities.
 
 Tenant leakage is a critical defect. It should be tested explicitly.
 
 ## Relationship-based authorization
 
-SpiceDB is the proposed fine-grained authorization system. It should model access relationships such as membership in tenant, role in legal entity, access to module, ability to administer users, ability to export accounting data, and explicit grants to sensitive resources.
+SpiceDB is the fine-grained authorization system. In V0 it should stay coarse and security-critical: tenant membership, legal-entity roles, module access, admin/support powers, accounting/export powers, and explicit grants to sensitive resources.
 
 SpiceDB should not mirror every business ontology edge. Business relationships and authorization relationships overlap but are not the same thing.
 
-## TERP Policy Layer
+## OntOS Policy Layer
 
 The Policy Layer handles conditions that are not pure relationship authorization. Examples: module suspended, module read-only, accounting period locked, invoice already exported, document sensitivity, amount threshold, approval required, action disabled by feature flag, or tenant over package limit.
 
@@ -737,7 +757,7 @@ For debugging and support, the system may later support “view as principal” 
 
 ## Consistency with SpiceDB
 
-Not every business write should synchronously write to SpiceDB. V0 should keep SpiceDB relationships relatively coarse: tenant membership, legal-entity roles, module access, admin permissions, explicit grants, and sensitive-resource access. Business entity ownership can often be evaluated through tenant/legal-entity/module scope plus policy, rather than one SpiceDB tuple per entity.
+Not every business write should synchronously write to SpiceDB. V0 should keep SpiceDB relationships relatively coarse and should not mirror the whole business ontology. Business entity access can often be evaluated through tenant/legal-entity/module scope plus policy, rather than one SpiceDB tuple per ordinary entity.
 
 Role and access changes are security-critical and should fail closed if SpiceDB cannot be updated. Derived or helper relationships can be projected asynchronously if introduced later.
 
@@ -749,7 +769,7 @@ Role and access changes are security-critical and should fail closed if SpiceDB 
 
 # Data storage and projections
 
-TERP deliberately uses multiple data stores, each with a clear responsibility. This is not polyglot persistence for prestige; it exists because operational ERP data, graph exploration, authorization, and file blobs have different shapes.
+OntOS deliberately uses multiple data stores, each with a clear responsibility. This is not polyglot persistence for prestige; it exists because operational ERP data, graph exploration, authorization, and file blobs have different shapes.
 
 ## Postgres
 
@@ -759,17 +779,17 @@ Postgres is where constraints, indexes, migrations, accounting/reporting queries
 
 ## Neo4j
 
-Neo4j is a graph projection of the company ontology. It is useful for multi-hop relationships, impact analysis, visual exploration, and future AI context. It should be rebuilt from Postgres if necessary. It should not be required to issue an invoice, create a lease, create a reservation, or enforce core permissions in V0.
+Neo4j is an optional graph projection of the company ontology. It may become useful for multi-hop relationships, impact analysis, visual exploration, and future AI context. It should be rebuilt from Postgres if introduced. It should not be required to issue an invoice, create a lease, create a reservation, or enforce core permissions in V0.
 
 The projection should include entity nodes and typed relation edges, plus selected denormalized display/status/type/module/tenant fields. Avoid dumping all child rows or large sensitive payloads into Neo4j by default.
 
 ## SpiceDB
 
-SpiceDB is the authorization store. It stores relationship tuples and permission schema. It should be fed by deliberate access-management actions, not by blindly mirroring every business relation.
+SpiceDB is the authorization store. It stores relationship tuples and permission schema. It should be fed by deliberate access-management actions, not by blindly mirroring every business relation. OntOS treats SpiceDB as foundation-level infrastructure because hand-rolled authorization creates too many failure points.
 
 ## Object storage
 
-Object storage holds binary file content. Document metadata, links, ownership, permissions, expiration, versions, and audit live in Postgres. A file blob without a document metadata entity is not a business document in TERP.
+Object storage holds binary file content. Document metadata, links, ownership, permissions, expiration, versions, and audit live in Postgres. A file blob without a document metadata entity is not a business document in OntOS.
 
 ## Search index
 
@@ -791,7 +811,7 @@ All projections must be rebuildable from canonical state. This includes Neo4j gr
 
 # V0 scope and modules
 
-V0 must deliver a useful ERP aligned with the committed customer scope while establishing the foundations needed for future productization. It should not deliver the entire long-term TERP vision.
+V0 must deliver a useful ERP aligned with the committed customer scope while establishing the foundations needed for future productization. It should not deliver the entire long-term OntOS vision.
 
 ## V0 Core capabilities
 
@@ -801,13 +821,15 @@ These capabilities are not optional platform indulgence. They are required to sa
 
 ## V0 business MicroVerticals
 
-### `internal.delivery`
-
-The first dogfood MicroVertical should cover clients, projects, tickets, documents, and invoice drafts. It is valuable because the internal operator can use it immediately and discover issues in entity linking, permissions, document attachment, action flow, and billing drafts before the customer depends on the same patterns.
-
 ### `property.registry`
 
-This MicroVertical covers legal-entity property structures: properties, buildings, units, states, technical metadata, equipment/labels, and links to documents/service tickets/reporting.
+Current working assumption: this is the first customer-domain MicroVertical to validate after the foundation skeleton. It likely covers legal-entity property structures: properties or property complexes, buildings, units/spaces, ownership/management relationships, unit/space state, basic technical metadata, equipment/labels, and links to documents/service tickets/reporting. It appears to be the dependency root for long-term rental, short-term rental, facility, billing, documents, search, and reporting.
+
+Open boundary to validate: lease contracts, reservations, pricing, invoicing, payments, cleaning tasks, facility workflows, accounting costs, and reporting aggregates probably belong to later MicroVerticals and link back to registry entities through typed relations.
+
+### `internal.delivery`
+
+This early dogfood MicroVertical should cover clients, projects, tickets, documents, and invoice drafts after the customer-domain rails are proven by `property.registry`. It is valuable because the internal operator can discover issues in entity linking, permissions, document attachment, action flow, and billing drafts before those patterns are repeated broadly.
 
 ### `property.long_term_rental`
 
@@ -815,7 +837,7 @@ This MicroVertical covers lease contracts, tenants/contacts, deposits, basic pay
 
 ### `property.short_term_rental`
 
-This MicroVertical covers units, reservations, guests/contacts, reservation state, check-in/check-out basics, cleaning tasks, cancellation/change basics, and invoice draft links.
+This MicroVertical covers units/spaces, reservations, guests/contacts, reservation state, check-in/check-out basics, cleaning tasks, cancellation/change basics, and invoice draft links. It should support guests as external actors. First-class capacity allocation contracts are a future discovery topic unless a concrete customer workflow requires them.
 
 ### `billing.core`
 
@@ -845,11 +867,11 @@ The architecture should be ready to integrate these later without implementing t
 
 ## Accounting boundary
 
-TERP should not implement statutory accounting. It should provide operational evidence, billing records, cost records, document links, approval/checklist workflow, and export/integration to accounting software. This boundary is important because the customer context explicitly prefers integration with mature accounting software rather than building accounting correctness ourselves.
+OntOS should not implement statutory accounting. It should provide operational evidence, billing records, cost records, document links, approval/checklist workflow, and export/integration to accounting software. This boundary is important because the customer context explicitly prefers integration with mature accounting software rather than building accounting correctness ourselves.
 
 ## Manufacturing and Pulsar boundary
 
-Manufacturing in 2027 should be handled as TERP manufacturing operations plus integration with a specialist partner for machine prediction and predictive maintenance. TERP should own production orders, products, BOM, material reservation, service tickets, ISO evidence, documents, and audit. Pulsar-like specialist systems can own machine analytics and prediction outputs, which TERP receives as events or integration payloads.
+Manufacturing in 2027 should be handled as OntOS manufacturing operations plus integration with a specialist partner for machine prediction and predictive maintenance. OntOS should own production orders, products, BOM, material reservation, service tickets, ISO evidence, documents, and audit. Pulsar-like specialist systems can own machine analytics and prediction outputs, which OntOS receives as events or integration payloads.
 
 ---
 
@@ -863,7 +885,7 @@ This roadmap is intentionally agile. It sets monthly delivery intent and archite
 
 ## End of May 2026 — throwaway PoC
 
-The PoC should validate the stack and the architectural seams. It is expected to be disposable. It should prove UltraModern.js MicroVertical structure, design-system integration, BetterAuth session mapping to TERP principal, SpiceDB permission checks, Postgres entity registry, relation edges, audit recording, outbox basics, Neo4j projection, module activation/deactivation, internal dogfood slice, and property/rental stubs.
+The PoC should validate the stack and the architectural seams. It is expected to be disposable. It should prove UltraModern.js MicroVertical structure, design-system integration, BetterAuth session mapping to OntOS principal, SpiceDB permission checks, Postgres entity registry, relation edges, audit recording, outbox basics, module activation/deactivation, internal dogfood slice, and property/rental stubs. Neo4j can be tested as an optional projection spike, but the PoC should not make V0 depend on it.
 
 The PoC should not implement product AI, full rental workflows, full billing, full accounting integration, or polished UX.
 
@@ -873,11 +895,11 @@ June should convert PoC learnings into decisions. Key outputs are a refined glos
 
 This month should avoid building a large production system before the architecture has been grilled. It should produce enough production skeleton to start safely in July.
 
-## July 2026 — production foundation and internal dogfood start
+## July 2026 — production foundation and property registry start
 
-July should establish the production skeleton, tenant/legal entity model, principal model, BetterAuth integration, SpiceDB checks, module registry, action registry, entity registry, relation registry, audit, timeline basics, and first internal dogfood features: clients, projects, tickets, documents, invoice drafts.
+July should establish the production skeleton, tenant/legal entity model, principal model, BetterAuth integration, SpiceDB checks, module registry, action registry, entity registry, relation registry, audit, timeline basics, and the first `property.registry` slice.
 
-The customer-facing property structure can begin with holding/SRO and property/unit registry skeletons.
+The customer-facing property structure should begin with holding/SRO and property/unit registry skeletons. Internal dogfooding can start once these rails are working.
 
 ## August 2026 — property base, documents, search
 
@@ -959,7 +981,7 @@ This document is intentionally adversarial. Use it to challenge the architecture
 
 1. Is SpiceDB appropriate for V0 or too heavy for the team?
 2. What is the minimum SpiceDB schema that proves value without modeling every business relation?
-3. Which permissions are handled by SpiceDB vs TERP policy layer?
+3. Which permissions are handled by SpiceDB vs OntOS Policy Layer?
 4. How is search permission filtering implemented without one SpiceDB call per result?
 5. What is the fail-closed behavior when SpiceDB is unavailable?
 6. How are role changes audited?
@@ -998,11 +1020,11 @@ This document is intentionally adversarial. Use it to challenge the architecture
 
 # Source grounding
 
-This pack is based on the current conversation, previous TERP architecture research artifacts, and private source materials summarized at a high level.
+This pack is based on the current conversation, previous OntOS architecture research artifacts, and private source materials summarized at a high level.
 
 ## Internal strategy source
 
-The internal strategy material frames TERP as a strategic internal/hybrid opportunity. It lists options such as internal project, consortium, and hybrid approach. The hybrid direction is particularly relevant: keep the project small/internal until a presentable MVP exists, then consider adding names, investors, and public positioning.
+The internal strategy material frames OntOS as a strategic internal/hybrid opportunity. It lists options such as internal project, consortium, and hybrid approach. The hybrid direction is particularly relevant: keep the project small/internal until a presentable MVP exists, then consider adding names, investors, and public positioning.
 
 ## Draft module source
 
@@ -1038,13 +1060,13 @@ The project needs feature cohesion, fast development with coding agents, and one
 
 ## Decision
 
-A TERP MicroVertical is a unified vertical slice containing both frontend and backend concerns for a bounded business capability. A MicroVertical owns its UI, routes, components, state, actions, command handlers, domain code, migrations, tests, entity declarations, relation declarations, permissions, search/report descriptors, and projection descriptors.
+An OntOS MicroVertical is a unified vertical slice containing both frontend and backend concerns for a bounded business capability. A MicroVertical owns its UI, routes, components, state, actions, command handlers, domain code, migrations, tests, entity declarations, relation declarations, permissions, search/report descriptors, and projection descriptors.
 
-MicroVerticals are deployed together in V0 as part of one TERP Application Runtime. They are not independently deployed microservices.
+MicroVerticals are deployed together in V0 as part of one OntOS Application Runtime. They are not independently deployed microservices.
 
 ## Consequences
 
-The architecture should model one TERP Application Runtime container rather than separate Web App and BFF containers at the conceptual C4 container level. Framework-specific internal routes or handlers may exist, but they are implementation details inside the unified runtime.
+The architecture should model one OntOS Application Runtime container rather than separate Web App and BFF containers at the conceptual C4 container level. Framework-specific internal routes or handlers may exist, but they are implementation details inside the unified runtime.
 
 MicroVertical manifests become central. Coding agents should generate MicroVerticals as cohesive slices, not as disconnected frontend/backend fragments.
 
@@ -1068,7 +1090,7 @@ The team is small, the delivery timeline is constrained, and the domain is still
 
 ## Decision
 
-TERP V0 will be implemented as a TypeScript modular monolith/modulith using UltraModern.js MicroVerticals. Module boundaries are internal package/runtime boundaries, not network boundaries.
+OntOS V0 will be implemented as a TypeScript modular monolith/modulith using UltraModern.js MicroVerticals. Module boundaries are internal package/runtime boundaries, not network boundaries.
 
 ## Consequences
 
@@ -1110,7 +1132,7 @@ The team must resist adding “quick” inline side effects in command handlers.
 <!-- Source file: adr/0004-postgres-canonical-neo4j-projection.md -->
 
 
-# ADR-0004: Postgres is canonical; Neo4j is a projection
+# ADR-0004: Postgres is canonical; Neo4j is an optional projection
 
 Status: Proposed
 
@@ -1120,15 +1142,15 @@ The long-term vision depends on graph exploration, but V0 ERP operations require
 
 ## Decision
 
-Postgres is the canonical operational source of truth. Neo4j is a replayable graph projection of entity registry rows and typed relation edges.
+Postgres is the canonical operational source of truth. Neo4j, if included in V0, is a replayable graph projection of entity registry rows and typed relation edges. The entity registry and typed relation edges must stand on their own without Neo4j.
 
 ## Consequences
 
-ERP operations do not depend on Neo4j availability. Graph views may be eventually consistent. Neo4j can be rebuilt from Postgres and domain events.
+ERP operations do not depend on Neo4j availability or even on Neo4j being present. Graph views may be eventually consistent. Neo4j can be introduced later and rebuilt from Postgres and domain events.
 
 ## Risks
 
-If application code starts making operational decisions based only on Neo4j, the model breaks. That must be prohibited for V0.
+If application code starts making operational decisions based only on Neo4j, the model breaks. That must be prohibited for V0. The remaining risk is delaying graph feedback too long and discovering too late that relation semantics are too weak for useful traversal.
 
 ---
 
@@ -1136,17 +1158,17 @@ If application code starts making operational decisions based only on Neo4j, the
 <!-- Source file: adr/0005-betterauth-spicedb-policy-layer.md -->
 
 
-# ADR-0005: BetterAuth + SpiceDB + TERP Policy Layer
+# ADR-0005: BetterAuth + SpiceDB + OntOS Policy Layer
 
 Status: Proposed
 
 ## Context
 
-The system needs authentication, sessions, multi-tenant/user DX, relationship-based authorization, and business-specific policy checks. One tool should not be forced to solve all of these.
+The system needs authentication, sessions, multi-tenant/user DX, relationship-based authorization, and business-specific policy checks. Custom authorization logic spread through application code is too easy to get wrong, especially across tenants, legal entities, modules, and sensitive records. One tool should not be forced to solve all of these.
 
 ## Decision
 
-BetterAuth handles authentication and session DX. TERP maps authenticated users into principals. SpiceDB handles relationship-based authorization. TERP Policy Layer handles business policies such as module state, locked periods, invoice already exported, amount thresholds, and approval requirements.
+BetterAuth handles authentication and session DX. OntOS maps authenticated users into principals. SpiceDB handles coarse, security-critical relationship-based authorization: tenant membership, legal-entity roles, module access, admin/support powers, accounting/export powers, and explicit grants to sensitive resources. OntOS Policy Layer handles business policies such as module state, locked periods, invoice already exported, amount thresholds, and approval requirements.
 
 ## Consequences
 
@@ -1154,7 +1176,7 @@ Authn, authz, and business policy remain separate. SpiceDB should not mirror the
 
 ## Risks
 
-SpiceDB may be too heavy for V0 if the schema is over-modeled. The PoC must validate minimum useful schema and latency.
+SpiceDB can still become too heavy if the schema is over-modeled. V0 must keep the schema deliberately small and validate latency, consistency behavior, and search-filtering strategy early.
 
 ---
 
@@ -1168,7 +1190,7 @@ Status: Proposed
 
 ## Context
 
-TERP needs cross-module linking without destroying domain integrity. A single generic JSON/EAV table would be flexible but weak for ERP constraints, billing, exports, and reporting. Direct foreign keys between every module pair would create tight coupling.
+OntOS needs cross-module linking without destroying domain integrity. A single generic JSON/EAV table would be flexible but weak for ERP constraints, billing, exports, and reporting. Direct foreign keys between every module pair would create tight coupling.
 
 ## Decision
 
@@ -1272,7 +1294,7 @@ Status: Proposed
 
 ## Context
 
-TERP uses both business entity relationships and authorization relationships. Neo4j and SpiceDB both represent graphs, but they solve different problems.
+OntOS uses both business entity relationships and authorization relationships. Neo4j and SpiceDB both represent graphs, but they solve different problems.
 
 ## Decision
 
@@ -1298,15 +1320,15 @@ Status: Proposed
 
 ## Context
 
-The system will be used by a customer, but the internal operator also needs an operational slice: clients, projects, tickets, documents, and invoice drafts. This is a low-friction way to validate foundations before customer workflows carry all the risk.
+The system will be used by a customer, but the internal operator also needs an operational slice: clients, projects, tickets, documents, and invoice drafts. This is a low-friction way to validate foundations, but it must not displace the customer-domain dependency root.
 
 ## Decision
 
-The `internal.delivery` MicroVertical should be one of the first implemented slices after the PoC. It should validate entity linking, document attachment, permissions, audit, invoice drafts, and module activation.
+Current planning assumption: `property.registry` is the likely first customer-domain slice after the foundation skeleton. The `internal.delivery` MicroVertical should start early after those rails are proven, validating entity linking, document attachment, permissions, audit, invoice drafts, and module activation without distracting from committed customer scope.
 
 ## Consequences
 
-The team experiences its own UX and architecture issues early. Dogfooding generates real feedback without waiting for customer data.
+The customer-domain backbone is explored first. The team still experiences its own UX and architecture issues early, but dogfooding follows the same rails instead of setting the initial direction.
 
 ## Risks
 
@@ -1318,7 +1340,7 @@ Dogfooding must not distract from committed customer scope. It should remain nar
 <!-- Source file: adr/0012-pulsar-for-machine-prediction.md -->
 
 
-# ADR-0012: Machine prediction is integrated, not built in TERP V0/V1
+# ADR-0012: Machine prediction is integrated, not built in OntOS V0/V1
 
 Status: Proposed
 
@@ -1328,12 +1350,12 @@ Manufacturing and machine prediction are future business opportunities, but the 
 
 ## Decision
 
-TERP should own manufacturing operations, ERP context, service tickets, ISO evidence, documents, audit, and workflows. Pulsar or similar systems should own machine data analytics and predictive maintenance outputs. TERP integrates their outputs as external events or recommendations.
+OntOS should own manufacturing operations, ERP context, service tickets, ISO evidence, documents, audit, and workflows. Pulsar or similar systems should own machine data analytics and predictive maintenance outputs. OntOS integrates their outputs as external events or recommendations.
 
 ## Consequences
 
-The manufacturing roadmap becomes lower risk. TERP remains the operational ontology and workflow layer rather than a machine-learning platform.
+The manufacturing roadmap becomes lower risk. OntOS remains the operational ontology and workflow layer rather than a machine-learning platform.
 
 ## Risks
 
-Integration boundaries must be defined early enough in manufacturing discovery. TERP must not assume machine event quality or availability without PoC evidence.
+Integration boundaries must be defined early enough in manufacturing discovery. OntOS must not assume machine event quality or availability without PoC evidence.

@@ -1,6 +1,6 @@
 # Architecture overview
 
-TERP V0 should be understood as a jointly deployable, modular application with strong vertical slices. Each business MicroVertical includes UI and backend behavior together, while Core provides common runtime capabilities. This architecture is deliberately different from a split frontend/BFF/backend model where vertical cohesion is lost across layers.
+OntOS V0 should be understood as a jointly deployable, modular application with strong vertical slices. Each business MicroVertical includes UI and backend behavior together, while Core provides common runtime capabilities. This architecture is deliberately different from a split frontend/BFF/backend model where vertical cohesion is lost across layers.
 
 ## Architectural position
 
@@ -14,7 +14,7 @@ The system is not an AI product in V0. It should be designed so AI can later con
 
 ## Runtime shape
 
-The main TERP Application Runtime contains the application shell, all active MicroVertical UI and server logic, and Core runtime capabilities. The Worker Runtime is separate and processes asynchronous work. Postgres stores canonical state. Neo4j stores a graph projection. SpiceDB stores authorization relationships. Object storage stores file blobs. External accounting systems, reservation web, banks, e-shop, and Pulsar integrations sit outside TERP.
+The main OntOS Application Runtime contains the application shell, all active MicroVertical UI and server logic, and Core runtime capabilities. The Worker Runtime is separate and processes asynchronous work. Postgres stores canonical state. Neo4j stores a graph projection. SpiceDB stores authorization relationships. Object storage stores file blobs. External accounting systems, reservation web, banks, e-shop, and Pulsar integrations sit outside OntOS.
 
 This separation is important. MicroVertical cohesion is preserved inside the application runtime. Operational simplicity is preserved by avoiding distributed MicroVertical services. Asynchronous work is isolated in workers because projections, exports, imports, notifications, and long-running tasks should not block user-facing command execution.
 
@@ -34,7 +34,7 @@ This means the system tolerates projection lag. A reservation created in Postgre
 
 ## Permissions
 
-Authentication and authorization are separate. BetterAuth handles authentication and sessions. A TERP principal registry maps authenticated subjects into principals. SpiceDB answers relationship-based permission checks. The TERP Policy Layer evaluates business conditions that are not purely relational.
+Authentication and authorization are separate. BetterAuth handles authentication and sessions. An OntOS principal registry maps authenticated subjects into principals. SpiceDB answers relationship-based permission checks. The OntOS Policy Layer evaluates business conditions that are not purely relational.
 
 Search and graph views must be permission-aware. The system should avoid per-result SpiceDB checks for large result sets unless scoped and cached. V0 should combine coarse permission projections with explicit checks for sensitive entities.
 

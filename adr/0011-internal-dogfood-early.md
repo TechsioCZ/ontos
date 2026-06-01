@@ -4,15 +4,15 @@ Status: Proposed
 
 ## Context
 
-The system will be used by a customer, but the internal operator also needs an operational slice: clients, projects, tickets, documents, and invoice drafts. This is a low-friction way to validate foundations before customer workflows carry all the risk.
+The system will be used by a customer, but the internal operator also needs an operational slice: clients, projects, tickets, documents, and invoice drafts. This is a low-friction way to validate foundations, but it must not displace the customer-domain dependency root.
 
 ## Decision
 
-The `internal.delivery` MicroVertical should be one of the first implemented slices after the PoC. It should validate entity linking, document attachment, permissions, audit, invoice drafts, and module activation.
+Current planning assumption: `property.registry` is the likely first customer-domain slice after the foundation skeleton. The `internal.delivery` MicroVertical can start early after those rails are proven, validating entity linking, document attachment, permissions, audit, invoice drafts, and module activation without distracting from committed customer scope.
 
 ## Consequences
 
-The team experiences its own UX and architecture issues early. Dogfooding generates real feedback without waiting for customer data.
+The customer-domain backbone is explored first. The team still experiences its own UX and architecture issues early, but dogfooding follows the same rails instead of setting the initial direction.
 
 ## Risks
 

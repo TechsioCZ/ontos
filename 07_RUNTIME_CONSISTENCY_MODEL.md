@@ -1,6 +1,6 @@
 # Runtime and consistency model
 
-TERP should use an action-driven core with evented side effects. This avoids the main failure mode of naive event-driven ERP architecture: business state changing unpredictably through subscriber chains.
+OntOS should use an action-driven core with evented side effects. This avoids the main failure mode of naive event-driven ERP architecture: business state changing unpredictably through subscriber chains.
 
 ## Write flow
 

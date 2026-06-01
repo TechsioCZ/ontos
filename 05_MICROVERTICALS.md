@@ -1,10 +1,10 @@
 # MicroVerticals
 
-This document defines MicroVerticals as they are intended for TERP. It supersedes any wording that implied a MicroVertical is only a frontend module or that the architecture is naturally split into web and BFF containers.
+This document defines MicroVerticals as they are intended for OntOS. It supersedes any wording that implied a MicroVertical is only a frontend module or that the architecture is naturally split into web and BFF containers.
 
 ## Definition
 
-A TERP MicroVertical is a unified vertical business slice inside one jointly deployable application. It owns both user-facing and server-side behavior for a bounded business capability. It is designed to be understood, generated, tested, activated, and evolved as one unit.
+An OntOS MicroVertical is a unified vertical business slice inside one jointly deployable application. It owns both user-facing and server-side behavior for a bounded business capability. It is designed to be understood, generated, tested, activated, and evolved as one unit.
 
 A MicroVertical should normally contain:
 
@@ -28,7 +28,7 @@ They are not separate microservices in V0. They are not only UI modules. They ar
 
 ## Why this model matters
 
-Traditional layered architecture often splits a feature across frontend, backend, database, permissions, jobs, and reporting folders. That makes it easy for a feature to become cross-layer scattered. TERP needs the opposite: each business capability should have a cohesive home so that humans and coding agents can reason about the whole feature.
+Traditional layered architecture often splits a feature across frontend, backend, database, permissions, jobs, and reporting folders. That makes it easy for a feature to become cross-layer scattered. OntOS needs the opposite: each business capability should have a cohesive home so that humans and coding agents can reason about the whole feature.
 
 A MicroVertical therefore packages the things that change together. The short-term rental slice owns reservation UI and reservation command handling together. The long-term rental slice owns lease contract UI and lease command handling together. The billing slice owns invoice actions and invoice UI together.
 

@@ -8,7 +8,7 @@ The team is small, the delivery timeline is constrained, and the domain is still
 
 ## Decision
 
-TERP V0 will be implemented as a TypeScript modular monolith/modulith using UltraModern.js MicroVerticals. Module boundaries are internal package/runtime boundaries, not network boundaries.
+OntOS V0 will be implemented as a TypeScript modular monolith/modulith using UltraModern.js MicroVerticals. Module boundaries are internal package/runtime boundaries, not network boundaries.
 
 ## Consequences
 

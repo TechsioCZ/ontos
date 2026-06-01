@@ -2,19 +2,19 @@
 
 This glossary is part of the architecture. Terms should not be treated as cosmetic. If two people use the same word differently, the architecture will drift.
 
-## TERP
+## OntOS
 
-TERP is the working name for the system. In V0 it is a delivery-bound ERP with platform-shaped foundations. In the long-term vision it becomes a temporal company ontology system with ERP MicroVerticals as the first application layer.
+OntOS is the canonical name for the system. In V0 it is a delivery-bound ERP with platform-shaped foundations. In the long-term vision it becomes a temporal company ontology system with ERP MicroVerticals as the first application layer.
 
-## TERP Core
+## OntOS Core
 
-TERP Core is the set of system capabilities that ordinary business MicroVerticals depend on. It is not itself a business MicroVertical. It includes authentication integration, principal context, authorization adapter, policy layer, module runtime, entity registry, relation registry, audit, events, outbox, document metadata services, search interfaces, reporting foundations, and projection interfaces.
+OntOS Core is the set of system capabilities that ordinary business MicroVerticals depend on. It is not itself a business MicroVertical. It includes authentication integration, principal context, authorization adapter, policy layer, module runtime, entity registry, relation registry, audit, events, outbox, document metadata services, search interfaces, reporting foundations, and projection interfaces.
 
 Core is not meant to be disabled per tenant in the same way business MicroVerticals can be. Some Core capabilities may have configuration or feature flags, but the kernel-level concepts are part of the runtime contract.
 
 ## MicroVertical
 
-A MicroVertical is a unified vertical slice of business capability inside the jointly deployable TERP application. A MicroVertical contains its frontend and backend parts together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, entity declarations, relation declarations, permissions, report descriptors, search descriptors, and projection descriptors.
+A MicroVertical is a unified vertical slice of business capability inside the jointly deployable OntOS application. A MicroVertical contains its frontend and backend parts together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, entity declarations, relation declarations, permissions, report descriptors, search descriptors, and projection descriptors.
 
 A MicroVertical is not a microservice in V0. It is a module boundary inside a modular monolith. Its purpose is to keep domain slices cohesive and independently understandable without introducing distributed-system overhead.
 
@@ -28,13 +28,13 @@ A System Module is a Core capability described with a manifest-like structure fo
 
 A Module Manifest is the declarative contract of a MicroVertical or System Module. It declares module identity, version, dependencies, owned entity types, relation types, actions, permissions, UI contributions, migrations, report descriptors, search descriptors, and projection handlers. The manifest is the primary artifact that allows the runtime, tooling, coding agents, and later Forge/vibemodule functionality to reason about a module.
 
-## TERP Application Runtime
+## OntOS Application Runtime
 
-The TERP Application Runtime is the main deployable application container. It includes the app shell, MicroVertical UI, server-side module actions, command handlers, Core services, and HTTP/API entrypoints. It should not be modeled as a separate Web App plus BFF for architecture purposes, because MicroVerticals intentionally combine frontend and backend concerns into a single vertical slice.
+The OntOS Application Runtime is the main deployable application container. It includes the app shell, MicroVertical UI, server-side module actions, command handlers, Core services, and HTTP/API entrypoints. It should not be modeled as a separate Web App plus BFF for architecture purposes, because MicroVerticals intentionally combine frontend and backend concerns into a single vertical slice.
 
-## TERP Worker Runtime
+## OntOS Worker Runtime
 
-The TERP Worker Runtime is a separate process or set of processes for asynchronous work: outbox processing, Neo4j projections, search projections, reporting refreshes, import/export tasks, scheduled jobs, and future integration workers. It consumes events/outbox messages emitted by the application runtime. It should not own canonical business state except for controlled state transitions related to its work, such as marking an export as completed.
+The OntOS Worker Runtime is a separate process or set of processes for asynchronous work: outbox processing, Neo4j projections, search projections, reporting refreshes, import/export tasks, scheduled jobs, and future integration workers. It consumes events/outbox messages emitted by the application runtime. It should not own canonical business state except for controlled state transitions related to its work, such as marking an export as completed.
 
 ## Action
 
@@ -92,27 +92,47 @@ A Tenant is the top-level isolation boundary for a customer or internal operatin
 
 ## Legal Entity
 
-A Legal Entity is a company/SRO/SPV/accounting-client inside a tenant. Many permissions, modules, invoices, documents, and reports are scoped to legal entities.
+A Legal Entity is a managed accounting or operating company inside a tenant. It may own, operate, bill, report, or account for parts of the business. External organizations are Parties unless the tenant manages them as part of its own operating structure.
+
+## Party
+
+A Party is a real-world person or organization OntOS deals with. A Party may be a guest, tenant, supplier, accountant office, external management company, owned company, contact person, or commercial counterparty.
+
+## Counterparty
+
+A Counterparty is a Party in a commercial or contractual relationship with a managed Legal Entity. Counterparties can include tenants, guests, suppliers, external managers, corporate buyers, wholesalers, or accounting offices.
 
 ## Principal
 
-A Principal is an actor that can be authenticated or represented in audit and authorization: user, agent, service account, integration, or system. In V0 agent principals may exist as foundations, but autonomous agent behavior is not product scope.
+A Principal is an actor that can authenticate, invoke actions, or appear in audit and authorization: internal staff, external manager staff, accountants, guests with portal access, integrations, service accounts, agents, or the system itself. In V0 agent principals may exist as foundations, but autonomous agent behavior is not product scope.
+
+## External Operator
+
+An External Operator is a Party outside the tenant's managed legal-entity structure that receives scoped operational access, such as an external property manager or external accountant.
+
+## Ownership Assignment
+
+An Ownership Assignment is a temporal relation stating which Legal Entity owns a property, property complex, building, or unit/space for a period. V0 tracks simple validity intervals and audit metadata, not full bitemporal ownership history.
+
+## Management Assignment
+
+A Management Assignment is a temporal relation stating which Party or External Operator manages a property, property complex, building, or unit/space for a period. It is not itself an access grant; access is granted through SpiceDB.
 
 ## BetterAuth
 
-BetterAuth is the proposed authentication/session layer. It owns login/session mechanics and maps authenticated users into TERP principals. It should not be treated as the complete fine-grained authorization system.
+BetterAuth is the proposed authentication/session layer. It owns login/session mechanics and maps authenticated users into OntOS principals. It should not be treated as the complete fine-grained authorization system.
 
 ## SpiceDB
 
-SpiceDB is the proposed authorization graph. It models relationships and answers permission questions. It is not the business ontology graph.
+SpiceDB is the authorization graph. It models relationships and answers permission questions. It is not the business ontology graph.
 
-## TERP Policy Layer
+## OntOS Policy Layer
 
-The TERP Policy Layer handles business conditions that are not pure relationship-based authorization: module state, locked accounting period, invoice already exported, amount thresholds, approval requirements, document sensitivity, and risk conditions.
+The OntOS Policy Layer handles business conditions that are not pure relationship-based authorization: module state, locked accounting period, invoice already exported, amount thresholds, approval requirements, document sensitivity, and risk conditions.
 
 ## Neo4j Projection
 
-Neo4j stores a graph projection of registered entities and typed relationships for graph traversal, impact analysis, visual exploration, and future semantic/AI context. It is not the canonical ERP store in V0.
+Neo4j Projection is an optional graph projection of registered entities and typed relationships for graph traversal, impact analysis, visual exploration, and future semantic/AI context. It is not the canonical ERP store in V0 and is not required for canonical entity and relation storage.
 
 ## Forge
 

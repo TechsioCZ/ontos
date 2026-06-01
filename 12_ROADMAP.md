@@ -4,7 +4,7 @@ This roadmap is intentionally agile. It sets monthly delivery intent and archite
 
 ## End of May 2026 — throwaway PoC
 
-The PoC should validate the stack and the architectural seams. It is expected to be disposable. It should prove UltraModern.js MicroVertical structure, design-system integration, BetterAuth session mapping to TERP principal, SpiceDB permission checks, Postgres entity registry, relation edges, audit recording, outbox basics, Neo4j projection, module activation/deactivation, internal dogfood slice, and property/rental stubs.
+The PoC should validate the stack and the architectural seams. It is expected to be disposable. It should prove UltraModern.js MicroVertical structure, design-system integration, BetterAuth session mapping to OntOS principal, SpiceDB permission checks, Postgres entity registry, relation edges, audit recording, outbox basics, module activation/deactivation, internal dogfood slice, and property/rental stubs. Neo4j can be tested as an optional projection spike, but the PoC should not make V0 depend on it.
 
 The PoC should not implement product AI, full rental workflows, full billing, full accounting integration, or polished UX.
 
@@ -14,11 +14,11 @@ June should convert PoC learnings into decisions. Key outputs are a refined glos
 
 This month should avoid building a large production system before the architecture has been grilled. It should produce enough production skeleton to start safely in July.
 
-## July 2026 — production foundation and internal dogfood start
+## July 2026 — production foundation and property registry start
 
-July should establish the production skeleton, tenant/legal entity model, principal model, BetterAuth integration, SpiceDB checks, module registry, action registry, entity registry, relation registry, audit, timeline basics, and first internal dogfood features: clients, projects, tickets, documents, invoice drafts.
+July should establish the production skeleton, tenant/legal entity model, principal model, BetterAuth integration, SpiceDB checks, module registry, action registry, entity registry, relation registry, audit, timeline basics, and the first `property.registry` slice.
 
-The customer-facing property structure can begin with holding/SRO and property/unit registry skeletons.
+The customer-facing property structure should begin with holding/SRO and property/unit registry skeletons. Internal dogfooding can start once these rails are working.
 
 ## August 2026 — property base, documents, search
 

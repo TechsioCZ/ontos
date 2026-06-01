@@ -1,10 +1,10 @@
 # Source grounding
 
-This pack is based on the current conversation, previous TERP architecture research artifacts, and private source materials summarized at a high level.
+This pack is based on the current conversation, previous OntOS architecture research artifacts, and private source materials summarized at a high level.
 
 ## Internal strategy source
 
-The internal strategy material frames TERP as a strategic internal/hybrid opportunity. It lists options such as internal project, consortium, and hybrid approach. The hybrid direction is particularly relevant: keep the project small/internal until a presentable MVP exists, then consider adding names, investors, and public positioning.
+The internal strategy material frames OntOS as a strategic internal/hybrid opportunity. It lists options such as internal project, consortium, and hybrid approach. The hybrid direction is particularly relevant: keep the project small/internal until a presentable MVP exists, then consider adding names, investors, and public positioning.
 
 ## Draft module source
 

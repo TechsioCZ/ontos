@@ -25,7 +25,7 @@ Core is the reason MicroVerticals can be cohesive without becoming isolated. It 
 | Outbox | Yes | Side-effect dispatch must be consistent. |
 | Document metadata foundation | Yes | Documents must link to any entity. |
 | Search interface | Yes | Search spans modules and permissions. |
-| Neo4j projection interface | Yes | Graph projection spans modules. |
+| Graph projection interface | Yes | Graph projection may span modules even if Neo4j is introduced later. |
 
 ## What does not belong in Core
 

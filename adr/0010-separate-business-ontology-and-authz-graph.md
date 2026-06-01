@@ -4,7 +4,7 @@ Status: Proposed
 
 ## Context
 
-TERP uses both business entity relationships and authorization relationships. Neo4j and SpiceDB both represent graphs, but they solve different problems.
+OntOS uses both business entity relationships and authorization relationships. Neo4j and SpiceDB both represent graphs, but they solve different problems.
 
 ## Decision
 

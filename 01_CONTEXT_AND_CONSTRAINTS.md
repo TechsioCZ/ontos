@@ -1,6 +1,6 @@
 # Context and constraints
 
-TERP is being shaped from a concrete customer delivery and a broader product opportunity. The immediate customer need is a committed ERP for a property/rental business context. The long-term product direction is a reusable ERP and company ontology platform that can serve the internal operator, the current customer’s multiple companies, and future larger customers.
+OntOS is being shaped from a concrete customer delivery and a broader product opportunity. The immediate customer need is a committed ERP for a property/rental business context. The long-term product direction is a reusable ERP and company ontology platform that can serve the internal operator, the current customer’s multiple companies, and future larger customers.
 
 ## Delivery context
 
@@ -12,7 +12,7 @@ The customer delivery materials create hard delivery constraints. The committed 
 
 ## Product context
 
-The broader TERP ambition is not to write a one-off ERP for one customer. The intended long-term category is a temporal company ontology system with ERP MicroVerticals as the first application layer. Important business objects should be addressable entities; relationships should be typed, auditable, and time-aware; and future modules should be easier to add because they plug into the same Core.
+The broader OntOS ambition is not to write a one-off ERP for one customer. The intended long-term category is a temporal company ontology system with ERP MicroVerticals as the first application layer. Important business objects should be addressable entities; relationships should be typed, auditable, and time-aware; and future modules should be easier to add because they plug into the same Core.
 
 This long-term direction must not distort V0. V0 is not the vibemodule, not an AI assistant, not an autonomous-agent platform, and not a full manufacturing/machine-prediction system. V0 must first prove that the Core and MicroVertical architecture can deliver concrete ERP functionality without becoming a fragile bespoke system.
 
@@ -24,9 +24,9 @@ Heavy coding-agent usage changes implementation throughput but does not remove t
 
 ## Current intended stack
 
-The intended PoC stack is UltraModern.js with MicroVerticals, an existing design system, Postgres, Neo4j, SpiceDB, and BetterAuth. This is not yet a final architecture. The PoC should validate the combination and reveal which parts are overkill, unsafe, or misaligned.
+The intended PoC stack is UltraModern.js with MicroVerticals, an existing design system, Postgres, SpiceDB, BetterAuth, and possibly Neo4j. This is not yet a final architecture. The PoC should validate the combination and reveal which parts are overkill, unsafe, or misaligned.
 
-The stack division is currently understood as follows. UltraModern.js provides the unified application runtime and MicroVertical structure. The design system provides UI consistency. Postgres is canonical operational storage. Neo4j is a graph projection/read model for ontology exploration and relationship traversal. SpiceDB is the authorization graph. BetterAuth is authentication/session DX.
+The stack division is currently understood as follows. UltraModern.js provides the unified application runtime and MicroVertical structure. The design system provides UI consistency. Postgres is canonical operational storage. SpiceDB is the authorization graph. BetterAuth is authentication/session DX. Neo4j may be added as a graph projection/read model for ontology exploration and relationship traversal once typed relations justify it.
 
 ## V0 non-goals
 

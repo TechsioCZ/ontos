@@ -1,8 +1,8 @@
-# TERP Architecture Pack v3 — `/grill-with-docs` input
+# OntOS Architecture Pack v3 — `/grill-with-docs` input
 
-This pack is a working architecture dossier for TERP. It is intentionally written as input for a technical architecture grilling session and for a coding agent. It consolidates the current business context, delivery constraints, architectural decisions, MicroVertical semantics, C4 views, ADRs, glossary, V0 scope, roadmap, and open questions.
+This pack is a working architecture dossier for OntOS. It is intentionally written as input for a technical architecture grilling session and for a coding agent. It consolidates the current business context, delivery constraints, architectural decisions, MicroVertical semantics, C4 views, ADRs, glossary, V0 scope, roadmap, and open questions.
 
-The most important correction in this version is the MicroVertical model. A TERP MicroVertical is not a frontend module plus a separate BFF/backend service. A MicroVertical is a unified vertical slice inside one jointly deployable UltraModern.js application. It owns its UI, routes, state, actions, command handlers, domain tables, entity declarations, relation declarations, migrations, tests, and projection descriptors. The TERP Core sits alongside the MicroVerticals as system infrastructure: authentication integration, authorization adapter, module runtime, entity registry, relation registry, audit, events, outbox, documents, search, and projection interfaces.
+The most important correction in this version is the MicroVertical model. An OntOS MicroVertical is not a frontend module plus a separate BFF/backend service. A MicroVertical is a unified vertical slice inside one jointly deployable UltraModern.js application. It owns its UI, routes, state, actions, command handlers, domain tables, entity declarations, relation declarations, migrations, tests, and projection descriptors. The OntOS Core sits alongside the MicroVerticals as system infrastructure: authentication integration, authorization adapter, module runtime, entity registry, relation registry, audit, events, outbox, documents, search, and projection interfaces.
 
 ## Recommended reading order
 
@@ -15,7 +15,7 @@ The most important correction in this version is the MicroVertical model. A TERP
 7. `06_CORE_KERNEL.md` — what belongs in Core and what must stay out.
 8. `07_RUNTIME_CONSISTENCY_MODEL.md` — actions, commands, audit, events, outbox, workers.
 9. `08_CANONICAL_ENTITY_MODEL.md` — domain tables, entity registry, relation types, Neo4j projection.
-10. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, TERP policy layer.
+10. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, OntOS Policy Layer.
 11. `10_DATA_STORAGE_AND_PROJECTIONS.md` — Postgres, Neo4j, search, object storage, projection lag.
 12. `11_V0_SCOPE_AND_MODULES.md` — concrete V0 functional scope and modules.
 13. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap.
@@ -26,6 +26,6 @@ The most important correction in this version is the MicroVertical model. A TERP
 
 ## Core thesis
 
-TERP V0 is a delivery-bound ERP system implemented as a TypeScript modular monolith built on UltraModern.js MicroVerticals. The long-term direction is a temporal company ontology system, but V0 must first deliver concrete ERP functionality: multi-company structure, property registry, long-term rental, short-term rental, billing, accounting handoff, documents, permissions, audit, and reporting.
+OntOS V0 is a delivery-bound ERP system implemented as a TypeScript modular monolith built on UltraModern.js MicroVerticals. The long-term direction is a temporal company ontology system, but V0 must first deliver concrete ERP functionality: multi-company structure, property registry, long-term rental, short-term rental, billing, accounting handoff, documents, permissions, audit, and reporting.
 
 The architecture optimizes for a small team, heavy coding-agent usage, fast prototyping, production delivery by the end of 2026, and future extensibility without premature distributed-systems complexity.

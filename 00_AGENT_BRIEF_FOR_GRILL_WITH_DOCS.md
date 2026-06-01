@@ -1,6 +1,6 @@
 # Agent brief for `/grill-with-docs`
 
-You are reviewing the TERP architecture before implementation. Treat this as an architecture grilling session, not a documentation summarization task.
+You are reviewing the OntOS architecture before implementation. Treat this as an architecture grilling session, not a documentation summarization task.
 
 ## Goal of the grilling session
 
@@ -10,7 +10,7 @@ The project will likely start with a throwaway PoC. The documents in this pack s
 
 ## Important correction to preserve
 
-Do not model TERP as a separate Web App container and BFF/API container where MicroVerticals live only in one of them. That is not the intended MicroVertical concept.
+Do not model OntOS as a separate Web App container and BFF/API container where MicroVerticals live only in one of them. That is not the intended MicroVertical concept.
 
 A MicroVertical is a unified vertical slice inside a jointly deployable UltraModern.js application. It includes frontend and backend concerns together: UI, routes, components, state, actions, command handlers, domain code, migrations, tests, and metadata. Core services are outside ordinary business MicroVerticals and provide the platform capabilities that all MicroVerticals use.
 
@@ -22,9 +22,9 @@ A separate worker runtime may exist for outbox processing, projections, imports,
 - Product AI is not part of V0 delivery. AI may be heavily used in development, but user-facing AI, autonomous agents, process autodiscovery, and vibemodule are later capabilities.
 - The V0 must satisfy the 2026 ERP delivery obligation, including short-term rental, long-term rental, billing, accounting workflow/export, documents, roles/permissions, audit, reporting, and multi-company foundations.
 - Internal dogfooding should begin early with clients, projects, tickets, documents, and invoice drafts.
-- The current intended stack is UltraModern.js + MicroVerticals, existing design system, Postgres, Neo4j, SpiceDB, and BetterAuth.
-- Neo4j should be challenged as a projection/read model, not assumed as the canonical transactional ERP store.
-- SpiceDB should be challenged as the authorization graph, not the company ontology graph.
+- The current intended stack is UltraModern.js + MicroVerticals, existing design system, Postgres, SpiceDB, BetterAuth, and possibly Neo4j.
+- Neo4j should be treated as an optional projection/read model, not assumed as mandatory V0 infrastructure or the canonical transactional ERP store.
+- SpiceDB is foundation-level authorization infrastructure and should be challenged as the authorization graph, not the company ontology graph.
 - Postgres should be challenged as canonical operational truth, but any alternative must explain billing, audit, exports, migrations, and committed delivery.
 
 ## What to grill first

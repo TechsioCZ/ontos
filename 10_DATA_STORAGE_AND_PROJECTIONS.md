@@ -1,6 +1,6 @@
 # Data storage and projections
 
-TERP deliberately uses multiple data stores, each with a clear responsibility. This is not polyglot persistence for prestige; it exists because operational ERP data, graph exploration, authorization, and file blobs have different shapes.
+OntOS deliberately uses multiple data stores, each with a clear responsibility. This is not polyglot persistence for prestige; it exists because operational ERP data, graph exploration, authorization, and file blobs have different shapes.
 
 ## Postgres
 
@@ -10,17 +10,17 @@ Postgres is where constraints, indexes, migrations, accounting/reporting queries
 
 ## Neo4j
 
-Neo4j is a graph projection of the company ontology. It is useful for multi-hop relationships, impact analysis, visual exploration, and future AI context. It should be rebuilt from Postgres if necessary. It should not be required to issue an invoice, create a lease, create a reservation, or enforce core permissions in V0.
+Neo4j is an optional graph projection of the company ontology. It may become useful for multi-hop relationships, impact analysis, visual exploration, and future AI context. It should be rebuilt from Postgres if introduced. It should not be required to issue an invoice, create a lease, create a reservation, or enforce core permissions in V0.
 
 The projection should include entity nodes and typed relation edges, plus selected denormalized display/status/type/module/tenant fields. Avoid dumping all child rows or large sensitive payloads into Neo4j by default.
 
 ## SpiceDB
 
-SpiceDB is the authorization store. It stores relationship tuples and permission schema. It should be fed by deliberate access-management actions, not by blindly mirroring every business relation.
+SpiceDB is the authorization store. It stores relationship tuples and permission schema. It should be fed by deliberate access-management actions, not by blindly mirroring every business relation. OntOS treats SpiceDB as foundation-level infrastructure because hand-rolled authorization creates too many failure points.
 
 ## Object storage
 
-Object storage holds binary file content. Document metadata, links, ownership, permissions, expiration, versions, and audit live in Postgres. A file blob without a document metadata entity is not a business document in TERP.
+Object storage holds binary file content. Document metadata, links, ownership, permissions, expiration, versions, and audit live in Postgres. A file blob without a document metadata entity is not a business document in OntOS.
 
 ## Search index
 

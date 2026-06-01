@@ -1,6 +1,6 @@
 # Canonical entity model
 
-TERP needs both strong domain modeling and universal cross-module linking. The chosen model is explicit Postgres domain tables plus a central entity registry and typed relation edges.
+OntOS needs both strong domain modeling and universal cross-module linking. The chosen model is explicit Postgres domain tables plus a central entity registry and typed relation edges.
 
 ## Why not generic JSON/EAV
 
@@ -58,9 +58,9 @@ If Neo4j is unavailable or stale, canonical ERP operations should continue. Grap
 
 The first entity catalog should include Core entities, property entities, rental entities, billing entities, accounting workflow entities, document entities, facility entities, and internal dogfood entities.
 
-Core: tenant, legal entity, org unit, principal, user, agent placeholder, module installation.
+Core: tenant, legal entity, party, counterparty, external operator, org unit, principal, user, agent placeholder, module installation.
 
-Property/rental: property, building, unit, contact, lease contract, reservation, guest/contact, service ticket.
+Property/rental: property, property complex, building, unit/space, contact, lease contract, reservation, guest/contact, ownership assignment, management assignment, service ticket. Capacity allocation contract is a future commercial-rights pattern unless a concrete V0 customer workflow requires it.
 
 Billing/accounting: invoice draft, invoice, payment, supplier invoice or cost record, accounting export batch.
 

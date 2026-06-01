@@ -3,7 +3,7 @@ flowchart LR
   internal[Internal operator users]
   acct[Accountants]
   admin[Admins]
-  terp[TERP]
+  ontos[OntOS]
   accsw[Accounting software]
   bank[Banks / statement files]
   resweb[Reservation website]
@@ -11,13 +11,13 @@ flowchart LR
   pulsar[Pulsar Solutions / machine signals]
   storage[Object storage]
 
-  users --> terp
-  internal --> terp
-  acct --> terp
-  admin --> terp
-  terp --> accsw
-  bank --> terp
-  resweb --> terp
-  shop --> terp
-  pulsar --> terp
-  terp --> storage
+  users --> ontos
+  internal --> ontos
+  acct --> ontos
+  admin --> ontos
+  ontos --> accsw
+  bank --> ontos
+  resweb --> ontos
+  shop --> ontos
+  pulsar --> ontos
+  ontos --> storage

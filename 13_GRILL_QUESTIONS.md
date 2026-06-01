@@ -44,7 +44,7 @@ This document is intentionally adversarial. Use it to challenge the architecture
 
 1. Is SpiceDB appropriate for V0 or too heavy for the team?
 2. What is the minimum SpiceDB schema that proves value without modeling every business relation?
-3. Which permissions are handled by SpiceDB vs TERP policy layer?
+3. Which permissions are handled by SpiceDB vs OntOS Policy Layer?
 4. How is search permission filtering implemented without one SpiceDB call per result?
 5. What is the fail-closed behavior when SpiceDB is unavailable?
 6. How are role changes audited?

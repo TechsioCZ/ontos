@@ -4,7 +4,7 @@ Status: Proposed
 
 ## Context
 
-TERP needs cross-module linking without destroying domain integrity. A single generic JSON/EAV table would be flexible but weak for ERP constraints, billing, exports, and reporting. Direct foreign keys between every module pair would create tight coupling.
+OntOS needs cross-module linking without destroying domain integrity. A single generic JSON/EAV table would be flexible but weak for ERP constraints, billing, exports, and reporting. Direct foreign keys between every module pair would create tight coupling.
 
 ## Decision
 

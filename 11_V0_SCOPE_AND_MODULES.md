@@ -1,6 +1,6 @@
 # V0 scope and modules
 
-V0 must deliver a useful ERP aligned with the committed customer scope while establishing the foundations needed for future productization. It should not deliver the entire long-term TERP vision.
+V0 must deliver a useful ERP aligned with the committed customer scope while establishing the foundations needed for future productization. It should not deliver the entire long-term OntOS vision.
 
 ## V0 Core capabilities
 
@@ -10,13 +10,15 @@ These capabilities are not optional platform indulgence. They are required to sa
 
 ## V0 business MicroVerticals
 
-### `internal.delivery`
-
-The first dogfood MicroVertical should cover clients, projects, tickets, documents, and invoice drafts. It is valuable because the internal operator can use it immediately and discover issues in entity linking, permissions, document attachment, action flow, and billing drafts before the customer depends on the same patterns.
-
 ### `property.registry`
 
-This MicroVertical covers legal-entity property structures: properties, buildings, units, states, technical metadata, equipment/labels, and links to documents/service tickets/reporting.
+Current working assumption: this is the first customer-domain MicroVertical to validate after the foundation skeleton. It likely covers legal-entity property structures: properties or property complexes, buildings, units/spaces, ownership/management relationships, unit/space state, basic technical metadata, equipment/labels, and links to documents/service tickets/reporting. It appears to be the dependency root for long-term rental, short-term rental, facility, billing, documents, search, and reporting.
+
+Open boundary to validate: lease contracts, reservations, pricing, invoicing, payments, cleaning tasks, facility workflows, accounting costs, and reporting aggregates probably belong to later MicroVerticals and link back to registry entities through typed relations.
+
+### `internal.delivery`
+
+This early dogfood MicroVertical should cover clients, projects, tickets, documents, and invoice drafts after the customer-domain rails are proven by `property.registry`. It is valuable because the internal operator can discover issues in entity linking, permissions, document attachment, action flow, and billing drafts before those patterns are repeated broadly.
 
 ### `property.long_term_rental`
 
@@ -24,7 +26,7 @@ This MicroVertical covers lease contracts, tenants/contacts, deposits, basic pay
 
 ### `property.short_term_rental`
 
-This MicroVertical covers units, reservations, guests/contacts, reservation state, check-in/check-out basics, cleaning tasks, cancellation/change basics, and invoice draft links.
+This MicroVertical covers units/spaces, reservations, guests/contacts, reservation state, check-in/check-out basics, cleaning tasks, cancellation/change basics, and invoice draft links. It should support guests as external actors. First-class capacity allocation contracts are a future discovery topic unless a concrete customer workflow requires them.
 
 ### `billing.core`
 
@@ -54,8 +56,8 @@ The architecture should be ready to integrate these later without implementing t
 
 ## Accounting boundary
 
-TERP should not implement statutory accounting. It should provide operational evidence, billing records, cost records, document links, approval/checklist workflow, and export/integration to accounting software. This boundary is important because the customer context explicitly prefers integration with mature accounting software rather than building accounting correctness ourselves.
+OntOS should not implement statutory accounting. It should provide operational evidence, billing records, cost records, document links, approval/checklist workflow, and export/integration to accounting software. This boundary is important because the customer context explicitly prefers integration with mature accounting software rather than building accounting correctness ourselves.
 
 ## Manufacturing and Pulsar boundary
 
-Manufacturing in 2027 should be handled as TERP manufacturing operations plus integration with a specialist partner for machine prediction and predictive maintenance. TERP should own production orders, products, BOM, material reservation, service tickets, ISO evidence, documents, and audit. Pulsar-like specialist systems can own machine analytics and prediction outputs, which TERP receives as events or integration payloads.
+Manufacturing in 2027 should be handled as OntOS manufacturing operations plus integration with a specialist partner for machine prediction and predictive maintenance. OntOS should own production orders, products, BOM, material reservation, service tickets, ISO evidence, documents, and audit. Pulsar-like specialist systems can own machine analytics and prediction outputs, which OntOS receives as events or integration payloads.
