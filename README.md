@@ -2,7 +2,7 @@
 
 This pack is a working architecture dossier for OntOS. It is intentionally written as input for a technical architecture grilling session and for a coding agent. It consolidates the current business context, delivery constraints, architectural decisions, MicroVertical semantics, C4 views, ADRs, glossary, V0 scope, roadmap, and open questions.
 
-The most important correction in this version is the MicroVertical model. An OntOS MicroVertical is not a frontend module plus a separate BFF/backend service. A MicroVertical is a unified vertical slice inside one jointly deployable UltraModern.js application. It owns its UI, routes, state, actions, command handlers, domain tables, entity declarations, relation declarations, migrations, tests, and projection descriptors. The OntOS Core sits alongside the MicroVerticals as system infrastructure: authentication integration, authorization adapter, module runtime, entity registry, relation registry, audit, events, outbox, documents, search, and projection interfaces.
+The most important correction in this version is the MicroVertical model. An UltraModern.js MicroVertical is not a frontend module plus a separate BFF/backend service. It is a unified vertical slice inside one jointly deployable UltraModern.js application. OntOS uses that implementation concept for ERP business modules, then adds an OntOS-specific Effect Schema-defined Module Manifest for public module contracts: activation, dependencies, public APIs, public components, public resource types, public events, search, and reports. The OntOS Core sits alongside the MicroVerticals as system infrastructure: BetterAuth binding, authorization adapter, tenant-level module state, action invocation recording, audit, events, outbox, media assets/links, search, ResourceRef conventions, and projection interfaces.
 
 ## Recommended reading order
 
@@ -14,15 +14,16 @@ The most important correction in this version is the MicroVertical model. An Ont
 6. `05_MICROVERTICALS.md` — exact MicroVertical semantics, lifecycle, boundaries, and runtime behavior.
 7. `06_CORE_KERNEL.md` — what belongs in Core and what must stay out.
 8. `07_RUNTIME_CONSISTENCY_MODEL.md` — actions, commands, audit, events, outbox, workers.
-9. `08_CANONICAL_ENTITY_MODEL.md` — domain tables, entity registry, relation types, Neo4j projection.
+9. `08_CANONICAL_ENTITY_MODEL.md` — explicit domain tables, ResourceRef, module ownership, Neo4j projection.
 10. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, OntOS Policy Layer.
 11. `10_DATA_STORAGE_AND_PROJECTIONS.md` — Postgres, Neo4j, search, object storage, projection lag.
 12. `11_V0_SCOPE_AND_MODULES.md` — concrete V0 functional scope and modules.
 13. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap.
 14. `13_GRILL_QUESTIONS.md` — questions the agent should use to challenge the architecture.
-15. `adr/` — decision records. These are proposed decisions, not sacred law.
-16. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
-17. `appendix/` — source grounding and evidence notes.
+15. `14_ONTOS_MODULE_MANIFEST.md` — first Effect Schema-defined contract shape for OntOS Module Manifests.
+16. `adr/` — decision records. These are proposed decisions, not sacred law.
+17. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
+18. `appendix/` — source grounding and evidence notes.
 
 ## Core thesis
 

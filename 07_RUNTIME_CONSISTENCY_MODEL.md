@@ -26,6 +26,31 @@ Audit events capture evidence: actor, principal kind, tenant, legal entity, acti
 
 Audit events are not workflow triggers. They are evidence records.
 
+## Action invocations and payload evidence
+
+`CORE_ACTION_INVOCATIONS` is the lifecycle envelope for a write-side Action attempt. It should answer: who invoked which action, in which tenant/legal-entity context, against which target, through which authentication path, with what idempotency key, and how execution ended.
+
+`auth_method` records the authentication path used at runtime: `session`, `api_key`, `system`, or `support_impersonation`. This is intentionally separate from `principal_id`, because the same principal may act through an interactive session, an API key, or a system job. It is also separate from authorization; SpiceDB still answers permission questions.
+
+`auth_context_ref` is an optional non-secret runtime reference for investigation, such as a BetterAuth session id, BetterAuth API key id, support impersonation session id, or worker run id. It must not contain raw API keys, session tokens, passwords, or secrets.
+
+`idempotency_key` is an optional client-provided retry key. For non-idempotent writes, the runtime should enforce uniqueness for a scope such as `tenant_id + action_key + principal_id + idempotency_key`. If the same key is submitted again with the same request hash, the runtime can return the original result or mark the duplicate as `replayed`. If the same key is submitted with a different request hash, it should fail as an idempotency conflict.
+
+`request_hash` is a SHA-256 hash of the canonical request envelope after normalization. It should include the action key, tenant/legal-entity context, target ResourceRef where present, schema version, and normalized request body. It is used for idempotency conflict detection, tamper evidence, and debugging without requiring raw payload storage in the main invocation row.
+
+Suggested `status` values:
+
+- `received`: invocation row exists, checks/execution not finished.
+- `rejected`: authn/authz/policy/validation/idempotency conflict prevented execution.
+- `running`: command handler is executing.
+- `succeeded`: canonical transaction committed.
+- `failed`: execution failed and the canonical transaction did not commit or committed a modeled failure state.
+- `replayed`: duplicate idempotent request returned the earlier outcome.
+
+Payload evidence belongs in `CORE_ACTION_PAYLOAD_RECORDS`, not directly in `CORE_ACTION_INVOCATIONS`. The payload table should support `request`, `response`, and `error` records with capture modes such as `hash_only`, `redacted_json`, `object_ref`, or `omitted`. Raw sensitive payloads should not be stored by default. Large payloads or acceptance evidence can be encrypted in object storage and referenced by storage key with retention rules.
+
+Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS` should record important reads, lists, searches, exports, and downloads: who accessed what, query/filter hash, result count, result hash or artifact reference, and timestamp. The default should not be “store every full response body forever”; high-volume and sensitive reads need sampling, redaction, retention, and explicit product/security reasons.
+
 ## Outbox messages
 
 Outbox messages are technical delivery records. They are written transactionally with canonical data so that side effects are not lost when a process crashes between database write and external notification.

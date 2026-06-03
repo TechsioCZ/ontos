@@ -4,15 +4,15 @@ Status: Proposed
 
 ## Context
 
-OntOS uses both business entity relationships and authorization relationships. Neo4j and SpiceDB both represent graphs, but they solve different problems.
+OntOS uses both business relationships and authorization relationships. Neo4j and SpiceDB both represent graphs, but they solve different problems.
 
 ## Decision
 
-Business ontology relationships are canonical in Postgres entity edges and projected to Neo4j. Authorization relationships are stored in SpiceDB. The two graphs may reference the same concepts, but they are not the same graph.
+Business relationships are canonical in module-owned Postgres tables and selected ResourceRef links, then may be projected to Neo4j. Authorization relationships are stored in SpiceDB. The two graphs may reference the same concepts, but they are not the same graph.
 
 ## Consequences
 
-Neo4j answers relationship/exploration questions. SpiceDB answers permission questions. This avoids mixing semantic business links with access-control decisions.
+Neo4j answers relationship/exploration questions when introduced. SpiceDB answers permission questions. This avoids mixing semantic business links with access-control decisions.
 
 ## Risks
 

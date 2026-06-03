@@ -12,8 +12,8 @@ OntOS V0 will be implemented as a TypeScript modular monolith/modulith using Ult
 
 ## Consequences
 
-Local development, transactions, refactoring, and deployment remain simpler. Hot paths can be extracted later based on measurement. The architecture must still enforce module boundaries through manifests, dependency rules, tests, and review.
+Local development, transactions, refactoring, and deployment remain simpler. Hot paths can be extracted later based on measurement. The architecture must still enforce module boundaries through OntOS Module Manifests, dependency rules, tests, and review.
 
 ## Risks
 
-A modular monolith can degrade into a big ball of mud if boundaries are not enforced. The MicroVertical manifest and dependency rules are therefore not optional.
+A modular monolith can degrade into a big ball of mud if boundaries are not enforced. The OntOS Module Manifest and dependency rules are therefore not optional.

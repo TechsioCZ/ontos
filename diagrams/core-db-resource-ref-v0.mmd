@@ -1,0 +1,412 @@
+erDiagram
+  CORE_TENANTS {
+    uuid tenant_id PK "stable customer boundary"
+    text slug UK
+    text name
+    text status "active|suspended|archived"
+    text default_locale
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CORE_LEGAL_ENTITIES {
+    uuid legal_entity_id PK
+    uuid tenant_id FK
+    text legal_name
+    text registration_country
+    text registration_number "IČO/company register number"
+    text vat_id "nullable DIČ/VAT ID"
+    text status
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CORE_PRINCIPALS {
+    uuid principal_id PK
+    uuid tenant_id FK
+    text kind "human|service|integration|agent|system"
+    text display_name
+    text status
+    timestamptz created_at
+    timestamptz disabled_at
+  }
+
+  CORE_PRINCIPAL_AUTH_BINDINGS {
+    uuid principal_auth_binding_id PK
+    uuid tenant_id FK
+    uuid principal_id FK
+    text provider "better_auth"
+    text subject_type "user|api_key"
+    text provider_subject_id "UK with tenant/provider/type"
+    text status "active|revoked|disabled"
+    timestamptz created_at
+    timestamptz updated_at
+    timestamptz revoked_at
+  }
+
+  CORE_TENANT_MODULE_STATES {
+    uuid tenant_module_state_id PK
+    uuid tenant_id FK
+    text module_key "deployed module identifier"
+    text state "active|read_only|suspended|quarantined|archived"
+    uuid last_change_id FK
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CORE_TENANT_MODULE_STATE_CHANGES {
+    uuid module_state_change_id PK
+    uuid tenant_id FK
+    text module_key
+    text previous_state "nullable for initial state"
+    text new_state
+    uuid changed_by_principal_id FK "nullable for system"
+    uuid action_invocation_id FK "nullable"
+    text change_source "user|support|system|migration"
+    text reason
+    timestamptz occurred_at
+  }
+
+  CORE_ACTION_INVOCATIONS {
+    uuid action_invocation_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid principal_id FK "effective actor"
+    uuid auth_binding_id FK "nullable for system/internal"
+    uuid impersonated_by_principal_id FK "nullable original actor"
+    text auth_method "session|api_key|system|support_impersonation"
+    text auth_context_ref "non-secret session/key/job ref"
+    text action_key "module.action"
+    text idempotency_key "nullable client retry key"
+    text target_module_key "ResourceRef part"
+    text target_resource_type "ResourceRef part"
+    text target_resource_id "ResourceRef part"
+    text status "received|rejected|running|succeeded|failed|replayed"
+    text request_hash "sha256 canonical request envelope"
+    timestamptz started_at
+    timestamptz completed_at
+  }
+
+  CORE_ACTION_PAYLOAD_RECORDS {
+    uuid action_payload_record_id PK
+    uuid tenant_id FK
+    uuid action_invocation_id FK
+    text payload_kind "request|response|error"
+    text capture_mode "hash_only|redacted_json|object_ref|omitted"
+    text schema_key
+    text payload_hash "sha256 canonical payload"
+    jsonb payload_json "nullable redacted"
+    text payload_storage_key "nullable encrypted object ref"
+    text redaction_profile
+    bigint byte_size
+    timestamptz created_at
+  }
+
+  CORE_AUDIT_EVENTS {
+    uuid audit_event_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid action_invocation_id FK "nullable"
+    uuid principal_id FK "effective actor, nullable for system"
+    uuid auth_binding_id FK "nullable"
+    uuid impersonated_by_principal_id FK "nullable original actor"
+    text auth_method "session|api_key|system|support_impersonation"
+    text auth_context_ref "non-secret session/key/job ref"
+    text event_type
+    text outcome "allowed|denied|succeeded|failed"
+    text target_module_key "ResourceRef part"
+    text target_resource_type "ResourceRef part"
+    text target_resource_id "ResourceRef part"
+    text authz_decision "summary from SpiceDB check"
+    text policy_decision "summary from module policy"
+    jsonb evidence_json
+    timestamptz occurred_at
+  }
+
+  CORE_DATA_ACCESS_EVENTS {
+    uuid data_access_event_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid action_invocation_id FK "nullable export/download"
+    uuid principal_id FK "effective actor"
+    uuid auth_binding_id FK "nullable"
+    uuid impersonated_by_principal_id FK "nullable original actor"
+    text auth_method "session|api_key|system|support_impersonation"
+    text auth_context_ref "non-secret session/key/job ref"
+    text access_kind "read|list|search|export|download"
+    text source_module_key
+    text target_module_key "ResourceRef part nullable"
+    text target_resource_type "ResourceRef part nullable"
+    text target_resource_id "ResourceRef part nullable"
+    text query_hash "sha256 canonical query/filter"
+    integer result_count
+    text result_hash "hash of result refs/response"
+    text capture_mode "hash_only|redacted_json|artifact_ref|omitted"
+    text artifact_storage_key "nullable encrypted object ref"
+    timestamptz occurred_at
+  }
+
+  CORE_DOMAIN_EVENTS {
+    uuid domain_event_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid action_invocation_id FK "nullable"
+    text producer_module_key
+    text event_type
+    text subject_module_key "ResourceRef part"
+    text subject_resource_type "ResourceRef part"
+    text subject_resource_id "ResourceRef part"
+    jsonb payload_json
+    bigint sequence_no
+    timestamptz occurred_at
+  }
+
+  CORE_OUTBOX_MESSAGES {
+    uuid outbox_message_id PK
+    uuid tenant_id FK
+    uuid domain_event_id FK
+    text producer_module_key
+    text topic
+    jsonb payload_json
+    text status "pending|processing|done|dead"
+    integer attempts_count
+    timestamptz available_at
+    timestamptz created_at
+  }
+
+  CORE_OUTBOX_ATTEMPTS {
+    uuid outbox_attempt_id PK
+    uuid outbox_message_id FK
+    text worker_id
+    timestamptz started_at
+    timestamptz finished_at
+    text error_message
+  }
+
+  CORE_MEDIA_ASSETS {
+    uuid media_asset_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid ingested_by_principal_id FK "nullable"
+    text ingestion_source "user|integration|import|system"
+    text external_source_ref "nullable"
+    text storage_provider
+    text storage_key UK
+    text mime_type
+    bigint byte_size
+    text sha256
+    text processing_status "uploaded|scanning|ready|failed"
+    timestamptz created_at
+  }
+
+  CORE_MEDIA_LINKS {
+    uuid media_link_id PK
+    uuid tenant_id FK
+    uuid media_asset_id FK
+    uuid linked_by_principal_id FK "nullable"
+    text link_source "user|integration|import|system"
+    text target_module_key "ResourceRef part"
+    text target_resource_type "ResourceRef part"
+    text target_resource_id "ResourceRef part"
+    text link_kind "attachment|evidence|source|preview"
+    timestamptz created_at
+    timestamptz deleted_at
+  }
+
+  CORE_SEARCH_INDEX_ENTRIES {
+    uuid search_index_entry_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    text source_module_key "ResourceRef part"
+    text source_resource_type "ResourceRef part"
+    text source_resource_id "ResourceRef part"
+    text title
+    text body_text
+    jsonb facets_json
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  CORE_WORKER_CHECKPOINTS {
+    text checkpoint_key PK
+    text consumer_name
+    text source_topic
+    uuid last_domain_event_id FK
+    timestamptz last_processed_at
+  }
+
+  ORGANIZATION_LEGAL_ENTITY_GROUPS {
+    uuid legal_entity_group_id PK
+    uuid tenant_id FK
+    text group_type "holding|portfolio|acquisition_batch|custom"
+    text name
+    text status
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  ORGANIZATION_LEGAL_ENTITY_GROUP_MEMBERS {
+    uuid group_member_id PK
+    uuid tenant_id FK
+    uuid legal_entity_group_id FK
+    uuid legal_entity_id FK
+    text member_role "parent|subsidiary|portfolio_member|acquired"
+    date valid_from
+    date valid_to "nullable"
+  }
+
+  PROPERTY_PROPERTIES {
+    uuid property_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK
+    text code
+    text name
+    text lifecycle_state
+    jsonb address_json
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  PROPERTY_BUILDINGS {
+    uuid building_id PK
+    uuid tenant_id FK
+    uuid property_id FK
+    text code
+    text name
+    text lifecycle_state
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  PROPERTY_UNITS {
+    uuid unit_id PK
+    uuid tenant_id FK
+    uuid building_id FK
+    text code
+    text unit_type
+    text floor_label
+    numeric area_m2
+    text lifecycle_state
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  RENTAL_SHORT_TERM_LEGAL_ENTITY_SETTINGS {
+    uuid settings_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK
+    text status "active|not_configured|paused"
+    text default_currency
+    text booking_rules_profile_id
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  BILLING_NUMBERING_SERIES {
+    uuid numbering_series_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK
+    text code
+    text format_pattern
+    integer next_number
+    text status
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  BILLING_INVOICES {
+    uuid invoice_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK
+    uuid created_by_principal_id FK
+    uuid numbering_series_id FK "nullable until issued"
+    text invoice_number UK "nullable until issued"
+    text customer_module_key "ResourceRef part"
+    text customer_resource_type "ResourceRef part"
+    text customer_resource_id "ResourceRef part"
+    text status "draft|issued|paid|cancelled|exported"
+    text currency
+    bigint total_amount_minor
+    timestamptz issued_at
+    timestamptz exported_at
+    timestamptz created_at
+    timestamptz updated_at
+  }
+
+  BILLING_INVOICE_LINES {
+    uuid invoice_line_id PK
+    uuid tenant_id FK
+    uuid invoice_id FK
+    integer line_no
+    text description
+    numeric quantity
+    bigint unit_amount_minor
+    integer tax_rate_bps
+    bigint line_total_minor
+  }
+
+  BILLING_INVOICE_LINE_SOURCES {
+    uuid invoice_line_source_id PK
+    uuid tenant_id FK
+    uuid invoice_line_id FK
+    text source_module_key "ResourceRef part"
+    text source_resource_type "ResourceRef part"
+    text source_resource_id "ResourceRef part"
+    text source_kind "building|unit|reservation|lease|service|manual|import"
+    integer allocation_ratio_bps "nullable"
+    bigint allocated_amount_minor "nullable"
+    timestamptz created_at
+  }
+
+  CORE_TENANTS ||--o{ CORE_LEGAL_ENTITIES : scopes
+  CORE_TENANTS ||--o{ CORE_PRINCIPALS : owns
+  CORE_TENANTS ||--o{ CORE_PRINCIPAL_AUTH_BINDINGS : scopes
+  CORE_PRINCIPALS ||--o{ CORE_PRINCIPAL_AUTH_BINDINGS : resolves_to
+  CORE_TENANTS ||--o{ CORE_TENANT_MODULE_STATES : configures
+  CORE_TENANT_MODULE_STATE_CHANGES ||--o| CORE_TENANT_MODULE_STATES : last_change
+  CORE_TENANTS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : records
+  CORE_PRINCIPALS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : changed_by_optional
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : caused_by_optional
+  CORE_TENANTS ||--o{ CORE_ACTION_INVOCATIONS : records
+  CORE_PRINCIPALS ||--o{ CORE_ACTION_INVOCATIONS : invokes
+  CORE_PRINCIPAL_AUTH_BINDINGS ||--o{ CORE_ACTION_INVOCATIONS : authenticated_via
+  CORE_TENANTS ||--o{ CORE_ACTION_PAYLOAD_RECORDS : stores
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_ACTION_PAYLOAD_RECORDS : captures_io
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_AUDIT_EVENTS : correlates
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_DOMAIN_EVENTS : produces
+  CORE_TENANTS ||--o{ CORE_AUDIT_EVENTS : records
+  CORE_PRINCIPAL_AUTH_BINDINGS ||--o{ CORE_AUDIT_EVENTS : authenticated_via
+  CORE_TENANTS ||--o{ CORE_DATA_ACCESS_EVENTS : records
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_DATA_ACCESS_EVENTS : caused_by_optional
+  CORE_PRINCIPALS ||--o{ CORE_DATA_ACCESS_EVENTS : accesses
+  CORE_PRINCIPAL_AUTH_BINDINGS ||--o{ CORE_DATA_ACCESS_EVENTS : authenticated_via
+  CORE_TENANTS ||--o{ CORE_DOMAIN_EVENTS : records
+  CORE_DOMAIN_EVENTS ||--o{ CORE_OUTBOX_MESSAGES : dispatches
+  CORE_OUTBOX_MESSAGES ||--o{ CORE_OUTBOX_ATTEMPTS : retried_by
+  CORE_TENANTS ||--o{ CORE_MEDIA_ASSETS : stores
+  CORE_MEDIA_ASSETS ||--o{ CORE_MEDIA_LINKS : has_links
+  CORE_PRINCIPALS ||--o{ CORE_MEDIA_ASSETS : ingested_by_optional
+  CORE_PRINCIPALS ||--o{ CORE_MEDIA_LINKS : linked_by_optional
+  CORE_TENANTS ||--o{ CORE_SEARCH_INDEX_ENTRIES : indexes_optionally
+  CORE_DOMAIN_EVENTS ||--o{ CORE_WORKER_CHECKPOINTS : checkpointed_after
+
+  CORE_TENANTS ||--o{ ORGANIZATION_LEGAL_ENTITY_GROUPS : has_views
+  ORGANIZATION_LEGAL_ENTITY_GROUPS ||--o{ ORGANIZATION_LEGAL_ENTITY_GROUP_MEMBERS : includes
+  CORE_LEGAL_ENTITIES ||--o{ ORGANIZATION_LEGAL_ENTITY_GROUP_MEMBERS : grouped_as
+
+  CORE_TENANTS ||--o{ PROPERTY_PROPERTIES : tenant_fk
+  CORE_LEGAL_ENTITIES ||--o{ PROPERTY_PROPERTIES : legal_entity_fk
+  PROPERTY_PROPERTIES ||--o{ PROPERTY_BUILDINGS : contains
+  PROPERTY_BUILDINGS ||--o{ PROPERTY_UNITS : contains
+
+  CORE_TENANTS ||--o{ RENTAL_SHORT_TERM_LEGAL_ENTITY_SETTINGS : tenant_fk
+  CORE_LEGAL_ENTITIES ||--o| RENTAL_SHORT_TERM_LEGAL_ENTITY_SETTINGS : short_term_setup
+
+  CORE_TENANTS ||--o{ BILLING_NUMBERING_SERIES : tenant_fk
+  CORE_LEGAL_ENTITIES ||--o{ BILLING_NUMBERING_SERIES : legal_entity_fk
+  CORE_TENANTS ||--o{ BILLING_INVOICES : tenant_fk
+  CORE_LEGAL_ENTITIES ||--o{ BILLING_INVOICES : legal_entity_fk
+  CORE_PRINCIPALS ||--o{ BILLING_INVOICES : created_by
+  BILLING_NUMBERING_SERIES ||--o{ BILLING_INVOICES : numbers
+  BILLING_INVOICES ||--o{ BILLING_INVOICE_LINES : contains
+  BILLING_INVOICE_LINES ||--o{ BILLING_INVOICE_LINE_SOURCES : allocated_from

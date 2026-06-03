@@ -8,25 +8,39 @@ OntOS is the canonical name for the system. In V0 it is a delivery-bound ERP wit
 
 ## OntOS Core
 
-OntOS Core is the set of system capabilities that ordinary business MicroVerticals depend on. It is not itself a business MicroVertical. It includes authentication integration, principal context, authorization adapter, policy layer, module runtime, entity registry, relation registry, audit, events, outbox, document metadata services, search interfaces, reporting foundations, and projection interfaces.
+OntOS Core is the set of system capabilities that ordinary OntOS Business Modules depend on. It is not itself a business module. It includes tenant and legal-entity boundaries, principal context, BetterAuth binding, SpiceDB adapter, policy layer, tenant-level module state, action invocation recording, audit, events, outbox, media asset/link infrastructure, search index entries, worker checkpoints, reporting foundations, and projection interfaces.
 
-Core is not meant to be disabled per tenant in the same way business MicroVerticals can be. Some Core capabilities may have configuration or feature flags, but the kernel-level concepts are part of the runtime contract.
+Core is not meant to be disabled per tenant in the same way business modules can be. Some Core capabilities may have configuration or feature flags, but the kernel-level concepts are part of the runtime contract.
 
-## MicroVertical
+## UltraModern.js MicroVertical
 
-A MicroVertical is a unified vertical slice of business capability inside the jointly deployable OntOS application. A MicroVertical contains its frontend and backend parts together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, entity declarations, relation declarations, permissions, report descriptors, search descriptors, and projection descriptors.
+An UltraModern.js MicroVertical is a framework-level unified vertical slice inside the jointly deployable application. It keeps frontend and backend parts of a capability together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, public resource descriptors, permissions, report descriptors, search descriptors, and projection descriptors.
 
-A MicroVertical is not a microservice in V0. It is a module boundary inside a modular monolith. Its purpose is to keep domain slices cohesive and independently understandable without introducing distributed-system overhead.
+The framework concept does not define an OntOS manifest by itself. OntOS uses MicroVerticals as the likely implementation shape for business modules in V0.
+
+An UltraModern.js MicroVertical is not a microservice in V0. It is a module boundary inside a modular monolith. Its purpose is to keep domain slices cohesive and independently understandable without introducing distributed-system overhead.
 
 Examples: `internal.delivery`, `property.registry`, `property.long_term_rental`, `property.short_term_rental`, `billing.core`, `accounting.office`, `documents.center`, `facility.basic`.
 
+## OntOS Business Module
+
+An OntOS Business Module is a product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. A business module has a public OntOS Module Manifest so Core, activation logic, tooling, and other modules can reason about its public contract.
+
+## Foundational Module
+
+A Foundational Module is an OntOS Business Module that models shared business reality used by multiple other modules, but is not part of the Core Kernel. A Foundational Module may be active for most tenants and required by other modules, but it remains outside Core because it owns domain concepts that can evolve with customer discovery.
+
+Example: `organization.registry`.
+
 ## System Module
 
-A System Module is a Core capability described with a manifest-like structure for consistency, but it is not an ordinary business MicroVertical. Examples include `core.identity`, `core.authz`, `core.modules`, `core.ontology`, `core.audit`, `core.events`, `core.outbox`, and `core.search`.
+A System Module is a Core-owned capability described with an OntOS Module Manifest or a narrower system-module variant for consistency, but it is not an ordinary business module. Examples include `core.identity`, `core.authz`, `core.modules`, `core.audit`, `core.events`, `core.outbox`, and `core.search`.
 
-## Module Manifest
+## OntOS Module Manifest
 
-A Module Manifest is the declarative contract of a MicroVertical or System Module. It declares module identity, version, dependencies, owned entity types, relation types, actions, permissions, UI contributions, migrations, report descriptors, search descriptors, and projection handlers. The manifest is the primary artifact that allows the runtime, tooling, coding agents, and later Forge/vibemodule functionality to reason about a module.
+An OntOS Module Manifest is the OntOS-specific Effect Schema-defined public contract of an OntOS Business Module, Foundational Module, or selected System Module. It declares module identity, activation, dependencies, public APIs, public component exports, public resource types, public events, search descriptors, and report descriptors.
+
+The manifest is not part of the standard UltraModern.js MicroVertical concept, and it is not an implementation manifest. It should rely on typed values and inference rather than manually-authored import/export strings. It should not declare database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, tests, private imports, the SpiceDB permission model, or a static relation catalog.
 
 ## OntOS Application Runtime
 
@@ -38,9 +52,9 @@ The OntOS Worker Runtime is a separate process or set of processes for asynchron
 
 ## Action
 
-An Action is the public business operation exposed by a MicroVertical. It is the unit that UI, API calls, imports, integrations, and later agents invoke. Actions are declared in the module manifest and are subject to authentication, authorization, policy checks, module state checks, validation, audit, and command handling.
+An Action is the public business operation exposed by an OntOS Business Module. It is the unit that UI, API calls, imports, integrations, and later agents invoke. Actions are declared in the OntOS Module Manifest and are subject to authentication, authorization, policy checks, module state checks, validation, audit, and command handling.
 
-Examples: create reservation, issue invoice, attach document, link entities, activate module, create lease contract, create ticket.
+Examples: create reservation, issue invoice, attach media/document, link resources, activate module, create lease contract, create ticket.
 
 ## Command Handler
 
@@ -58,25 +72,25 @@ An Audit Event records who or what did something, when, under which principal, f
 
 An Outbox Message is a delivery mechanism for asynchronous side effects. It is written in the same Postgres transaction as the business state change and later processed by workers. This avoids dual-write inconsistency between the database and external side effects.
 
-## Entity
+## Resource
 
-An Entity is a business object with durable identity over time. Full entities are addressable, searchable, linkable, auditable, and visible as first-class objects in the company ontology. Not every database row is an Entity.
+A Resource is a module-owned business or system object with durable identity over time. Full resources may be addressable, searchable, linkable, auditable, and visible in projections. Not every database row is a Resource.
 
-## Entity Registry
+## ResourceRef
 
-The Entity Registry is a central addressability layer over explicit domain tables. It does not replace domain tables. It records stable entity identity, entity type, module ownership, display name, status, storage binding, and other metadata needed for linking, search, audit, and graph projection.
+A ResourceRef is the value reference used when Core or another module needs to point at a module-owned resource without owning that resource. The canonical shape is `tenant_id + module_key + resource_type + resource_id`.
 
-## Entity Reference
+ResourceRefs are not backed by a central Core entity registry. The owning module keeps canonical tables, constraints, lifecycle, and business rules.
 
-An Entity Reference is the stable reference used for cross-module linking. It should include tenant scope, entity type, and stable entity id. It should not expose arbitrary physical table names as the external linking contract.
+## Resource Link
 
-## Relation Type
+A Resource Link is a domain-specific link stored by the module or cross-cutting table that needs it. Links should use `ResourceRef` values across module boundaries rather than physical foreign keys.
 
-A Relation Type defines the semantics and constraints of a relationship between two entity types. It defines allowed source and target types, cardinality, temporal behavior, timeline visibility, search behavior, module ownership, and possibly permission implications.
+There is no central Core relation registry in V0. If a relationship carries business meaning, the owning module should model it explicitly.
 
-## Entity Edge
+## Organization Registry
 
-An Entity Edge is a concrete typed relation between two entity references. Edges may be temporal and audit-backed. The edge table is the canonical relation store in Postgres; Neo4j receives a projection of it.
+Organization Registry is the Foundational Module that models shared organizational business structure such as legal-entity groups, holdings, portfolios, acquisition batches, and similar views over managed Legal Entities. In V0 it is a group/view model, not a corporate ownership or control ledger.
 
 ## Canonical Store
 
@@ -84,7 +98,7 @@ The Canonical Store is the source of truth for operational ERP state. For V0 thi
 
 ## Projection
 
-A Projection is derived state built from canonical state and events. Neo4j graph nodes/relationships, search documents, reporting aggregates, and entity cards are projections. A projection must be rebuildable.
+A Projection is derived state built from canonical state and events. Neo4j graph nodes/relationships, search documents, reporting aggregates, and resource cards are projections. A projection must be rebuildable.
 
 ## Tenant
 
@@ -132,7 +146,7 @@ The OntOS Policy Layer handles business conditions that are not pure relationshi
 
 ## Neo4j Projection
 
-Neo4j Projection is an optional graph projection of registered entities and typed relationships for graph traversal, impact analysis, visual exploration, and future semantic/AI context. It is not the canonical ERP store in V0 and is not required for canonical entity and relation storage.
+Neo4j Projection is an optional graph projection of module-owned resources, selected ResourceRefs, and domain-specific relationships for graph traversal, impact analysis, visual exploration, and future semantic/AI context. It is not the canonical ERP store in V0.
 
 ## Forge
 
@@ -140,4 +154,4 @@ Forge is an internal developer tool for generating MicroVertical skeletons and k
 
 ## Vibemodule
 
-Vibemodule is a future user-facing capability where new modules can be generated or configured from higher-level descriptions. It requires the MicroVertical manifest, entity registry, relation registry, actions, permissions, migrations, and tests to be mature first. It is not V0 scope.
+Vibemodule is a future user-facing capability where new modules can be generated or configured from higher-level descriptions. It requires the OntOS Module Manifest, ResourceRef conventions, actions, permissions, migrations, and tests to be mature first. It is not V0 scope.

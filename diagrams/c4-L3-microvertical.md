@@ -1,25 +1,26 @@
-# C4 L3 Microvertical
+# C4 L3 MicroVertical-backed OntOS module
 
 ```mermaid
 flowchart TB
-  manifest[Module Manifest]
+  manifest[OntOS Module Manifest public contract]
+  public[Public surface: API / components / resources / events / search / reports]
+  package[UltraModern.js MicroVertical package]
   ui[UI routes / components / state]
-  actions[Actions]
+  actions[Action implementations]
   handlers[Command handlers]
-  domain[Domain tables / migrations]
-  ontology[Entity and relation declarations]
-  perms[Permissions and policy hooks]
-  proj[Search/report/projection descriptors]
-  tests[Fixtures and tests]
+  domain[Private domain tables / migrations]
+  ontology[Entity and relation implementation]
+  internal[Private fixtures / tests / projection handlers]
 
-  manifest --> ui
-  manifest --> actions
-  manifest --> ontology
-  manifest --> perms
-  manifest --> proj
+  manifest --> public
+  package --> ui
+  package --> actions
+  package --> domain
+  package --> ontology
+  package --> internal
+  public --> actions
   actions --> handlers
   handlers --> domain
   handlers --> ontology
-  tests --> manifest
-  tests --> handlers
+  internal --> handlers
 ```

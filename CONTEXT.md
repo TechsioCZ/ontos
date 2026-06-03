@@ -13,12 +13,36 @@ The first production delivery of OntOS. It prioritizes concrete ERP workflows fo
 _Avoid_: Platform-first release, ontology-first release
 
 **Strong Foundations**:
-The small set of architectural invariants that prevent expensive rework: registered Actions for writes, tenant/legal-entity isolation, separated authentication/authorization/business policy, registered full entities, typed cross-module relations, audit and outbox in the write path, and manifest-enforced MicroVertical boundaries.
+The small set of architectural invariants that prevent expensive rework: registered Actions for writes, tenant/legal-entity isolation, separated authentication/authorization/business policy, ResourceRef-based cross-module references, audit and outbox in the write path, and manifest-declared public module boundaries.
 _Avoid_: Polished Forge, vibemodule primitives, exhaustive ontology metadata, rich graph UX, generic workflow engine, generalized plugin loading, full future AI readiness
+
+**UltraModern.js MicroVertical**:
+The framework-level vertical slice concept in the UltraModern.js fork. It organizes frontend and backend behavior together inside the jointly deployable application. By itself, it does not define an OntOS manifest.
+_Avoid_: OntOS-specific manifest, standalone microservice, frontend-only module
+
+**OntOS Business Module**:
+A product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. It exposes a public OntOS Module Manifest so Core, activation logic, tooling, and other modules can reason about its public contract.
+_Avoid_: Generic plugin, deployment unit, raw framework module
+
+**Foundational Module**:
+An OntOS Business Module that models shared business reality used by multiple other modules, but is not part of the Core Kernel. A Foundational Module may be active for most tenants and required by other modules, but it remains outside Core because it owns domain concepts that can evolve with customer discovery.
+_Avoid_: Core module, System Module, platform service, ordinary vertical, always-on kernel
+
+**Organization Registry**:
+The Foundational Module that models shared organizational business structure such as legal-entity groups, holdings, portfolios, acquisition batches, and similar views over managed Legal Entities. In V0 it is a group/view model, not a corporate ownership or control ledger; Core only owns the minimal Legal Entity boundary needed for context, audit, and isolation.
+_Avoid_: Core organization model, company registry, legal-entity registry, holding registry, ownership ledger
+
+**OntOS Module Manifest**:
+The OntOS-specific Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. It declares public identity, activation, dependencies, APIs, components, public resource types, public events, search, and reports. It should rely on TypeScript/Effect/React inference wherever possible, using real typed values instead of manually-authored import/export strings. It does not publish a permission model or a static relation catalog; authorization is owned by SpiceDB, the OntOS Policy Layer, and API/action enforcement, while relations are dynamic runtime/domain data. It must not declare private implementation details such as database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, or tests.
+_Avoid_: MicroVertical Manifest, database schema, implementation manifest, stringly typed import/export metadata
 
 **Principal**:
 An actor that can authenticate, invoke actions, or appear in audit and authorization. A Principal may represent internal staff, external manager staff, accountants, guests with portal access, integrations, service accounts, agents, or the system itself.
 _Avoid_: User, employee, contact
+
+**Principal Auth Binding**:
+The Core-owned mapping from a stable externally authenticated subject to an OntOS Principal. BetterAuth owns users, sessions, API keys, key verification, and impersonation sessions; Core only stores the non-secret binding needed to resolve the effective Principal for actions, audit, and SpiceDB subjects. System jobs use system/service Principals without pretending to be external auth bindings.
+_Avoid_: Credential store, API key table, session table, runtime credential reference, user profile
 
 **Party**:
 A real-world person or organization OntOS deals with. A Party may be a guest, tenant, supplier, accountant office, external management company, owned company, contact person, or commercial counterparty.
@@ -45,7 +69,7 @@ The working minimum authorization model for OntOS V0. It likely covers tenant me
 _Avoid_: Full business ontology mirror, per-record tuple for every ordinary entity
 
 **Neo4j Projection**:
-An optional graph projection of registered entities and typed relations. It may become necessary for graph traversal, impact analysis, visual exploration, or future semantic context, but OntOS V0 must not depend on Neo4j for canonical ERP operations or permission decisions.
+An optional graph projection of module-owned resources, selected ResourceRefs, and domain-specific relationships. It may become necessary for graph traversal, impact analysis, visual exploration, or future semantic context, but OntOS V0 must not depend on Neo4j for canonical ERP operations or permission decisions.
 _Avoid_: Canonical graph store, mandatory V0 dependency, authorization graph
 
 **Property Registry**:
@@ -109,13 +133,13 @@ Developer: "Should every reservation, invoice, document, and relation edge becom
 Domain expert: "No. SpiceDB owns coarse security-critical access. Ordinary record access should mostly come from tenant, legal entity, module scope, and explicit sensitive-resource grants."
 
 Developer: "Does every V0 relation need to be projected into Neo4j?"
-Domain expert: "No. The typed relations need to be canonical in Postgres. Neo4j can be added when graph queries justify it."
+Domain expert: "No. Module-owned resources and selected ResourceRef/domain links remain canonical in Postgres. Neo4j can be added when graph queries justify it."
 
 Developer: "Should the first real MicroVertical be internal dogfooding?"
 Domain expert: "No. Start with Property Registry because it is the customer-domain dependency root. Add internal dogfooding once the rails are proven."
 
-Developer: "A unit has a lease, reservation, service ticket, document, and invoice. Which module owns the unit?"
-Domain expert: "Property Registry owns the unit. The lease, reservation, service ticket, document, and invoice are separate entities linked to it through typed relations."
+Developer: "A unit has a lease, reservation, service ticket, media attachment, and invoice. Which module owns the unit?"
+Domain expert: "Property Registry owns the unit. The lease, reservation, service ticket, media attachment, and invoice are separate resources linked to it through ResourceRefs or module-owned link tables."
 
 Developer: "Can an external property manager use OntOS without being one of our legal entities?"
 Domain expert: "Yes. The manager is a Party or External Operator. Their staff are Principals with SpiceDB access scoped to the properties, buildings, units, documents, and workflows they manage."

@@ -12,7 +12,7 @@ The project will likely start with a throwaway PoC. The documents in this pack s
 
 Do not model OntOS as a separate Web App container and BFF/API container where MicroVerticals live only in one of them. That is not the intended MicroVertical concept.
 
-A MicroVertical is a unified vertical slice inside a jointly deployable UltraModern.js application. It includes frontend and backend concerns together: UI, routes, components, state, actions, command handlers, domain code, migrations, tests, and metadata. Core services are outside ordinary business MicroVerticals and provide the platform capabilities that all MicroVerticals use.
+An UltraModern.js MicroVertical is a unified vertical slice inside a jointly deployable UltraModern.js application. It includes frontend and backend concerns together: UI, routes, components, state, actions, command handlers, domain code, migrations, tests, and metadata. OntOS Business Modules normally use that implementation shape in V0 and expose an OntOS-specific Effect Schema-defined Module Manifest for their public contract. Core services are outside ordinary business modules and provide the platform capabilities that all modules use.
 
 A separate worker runtime may exist for outbox processing, projections, imports, exports, and scheduled work. That does not make each MicroVertical a microservice. In V0 the system is a modular monolith/modulith.
 
@@ -21,7 +21,7 @@ A separate worker runtime may exist for outbox processing, projections, imports,
 - Team capacity is roughly two FTE developers from June 2026, a partial product/UX/UI role, and heavy use of coding agents.
 - Product AI is not part of V0 delivery. AI may be heavily used in development, but user-facing AI, autonomous agents, process autodiscovery, and vibemodule are later capabilities.
 - The V0 must satisfy the 2026 ERP delivery obligation, including short-term rental, long-term rental, billing, accounting workflow/export, documents, roles/permissions, audit, reporting, and multi-company foundations.
-- Internal dogfooding should begin early with clients, projects, tickets, documents, and invoice drafts.
+- Internal dogfooding should begin early with clients, projects, tickets, media/documents, and invoices with draft status.
 - The current intended stack is UltraModern.js + MicroVerticals, existing design system, Postgres, SpiceDB, BetterAuth, and possibly Neo4j.
 - Neo4j should be treated as an optional projection/read model, not assumed as mandatory V0 infrastructure or the canonical transactional ERP store.
 - SpiceDB is foundation-level authorization infrastructure and should be challenged as the authorization graph, not the company ontology graph.
@@ -33,7 +33,7 @@ A separate worker runtime may exist for outbox processing, projections, imports,
 2. Does the architecture correctly separate Core from MicroVerticals?
 3. Is the action/command-driven state model sufficiently concrete?
 4. Does the outbox/projection model avoid sync subscriber chaos?
-5. Is the entity registry model a good compromise between explicit domain tables and global ontology?
+5. Is the ResourceRef model a good compromise between explicit domain tables and cross-module addressability?
 6. Is the authorization model realistic for V0, especially SpiceDB consistency and search filtering?
 7. Is Neo4j introduced at the right layer, or is it premature?
 8. Does the V0 scope fit a two-developer team with coding agents?

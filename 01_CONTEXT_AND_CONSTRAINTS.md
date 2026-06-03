@@ -12,7 +12,7 @@ The customer delivery materials create hard delivery constraints. The committed 
 
 ## Product context
 
-The broader OntOS ambition is not to write a one-off ERP for one customer. The intended long-term category is a temporal company ontology system with ERP MicroVerticals as the first application layer. Important business objects should be addressable entities; relationships should be typed, auditable, and time-aware; and future modules should be easier to add because they plug into the same Core.
+The broader OntOS ambition is not to write a one-off ERP for one customer. The intended long-term category is a temporal company ontology system with ERP MicroVerticals as the first application layer. Important business objects should be addressable resources; relationships that carry business meaning should be explicit, auditable, and time-aware in the owning module; and future modules should be easier to add because they use the same Core runtime and ResourceRef conventions.
 
 This long-term direction must not distort V0. V0 is not the vibemodule, not an AI assistant, not an autonomous-agent platform, and not a full manufacturing/machine-prediction system. V0 must first prove that the Core and MicroVertical architecture can deliver concrete ERP functionality without becoming a fragile bespoke system.
 
@@ -26,10 +26,10 @@ Heavy coding-agent usage changes implementation throughput but does not remove t
 
 The intended PoC stack is UltraModern.js with MicroVerticals, an existing design system, Postgres, SpiceDB, BetterAuth, and possibly Neo4j. This is not yet a final architecture. The PoC should validate the combination and reveal which parts are overkill, unsafe, or misaligned.
 
-The stack division is currently understood as follows. UltraModern.js provides the unified application runtime and MicroVertical structure. The design system provides UI consistency. Postgres is canonical operational storage. SpiceDB is the authorization graph. BetterAuth is authentication/session DX. Neo4j may be added as a graph projection/read model for ontology exploration and relationship traversal once typed relations justify it.
+The stack division is currently understood as follows. UltraModern.js provides the unified application runtime and MicroVertical structure. The design system provides UI consistency. Postgres is canonical operational storage. SpiceDB is the authorization graph. BetterAuth is authentication/session/API key DX. Neo4j may be added as a graph projection/read model for ontology exploration and relationship traversal once ResourceRef/domain link semantics justify it.
 
 ## V0 non-goals
 
 The following are deliberately not V0 product scope: user-facing AI assistant, autonomous agents, document AI automation, process autodiscovery, vibemodule as a user feature, full manufacturing ERP, machine/PLC integrations, predictive maintenance, full channel manager integrations, portals, and a general low-code builder.
 
-Some of those capabilities must be prepared for architecturally. For example, actions should later be callable by agents, entity relationships should later support AI context, and MicroVertical manifests should later feed a module generator. Preparation does not mean implementation in V0.
+Some of those capabilities must be prepared for architecturally. For example, actions should later be callable by agents, ResourceRef-linked resources should later support AI context, and OntOS Module Manifests should later feed a module generator. Preparation does not mean implementation in V0.

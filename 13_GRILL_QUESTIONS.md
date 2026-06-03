@@ -13,11 +13,24 @@ This document is intentionally adversarial. Use it to challenge the architecture
 7. What does module activation mean if the code is already deployed?
 8. What exactly happens when a module is suspended or quarantined?
 
+## OntOS Module Manifest
+
+1. Which manifest fields are required for the PoC, and which can wait until production V0?
+2. Is Effect Schema the right authoring and validation format, with JSON emitted only as a generated catalog artifact?
+3. Is the manifest still too broad, or does it now correctly include only public contract: activation, dependencies, APIs, components, public resource types, public events, search, and reports?
+4. Which manifest sections should be runtime-enforced versus documentation-only?
+5. How do we prevent manifest declarations from drifting away from implementation code?
+6. Should Core system modules use the same manifest shape as business modules or a narrower variant?
+7. How should manifest validation enforce dependency rules and prevent private imports across MicroVertical boundaries?
+8. How should public component imports and Effect HttpApi clients be enforced at build time?
+9. Where are string identifiers genuinely part of the business contract, and where should typed inference replace them?
+10. What is the minimum Forge-generated manifest skeleton that makes coding-agent output safer?
+
 ## Core boundaries
 
 1. Which capabilities are truly Core and cannot be moved into a MicroVertical?
-2. Is document center Core, a MicroVertical, or a Core-adjacent system module?
-3. Is billing base Core or a business MicroVertical?
+2. Where is the boundary between Core media assets/links and the `documents.center` business module?
+3. Is billing base Core or a business module?
 4. Where should shared CRM/contact primitives live?
 5. How do we keep Core from becoming a dumping ground?
 
@@ -30,14 +43,14 @@ This document is intentionally adversarial. Use it to challenge the architecture
 5. What is the minimal outbox implementation that is safe enough for V0?
 6. What metrics prove that event/outbox processing is not becoming a bottleneck?
 
-## Entity model
+## ResourceRef model
 
-1. What exact criteria make something a full entity?
-2. Which V0 objects are full entities vs child rows?
-3. Does every full entity require a detail page, or only addressability?
-4. How are entity types versioned?
-5. How are relation types versioned?
-6. What happens when a relation type is deprecated?
+1. What exact criteria make something a public resource?
+2. Which V0 objects are public resources vs child rows?
+3. Does every public resource require a detail page, or only addressability?
+4. How are `module_key`, `resource_type`, and `resource_id` stabilized?
+5. Which cross-module references need validation by the owning module?
+6. Which relationships deserve module-owned tables instead of generic ResourceRef links?
 7. How do we prevent generic `relates_to` links from destroying semantic value?
 
 ## Authorization
@@ -51,7 +64,7 @@ This document is intentionally adversarial. Use it to challenge the architecture
 
 ## Data stores
 
-1. Is Neo4j necessary in the PoC, or should it be introduced after entity registry and edges stabilize?
+1. Is Neo4j necessary in the PoC, or should it be introduced after ResourceRef/domain link semantics stabilize?
 2. What will be the first graph query that justifies Neo4j?
 3. How do we rebuild Neo4j from Postgres?
 4. What data must never be projected into Neo4j?

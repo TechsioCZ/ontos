@@ -12,7 +12,7 @@ V0 is AI-ready but not AI-first as a product. AI may be used heavily in developm
 
 ## Consequences
 
-Architecture should preserve future AI hooks through entity registry, actions, audit, documents, and relations. Implementation does not depend on AI features.
+Architecture should preserve future AI hooks through ResourceRefs, actions, audit, media/documents, module-owned domain tables, and selected projections. Implementation does not depend on AI features.
 
 ## Risks
 

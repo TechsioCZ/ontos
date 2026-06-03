@@ -4,41 +4,45 @@ V0 must deliver a useful ERP aligned with the committed customer scope while est
 
 ## V0 Core capabilities
 
-V0 Core should include tenant/legal-entity model, principal model, BetterAuth authentication integration, SpiceDB authorization adapter, policy layer, module registry, module activation, action registry, entity registry, relation registry, audit events, domain events, outbox, worker runtime, document metadata, basic search, basic reporting foundations, and module manifests.
+V0 Core should include tenant/legal-entity model, principal model, Principal Auth Bindings for BetterAuth users/API keys, SpiceDB authorization adapter, policy layer, tenant-level module state, action invocation recording, audit events, domain events, outbox, worker runtime/checkpoints, media assets and media links, basic search index entries, basic reporting foundations, and OntOS Module Manifest support.
 
 These capabilities are not optional platform indulgence. They are required to safely deliver multi-company ERP modules with permissions, audit, documents, exports, and cross-module links.
 
-## V0 business MicroVerticals
+## V0 Business Modules
+
+### `organization.registry`
+
+This Foundational Module models shared organizational business structure over managed legal entities: legal-entity groups, holding/portfolio/acquisition-batch views, and group membership. In V0 it is a group/view model, not a corporate ownership/control ledger.
 
 ### `property.registry`
 
-Current working assumption: this is the first customer-domain MicroVertical to validate after the foundation skeleton. It likely covers legal-entity property structures: properties or property complexes, buildings, units/spaces, ownership/management relationships, unit/space state, basic technical metadata, equipment/labels, and links to documents/service tickets/reporting. It appears to be the dependency root for long-term rental, short-term rental, facility, billing, documents, search, and reporting.
+Current working assumption: this is the first customer-domain business module to validate after the foundation skeleton. It likely covers legal-entity property structures: properties or property complexes, buildings, units/spaces, ownership/management relationships, unit/space state, basic technical metadata, equipment/labels, and links to documents/service tickets/reporting. It appears to be the dependency root for long-term rental, short-term rental, facility, billing, documents, search, and reporting.
 
-Open boundary to validate: lease contracts, reservations, pricing, invoicing, payments, cleaning tasks, facility workflows, accounting costs, and reporting aggregates probably belong to later MicroVerticals and link back to registry entities through typed relations.
+Open boundary to validate: lease contracts, reservations, pricing, invoicing, payments, cleaning tasks, facility workflows, accounting costs, and reporting aggregates probably belong to later MicroVerticals and link back to property resources through ResourceRefs or module-owned link tables.
 
 ### `internal.delivery`
 
-This early dogfood MicroVertical should cover clients, projects, tickets, documents, and invoice drafts after the customer-domain rails are proven by `property.registry`. It is valuable because the internal operator can discover issues in entity linking, permissions, document attachment, action flow, and billing drafts before those patterns are repeated broadly.
+This early dogfood MicroVertical should cover clients, projects, tickets, media/documents, and invoices with `status = draft` after the customer-domain rails are proven by `property.registry`. It is valuable because the internal operator can discover issues in ResourceRef linking, permissions, media attachment, action flow, and billing before those patterns are repeated broadly.
 
 ### `property.long_term_rental`
 
-This MicroVertical covers lease contracts, tenants/contacts, deposits, basic payment schedules, terms, attachments, reminders, and links to invoices/documents/units.
+This business module covers lease contracts, tenants/contacts, deposits, basic payment schedules, terms, attachments, reminders, and links to invoices/documents/units.
 
 ### `property.short_term_rental`
 
-This MicroVertical covers units/spaces, reservations, guests/contacts, reservation state, check-in/check-out basics, cleaning tasks, cancellation/change basics, and invoice draft links. It should support guests as external actors. First-class capacity allocation contracts are a future discovery topic unless a concrete customer workflow requires them.
+This business module covers units/spaces, reservations, guests/contacts, reservation state, check-in/check-out basics, cleaning tasks, cancellation/change basics, and invoice source links. It should support guests as external actors. First-class capacity allocation contracts are a future discovery topic unless a concrete customer workflow requires them.
 
 ### `billing.core`
 
-This MicroVertical covers invoice drafts, issued invoices basic, numbering series, legal-entity billing identity, receivables status, payment state basics, and export-ready invoice evidence.
+This business module covers invoices with draft/issued lifecycle, invoice lines, line-level source allocations, numbering series, legal-entity billing identity, receivables status, payment state basics, and export-ready invoice evidence.
 
 ### `accounting.office` and `accounting.export`
 
-These MicroVerticals cover accounting workflow and handoff, not statutory accounting. V0 should include client/company workspace, document inbox basics, supplier/cost record basics, checklist/status workflow, expense assignment to legal entity/property/unit/contract, basic approvals, and export/import structure for the selected accounting system or Excel-based handoff.
+These business modules cover accounting workflow and handoff, not statutory accounting. V0 should include client/company workspace, document inbox basics, supplier/cost record basics, checklist/status workflow, expense assignment to legal entity/property/unit/contract, basic approvals, and export/import structure for the selected accounting system or Excel-based handoff.
 
 ### `documents.center`
 
-This MicroVertical or Core-adjacent system module covers document metadata, upload, categorization, entity links, permissions, expiration, versions as child rows initially, and audit.
+This business module may add document-specific classification and workflows on top of Core media assets/links: categorization, expiration, versions, document-specific permissions/policies, and audit.
 
 ### `facility.basic`
 

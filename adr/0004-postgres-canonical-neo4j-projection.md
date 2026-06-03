@@ -8,12 +8,12 @@ The long-term vision depends on graph exploration, but V0 ERP operations require
 
 ## Decision
 
-Postgres is the canonical operational source of truth. Neo4j, if included in V0, is a replayable graph projection of entity registry rows and typed relation edges. The entity registry and typed relation edges must stand on their own without Neo4j.
+Postgres is the canonical operational source of truth. Neo4j, if included in V0, is a replayable graph projection of module-owned resources, selected ResourceRefs, and domain-specific relationships. Module-owned tables and Core projection records must stand on their own without Neo4j.
 
 ## Consequences
 
-ERP operations do not depend on Neo4j availability or even on Neo4j being present. Graph views may be eventually consistent. Neo4j can be introduced later and rebuilt from Postgres and domain events.
+ERP operations do not depend on Neo4j availability or even on Neo4j being present. Graph views may be eventually consistent. Neo4j can be introduced later and rebuilt from Postgres, ResourceRefs, and domain events.
 
 ## Risks
 
-If application code starts making operational decisions based only on Neo4j, the model breaks. That must be prohibited for V0. The remaining risk is delaying graph feedback too long and discovering too late that relation semantics are too weak for useful traversal.
+If application code starts making operational decisions based only on Neo4j, the model breaks. That must be prohibited for V0. The remaining risk is delaying graph feedback too long and discovering too late that selected ResourceRef/domain link semantics are too weak for useful traversal.

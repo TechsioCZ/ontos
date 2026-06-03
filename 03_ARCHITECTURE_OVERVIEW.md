@@ -1,16 +1,16 @@
 # Architecture overview
 
-OntOS V0 should be understood as a jointly deployable, modular application with strong vertical slices. Each business MicroVertical includes UI and backend behavior together, while Core provides common runtime capabilities. This architecture is deliberately different from a split frontend/BFF/backend model where vertical cohesion is lost across layers.
+OntOS V0 should be understood as a jointly deployable, modular application with strong vertical slices. Each OntOS Business Module is normally implemented as an UltraModern.js MicroVertical that includes UI and backend behavior together, while Core provides common runtime capabilities. This architecture is deliberately different from a split frontend/BFF/backend model where vertical cohesion is lost across layers.
 
 ## Architectural position
 
-The system is a modular monolith, not a microservice platform. It should have strong internal boundaries, but those boundaries are enforced by module manifests, package structure, dependency rules, runtime registries, tests, and ADRs rather than by network calls between services.
+The system is a modular monolith, not a microservice platform. It should have strong internal boundaries, but those boundaries are enforced by OntOS Module Manifests, package structure, dependency rules, runtime registries, tests, and ADRs rather than by network calls between services.
 
 The system is not pure event-driven architecture. State changes are initiated through registered Actions and implemented by Command Handlers. Events and outbox messages are emitted as consequences of successful commands and are used to maintain projections, exports, reports, and integrations.
 
-The system is not a generic entity-store platform. Hard business objects such as invoices, leases, reservations, documents, and tickets live in explicit Postgres domain tables. A central entity registry gives those objects stable identity and cross-module addressability.
+The system is not a generic entity-store platform. Hard business objects such as invoices, leases, reservations, media assets, and tickets live in explicit Postgres domain tables owned by their modules. Cross-module addressability uses value-based `ResourceRef` values, not a central Core entity/relation registry.
 
-The system is not an AI product in V0. It should be designed so AI can later consume entities, actions, relations, documents, audit, and timelines, but no committed V0 feature should depend on user-facing AI.
+The system is not an AI product in V0. It should be designed so AI can later consume resources, actions, domain links, media/documents, audit, and timelines, but no committed V0 feature should depend on user-facing AI.
 
 ## Runtime shape
 
@@ -18,17 +18,17 @@ The main OntOS Application Runtime contains the application shell, all active Mi
 
 This separation is important. MicroVertical cohesion is preserved inside the application runtime. Operational simplicity is preserved by avoiding distributed MicroVertical services. Asynchronous work is isolated in workers because projections, exports, imports, notifications, and long-running tasks should not block user-facing command execution.
 
-## MicroVerticals and Core
+## Business Modules, MicroVerticals, and Core
 
-A MicroVertical is a product/business capability slice. It can own both user experience and business behavior. For example, `property.short_term_rental` can own reservation screens, availability state, reservation actions, reservation command handlers, reservation domain tables, relation types to units/guests/invoices/documents, report descriptors, and tests.
+An OntOS Business Module is a product/business capability slice. In V0 it is normally implemented as an UltraModern.js MicroVertical, so it can own both user experience and business behavior. For example, `property.short_term_rental` can own reservation screens, availability state, reservation actions, reservation command handlers, reservation domain tables, links to units/guests/invoices/documents, report descriptors, and tests.
 
-Core owns capabilities that all MicroVerticals require and that should not be reimplemented in business modules: identity mapping, authorization, policy evaluation, module registry, entity registry, relation registry, audit, events, outbox, document metadata, projection infrastructure, and common reporting/search foundations.
+Core owns capabilities that all business modules require and that should not be reimplemented in modules: tenant and legal-entity boundaries, principal mapping, authorization adapter, policy evaluation hooks, tenant-level module state, action invocation recording, audit, domain events, outbox, media asset/link infrastructure, search index entries, worker checkpoints, and common reporting/search foundations.
 
-This gives us a clear rule: MicroVerticals own domain behavior; Core owns cross-cutting runtime guarantees.
+This gives us a clear rule: OntOS Business Modules own domain behavior; Core owns cross-cutting runtime guarantees.
 
 ## Data and consistency
 
-Postgres is the canonical operational store. The core business transaction must write domain data, entity registry updates, relation updates, audit events, domain events, and outbox messages in the same transaction where appropriate. Neo4j and search indexes are updated asynchronously via outbox workers.
+Postgres is the canonical operational store. The core business transaction must write module-owned domain data, audit events, domain events, outbox messages, and any relevant `ResourceRef` projection records in the same transaction where appropriate. Neo4j and search indexes are updated asynchronously via outbox workers.
 
 This means the system tolerates projection lag. A reservation created in Postgres is real even if Neo4j has not yet projected it. A graph view may be temporarily stale; billing and audit must not be.
 
@@ -36,7 +36,7 @@ This means the system tolerates projection lag. A reservation created in Postgre
 
 Authentication and authorization are separate. BetterAuth handles authentication and sessions. An OntOS principal registry maps authenticated subjects into principals. SpiceDB answers relationship-based permission checks. The OntOS Policy Layer evaluates business conditions that are not purely relational.
 
-Search and graph views must be permission-aware. The system should avoid per-result SpiceDB checks for large result sets unless scoped and cached. V0 should combine coarse permission projections with explicit checks for sensitive entities.
+Search and graph views must be permission-aware. V0 should use tenant, legal-entity, module, and resource-type scoping for candidate selection, then authorize through SpiceDB list-filtering patterns such as `LookupResources` or `CheckBulkPermissions`. A materialized permission view should be added only when measured scale requires it.
 
 ## Delivery model
 

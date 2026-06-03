@@ -1,6 +1,6 @@
 # C4 model
 
-This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. OntOS MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime.
+This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. UltraModern.js MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime, and OntOS Business Modules normally use that implementation shape.
 
 Mermaid Markdown diagrams are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
 
@@ -18,7 +18,7 @@ The system boundary is important. OntOS owns operational context, workflows, doc
 
 This is the main jointly deployable application. It hosts the application shell, all active MicroVertical UI, all MicroVertical actions and command handlers, and Core runtime capabilities. In implementation it may expose HTTP routes, pages, server functions, API endpoints, or framework-specific handlers, but those are implementation surfaces inside the same application container.
 
-This container is where the MicroVertical concept lives. Each MicroVertical contributes UI, actions, backend behavior, domain model declarations, migrations, tests, and descriptors through its manifest.
+This container is where the MicroVertical implementation concept lives. Each OntOS Business Module contributes UI, actions, backend behavior, domain model declarations, migrations, tests, and public descriptors. Its public activation and cross-module contract is declared through the OntOS Module Manifest.
 
 ### OntOS Worker Runtime
 
@@ -26,11 +26,11 @@ The worker runtime processes asynchronous work: outbox dispatch, Neo4j projectio
 
 ### Postgres
 
-Postgres stores canonical operational truth: domain tables, entity registry, relation edges, module installations, audit events, domain events, outbox messages, document metadata, invoices, contracts, reservations, tickets, and accounting/export state.
+Postgres stores canonical operational truth: module-owned domain tables, Core runtime tables, audit events, domain events, outbox messages, media metadata/links, search projection entries, invoices, contracts, reservations, tickets, and accounting/export state.
 
 ### Neo4j
 
-Neo4j stores a replayable graph projection of entities and typed relationships. It supports graph traversal, impact analysis, visual exploration, and future AI context. It is not the source of truth for operational ERP decisions in V0.
+Neo4j stores a replayable graph projection of module-owned resources, selected ResourceRefs, and domain-specific relationships. It supports graph traversal, impact analysis, visual exploration, and future AI context. It is not the source of truth for operational ERP decisions in V0.
 
 ### SpiceDB
 
@@ -38,7 +38,7 @@ SpiceDB stores authorization relationships and answers permission questions. It 
 
 ### Object Storage
 
-Object storage stores file blobs. OntOS keeps document metadata, ownership, permissions, relations, timeline, and audit in Postgres.
+Object storage stores file blobs. OntOS keeps media metadata, links, permissions-relevant context, timeline, and audit in Postgres.
 
 ### External Systems
 
@@ -48,19 +48,19 @@ External systems include accounting software, banks/statement files, reservation
 
 ### Application Shell
 
-The shell provides navigation, layout, tenant/legal-entity context selection, MicroVertical mounting points, shared design-system primitives, and cross-module affordances such as search, entity detail, timeline, and document attachment entry points.
+The shell provides navigation, layout, tenant/legal-entity context selection, MicroVertical mounting points, shared design-system primitives, and cross-module affordances such as search, resource detail, timeline, and media attachment entry points.
 
-### MicroVertical Runtime
+### Module Runtime
 
-The runtime discovers known MicroVertical manifests, validates dependencies, checks activation state per tenant/legal entity, and exposes contributions to UI, actions, permissions, search, reports, and migrations. In V0, available MicroVertical code is part of the deployable application. Activation of an installed MicroVertical should be runtime-configurable; adding new code still requires deployment.
+The runtime discovers known OntOS Module Manifests, validates dependencies, checks activation state per tenant, and exposes public APIs, public components, resource contracts, search, and reports. In V0, available MicroVertical code is part of the deployable application. Activation of an installed module should be runtime-configurable; adding new code still requires deployment.
 
 ### Core Runtime Services
 
-Core runtime services include authentication integration, principal context, authorization adapter, business policy layer, module registry, action registry, entity registry, relation registry, audit/event/outbox recording, document metadata services, search interfaces, and projection descriptors.
+Core runtime services include BetterAuth binding, principal context, authorization adapter, business policy layer, tenant-level module state, action invocation recording, audit/event/outbox recording, media asset/link services, search index entries, worker checkpoints, and projection descriptors.
 
 ### MicroVertical Packages
 
-Each MicroVertical package contains the full vertical slice for one business capability: UI, state, routes, actions, command handlers, domain tables, entity/relation declarations, permissions, migrations, report descriptors, search descriptors, fixtures, and tests.
+Each MicroVertical package contains the implementation for one business capability: UI, state, routes, actions, command handlers, domain tables, resource/link implementation, permissions, migrations, report/search implementation, fixtures, and tests. The OntOS Module Manifest exposes only the public subset needed by Core, activation logic, tooling, and other modules: APIs, component exports, resource contracts, events, search, and reports.
 
 ### Action Execution Pipeline
 
@@ -74,7 +74,7 @@ Reads pending outbox messages, claims work idempotently, dispatches to registere
 
 ### Projection Workers
 
-Maintain Neo4j graph projection, search documents, entity cards, timelines, and reporting aggregates. They are replayable and should tolerate being behind canonical state.
+Maintain Neo4j graph projection, search documents, resource cards, timelines, and reporting aggregates. They are replayable and should tolerate being behind canonical state.
 
 ### Import/Export Workers
 
