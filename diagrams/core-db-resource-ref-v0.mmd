@@ -135,17 +135,18 @@ erDiagram
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
     text access_kind "read|list|search|export|download"
-    text source_module_key
+    text serving_module_key
     text target_module_key "ResourceRef part nullable"
     text target_resource_type "ResourceRef part nullable"
     text target_resource_id "ResourceRef part nullable"
     text query_hash "sha256 canonical query/filter"
     integer result_count
-    text result_hash "hash of result refs/response"
+    text result_fingerprint_schema "nullable e.g. resource_refs_v1"
+    text result_fingerprint_hash "nullable sha256 fingerprint"
     text evidence_policy_key
     text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
     jsonb evidence_payload_json "nullable redacted"
-    text redaction_profile
+    text redaction_profile "nullable, required for redacted_payload"
     text artifact_storage_key "nullable encrypted object ref"
     timestamptz occurred_at
   }

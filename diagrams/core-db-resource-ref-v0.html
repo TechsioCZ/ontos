@@ -241,7 +241,7 @@
           </div>
           <div class="field">
             <dt><code>CORE_DATA_ACCESS_EVENTS</code></dt>
-            <dd>Evidence read/list/search/export/download: kdo se díval, query hash, počet výsledků, hash výsledků nebo stored artifact. Neznamená ukládat každý response body navždy.</dd>
+            <dd>Evidence read/list/search/export/download: kdo se díval, přes který modul, query hash, počet výsledků, fingerprint výsledku nebo stored artifact. Neznamená ukládat každý response body navždy.</dd>
           </div>
         </dl>
       </section>
@@ -259,11 +259,11 @@
           </div>
           <div class="field">
             <dt><code>hash_only</code></dt>
-            <dd>Ukládá se hash dotazu nebo výsledku. Dává tamper evidence bez ukládání citlivého obsahu.</dd>
+            <dd>Ukládá se hash dotazu nebo fingerprint výsledku. Je jednosměrný: bez uloženého manifestu/payloadu/artifactu z něj obsah nezrekonstruujeme.</dd>
           </div>
           <div class="field">
             <dt><code>redacted_payload</code></dt>
-            <dd>Ukládá se očištěný snapshot/summary do <code>evidence_payload_json</code>; musí mít <code>redaction_profile</code>.</dd>
+            <dd>Ukládá se očištěný snapshot/summary do <code>evidence_payload_json</code>; <code>redaction_profile</code> je povinný jen pro tento mode, jinak je null.</dd>
           </div>
           <div class="field">
             <dt><code>stored_artifact</code></dt>
@@ -272,6 +272,14 @@
           <div class="field">
             <dt>System enforcement</dt>
             <dd>Build/test vyžaduje evidence policy pro public read/list/search/export/download. Runtime wrapper ji aplikuje a DB constraint hlídá povinná pole pro daný mode.</dd>
+          </div>
+          <div class="field">
+            <dt><code>serving_module_key</code></dt>
+            <dd>Modul, který read/list/search/export/download obsloužil. Např. <code>reporting.basic</code> může servírovat report nad billing/property daty.</dd>
+          </div>
+          <div class="field">
+            <dt><code>result_fingerprint_*</code></dt>
+            <dd><code>result_fingerprint_schema</code> říká, jak byl hash spočítaný; <code>result_fingerprint_hash</code> je jen otisk pro porovnání, ne obsah výsledku.</dd>
           </div>
         </dl>
       </section>
@@ -478,17 +486,18 @@ erDiagram
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
     text access_kind "read|list|search|export|download"
-    text source_module_key
+    text serving_module_key
     text target_module_key "ResourceRef nullable"
     text target_resource_type "ResourceRef nullable"
     text target_resource_id "ResourceRef nullable"
     text query_hash "sha256 canonical query/filter"
     integer result_count
-    text result_hash "hash of result refs/response"
+    text result_fingerprint_schema "nullable e.g. resource_refs_v1"
+    text result_fingerprint_hash "nullable sha256 fingerprint"
     text evidence_policy_key
     text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
     jsonb evidence_payload_json "nullable redacted"
-    text redaction_profile
+    text redaction_profile "nullable, required for redacted_payload"
     text artifact_storage_key "nullable encrypted object ref"
     timestamptz occurred_at
   }

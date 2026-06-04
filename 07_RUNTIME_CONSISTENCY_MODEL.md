@@ -74,8 +74,8 @@ Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS
 Evidence capture modes:
 
 - `metadata_only`: record actor, time, endpoint/action, target/query metadata, and context, but no result hash or payload. Use for ordinary detail reads or sensitive reads where duplicated evidence would create more risk than value.
-- `hash_only`: record a canonical query hash and/or result hash without storing the result content. Use when tamper evidence matters but content storage is unnecessary or risky.
-- `redacted_payload`: store a redacted snapshot or summary in `evidence_payload_json`. The descriptor must name a `redaction_profile`.
+- `hash_only`: record a canonical query hash and/or result fingerprint without storing the result content. Use when tamper evidence matters but content storage is unnecessary or risky. A fingerprint hash is one-way evidence; it cannot reconstruct what the user saw without a matching manifest, redacted payload, or stored artifact.
+- `redacted_payload`: store a redacted snapshot or summary in `evidence_payload_json`. The descriptor must name a `redaction_profile`; that column is nullable for every other mode.
 - `stored_artifact`: store the exact output outside the database, encrypted, and reference it through `artifact_storage_key` or payload storage key. The descriptor must define artifact kind, retention, and encryption requirements.
 
 System enforcement should be layered:
@@ -83,8 +83,12 @@ System enforcement should be layered:
 - Every public read/list/search/export/download endpoint must declare an access evidence policy. Missing policy should fail build or contract tests.
 - The policy should be a typed discriminated union so `stored_artifact` cannot be declared without retention/encryption, and `redacted_payload` cannot be declared without a redaction profile.
 - Public reads and exports should run through a runtime wrapper such as `withDataAccessEvidence(descriptor, handler)`. The wrapper writes `CORE_DATA_ACCESS_EVENTS`; handlers should not write arbitrary capture modes directly.
-- Database constraints should enforce mode-specific invariants, such as `stored_artifact` requiring `artifact_storage_key`, `redacted_payload` requiring `redaction_profile` and redacted payload, and non-artifact modes leaving `artifact_storage_key` null.
+- Database constraints should enforce mode-specific invariants, such as `stored_artifact` requiring `artifact_storage_key`, `redacted_payload` requiring `redaction_profile` and redacted payload, non-redacted modes leaving `redaction_profile` null, and non-artifact modes leaving `artifact_storage_key` null.
 - Changes to evidence policies for sensitive endpoints should require product/security review, because switching from `stored_artifact` to `metadata_only` changes business evidence and security posture.
+
+For data access events, `serving_module_key` is the module that served the read/list/search/export/download surface, even when the returned data came from other modules. For example, `reporting.basic` may serve a report that includes billing and property resources.
+
+`result_fingerprint_hash` should be understood narrowly: it is a SHA-256 fingerprint of a canonical result representation, not stored content. The representation must be identified by `result_fingerprint_schema`, such as `resource_refs_v1`. A typical `resource_refs_v1` fingerprint should use stable fields such as `module_key`, `resource_type`, `resource_id`, and optionally resource version or updated timestamp. It should not depend on mutable display names or labels. If the business needs to know exactly what was shown or exported later, the evidence mode must be `redacted_payload` or `stored_artifact`, not only `hash_only`.
 
 ## Outbox messages
 
