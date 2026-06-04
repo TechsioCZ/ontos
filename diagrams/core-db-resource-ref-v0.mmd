@@ -134,7 +134,6 @@ erDiagram
     text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
     jsonb evidence_payload_json "nullable redacted"
     text redaction_profile "nullable, required for redacted_payload"
-    text artifact_storage_key "nullable encrypted object ref"
     timestamptz occurred_at
   }
 
@@ -189,6 +188,33 @@ erDiagram
     text sha256
     text processing_status "uploaded|scanning|ready|failed"
     timestamptz created_at
+  }
+
+  CORE_EVIDENCE_REFERENCES {
+    uuid evidence_reference_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid media_asset_id FK
+    text source_kind "action|audit|data_access|domain_event"
+    uuid action_invocation_id FK "nullable source"
+    uuid audit_event_id FK "nullable source"
+    uuid data_access_event_id FK "nullable source"
+    uuid domain_event_id FK "nullable source"
+    text evidence_kind "export|generated_document|import_file|signed_document|compliance_bundle|action_snapshot"
+    text subject_module_key "ResourceRef part nullable"
+    text subject_resource_type "ResourceRef part nullable"
+    text subject_resource_id "ResourceRef part nullable"
+    text evidence_policy_key
+    text retention_policy_key
+    timestamptz retain_until "nullable"
+    timestamptz legal_hold_until "nullable"
+    text disposition_status "active|expired|deleted|legal_hold"
+    text data_classification "internal|confidential|restricted"
+    text schema_key "nullable artifact/manifest schema"
+    text redaction_profile "nullable"
+    timestamptz created_at
+    timestamptz updated_at
+    timestamptz deleted_at "nullable tombstone"
   }
 
   CORE_MEDIA_LINKS {
@@ -375,6 +401,13 @@ erDiagram
   CORE_OUTBOX_MESSAGES ||--o{ CORE_OUTBOX_ATTEMPTS : retried_by
   CORE_TENANTS ||--o{ CORE_MEDIA_ASSETS : stores
   CORE_MEDIA_ASSETS ||--o{ CORE_MEDIA_LINKS : has_links
+  CORE_MEDIA_ASSETS ||--o{ CORE_EVIDENCE_REFERENCES : referenced_as_evidence
+  CORE_TENANTS ||--o{ CORE_EVIDENCE_REFERENCES : indexes_evidence
+  CORE_LEGAL_ENTITIES ||--o{ CORE_EVIDENCE_REFERENCES : scopes_optional
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
+  CORE_AUDIT_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
+  CORE_DATA_ACCESS_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
+  CORE_DOMAIN_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_ASSETS : ingested_by_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_LINKS : linked_by_optional
   CORE_TENANTS ||--o{ CORE_SEARCH_INDEX_ENTRIES : indexes_optionally

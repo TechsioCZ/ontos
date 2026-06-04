@@ -250,6 +250,40 @@
         </dl>
       </section>
 
+      <section class="panel" aria-labelledby="evidence-references-title">
+        <h2 id="evidence-references-title">CORE_EVIDENCE_REFERENCES: Durable Artifact Ledger</h2>
+        <dl class="field-list">
+          <div class="field">
+            <dt>What lives in Postgres</dt>
+            <dd>Jen referenční ledger: tenant, zdrojový core event, primární ResourceRef, evidence policy, media asset, retence, legal hold, klasifikace a stav. Ne raw payload ani binární obsah.</dd>
+          </div>
+          <div class="field">
+            <dt><code>media_asset_id</code></dt>
+            <dd>FK na <code>CORE_MEDIA_ASSETS</code>, kde je storage provider/key, MIME typ, byte size a hash. Evidence reference tím asset nepřebírá; jen říká, že asset je auditně významný důkaz.</dd>
+          </div>
+          <div class="field">
+            <dt><code>source_kind</code> + source FK</dt>
+            <dd>Discriminator a přesně jeden fyzický FK: <code>action</code>, <code>audit</code>, <code>data_access</code>, nebo <code>domain_event</code>. Nepoužíváme polymorfní <code>source_id</code> bez FK.</dd>
+          </div>
+          <div class="field">
+            <dt><code>evidence_kind</code></dt>
+            <dd>Byznysový typ důkazu: export, vygenerovaný dokument, importní soubor, podepsaný dokument, compliance bundle nebo action snapshot.</dd>
+          </div>
+          <div class="field">
+            <dt><code>subject_* ResourceRef</code></dt>
+            <dd>Primární business objekt, ke kterému důkaz patří. Je nullable, protože export/report může zahrnovat mnoho resource refs nebo jen tenant-level evidence.</dd>
+          </div>
+          <div class="field">
+            <dt>Retention fields</dt>
+            <dd><code>retention_policy_key</code>, <code>retain_until</code>, <code>legal_hold_until</code> a <code>disposition_status</code> řídí mazání, archivaci a hold. Změny těchto polí jsou samy auditovatelné akce.</dd>
+          </div>
+          <div class="field">
+            <dt><code>data_classification</code></dt>
+            <dd>Klasifikace obsahu assetu pro řízení přístupu, exportů a retence: typicky <code>internal</code>, <code>confidential</code>, <code>restricted</code>.</dd>
+          </div>
+        </dl>
+      </section>
+
       <section class="panel" aria-labelledby="audit-events-title">
         <h2 id="audit-events-title">CORE_AUDIT_EVENTS: Action Checkpoint Flow</h2>
         <pre class="mermaid">
@@ -337,11 +371,11 @@ sequenceDiagram
           </div>
           <div class="field">
             <dt><code>stored_artifact</code></dt>
-            <dd>Přesný výstup je uložený šifrovaně mimo DB a tabulka drží <code>artifact_storage_key</code>. Typicky exporty, PDF, CSV, účetní balíčky.</dd>
+            <dd>Přesný výstup je uložený šifrovaně mimo DB jako <code>CORE_MEDIA_ASSETS</code> a auditně svázaný přes <code>CORE_EVIDENCE_REFERENCES</code>. Typicky exporty, PDF, CSV, účetní balíčky.</dd>
           </div>
           <div class="field">
             <dt>System enforcement</dt>
-            <dd>Build/test vyžaduje evidence policy pro public read/list/search/export/download. Runtime wrapper ji aplikuje a DB constraint hlídá povinná pole pro daný mode.</dd>
+            <dd>Build/test vyžaduje evidence policy pro public read/list/search/export/download. Runtime wrapper ji aplikuje; DB constraints hlídají lokální invariants a stored artifact vyžaduje odpovídající evidence reference.</dd>
           </div>
           <div class="field">
             <dt><code>serving_module_key</code></dt>
@@ -555,7 +589,6 @@ erDiagram
     text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
     jsonb evidence_payload_json "nullable redacted"
     text redaction_profile "nullable, required for redacted_payload"
-    text artifact_storage_key "nullable encrypted object ref"
     timestamptz occurred_at
   }
 
@@ -610,6 +643,33 @@ erDiagram
     text sha256
     text processing_status
     timestamptz created_at
+  }
+
+  CORE_EVIDENCE_REFERENCES {
+    uuid evidence_reference_id PK
+    uuid tenant_id FK
+    uuid legal_entity_id FK "nullable"
+    uuid media_asset_id FK
+    text source_kind "action|audit|data_access|domain_event"
+    uuid action_invocation_id FK "nullable source"
+    uuid audit_event_id FK "nullable source"
+    uuid data_access_event_id FK "nullable source"
+    uuid domain_event_id FK "nullable source"
+    text evidence_kind "export|generated_document|import_file|signed_document|compliance_bundle|action_snapshot"
+    text subject_module_key "ResourceRef nullable"
+    text subject_resource_type "ResourceRef nullable"
+    text subject_resource_id "ResourceRef nullable"
+    text evidence_policy_key
+    text retention_policy_key
+    timestamptz retain_until "nullable"
+    timestamptz legal_hold_until "nullable"
+    text disposition_status "active|expired|deleted|legal_hold"
+    text data_classification "internal|confidential|restricted"
+    text schema_key "nullable artifact/manifest schema"
+    text redaction_profile "nullable"
+    timestamptz created_at
+    timestamptz updated_at
+    timestamptz deleted_at "nullable tombstone"
   }
 
   CORE_MEDIA_LINKS {
@@ -673,6 +733,13 @@ erDiagram
   CORE_OUTBOX_MESSAGES ||--o{ CORE_OUTBOX_ATTEMPTS : retried_by
   CORE_TENANTS ||--o{ CORE_MEDIA_ASSETS : stores
   CORE_MEDIA_ASSETS ||--o{ CORE_MEDIA_LINKS : has_links
+  CORE_MEDIA_ASSETS ||--o{ CORE_EVIDENCE_REFERENCES : referenced_as_evidence
+  CORE_TENANTS ||--o{ CORE_EVIDENCE_REFERENCES : indexes_evidence
+  CORE_LEGAL_ENTITIES ||--o{ CORE_EVIDENCE_REFERENCES : scopes_optional
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
+  CORE_AUDIT_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
+  CORE_DATA_ACCESS_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
+  CORE_DOMAIN_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_ASSETS : ingested_by_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_LINKS : linked_by_optional
   CORE_TENANTS ||--o{ CORE_SEARCH_INDEX_ENTRIES : indexes_optionally
@@ -903,6 +970,7 @@ flowchart LR
 
   subgraph Core["core"]
     audit["CORE_AUDIT_EVENTS\ntarget ResourceRef"]
+    evidence["CORE_EVIDENCE_REFERENCES\nsubject ResourceRef"]
     media["CORE_MEDIA_LINKS\ntarget ResourceRef"]
     search["CORE_SEARCH_INDEX_ENTRIES\nsource ResourceRef"]
     outbox["CORE_OUTBOX_MESSAGES\npayload contains ResourceRef"]
@@ -910,6 +978,7 @@ flowchart LR
 
   source -. "value reference, no physical FK" .-> unit
   invoice -. "ResourceRef" .-> audit
+  invoice -. "ResourceRef" .-> evidence
   unit -. "ResourceRef" .-> media
   invoice -. "ResourceRef" .-> search
   invoice -. "ResourceRef" .-> outbox
@@ -932,6 +1001,7 @@ flowchart LR
   command --> moduleTables["Module writes canonical tables with local FKs"]
   command --> trace["Effect/OpenTelemetry trace\ntrace_id / correlation_id"]
   command --> audit["Core audit_events target ResourceRef"]
+  command --> evidence["Core evidence_references\nretention / legal hold / media asset"]
   command --> events["Core domain_events subject ResourceRef"]
   events --> outbox["Core outbox_messages"]
   outbox --> search["Search worker updates optional core_search_index_entries"]

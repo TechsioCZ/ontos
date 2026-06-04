@@ -72,7 +72,7 @@ Do not add separate `authz_decision` or `policy_decision` columns. The normalize
 
 `request_hash` is a SHA-256 hash of the canonical request envelope after normalization. It should include the action key, tenant/legal-entity context, target ResourceRef where present, schema version, and normalized request body. It is used for idempotency conflict detection, tamper evidence, and debugging without requiring raw payload storage in the main invocation row.
 
-Core DB is not a generic payload store or observability backend. Postgres stores the action/audit spine and durable evidence references. Effect/OpenTelemetry stores technical request traces. Object storage/archive stores large or exact artifacts only when an explicit evidence policy requires them. The baseline Core schema must not store generic action request/response payloads.
+Core DB is not a generic payload store or observability backend. Postgres stores the action/audit spine and durable evidence references. `CORE_MEDIA_ASSETS` stores object-storage metadata for files/artifacts. Effect/OpenTelemetry stores technical request traces. Object storage/archive stores large or exact artifact bytes only when an explicit evidence policy requires them. The baseline Core schema must not store generic action request/response payloads.
 
 The idempotency contract is end-to-end:
 
@@ -103,7 +103,43 @@ Suggested `status` values:
 - `failed`: execution failed and the canonical transaction did not commit or committed a modeled failure state.
 - `replayed`: duplicate idempotent request returned the earlier outcome.
 
-If later compliance needs exact action request, response, or acceptance evidence, add an optional `CORE_ACTION_EVIDENCE_REFERENCES` capability deliberately. It should store metadata such as `action_invocation_id`, `evidence_kind`, `evidence_policy_key`, `schema_key`, payload/artifact hash, storage key, byte size, retention metadata, and timestamps. It should not store raw request/response bodies in Postgres by default.
+If compliance needs exact action request, response, export, signed-document, import-file, or acceptance evidence, use `CORE_EVIDENCE_REFERENCES` deliberately. It should bind a core source row to a stored `CORE_MEDIA_ASSETS` artifact and should not store raw request/response bodies in Postgres.
+
+## Evidence references
+
+`CORE_EVIDENCE_REFERENCES` is the durable artifact ledger. It answers: which stored artifact is audit/compliance evidence, which core event produced or justified it, which primary business subject it belongs to, which evidence and retention policy applies, and whether it is under legal hold or eligible for deletion.
+
+The table should contain metadata only:
+
+- `evidence_reference_id uuid`: primary key.
+- `tenant_id uuid`: required tenant scope and partition/index key.
+- `legal_entity_id uuid nullable`: optional legal-entity scope. Null means tenant-wide, cross-entity, or not legally entity-specific.
+- `media_asset_id uuid`: required FK to `CORE_MEDIA_ASSETS`. The media asset row owns `storage_provider`, `storage_key`, `mime_type`, `byte_size`, and `sha256`.
+- `source_kind text`: discriminator with values such as `action`, `audit`, `data_access`, or `domain_event`.
+- `action_invocation_id uuid nullable`, `audit_event_id uuid nullable`, `data_access_event_id uuid nullable`, `domain_event_id uuid nullable`: physical FKs to possible Core source rows. Exactly one should be non-null and it must match `source_kind`; avoid a generic polymorphic `source_id` without a database FK.
+- `evidence_kind text`: business/compliance category, such as `export`, `generated_document`, `import_file`, `signed_document`, `compliance_bundle`, or `action_snapshot`.
+- `subject_module_key text nullable`, `subject_resource_type text nullable`, `subject_resource_id text nullable`: primary ResourceRef for finding evidence from a business object. Nullable because exports/reports may cover many resources or only tenant-level evidence.
+- `evidence_policy_key text`: policy that required or allowed this evidence to be retained.
+- `retention_policy_key text`: retention schedule that controls lifecycle/disposition.
+- `retain_until timestamptz nullable`: earliest time the artifact may be disposed of. Null means governed only by policy/defaults.
+- `legal_hold_until timestamptz nullable`: hold override. Use PostgreSQL `infinity` if a hold has no known end date.
+- `disposition_status text`: lifecycle of the evidence reference, such as `active`, `expired`, `deleted`, or `legal_hold`.
+- `data_classification text`: classification used by access control, export control, and retention, such as `internal`, `confidential`, or `restricted`.
+- `schema_key text nullable`: schema/manifest key for structured artifacts or bundles.
+- `redaction_profile text nullable`: profile used if the artifact is intentionally redacted. Null for exact artifacts.
+- `created_at timestamptz`, `updated_at timestamptz`, `deleted_at timestamptz nullable`: creation, mutable lifecycle metadata, and deletion tombstone.
+
+The `text` columns above are not free-form text. In the first migrations, prefer `text` plus `CHECK` constraints and typed application schemas over PostgreSQL enums, because evidence kinds, classifications, and disposition states will likely evolve during early enterprise/compliance work.
+
+Important constraints:
+
+- `media_asset_id` must point to an immutable storage object or immutable object version.
+- Exactly one source FK must be set.
+- `source_kind` must match the non-null source FK.
+- `subject_*` should be all null or all non-null.
+- `deleted_at` should be set only when `disposition_status = deleted`.
+- `legal_hold_until` should prevent physical deletion even if `retain_until` has passed.
+- Changes to retention, legal hold, disposition, or classification should be made through Actions and audited.
 
 Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS` should record important reads, lists, searches, exports, and downloads: who accessed what, query/filter hash, result count, result hash or artifact reference, and timestamp. The default should not be “store every full response body forever”; high-volume and sensitive reads need sampling, redaction, retention, and explicit product/security reasons.
 
@@ -114,14 +150,14 @@ Evidence capture modes:
 - `metadata_only`: record actor, time, endpoint/action, target/query metadata, and context, but no result hash or payload. Use for ordinary detail reads or sensitive reads where duplicated evidence would create more risk than value.
 - `hash_only`: record a canonical query hash and/or result fingerprint without storing the result content. Use when tamper evidence matters but content storage is unnecessary or risky. A fingerprint hash is one-way evidence; it cannot reconstruct what the user saw without a matching manifest, redacted payload, or stored artifact.
 - `redacted_payload`: store a redacted snapshot or summary in `evidence_payload_json`. The descriptor must name a `redaction_profile`; that column is nullable for every other mode.
-- `stored_artifact`: store the exact output outside the database, encrypted, and reference it through `artifact_storage_key`. The descriptor must define artifact kind, retention, and encryption requirements.
+- `stored_artifact`: store the exact output outside the database, encrypted, as a `CORE_MEDIA_ASSETS` row and bind it through `CORE_EVIDENCE_REFERENCES`. The descriptor must define artifact kind, retention, classification, and encryption requirements.
 
 System enforcement should be layered:
 
 - Every public read/list/search/export/download endpoint must declare an access evidence policy. Missing policy should fail build or contract tests.
 - The policy should be a typed discriminated union so `stored_artifact` cannot be declared without retention/encryption, and `redacted_payload` cannot be declared without a redaction profile.
 - Public reads and exports should run through a runtime wrapper such as `withDataAccessEvidence(descriptor, handler)`. The wrapper writes `CORE_DATA_ACCESS_EVENTS`; handlers should not write arbitrary capture modes directly.
-- Database constraints should enforce mode-specific invariants, such as `stored_artifact` requiring `artifact_storage_key`, `redacted_payload` requiring `redaction_profile` and redacted payload, non-redacted modes leaving `redaction_profile` null, and non-artifact modes leaving `artifact_storage_key` null.
+- Database constraints should enforce local mode-specific invariants, such as `redacted_payload` requiring `redaction_profile` and redacted payload, and non-redacted modes leaving `redaction_profile` null. `stored_artifact` should create a matching `CORE_MEDIA_ASSETS` + `CORE_EVIDENCE_REFERENCES` pair; enforce this with the runtime wrapper, contract tests, and if needed a deferred trigger because it is a cross-row invariant.
 - Changes to evidence policies for sensitive endpoints should require product/security review, because switching from `stored_artifact` to `metadata_only` changes business evidence and security posture.
 
 For data access events, `serving_module_key` is the module that served the read/list/search/export/download surface, even when the returned data came from other modules. For example, `reporting.basic` may serve a report that includes billing and property resources.
