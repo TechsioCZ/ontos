@@ -246,6 +246,72 @@
         </dl>
       </section>
 
+      <section class="panel" aria-labelledby="audit-events-title">
+        <h2 id="audit-events-title">CORE_AUDIT_EVENTS: Action Checkpoint Flow</h2>
+        <pre class="mermaid">
+sequenceDiagram
+  participant Core as Core action runtime
+  participant Authz as SpiceDB
+  participant Policy as Policy layer
+  participant Module as Module command handler
+  participant Audit as CORE_AUDIT_EVENTS
+
+  Core->>Audit: action.received / succeeded / system / action_received
+  Core->>Audit: action.authn_resolved / succeeded / authn / principal_resolved
+  Core->>Authz: Check permission
+  Authz-->>Core: allowed or denied
+  Core->>Audit: action.authz_checked / allowed|denied / authz / spicedb_permission_*
+  alt authz denied
+    Core->>Audit: action.rejected / denied / authz / spicedb_permission_denied
+  else authz allowed
+    Core->>Policy: Evaluate policy
+    Policy-->>Core: allowed or denied
+    Core->>Audit: action.policy_checked / allowed|denied / policy / policy_*
+    alt policy denied
+      Core->>Audit: action.rejected / denied / policy / policy_code
+    else policy allowed
+      Core->>Module: Validate and execute
+      Core->>Audit: action.validation_checked / allowed|denied / validation / validation_*
+      alt validation denied
+        Core->>Audit: action.rejected / denied / validation / invalid_payload
+      else execution succeeds
+        Module-->>Core: committed canonical state
+        Core->>Audit: action.executed / succeeded / execution / domain_outcome_code
+      else execution fails
+        Module-->>Core: failure
+        Core->>Audit: action.failed / failed / execution / error_code
+      end
+    end
+  end
+        </pre>
+        <dl class="field-list">
+          <div class="field">
+            <dt><code>outcome</code></dt>
+            <dd><code>allowed</code>/<code>denied</code> jsou gate rozhodnutí. <code>succeeded</code>/<code>failed</code> jsou výsledky provedení nebo systémového checkpointu.</dd>
+          </div>
+          <div class="field">
+            <dt><code>outcome_stage</code></dt>
+            <dd>Vrstva, kde výsledek vznikl: <code>system</code>, <code>authn</code>, <code>authz</code>, <code>policy</code>, <code>validation</code>, <code>execution</code>.</dd>
+          </div>
+          <div class="field">
+            <dt><code>outcome_code</code></dt>
+            <dd>Stabilní strojový důvod, např. <code>spicedb_permission_denied</code>, <code>invoice_already_exported</code>, <code>validation_passed</code>, <code>numbering_series_exhausted</code>.</dd>
+          </div>
+          <div class="field">
+            <dt><code>evidence_json</code></dt>
+            <dd>Malé redigované supporting facts. Neduplikuje outcome; neobsahuje raw request/response ani celé business objekty.</dd>
+          </div>
+          <div class="field">
+            <dt>Default audit profile</dt>
+            <dd><code>standard</code>: received, authn_resolved, authz_checked, policy_checked, validation_checked, terminal event. <code>sensitive</code> přidává extra checkpointy; <code>minimal</code> jen explicitní výjimka pro noisy interní joby.</dd>
+          </div>
+          <div class="field">
+            <dt>Single source of truth</dt>
+            <dd>Nepoužíváme samostatné <code>authz_decision</code>/<code>policy_decision</code>. Výsledek je vždy <code>outcome + outcome_stage + outcome_code</code>, fakta jsou v <code>evidence_json</code>.</dd>
+          </div>
+        </dl>
+      </section>
+
       <section class="panel" aria-labelledby="evidence-policy-title">
         <h2 id="evidence-policy-title">Data Access Evidence Policy</h2>
         <dl class="field-list">
@@ -465,13 +531,14 @@ erDiagram
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
     text event_type
-    text outcome
+    text outcome "allowed|denied|succeeded|failed"
+    text outcome_stage "system|authn|authz|policy|validation|execution"
+    text outcome_code
+    text audit_profile "standard|sensitive|minimal"
     text target_module_key "ResourceRef"
     text target_resource_type "ResourceRef"
     text target_resource_id "ResourceRef"
-    text authz_decision
-    text policy_decision
-    jsonb evidence_json
+    jsonb evidence_json "small redacted supporting facts"
     timestamptz occurred_at
   }
 

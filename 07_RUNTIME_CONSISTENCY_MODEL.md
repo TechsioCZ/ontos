@@ -22,9 +22,39 @@ Domain events are useful for timeline, audit-adjacent explanations, projection t
 
 ## Audit events
 
-Audit events capture evidence: actor, principal kind, tenant, legal entity, action, target resource, permission decision, policy decision, before/after summary where needed, request metadata, and timestamp. Audit must be reliable and queryable because both the business and delivery process require traceability.
+Audit events capture evidence: actor, principal kind, tenant, legal entity, action, target resource, checkpoint outcome, outcome stage/code, small supporting facts, request metadata, and timestamp. Audit must be reliable and queryable because both the business and delivery process require traceability.
 
 Audit events are not workflow triggers. They are evidence records.
+
+The default V0 profile should emit multiple audit checkpoints for one action attempt. This preserves analysis value that cannot be reconstructed later: where actions are blocked, which policies create friction, which modules fail during execution, and which security gates are frequently denied.
+
+Default `standard` checkpoint flow:
+
+- `action.received`: the action request entered the Core runtime.
+- `action.authn_resolved`: the runtime resolved the effective principal and authentication context.
+- `action.authz_checked`: SpiceDB authorization was checked.
+- `action.policy_checked`: module/core policy was checked.
+- `action.validation_checked`: request/domain validation was checked.
+- terminal event: one of `action.executed`, `action.rejected`, or `action.failed`.
+
+`sensitive` audit profile may add extra domain/security checkpoints, such as support impersonation, role changes, module activation, destructive operations, accounting export, bulk download, or legally significant document operations.
+
+`minimal` audit profile is an explicit exception for noisy internal/system jobs where full checkpoint audit would create low-value volume. It should not be the default for user-facing ERP actions.
+
+`outcome` values have specific meanings:
+
+- `allowed`: a gate stage allowed the action to continue.
+- `denied`: a gate stage stopped the action before business execution.
+- `succeeded`: a system/execution checkpoint completed successfully.
+- `failed`: execution or system processing failed after the action had started.
+
+`outcome_stage` identifies where the outcome came from: `system`, `authn`, `authz`, `policy`, `validation`, or `execution`.
+
+`outcome_code` is the stable machine-readable reason, such as `action_received`, `principal_resolved`, `spicedb_permission_allowed`, `spicedb_permission_denied`, `invoice_already_exported`, `validation_passed`, `invalid_payload`, `invoice_issued`, or `numbering_series_exhausted`.
+
+`evidence_json` contains small redacted supporting facts only. It should not duplicate `outcome`, `outcome_stage`, or `outcome_code`; those are the single source of truth for the result. It should not contain raw request payloads, raw response bodies, tokens, secrets, or full business object snapshots. Request/response evidence belongs in `CORE_ACTION_PAYLOAD_RECORDS`; read/export/download evidence belongs in `CORE_DATA_ACCESS_EVENTS`.
+
+Do not add separate `authz_decision` or `policy_decision` columns. The normalized model is `outcome + outcome_stage + outcome_code + evidence_json`.
 
 ## Action invocations and payload evidence
 

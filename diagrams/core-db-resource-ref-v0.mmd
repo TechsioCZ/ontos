@@ -115,12 +115,13 @@ erDiagram
     text auth_context_ref "non-secret session/key/job ref"
     text event_type
     text outcome "allowed|denied|succeeded|failed"
+    text outcome_stage "system|authn|authz|policy|validation|execution"
+    text outcome_code
+    text audit_profile "standard|sensitive|minimal"
     text target_module_key "ResourceRef part"
     text target_resource_type "ResourceRef part"
     text target_resource_id "ResourceRef part"
-    text authz_decision "summary from SpiceDB check"
-    text policy_decision "summary from module policy"
-    jsonb evidence_json
+    jsonb evidence_json "small redacted supporting facts"
     timestamptz occurred_at
   }
 
