@@ -29,6 +29,8 @@ Object storage keys should be technical, collision-resistant identifiers such as
 
 Do not derive authorization, uniqueness, tenant ownership, or folder hierarchy from filenames. Filenames can collide, contain sensitive text, contain unsafe path characters, and change for presentation reasons. Storage identity is `storage_provider + storage_key`; human naming is metadata.
 
+`CORE_MEDIA_ASSETS` needs both `created_at` and `updated_at` because media metadata can change after ingest: `display_filename`, processing state, detected MIME metadata, preview readiness, or external source references may be corrected without changing the underlying storage object.
+
 ## Search index
 
 The first search implementation may be Postgres-based. The architecture should still treat search documents as projections because later search may move to a dedicated engine. Search documents should include tenant, legal entity, module, resource type, display fields, searchable text, facets, and timestamps.
