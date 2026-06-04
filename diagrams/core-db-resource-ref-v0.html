@@ -303,7 +303,15 @@
           </div>
           <div class="field">
             <dt><code>media_asset_id</code></dt>
-            <dd>FK na <code>CORE_MEDIA_ASSETS</code>, kde je storage provider/key, MIME typ, byte size a hash. Evidence reference tím asset nepřebírá; jen říká, že asset je auditně významný důkaz.</dd>
+            <dd>FK na <code>CORE_MEDIA_ASSETS</code>, kde je storage provider/key, volitelná version/generation, MIME typ, byte size a <code>content_sha256</code>. Evidence reference tím asset nepřebírá; jen říká, že asset je auditně významný důkaz.</dd>
+          </div>
+          <div class="field">
+            <dt><code>artifact_content_sha256</code></dt>
+            <dd>Snapshot hashe obsahu v okamžiku registrace evidence. Díky tomu evidence pinne přesné bajty i po migraci storage, přejmenování souboru nebo změně prezentačních metadat.</dd>
+          </div>
+          <div class="field">
+            <dt>Storage lock snapshot</dt>
+            <dd><code>storage_lock_scope</code>, <code>storage_lock_mode</code>, <code>storage_legal_hold</code>, <code>storage_retain_until</code>, <code>storage_lock_status</code>, <code>storage_lock_verified_at</code> a malý <code>storage_lock_evidence_json</code> zaznamenávají, zda provider skutečně potvrdil WORM/Object Lock. <code>application_only</code> znamená, že chrání jen naše API, ne storage provider.</dd>
           </div>
           <div class="field">
             <dt><code>source_kind</code> + source FK</dt>
@@ -681,12 +689,14 @@ erDiagram
     text ingestion_source "user|integration|import|system"
     text external_source_ref "nullable"
     text storage_provider
-    text storage_key UK
+    text storage_key UK "technical object key"
+    text storage_object_version_ref "nullable version/generation"
     text original_filename "nullable user/source filename"
     text display_filename "safe UI/download filename"
     text mime_type
     bigint byte_size
-    text sha256
+    text content_sha256 "hash of exact stored bytes"
+    timestamptz sealed_at "nullable immutable identity sealed"
     text processing_status
     timestamptz created_at
     timestamptz updated_at
@@ -708,6 +718,14 @@ erDiagram
     text subject_resource_id "ResourceRef nullable"
     text evidence_policy_key
     text retention_policy_key
+    text artifact_content_sha256 "snapshot of media hash"
+    text storage_lock_scope "none|object_version|object|bucket_prefix|bucket|container|application_only"
+    text storage_lock_mode "none|governance|compliance|bucket_lock|application_only"
+    boolean storage_legal_hold "provider legal hold flag"
+    timestamptz storage_retain_until "nullable provider retain-until"
+    text storage_lock_status "not_required|application_only|pending|verified|failed|expired"
+    timestamptz storage_lock_verified_at "nullable"
+    jsonb storage_lock_evidence_json "small provider metadata snapshot"
     timestamptz retain_until "nullable"
     timestamptz legal_hold_until "nullable"
     text disposition_status "active|expired|deleted|legal_hold"

@@ -45,12 +45,16 @@ The Core-owned mapping from a stable externally authenticated subject to an OntO
 _Avoid_: Credential store, API key table, session table, runtime credential reference, user profile
 
 **Evidence Artifact**:
-A durable file, export, generated document, import source, signed document, or compliance bundle retained as proof for audit, compliance, or later investigation. An Evidence Artifact is the content being retained, not the index entry that makes it discoverable.
+A durable file, export, generated document, import source, signed document, or compliance bundle retained as proof for audit, compliance, or later investigation. An Evidence Artifact is the content being retained, not the index entry that makes it discoverable. Its stable content identity is the hash of the exact stored bytes, not the display filename or surrounding metadata.
 _Avoid_: Raw payload, trace, log line, media attachment by default
 
 **Evidence Registry**:
-The Core vocabulary for durable audit and compliance evidence references. It records that an Evidence Artifact exists, what business subject or runtime event it substantiates, and which retention, classification, and legal-hold rules apply; it is not a financial ledger, payload archive, or observability trace store.
+The Core vocabulary for durable audit and compliance evidence references. It records that an Evidence Artifact exists, what business subject or runtime event it substantiates, which content hash was registered, whether provider-side storage immutability was verified, and which retention, classification, and legal-hold rules apply; it is not a financial ledger, payload archive, observability trace store, or replacement for storage-level WORM.
 _Avoid_: PG ledger, Postgres ledger, double-entry ledger, payload store, artifact storage
+
+**Storage-Level WORM / Object Lock**:
+Provider-enforced immutability for stored artifact bytes, usually through retention periods, legal holds, object versions/generations, bucket/prefix rules, or container policies. OntOS records the requested and verified lock state for evidence, but Postgres does not itself make object storage immutable. If a backend lacks WORM/Object Lock, the evidence can only be considered application-level immutable.
+_Avoid_: DB trigger as legal WORM, immutable URL, filename convention, ordinary no-delete permission
 
 **Party**:
 A real-world person or organization OntOS deals with. A Party may be a guest, tenant, supplier, accountant office, external management company, owned company, contact person, or commercial counterparty.

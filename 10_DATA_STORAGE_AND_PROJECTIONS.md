@@ -27,7 +27,11 @@ Object storage keys should be technical, collision-resistant identifiers such as
 - `original_filename`: the filename received from the browser, import, integration, or external system. It is provenance metadata and may be null.
 - `display_filename`: the sanitized filename OntOS uses for UI and download headers.
 
-Do not derive authorization, uniqueness, tenant ownership, or folder hierarchy from filenames. Filenames can collide, contain sensitive text, contain unsafe path characters, and change for presentation reasons. Storage identity is `storage_provider + storage_key`; human naming is metadata.
+Do not derive authorization, uniqueness, tenant ownership, or folder hierarchy from filenames. Filenames can collide, contain sensitive text, contain unsafe path characters, and change for presentation reasons. Storage identity is `storage_provider + storage_key` plus `storage_object_version_ref` when the provider exposes object versions/generations; human naming is metadata.
+
+`content_sha256` is the SHA-256 hash of the exact stored bytes. It is content identity, not metadata. It may be null only while upload/ingest is incomplete. After upload/ingest is complete and the media asset is sealed, `storage_key`, `storage_object_version_ref`, `byte_size`, and `content_sha256` must be present and immutable. Presentation metadata such as `display_filename`, processing state, detected metadata, previews, and links may still change without changing the content identity.
+
+WORM/Object Lock belongs to the storage provider, not to Postgres. For evidence that needs strong legal/compliance posture, the upload/evidence workflow should set or rely on provider-side retention/legal hold/bucket lock, read the provider metadata back, and record the result on `CORE_EVIDENCE_REFERENCES`. If the provider does not support storage-level immutability, OntOS can only mark the evidence as `application_only`: protected by OntOS APIs, audit, credentials, and DB constraints, but not by provider-enforced WORM.
 
 `CORE_MEDIA_ASSETS` needs both `created_at` and `updated_at` because media metadata can change after ingest: `display_filename`, processing state, detected MIME metadata, preview readiness, or external source references may be corrected without changing the underlying storage object.
 

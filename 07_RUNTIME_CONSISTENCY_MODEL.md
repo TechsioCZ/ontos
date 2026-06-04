@@ -139,13 +139,21 @@ The table should contain metadata only:
 - `evidence_reference_id uuid`: primary key.
 - `tenant_id uuid`: required tenant scope and partition/index key.
 - `legal_entity_id uuid nullable`: optional legal-entity scope. Null means tenant-wide, cross-entity, or not legally entity-specific.
-- `media_asset_id uuid`: required FK to `CORE_MEDIA_ASSETS`. The media asset row owns `storage_provider`, `storage_key`, filename metadata, `mime_type`, `byte_size`, and `sha256`.
+- `media_asset_id uuid`: required FK to `CORE_MEDIA_ASSETS`. The media asset row owns `storage_provider`, `storage_key`, optional `storage_object_version_ref`, filename metadata, `mime_type`, `byte_size`, and `content_sha256`.
 - `source_kind text`: discriminator with values such as `action`, `audit`, `data_access`, or `domain_event`.
 - `action_invocation_id uuid nullable`, `audit_event_id uuid nullable`, `data_access_event_id uuid nullable`, `domain_event_id uuid nullable`: physical FKs to possible Core source rows. Exactly one should be non-null and it must match `source_kind`; avoid a generic polymorphic `source_id` without a database FK.
 - `evidence_kind text`: business/compliance category, such as `export`, `generated_document`, `import_file`, `signed_document`, `compliance_bundle`, or `action_snapshot`.
 - `subject_module_key text nullable`, `subject_resource_type text nullable`, `subject_resource_id text nullable`: primary ResourceRef for finding evidence from a business object. Nullable because exports/reports may cover many resources or only tenant-level evidence.
 - `evidence_policy_key text`: policy that required or allowed this evidence to be retained.
 - `retention_policy_key text`: retention schedule that controls lifecycle/disposition.
+- `artifact_content_sha256 text`: snapshot of `CORE_MEDIA_ASSETS.content_sha256` at the moment the artifact becomes evidence. This pins the exact bytes even if the asset later receives display metadata changes or the storage object is migrated.
+- `storage_lock_scope text`: what the provider lock applies to, such as `none`, `object_version`, `object`, `bucket_prefix`, `bucket`, `container`, or `application_only`.
+- `storage_lock_mode text`: provider retention mode, such as `none`, `governance`, `compliance`, `bucket_lock`, or `application_only`. Legal hold is separate because providers often model it independently from time-based retention.
+- `storage_legal_hold boolean`: whether provider-side legal hold was observed for the artifact.
+- `storage_retain_until timestamptz nullable`: provider-side retain-until timestamp if known.
+- `storage_lock_status text`: current verification state, such as `not_required`, `application_only`, `pending`, `verified`, `failed`, or `expired`.
+- `storage_lock_verified_at timestamptz nullable`: when OntOS last verified the provider lock metadata.
+- `storage_lock_evidence_json jsonb`: small redacted provider metadata snapshot, such as S3 version id, retention mode, retain-until, legal-hold flag, matched bucket/prefix rule, or provider request id. It must not store the artifact bytes.
 - `retain_until timestamptz nullable`: earliest time the artifact may be disposed of. Null means governed only by policy/defaults.
 - `legal_hold_until timestamptz nullable`: hold override. Use PostgreSQL `infinity` if a hold has no known end date.
 - `disposition_status text`: lifecycle of the evidence reference, such as `active`, `expired`, `deleted`, or `legal_hold`.
@@ -158,13 +166,18 @@ The `text` columns above are not free-form text. In the first migrations, prefer
 
 Important constraints:
 
-- `media_asset_id` must point to an immutable storage object or immutable object version.
+- `artifact_content_sha256` must equal the referenced media asset `content_sha256` at evidence registration time.
+- Legal/compliance-grade evidence should require `storage_lock_status = verified` unless the evidence policy explicitly allows `application_only`.
+- `application_only` is not provider WORM. It means OntOS prevents mutation through its own API, but an administrator with direct storage access could still bypass it.
+- `media_asset_id` for legal/compliance-grade evidence must point to an immutable storage object, immutable object version, or a bucket/prefix/container rule that covers the object.
 - Exactly one source FK must be set.
 - `source_kind` must match the non-null source FK.
 - `subject_*` should be all null or all non-null.
 - `deleted_at` should be set only when `disposition_status = deleted`.
 - `legal_hold_until` should prevent physical deletion even if `retain_until` has passed.
 - Changes to retention, legal hold, disposition, or classification should be made through Actions and audited.
+
+The hash and storage lock solve different problems. `content_sha256` proves integrity of the stored bytes. WORM/Object Lock proves that the storage provider prevented overwrite or deletion for the configured retention/hold period. Strong legal evidence usually needs both, plus action/audit context and retention policy. Postgres records the verification metadata; it does not replace storage-level WORM.
 
 Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS` should record important reads, lists, searches, exports, and downloads: who accessed what, query/filter hash, result count, result hash or artifact reference, and timestamp. The default should not be “store every full response body forever”; high-volume and sensitive reads need sampling, redaction, retention, and explicit product/security reasons.
 
