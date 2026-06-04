@@ -38,6 +38,24 @@ Audit events are not workflow triggers. They are evidence records.
 
 `request_hash` is a SHA-256 hash of the canonical request envelope after normalization. It should include the action key, tenant/legal-entity context, target ResourceRef where present, schema version, and normalized request body. It is used for idempotency conflict detection, tamper evidence, and debugging without requiring raw payload storage in the main invocation row.
 
+The idempotency contract is end-to-end:
+
+- UI creates a stable idempotency key when one user intent starts, such as opening a create modal or initializing a form instance. Double-clicks, request retries, and browser POST resubmits for that same intent must reuse the same key.
+- Classic HTML forms should carry the key as a hidden input. Successful writes should prefer POST/Redirect/GET so refresh repeats a GET detail page rather than the write request.
+- REST, MCP, SDK, import, and integration clients must send an `Idempotency-Key` for non-idempotent write actions. If the key is missing, the backend should reject the request, for example with `428 Precondition Required` or a domain error such as `idempotency_key_required`.
+- SDKs and MCP adapters may generate a key automatically for one tool/action call, but retries of that same call must reuse it.
+- External integrations should prefer deterministic keys from their source system, such as `booking:reservation:123:create`, `bank-file:abc:row:42`, or `mcp-run:<tool-run-id>`.
+- Backend enforcement is authoritative. Disabled buttons are only UX. The runtime must use an atomic insert or equivalent lock around the unique idempotency scope.
+
+Duplicate handling:
+
+- Same key and same `request_hash` with `succeeded`: return the original result.
+- Same key and same `request_hash` with `running`: return `202 pending` or wait briefly and then return the outcome.
+- Same key and same `request_hash` with `failed`: return the original failure or apply an explicit retry policy.
+- Same key and different `request_hash`: return `409 idempotency_conflict`.
+
+Idempotency prevents duplicate execution of the same intent. It does not replace business uniqueness. Domain tables still need constraints for real-world duplicates, such as one invoice number per legal entity or one normalized channel name per workspace.
+
 Suggested `status` values:
 
 - `received`: invocation row exists, checks/execution not finished.

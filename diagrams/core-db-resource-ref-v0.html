@@ -246,6 +246,68 @@
         </dl>
       </section>
 
+      <section class="panel" aria-labelledby="idempotency-title">
+        <h2 id="idempotency-title">Idempotency Contract From UI/API To Backend</h2>
+        <pre class="mermaid">
+sequenceDiagram
+  participant UI as UI / API / MCP client
+  participant API as Action endpoint
+  participant Core as Core action runtime
+  participant DB as Postgres
+  participant Mod as Module command handler
+
+  UI->>UI: Create stable idempotency_key for one user intent
+  UI->>API: POST action + Idempotency-Key + payload
+  API->>Core: Normalize request and compute request_hash
+  Core->>DB: INSERT CORE_ACTION_INVOCATIONS with unique tenant/action/principal/key
+  alt Insert succeeds
+    Core->>DB: status = running
+    Core->>Mod: Execute command handler
+    Mod->>DB: Write canonical domain state
+    Core->>DB: Store payload evidence, audit, domain event, outbox
+    Core->>DB: status = succeeded
+    Core-->>UI: Return result and cache replay response reference
+  else Unique key exists with same request_hash
+    Core->>DB: Load original invocation
+    alt original succeeded
+      Core-->>UI: Return original result, mark replay if useful
+    else original running
+      Core-->>UI: 202 pending or short wait
+    else original failed
+      Core-->>UI: Return original failure or retry policy result
+    end
+  else Unique key exists with different request_hash
+    Core-->>UI: 409 idempotency_conflict
+  end
+        </pre>
+        <dl class="field-list">
+          <div class="field">
+            <dt>UI intent key</dt>
+            <dd>FE generuje key při vzniku intentu, například otevření create modalu nebo inicializaci form instance. Double-click, retry nebo POST refresh musí poslat stejný key.</dd>
+          </div>
+          <div class="field">
+            <dt>HTML form / refresh POST</dt>
+            <dd>Klasický form má key jako hidden input. Po úspěšném POSTu použít POST/Redirect/GET, aby refresh opakoval GET detail, ne write request.</dd>
+          </div>
+          <div class="field">
+            <dt>REST / MCP / integrations</dt>
+            <dd>U non-idempotent write actions je <code>Idempotency-Key</code> povinný. SDK nebo MCP adapter ho může generovat pro jeden tool call; retry musí použít stejný key.</dd>
+          </div>
+          <div class="field">
+            <dt>External deterministic keys</dt>
+            <dd>Integrace by měly používat deterministické klíče, např. <code>booking:reservation:123:create</code> nebo <code>bank-file:abc:row:42</code>.</dd>
+          </div>
+          <div class="field">
+            <dt>Backend is source of truth</dt>
+            <dd>Ochrana proti duplicitám stojí na atomickém insertu a unique constraintu, ne na disabled buttonu ve frontendu.</dd>
+          </div>
+          <div class="field">
+            <dt>Business uniqueness</dt>
+            <dd>Idempotency řeší stejný intent opakovaně. Věcné duplicity musí pořád hlídat doménové unikáty, např. normalized channel name nebo invoice number.</dd>
+          </div>
+        </dl>
+      </section>
+
       <section class="panel" aria-labelledby="core-title">
         <h2 id="core-title">Core Tables</h2>
         <pre class="mermaid wide">
