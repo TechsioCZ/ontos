@@ -224,12 +224,13 @@ erDiagram
     uuid media_link_id PK
     uuid tenant_id FK
     uuid media_asset_id FK
-    uuid linked_by_principal_id FK "nullable"
+    uuid linked_by_principal_id FK "effective actor, nullable for system/import"
+    uuid action_invocation_id FK "required for user/support"
     text link_source "user|integration|import|system"
     text target_module_key "ResourceRef part"
     text target_resource_type "ResourceRef part"
     text target_resource_id "ResourceRef part"
-    text link_kind "attachment|evidence|source|preview"
+    text link_kind "module-scoped constrained text"
     timestamptz created_at
     timestamptz deleted_at
   }
@@ -415,6 +416,7 @@ erDiagram
   CORE_DOMAIN_EVENTS ||--o{ CORE_EVIDENCE_REFERENCES : evidence_for_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_ASSETS : ingested_by_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_LINKS : linked_by_optional
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_MEDIA_LINKS : caused_by_user_support
   CORE_TENANTS ||--o{ CORE_SEARCH_INDEX_ENTRIES : indexes_optionally
   CORE_TENANTS ||--o{ CORE_WORKER_CHECKPOINTS : scopes_worker_cursors
 

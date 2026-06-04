@@ -43,7 +43,7 @@ Support/admin impersonation is also not a subject type. BetterAuth can create an
 
 `CORE_ACTION_INVOCATIONS`, `CORE_AUDIT_EVENTS`, and read/access logs should capture the resolved `principal_id`, optional `auth_binding_id`, `auth_method`, non-secret `auth_context_ref`, and optional `impersonated_by_principal_id`. This preserves the difference between the effective actor, the authentication path, and the original authenticated actor when support/admin impersonation is used.
 
-Derived history tables should not each copy impersonation columns. For example, tenant module state changes store `changed_by_principal_id` as the effective actor and join through `action_invocation_id` to recover the original support/admin actor when impersonation was used. User/support changes should therefore require an action invocation; system or migration changes may be explicit exceptions.
+Derived history/link tables should not each copy impersonation columns. For example, tenant module state changes store `changed_by_principal_id` and media links store `linked_by_principal_id` as the effective actor; both join through `action_invocation_id` to recover the original support/admin actor when impersonation was used. User/support changes should therefore require an action invocation; system, import, integration, or migration changes may be explicit exceptions.
 
 ## Tenant and legal-entity context
 

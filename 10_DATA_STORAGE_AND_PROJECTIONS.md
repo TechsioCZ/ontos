@@ -31,6 +31,10 @@ Do not derive authorization, uniqueness, tenant ownership, or folder hierarchy f
 
 `CORE_MEDIA_ASSETS` needs both `created_at` and `updated_at` because media metadata can change after ingest: `display_filename`, processing state, detected MIME metadata, preview readiness, or external source references may be corrected without changing the underlying storage object.
 
+`CORE_MEDIA_LINKS` connects a stored media asset to a target ResourceRef. `linked_by_principal_id` stores the effective actor that created the link. For support/admin impersonation, do not duplicate impersonation columns into the link row; user/support-created links should require `action_invocation_id`, and the joined action invocation provides `auth_method`, `auth_context_ref`, and optional `impersonated_by_principal_id`.
+
+`link_kind` is module-scoped constrained text, not a globally exhaustive enum and not arbitrary user text. The target module should define allowed values for the target resource type, such as `attachment`, `photo`, `contract_scan`, `invoice_pdf`, `source_file`, or `preview`. Do not use `link_kind = evidence` for compliance evidence; durable audit/compliance evidence belongs in `CORE_EVIDENCE_REFERENCES`.
+
 ## Search index
 
 The first search implementation may be Postgres-based. The architecture should still treat search documents as projections because later search may move to a dedicated engine. Search documents should include tenant, legal entity, module, resource type, display fields, searchable text, facets, and timestamps.
