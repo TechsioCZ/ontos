@@ -8,6 +8,21 @@ A user, API consumer, import, integration, or later agent invokes a registered A
 
 The Command Handler writes canonical state to Postgres in a transaction. When the action changes business state, the same transaction should record the relevant audit event, domain event, and outbox message. After commit, workers process outbox messages and update derived read models or external outputs.
 
+## Tenant module state changes
+
+`CORE_TENANT_MODULE_STATE_CHANGES` is a history table for tenant-level module activation/suspension/read-only state changes.
+
+`changed_by_principal_id` stores the effective actor. For ordinary admin changes, that is the admin principal. For support/admin impersonation, that is the impersonated principal because the action executes as that principal.
+
+Do not duplicate `impersonated_by_principal_id` into this history table. User/support-driven state changes must have `action_invocation_id`; the joined `CORE_ACTION_INVOCATIONS` row is the source of truth for `auth_method`, `auth_context_ref`, `auth_binding_id`, and optional `impersonated_by_principal_id`. This keeps impersonation evidence in one action/audit envelope instead of copying it into every derived history table.
+
+Suggested invariants:
+
+- `change_source in ('user', 'support')` requires `action_invocation_id` and `changed_by_principal_id`.
+- `change_source = 'support'` should point to an action invocation with `auth_method = 'support_impersonation'` or another explicit support auth method.
+- `change_source in ('system', 'migration')` may use a system/service principal or leave `changed_by_principal_id` null when the source is otherwise clear.
+- When `action_invocation_id` is present, `changed_by_principal_id` should match the action invocation's effective `principal_id`.
+
 ## Why actions before events
 
 A business action is intentional and authorized. A domain event is a record that something happened. If events become the primary mechanism for state changes, the architecture becomes difficult to reason about: subscriber order matters, side effects become hidden, and performance degrades through synchronous fan-out.

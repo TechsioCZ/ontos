@@ -60,8 +60,8 @@ erDiagram
     text module_key
     text previous_state "nullable for initial state"
     text new_state
-    uuid changed_by_principal_id FK "nullable for system"
-    uuid action_invocation_id FK "nullable"
+    uuid changed_by_principal_id FK "effective actor, nullable for system/migration"
+    uuid action_invocation_id FK "required for user/support"
     text change_source "user|support|system|migration"
     text reason
     timestamptz occurred_at
@@ -384,7 +384,7 @@ erDiagram
   CORE_TENANT_MODULE_STATE_CHANGES ||--o| CORE_TENANT_MODULE_STATES : last_change
   CORE_TENANTS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : records
   CORE_PRINCIPALS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : changed_by_optional
-  CORE_ACTION_INVOCATIONS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : caused_by_optional
+  CORE_ACTION_INVOCATIONS ||--o{ CORE_TENANT_MODULE_STATE_CHANGES : caused_by_user_support
   CORE_TENANTS ||--o{ CORE_ACTION_INVOCATIONS : records
   CORE_PRINCIPALS ||--o{ CORE_ACTION_INVOCATIONS : invokes
   CORE_PRINCIPAL_AUTH_BINDINGS ||--o{ CORE_ACTION_INVOCATIONS : authenticated_via
