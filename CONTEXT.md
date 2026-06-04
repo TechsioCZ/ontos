@@ -44,6 +44,14 @@ _Avoid_: User, employee, contact
 The Core-owned mapping from a stable externally authenticated subject to an OntOS Principal. BetterAuth owns users, sessions, API keys, key verification, and impersonation sessions; Core only stores the non-secret binding needed to resolve the effective Principal for actions, audit, and SpiceDB subjects. System jobs use system/service Principals without pretending to be external auth bindings.
 _Avoid_: Credential store, API key table, session table, runtime credential reference, user profile
 
+**Evidence Artifact**:
+A durable file, export, generated document, import source, signed document, or compliance bundle retained as proof for audit, compliance, or later investigation. An Evidence Artifact is the content being retained, not the index entry that makes it discoverable.
+_Avoid_: Raw payload, trace, log line, media attachment by default
+
+**Evidence Registry**:
+The Core vocabulary for durable audit and compliance evidence references. It records that an Evidence Artifact exists, what business subject or runtime event it substantiates, and which retention, classification, and legal-hold rules apply; it is not a financial ledger, payload archive, or observability trace store.
+_Avoid_: PG ledger, Postgres ledger, double-entry ledger, payload store, artifact storage
+
 **Party**:
 A real-world person or organization OntOS deals with. A Party may be a guest, tenant, supplier, accountant office, external management company, owned company, contact person, or commercial counterparty.
 _Avoid_: Account, user, legal entity
@@ -149,3 +157,6 @@ Domain expert: "No, unless the customer has that workflow. V0 should support ext
 
 Developer: "A property changed managers in July. Should old tickets still show the old manager?"
 Domain expert: "Yes. Ownership and management assignments are temporal from day one, with simple validity intervals and audit metadata."
+
+Developer: "Is the Evidence Registry a PostgreSQL ledger or a double-entry accounting ledger?"
+Domain expert: "No. Evidence Registry is the vocabulary for audit and compliance evidence references. Financial ledgers belong to billing/accounting; observability traces belong to observability tooling; raw artifacts belong to storage."

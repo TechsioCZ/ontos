@@ -107,7 +107,7 @@ If compliance needs exact action request, response, export, signed-document, imp
 
 ## Evidence references
 
-`CORE_EVIDENCE_REFERENCES` is the durable artifact ledger. It answers: which stored artifact is audit/compliance evidence, which core event produced or justified it, which primary business subject it belongs to, which evidence and retention policy applies, and whether it is under legal hold or eligible for deletion.
+`CORE_EVIDENCE_REFERENCES` is the database table for the Evidence Registry. It answers: which stored artifact is audit/compliance evidence, which core event produced or justified it, which primary business subject it belongs to, which evidence and retention policy applies, and whether it is under legal hold or eligible for deletion.
 
 The table should contain metadata only:
 
