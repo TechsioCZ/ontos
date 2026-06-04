@@ -139,7 +139,7 @@ The table should contain metadata only:
 - `evidence_reference_id uuid`: primary key.
 - `tenant_id uuid`: required tenant scope and partition/index key.
 - `legal_entity_id uuid nullable`: optional legal-entity scope. Null means tenant-wide, cross-entity, or not legally entity-specific.
-- `media_asset_id uuid`: required FK to `CORE_MEDIA_ASSETS`. The media asset row owns `storage_provider`, `storage_key`, `mime_type`, `byte_size`, and `sha256`.
+- `media_asset_id uuid`: required FK to `CORE_MEDIA_ASSETS`. The media asset row owns `storage_provider`, `storage_key`, filename metadata, `mime_type`, `byte_size`, and `sha256`.
 - `source_kind text`: discriminator with values such as `action`, `audit`, `data_access`, or `domain_event`.
 - `action_invocation_id uuid nullable`, `audit_event_id uuid nullable`, `data_access_event_id uuid nullable`, `domain_event_id uuid nullable`: physical FKs to possible Core source rows. Exactly one should be non-null and it must match `source_kind`; avoid a generic polymorphic `source_id` without a database FK.
 - `evidence_kind text`: business/compliance category, such as `export`, `generated_document`, `import_file`, `signed_document`, `compliance_bundle`, or `action_snapshot`.

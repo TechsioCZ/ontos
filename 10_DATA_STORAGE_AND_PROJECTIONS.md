@@ -22,6 +22,13 @@ SpiceDB is the authorization store. It stores relationship tuples and permission
 
 Object storage holds binary file content. Media metadata, links, processing state, relevant permission context, expiration, versions, and audit live in Postgres. A file blob without a media asset row is not an OntOS-managed asset.
 
+Object storage keys should be technical, collision-resistant identifiers such as UUID/ULID-based keys, not user filenames. User/source filenames belong in Postgres media metadata:
+
+- `original_filename`: the filename received from the browser, import, integration, or external system. It is provenance metadata and may be null.
+- `display_filename`: the sanitized filename OntOS uses for UI and download headers.
+
+Do not derive authorization, uniqueness, tenant ownership, or folder hierarchy from filenames. Filenames can collide, contain sensitive text, contain unsafe path characters, and change for presentation reasons. Storage identity is `storage_provider + storage_key`; human naming is metadata.
+
 ## Search index
 
 The first search implementation may be Postgres-based. The architecture should still treat search documents as projections because later search may move to a dedicated engine. Search documents should include tenant, legal entity, module, resource type, display fields, searchable text, facets, and timestamps.
