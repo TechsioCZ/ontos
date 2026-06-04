@@ -6,27 +6,28 @@ The most important correction in this version is the MicroVertical model. An Ult
 
 ## Recommended reading order
 
-1. `17_DELIVERY_MANAGER_PRODUCT_LEAD_BRIEF.md` — short stakeholder brief explaining what happened this week and what Product/Delivery should help with.
-2. `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md` — current operational handoff for June, including V0/V1 terminology correction, Core/Shell decision, PoC plan, and next-week developer tasks.
-3. `15_PRE_DEVELOPMENT_VALIDATION_REPORT.md` — consolidated readiness audit and blocker list.
-4. `00_AGENT_BRIEF_FOR_GRILL_WITH_DOCS.md` — original grilling/coding-agent brief.
-5. `01_CONTEXT_AND_CONSTRAINTS.md` — why this exists, what must be delivered, what is out of scope.
-6. `02_GLOSSARY.md` — precise vocabulary; this should be grilled aggressively.
-7. `03_ARCHITECTURE_OVERVIEW.md` — coherent high-level architecture.
-8. `04_C4_MODEL.md` — C4 context/container/component views adapted to MicroVertical reality.
-9. `05_MICROVERTICALS.md` — exact MicroVertical semantics, lifecycle, boundaries, and runtime behavior.
-10. `06_CORE_KERNEL.md` — what belongs in Core and what must stay out.
-11. `07_RUNTIME_CONSISTENCY_MODEL.md` — actions, commands, audit, events, outbox, workers.
-12. `08_CANONICAL_ENTITY_MODEL.md` — explicit domain tables, ResourceRef, module ownership, Neo4j projection.
-13. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, OntOS Policy Layer.
-14. `10_DATA_STORAGE_AND_PROJECTIONS.md` — Postgres, Neo4j, search, object storage, projection lag.
-15. `11_V0_SCOPE_AND_MODULES.md` — older V0 wording for functional scope; read with the V0/V1 correction in `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md`.
-16. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap; read with the V0/V1 correction.
-17. `13_GRILL_QUESTIONS.md` — questions the agent should use to challenge the architecture.
-18. `14_ONTOS_MODULE_MANIFEST.md` — first Effect Schema-defined contract shape for OntOS Module Manifests.
-19. `adr/` — decision records. These are proposed decisions, not sacred law.
-20. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
-21. `appendix/` — source grounding and evidence notes.
+1. `18_BUSINESS_SALES_VALUE_BRIEF.md` — business/sales value brief explaining customer pain, benefits, positioning, and proof points.
+2. `17_DELIVERY_MANAGER_PRODUCT_LEAD_BRIEF.md` — short stakeholder brief explaining what happened this week and what Product/Delivery should help with.
+3. `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md` — current operational handoff for June, including V0/V1 terminology correction, Core/Shell decision, PoC plan, and next-week developer tasks.
+4. `15_PRE_DEVELOPMENT_VALIDATION_REPORT.md` — consolidated readiness audit and blocker list.
+5. `00_AGENT_BRIEF_FOR_GRILL_WITH_DOCS.md` — original grilling/coding-agent brief.
+6. `01_CONTEXT_AND_CONSTRAINTS.md` — why this exists, what must be delivered, what is out of scope.
+7. `02_GLOSSARY.md` — precise vocabulary; this should be grilled aggressively.
+8. `03_ARCHITECTURE_OVERVIEW.md` — coherent high-level architecture.
+9. `04_C4_MODEL.md` — C4 context/container/component views adapted to MicroVertical reality.
+10. `05_MICROVERTICALS.md` — exact MicroVertical semantics, lifecycle, boundaries, and runtime behavior.
+11. `06_CORE_KERNEL.md` — what belongs in Core and what must stay out.
+12. `07_RUNTIME_CONSISTENCY_MODEL.md` — actions, commands, audit, events, outbox, workers.
+13. `08_CANONICAL_ENTITY_MODEL.md` — explicit domain tables, ResourceRef, module ownership, Neo4j projection.
+14. `09_AUTHN_AUTHZ_MODEL.md` — BetterAuth, SpiceDB, OntOS Policy Layer.
+15. `10_DATA_STORAGE_AND_PROJECTIONS.md` — Postgres, Neo4j, search, object storage, projection lag.
+16. `11_V0_SCOPE_AND_MODULES.md` — older V0 wording for functional scope; read with the V0/V1 correction in `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md`.
+17. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap; read with the V0/V1 correction.
+18. `13_GRILL_QUESTIONS.md` — questions the agent should use to challenge the architecture.
+19. `14_ONTOS_MODULE_MANIFEST.md` — first Effect Schema-defined contract shape for OntOS Module Manifests.
+20. `adr/` — decision records. These are proposed decisions, not sacred law.
+21. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
+22. `appendix/` — source grounding and evidence notes.
 
 ## Core thesis
 
