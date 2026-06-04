@@ -65,9 +65,26 @@ Suggested `status` values:
 - `failed`: execution failed and the canonical transaction did not commit or committed a modeled failure state.
 - `replayed`: duplicate idempotent request returned the earlier outcome.
 
-Payload evidence belongs in `CORE_ACTION_PAYLOAD_RECORDS`, not directly in `CORE_ACTION_INVOCATIONS`. The payload table should support `request`, `response`, and `error` records with capture modes such as `hash_only`, `redacted_json`, `object_ref`, or `omitted`. Raw sensitive payloads should not be stored by default. Large payloads or acceptance evidence can be encrypted in object storage and referenced by storage key with retention rules.
+Payload evidence belongs in `CORE_ACTION_PAYLOAD_RECORDS`, not directly in `CORE_ACTION_INVOCATIONS`. The payload table should support `request`, `response`, and `error` records with `evidence_capture_mode` values such as `metadata_only`, `hash_only`, `redacted_payload`, or `stored_artifact`. Raw sensitive payloads should not be stored by default. Large payloads or acceptance evidence can be encrypted in object storage and referenced by storage key with retention rules.
 
 Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS` should record important reads, lists, searches, exports, and downloads: who accessed what, query/filter hash, result count, result hash or artifact reference, and timestamp. The default should not be “store every full response body forever”; high-volume and sensitive reads need sampling, redaction, retention, and explicit product/security reasons.
+
+`evidence_capture_mode` is not supplied by frontend code, API clients, or ad hoc handler logic. It is set by the Core runtime from an access evidence policy declared on the public endpoint/action descriptor.
+
+Evidence capture modes:
+
+- `metadata_only`: record actor, time, endpoint/action, target/query metadata, and context, but no result hash or payload. Use for ordinary detail reads or sensitive reads where duplicated evidence would create more risk than value.
+- `hash_only`: record a canonical query hash and/or result hash without storing the result content. Use when tamper evidence matters but content storage is unnecessary or risky.
+- `redacted_payload`: store a redacted snapshot or summary in `evidence_payload_json`. The descriptor must name a `redaction_profile`.
+- `stored_artifact`: store the exact output outside the database, encrypted, and reference it through `artifact_storage_key` or payload storage key. The descriptor must define artifact kind, retention, and encryption requirements.
+
+System enforcement should be layered:
+
+- Every public read/list/search/export/download endpoint must declare an access evidence policy. Missing policy should fail build or contract tests.
+- The policy should be a typed discriminated union so `stored_artifact` cannot be declared without retention/encryption, and `redacted_payload` cannot be declared without a redaction profile.
+- Public reads and exports should run through a runtime wrapper such as `withDataAccessEvidence(descriptor, handler)`. The wrapper writes `CORE_DATA_ACCESS_EVENTS`; handlers should not write arbitrary capture modes directly.
+- Database constraints should enforce mode-specific invariants, such as `stored_artifact` requiring `artifact_storage_key`, `redacted_payload` requiring `redaction_profile` and redacted payload, and non-artifact modes leaving `artifact_storage_key` null.
+- Changes to evidence policies for sensitive endpoints should require product/security review, because switching from `stored_artifact` to `metadata_only` changes business evidence and security posture.
 
 ## Outbox messages
 

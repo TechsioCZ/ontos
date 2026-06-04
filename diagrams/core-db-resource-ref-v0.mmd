@@ -92,10 +92,11 @@ erDiagram
     uuid tenant_id FK
     uuid action_invocation_id FK
     text payload_kind "request|response|error"
-    text capture_mode "hash_only|redacted_json|object_ref|omitted"
+    text evidence_policy_key
+    text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
     text schema_key
     text payload_hash "sha256 canonical payload"
-    jsonb payload_json "nullable redacted"
+    jsonb evidence_payload_json "nullable redacted"
     text payload_storage_key "nullable encrypted object ref"
     text redaction_profile
     bigint byte_size
@@ -141,7 +142,10 @@ erDiagram
     text query_hash "sha256 canonical query/filter"
     integer result_count
     text result_hash "hash of result refs/response"
-    text capture_mode "hash_only|redacted_json|artifact_ref|omitted"
+    text evidence_policy_key
+    text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
+    jsonb evidence_payload_json "nullable redacted"
+    text redaction_profile
     text artifact_storage_key "nullable encrypted object ref"
     timestamptz occurred_at
   }

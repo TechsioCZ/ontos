@@ -237,11 +237,41 @@
           </div>
           <div class="field">
             <dt><code>CORE_ACTION_PAYLOAD_RECORDS</code></dt>
-            <dd>Oddělené request/response/error payload záznamy. Defaultně hash nebo redacted JSON; raw/velké payloady jen šifrovaně přes object ref a s retencí.</dd>
+            <dd>Oddělené request/response/error payload záznamy. Evidence mode určuje runtime podle action descriptoru; raw/velké payloady jen šifrovaně přes storage key a s retencí.</dd>
           </div>
           <div class="field">
             <dt><code>CORE_DATA_ACCESS_EVENTS</code></dt>
-            <dd>Evidence read/list/search/export/download: kdo se díval, query hash, počet výsledků, hash výsledků nebo artifact ref. Neznamená ukládat každý response body navždy.</dd>
+            <dd>Evidence read/list/search/export/download: kdo se díval, query hash, počet výsledků, hash výsledků nebo stored artifact. Neznamená ukládat každý response body navždy.</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel" aria-labelledby="evidence-policy-title">
+        <h2 id="evidence-policy-title">Data Access Evidence Policy</h2>
+        <dl class="field-list">
+          <div class="field">
+            <dt>Who sets <code>evidence_capture_mode</code></dt>
+            <dd>Nenastavuje ho FE, API klient ani handler ad hoc. Nastavuje ho Core runtime podle deklarovaného endpoint/action descriptoru.</dd>
+          </div>
+          <div class="field">
+            <dt><code>metadata_only</code></dt>
+            <dd>Ukládá se fakt přístupu: actor, čas, target/query metadata. Výsledek ani hash výsledku se záměrně neukládá.</dd>
+          </div>
+          <div class="field">
+            <dt><code>hash_only</code></dt>
+            <dd>Ukládá se hash dotazu nebo výsledku. Dává tamper evidence bez ukládání citlivého obsahu.</dd>
+          </div>
+          <div class="field">
+            <dt><code>redacted_payload</code></dt>
+            <dd>Ukládá se očištěný snapshot/summary do <code>evidence_payload_json</code>; musí mít <code>redaction_profile</code>.</dd>
+          </div>
+          <div class="field">
+            <dt><code>stored_artifact</code></dt>
+            <dd>Přesný výstup je uložený šifrovaně mimo DB a tabulka drží <code>artifact_storage_key</code>. Typicky exporty, PDF, CSV, účetní balíčky.</dd>
+          </div>
+          <div class="field">
+            <dt>System enforcement</dt>
+            <dd>Build/test vyžaduje evidence policy pro public read/list/search/export/download. Runtime wrapper ji aplikuje a DB constraint hlídá povinná pole pro daný mode.</dd>
           </div>
         </dl>
       </section>
@@ -405,10 +435,11 @@ erDiagram
     uuid tenant_id FK
     uuid action_invocation_id FK
     text payload_kind "request|response|error"
-    text capture_mode "hash_only|redacted_json|object_ref|omitted"
+    text evidence_policy_key
+    text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
     text schema_key
     text payload_hash "sha256 canonical payload"
-    jsonb payload_json "nullable redacted"
+    jsonb evidence_payload_json "nullable redacted"
     text payload_storage_key "nullable encrypted object ref"
     text redaction_profile
     bigint byte_size
@@ -454,7 +485,10 @@ erDiagram
     text query_hash "sha256 canonical query/filter"
     integer result_count
     text result_hash "hash of result refs/response"
-    text capture_mode "hash_only|redacted_json|artifact_ref|omitted"
+    text evidence_policy_key
+    text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
+    jsonb evidence_payload_json "nullable redacted"
+    text redaction_profile
     text artifact_storage_key "nullable encrypted object ref"
     timestamptz occurred_at
   }
