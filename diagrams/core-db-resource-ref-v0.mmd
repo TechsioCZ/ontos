@@ -76,6 +76,8 @@ erDiagram
     uuid impersonated_by_principal_id FK "nullable original actor"
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
+    text trace_id "nullable OpenTelemetry trace id"
+    text correlation_id "nullable app/request correlation id"
     text action_key "module.action"
     text idempotency_key "nullable client retry key"
     text target_module_key "ResourceRef part"
@@ -85,22 +87,6 @@ erDiagram
     text request_hash "sha256 canonical request envelope"
     timestamptz started_at
     timestamptz completed_at
-  }
-
-  CORE_ACTION_PAYLOAD_RECORDS {
-    uuid action_payload_record_id PK
-    uuid tenant_id FK
-    uuid action_invocation_id FK
-    text payload_kind "request|response|error"
-    text evidence_policy_key
-    text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
-    text schema_key
-    text payload_hash "sha256 canonical payload"
-    jsonb evidence_payload_json "nullable redacted"
-    text payload_storage_key "nullable encrypted object ref"
-    text redaction_profile
-    bigint byte_size
-    timestamptz created_at
   }
 
   CORE_AUDIT_EVENTS {
@@ -376,8 +362,6 @@ erDiagram
   CORE_TENANTS ||--o{ CORE_ACTION_INVOCATIONS : records
   CORE_PRINCIPALS ||--o{ CORE_ACTION_INVOCATIONS : invokes
   CORE_PRINCIPAL_AUTH_BINDINGS ||--o{ CORE_ACTION_INVOCATIONS : authenticated_via
-  CORE_TENANTS ||--o{ CORE_ACTION_PAYLOAD_RECORDS : stores
-  CORE_ACTION_INVOCATIONS ||--o{ CORE_ACTION_PAYLOAD_RECORDS : captures_io
   CORE_ACTION_INVOCATIONS ||--o{ CORE_AUDIT_EVENTS : correlates
   CORE_ACTION_INVOCATIONS ||--o{ CORE_DOMAIN_EVENTS : produces
   CORE_TENANTS ||--o{ CORE_AUDIT_EVENTS : records

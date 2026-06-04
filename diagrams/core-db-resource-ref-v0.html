@@ -224,6 +224,10 @@
             <dd>Netajný runtime odkaz pro dohledání kontextu, např. session id, BetterAuth API key id, support session id nebo worker run id. Nikdy raw token/API key.</dd>
           </div>
           <div class="field">
+            <dt><code>trace_id</code> / <code>correlation_id</code></dt>
+            <dd>Odkaz na Effect/OpenTelemetry stopu a aplikační korelaci napříč FE, API, DB a workery. DB zůstává auditní zdroj pravdy; tracing řeší technickou observability stopu.</dd>
+          </div>
+          <div class="field">
             <dt><code>idempotency_key</code></dt>
             <dd>Volitelný retry klíč od klienta/integrace. Stejný klíč + stejný request vrací původní výsledek; stejný klíč + jiný request je konflikt.</dd>
           </div>
@@ -236,8 +240,8 @@
             <dd>SHA-256 kanonické request obálky: action, tenant/legal entity, target ResourceRef, schema verze a normalizované body. Slouží pro idempotency a tamper evidence.</dd>
           </div>
           <div class="field">
-            <dt><code>CORE_ACTION_PAYLOAD_RECORDS</code></dt>
-            <dd>Oddělené request/response/error payload záznamy. Evidence mode určuje runtime podle action descriptoru; raw/velké payloady jen šifrovaně přes storage key a s retencí.</dd>
+            <dt>Action payloads</dt>
+            <dd>Baseline Core DB neukládá generické request/response payloady akcí. Přesné nebo velké důkazy patří mimo DB do storage/archive jen podle explicitní evidence policy; v DB zůstane auditní kostra a případný odkaz.</dd>
           </div>
           <div class="field">
             <dt><code>CORE_DATA_ACCESS_EVENTS</code></dt>
@@ -368,9 +372,9 @@ sequenceDiagram
     Core->>DB: status = running
     Core->>Mod: Execute command handler
     Mod->>DB: Write canonical domain state
-    Core->>DB: Store payload evidence, audit, domain event, outbox
+    Core->>DB: Store audit, domain event, outbox, trace correlation
     Core->>DB: status = succeeded
-    Core-->>UI: Return result and cache replay response reference
+    Core-->>UI: Return result or stable resource reference
   else Unique key exists with same request_hash
     Core->>DB: Load original invocation
     alt original succeeded
@@ -493,6 +497,8 @@ erDiagram
     uuid impersonated_by_principal_id FK "nullable original actor"
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
+    text trace_id "nullable OpenTelemetry trace id"
+    text correlation_id "nullable app/request correlation id"
     text action_key
     text idempotency_key "nullable client retry key"
     text target_module_key "ResourceRef"
@@ -502,22 +508,6 @@ erDiagram
     text request_hash "sha256 canonical request envelope"
     timestamptz started_at
     timestamptz completed_at
-  }
-
-  CORE_ACTION_PAYLOAD_RECORDS {
-    uuid action_payload_record_id PK
-    uuid tenant_id FK
-    uuid action_invocation_id FK
-    text payload_kind "request|response|error"
-    text evidence_policy_key
-    text evidence_capture_mode "metadata_only|hash_only|redacted_payload|stored_artifact"
-    text schema_key
-    text payload_hash "sha256 canonical payload"
-    jsonb evidence_payload_json "nullable redacted"
-    text payload_storage_key "nullable encrypted object ref"
-    text redaction_profile
-    bigint byte_size
-    timestamptz created_at
   }
 
   CORE_AUDIT_EVENTS {
@@ -670,8 +660,6 @@ erDiagram
   CORE_TENANTS ||--o{ CORE_ACTION_INVOCATIONS : records
   CORE_PRINCIPALS ||--o{ CORE_ACTION_INVOCATIONS : invokes
   CORE_PRINCIPAL_AUTH_BINDINGS ||--o{ CORE_ACTION_INVOCATIONS : authenticated_via
-  CORE_TENANTS ||--o{ CORE_ACTION_PAYLOAD_RECORDS : stores
-  CORE_ACTION_INVOCATIONS ||--o{ CORE_ACTION_PAYLOAD_RECORDS : captures_io
   CORE_ACTION_INVOCATIONS ||--o{ CORE_AUDIT_EVENTS : correlates
   CORE_ACTION_INVOCATIONS ||--o{ CORE_DOMAIN_EVENTS : produces
   CORE_TENANTS ||--o{ CORE_AUDIT_EVENTS : records
@@ -942,7 +930,7 @@ flowchart LR
   moduleSetup --> modulePolicy["Owning module policy check"]
   modulePolicy --> command["Module command handler"]
   command --> moduleTables["Module writes canonical tables with local FKs"]
-  command --> payloads["Core action_payload_records\nrequest / response / error"]
+  command --> trace["Effect/OpenTelemetry trace\ntrace_id / correlation_id"]
   command --> audit["Core audit_events target ResourceRef"]
   command --> events["Core domain_events subject ResourceRef"]
   events --> outbox["Core outbox_messages"]

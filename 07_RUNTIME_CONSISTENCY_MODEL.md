@@ -52,11 +52,11 @@ Default `standard` checkpoint flow:
 
 `outcome_code` is the stable machine-readable reason, such as `action_received`, `principal_resolved`, `spicedb_permission_allowed`, `spicedb_permission_denied`, `invoice_already_exported`, `validation_passed`, `invalid_payload`, `invoice_issued`, or `numbering_series_exhausted`.
 
-`evidence_json` contains small redacted supporting facts only. It should not duplicate `outcome`, `outcome_stage`, or `outcome_code`; those are the single source of truth for the result. It should not contain raw request payloads, raw response bodies, tokens, secrets, or full business object snapshots. Request/response evidence belongs in `CORE_ACTION_PAYLOAD_RECORDS`; read/export/download evidence belongs in `CORE_DATA_ACCESS_EVENTS`.
+`evidence_json` contains small redacted supporting facts only. It should not duplicate `outcome`, `outcome_stage`, or `outcome_code`; those are the single source of truth for the result. It should not contain raw request payloads, raw response bodies, tokens, secrets, or full business object snapshots. Exact action request/response evidence belongs outside the baseline Core DB and should be referenced only by explicit evidence policy; read/export/download evidence belongs in `CORE_DATA_ACCESS_EVENTS`.
 
 Do not add separate `authz_decision` or `policy_decision` columns. The normalized model is `outcome + outcome_stage + outcome_code + evidence_json`.
 
-## Action invocations and payload evidence
+## Action invocations and trace correlation
 
 `CORE_ACTION_INVOCATIONS` is the lifecycle envelope for a write-side Action attempt. It should answer: who invoked which action, in which tenant/legal-entity context, against which target, through which authentication path, with what idempotency key, and how execution ended.
 
@@ -64,9 +64,15 @@ Do not add separate `authz_decision` or `policy_decision` columns. The normalize
 
 `auth_context_ref` is an optional non-secret runtime reference for investigation, such as a BetterAuth session id, BetterAuth API key id, support impersonation session id, or worker run id. It must not contain raw API keys, session tokens, passwords, or secrets.
 
+`trace_id` stores the OpenTelemetry trace id when the action runs inside an instrumented Effect/OpenTelemetry context. It is a join key into the observability backend, not durable business evidence.
+
+`correlation_id` stores the application/request correlation id used across frontend, API, workers, logs, and support tooling. It may equal an inbound request id, generated UI intent id, import run id, or integration delivery id. It is useful when one user-visible operation spans multiple traces or background workers.
+
 `idempotency_key` is an optional client-provided retry key. For non-idempotent writes, the runtime should enforce uniqueness for a scope such as `tenant_id + action_key + principal_id + idempotency_key`. If the same key is submitted again with the same request hash, the runtime can return the original result or mark the duplicate as `replayed`. If the same key is submitted with a different request hash, it should fail as an idempotency conflict.
 
 `request_hash` is a SHA-256 hash of the canonical request envelope after normalization. It should include the action key, tenant/legal-entity context, target ResourceRef where present, schema version, and normalized request body. It is used for idempotency conflict detection, tamper evidence, and debugging without requiring raw payload storage in the main invocation row.
+
+Core DB is not a generic payload store or observability backend. Postgres stores the action/audit spine and durable evidence references. Effect/OpenTelemetry stores technical request traces. Object storage/archive stores large or exact artifacts only when an explicit evidence policy requires them. The baseline Core schema must not store generic action request/response payloads.
 
 The idempotency contract is end-to-end:
 
@@ -86,6 +92,8 @@ Duplicate handling:
 
 Idempotency prevents duplicate execution of the same intent. It does not replace business uniqueness. Domain tables still need constraints for real-world duplicates, such as one invoice number per legal entity or one normalized channel name per workspace.
 
+Idempotency replay should normally return a stable resource reference or reconstruct the response from canonical state. If exact response replay is a legal/product requirement for a specific action, that is an explicit evidence policy exception and must use durable artifact/reference storage rather than generic payload rows in Postgres.
+
 Suggested `status` values:
 
 - `received`: invocation row exists, checks/execution not finished.
@@ -95,7 +103,7 @@ Suggested `status` values:
 - `failed`: execution failed and the canonical transaction did not commit or committed a modeled failure state.
 - `replayed`: duplicate idempotent request returned the earlier outcome.
 
-Payload evidence belongs in `CORE_ACTION_PAYLOAD_RECORDS`, not directly in `CORE_ACTION_INVOCATIONS`. The payload table should support `request`, `response`, and `error` records with `evidence_capture_mode` values such as `metadata_only`, `hash_only`, `redacted_payload`, or `stored_artifact`. Raw sensitive payloads should not be stored by default. Large payloads or acceptance evidence can be encrypted in object storage and referenced by storage key with retention rules.
+If later compliance needs exact action request, response, or acceptance evidence, add an optional `CORE_ACTION_EVIDENCE_REFERENCES` capability deliberately. It should store metadata such as `action_invocation_id`, `evidence_kind`, `evidence_policy_key`, `schema_key`, payload/artifact hash, storage key, byte size, retention metadata, and timestamps. It should not store raw request/response bodies in Postgres by default.
 
 Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS` should record important reads, lists, searches, exports, and downloads: who accessed what, query/filter hash, result count, result hash or artifact reference, and timestamp. The default should not be “store every full response body forever”; high-volume and sensitive reads need sampling, redaction, retention, and explicit product/security reasons.
 
@@ -106,7 +114,7 @@ Evidence capture modes:
 - `metadata_only`: record actor, time, endpoint/action, target/query metadata, and context, but no result hash or payload. Use for ordinary detail reads or sensitive reads where duplicated evidence would create more risk than value.
 - `hash_only`: record a canonical query hash and/or result fingerprint without storing the result content. Use when tamper evidence matters but content storage is unnecessary or risky. A fingerprint hash is one-way evidence; it cannot reconstruct what the user saw without a matching manifest, redacted payload, or stored artifact.
 - `redacted_payload`: store a redacted snapshot or summary in `evidence_payload_json`. The descriptor must name a `redaction_profile`; that column is nullable for every other mode.
-- `stored_artifact`: store the exact output outside the database, encrypted, and reference it through `artifact_storage_key` or payload storage key. The descriptor must define artifact kind, retention, and encryption requirements.
+- `stored_artifact`: store the exact output outside the database, encrypted, and reference it through `artifact_storage_key`. The descriptor must define artifact kind, retention, and encryption requirements.
 
 System enforcement should be layered:
 
