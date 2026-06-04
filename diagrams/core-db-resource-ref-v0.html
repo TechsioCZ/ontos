@@ -333,6 +333,10 @@
             <dt><code>data_classification</code></dt>
             <dd>Klasifikace obsahu assetu pro řízení přístupu, exportů a retence: typicky <code>internal</code>, <code>confidential</code>, <code>restricted</code>.</dd>
           </div>
+          <div class="field">
+            <dt>No artifact redaction profile in V0</dt>
+            <dd>Redigované artefakty zatím nemodelujeme jako baseline evidence flow. <code>redaction_profile</code> zůstává jen u <code>CORE_DATA_ACCESS_EVENTS</code> pro režim <code>redacted_payload</code>.</dd>
+          </div>
         </dl>
       </section>
 
@@ -731,7 +735,6 @@ erDiagram
     text disposition_status "active|expired|deleted|legal_hold"
     text data_classification "internal|confidential|restricted"
     text schema_key "nullable artifact/manifest schema"
-    text redaction_profile "nullable"
     timestamptz created_at
     timestamptz updated_at
     timestamptz deleted_at "nullable tombstone"

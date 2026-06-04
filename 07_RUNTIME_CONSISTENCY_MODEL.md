@@ -159,7 +159,6 @@ The table should contain metadata only:
 - `disposition_status text`: lifecycle of the evidence reference, such as `active`, `expired`, `deleted`, or `legal_hold`.
 - `data_classification text`: classification used by access control, export control, and retention, such as `internal`, `confidential`, or `restricted`.
 - `schema_key text nullable`: schema/manifest key for structured artifacts or bundles.
-- `redaction_profile text nullable`: profile used if the artifact is intentionally redacted. Null for exact artifacts.
 - `created_at timestamptz`, `updated_at timestamptz`, `deleted_at timestamptz nullable`: creation, mutable lifecycle metadata, and deletion tombstone.
 
 The `text` columns above are not free-form text. In the first migrations, prefer `text` plus `CHECK` constraints and typed application schemas over PostgreSQL enums, because evidence kinds, classifications, and disposition states will likely evolve during early enterprise/compliance work.
@@ -178,6 +177,8 @@ Important constraints:
 - Changes to retention, legal hold, disposition, or classification should be made through Actions and audited.
 
 The hash and storage lock solve different problems. `content_sha256` proves integrity of the stored bytes. WORM/Object Lock proves that the storage provider prevented overwrite or deletion for the configured retention/hold period. Strong legal evidence usually needs both, plus action/audit context and retention policy. Postgres records the verification metadata; it does not replace storage-level WORM.
+
+V0 intentionally does not put a redaction profile on `CORE_EVIDENCE_REFERENCES`. Redacted stored artifacts are a valid enterprise pattern, but they require a real redaction pipeline, profile registry, renderer tests, and product flows such as investor exports or support snapshots. Until those exist, evidence artifacts are treated as exact artifacts. `CORE_DATA_ACCESS_EVENTS.redaction_profile` remains only for `redacted_payload` read evidence.
 
 Read-side evidence is separate from write-side actions. `CORE_DATA_ACCESS_EVENTS` should record important reads, lists, searches, exports, and downloads: who accessed what, query/filter hash, result count, result hash or artifact reference, and timestamp. The default should not be “store every full response body forever”; high-volume and sensitive reads need sampling, redaction, retention, and explicit product/security reasons.
 
