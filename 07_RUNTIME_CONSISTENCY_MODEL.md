@@ -41,6 +41,10 @@ Domain events are useful for timeline, audit-adjacent explanations, projection t
 
 `tenant_sequence_no` is a monotonic ordering key for the tenant's domain-event stream. It should be unique within `tenant_id` and assigned transactionally with the event. It is not a business number, not gapless accounting numbering, and not a replacement for `occurred_at`; gaps are acceptable if transactions roll back or sequence allocation is skipped.
 
+Workers that consume the domain-event stream should checkpoint by position, not by event id. `CORE_WORKER_CHECKPOINTS` stores one cursor per `tenant_id + consumer_name + stream_key`, with `last_tenant_sequence_no` as the last fully processed tenant event. A worker then reads `CORE_DOMAIN_EVENTS where tenant_id = ? and tenant_sequence_no > last_tenant_sequence_no order by tenant_sequence_no`.
+
+This makes projection rebuilds, retries, and lag calculation straightforward. `domain_event_id` identifies one event, but it is not an ordering cursor.
+
 ## Audit events
 
 Audit events capture evidence: actor, principal kind, tenant, legal entity, action, target resource, checkpoint outcome, outcome stage/code, small supporting facts, request metadata, and timestamp. Audit must be reliable and queryable because both the business and delivery process require traceability.
@@ -196,6 +200,8 @@ ResourceRef role names should stay role-specific:
 Outbox messages are technical delivery records. They are written transactionally with canonical data so that side effects are not lost when a process crashes between database write and external notification.
 
 Outbox workers handle Neo4j projection, search projection, reporting refresh, accounting export preparation, future notifications, and future integration events. Handlers must be idempotent, retryable, observable, and capable of dead-lettering.
+
+`CORE_WORKER_CHECKPOINTS` is for stream consumers that need a durable cursor through tenant-scoped domain events. It is mutable runtime state, not audit evidence. The natural key is `tenant_id + consumer_name + stream_key`; the stored position is `last_tenant_sequence_no`.
 
 ## Synchronous vs asynchronous work
 

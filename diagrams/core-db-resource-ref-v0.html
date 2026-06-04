@@ -745,11 +745,13 @@ erDiagram
   }
 
   CORE_WORKER_CHECKPOINTS {
-    text checkpoint_key PK
-    text consumer_name
-    text source_topic
-    uuid last_domain_event_id FK
-    timestamptz last_processed_at
+    uuid tenant_id PK,FK
+    text consumer_name PK
+    text stream_key PK "domain_events"
+    bigint last_tenant_sequence_no "nullable before first event"
+    timestamptz last_processed_at "nullable"
+    timestamptz created_at
+    timestamptz updated_at
   }
 
   CORE_TENANTS ||--o{ CORE_LEGAL_ENTITIES : scopes
@@ -787,7 +789,7 @@ erDiagram
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_ASSETS : ingested_by_optional
   CORE_PRINCIPALS ||--o{ CORE_MEDIA_LINKS : linked_by_optional
   CORE_TENANTS ||--o{ CORE_SEARCH_INDEX_ENTRIES : indexes_optionally
-  CORE_DOMAIN_EVENTS ||--o{ CORE_WORKER_CHECKPOINTS : checkpointed_after
+  CORE_TENANTS ||--o{ CORE_WORKER_CHECKPOINTS : scopes_worker_cursors
         </pre>
       </section>
 
