@@ -212,6 +212,32 @@
         </article>
       </section>
 
+      <section class="panel" aria-labelledby="module-key-roles-title">
+        <h2 id="module-key-roles-title">Module Key Role Names</h2>
+        <dl class="field-list">
+          <div class="field">
+            <dt><code>producer_module_key</code></dt>
+            <dd>Write-side module that emitted a domain event or owns an outbox message contract. It answers “who produced this fact/message?”</dd>
+          </div>
+          <div class="field">
+            <dt><code>serving_module_key</code></dt>
+            <dd>Read-side module that served a read/list/search/export/download surface. It is the read equivalent of producer, but the operation did not create a domain fact.</dd>
+          </div>
+          <div class="field">
+            <dt><code>subject_* ResourceRef</code></dt>
+            <dd>The primary resource a domain event or evidence artifact is about. For events this is the business subject of the fact.</dd>
+          </div>
+          <div class="field">
+            <dt><code>target_* ResourceRef</code></dt>
+            <dd>The resource an action, audit checkpoint, data access event, or media link was aimed at. For list/report/export it can be null because the operation may cover many resources.</dd>
+          </div>
+          <div class="field">
+            <dt><code>source_* ResourceRef</code></dt>
+            <dd>Provenance of derived data, such as a search document or invoice line source. It answers “where did this derived row come from?”</dd>
+          </div>
+        </dl>
+      </section>
+
       <section class="panel" aria-labelledby="module-state-title">
         <h2 id="module-state-title">CORE_TENANT_MODULE_STATE_CHANGES: Actor Semantics</h2>
         <dl class="field-list">
@@ -595,7 +621,7 @@ erDiagram
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
     text access_kind "read|list|search|export|download"
-    text serving_module_key
+    text serving_module_key "read endpoint owner"
     text target_module_key "ResourceRef nullable"
     text target_resource_type "ResourceRef nullable"
     text target_resource_id "ResourceRef nullable"
@@ -615,13 +641,13 @@ erDiagram
     uuid tenant_id FK
     uuid legal_entity_id FK "nullable"
     uuid action_invocation_id FK "nullable"
-    text producer_module_key
+    text producer_module_key "event emitter/contract owner"
     text event_type
-    text subject_module_key "ResourceRef"
-    text subject_resource_type "ResourceRef"
-    text subject_resource_id "ResourceRef"
+    text subject_module_key "primary event subject ResourceRef"
+    text subject_resource_type "primary event subject ResourceRef"
+    text subject_resource_id "primary event subject ResourceRef"
     jsonb payload_json
-    bigint sequence_no
+    bigint tenant_sequence_no "monotonic per tenant event stream"
     timestamptz occurred_at
   }
 

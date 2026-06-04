@@ -35,6 +35,12 @@ Domain events should be named as past-tense business facts. Examples: lease cont
 
 Domain events are useful for timeline, audit-adjacent explanations, projection triggers, reporting refreshes, and future analytics. They are not a substitute for domain tables.
 
+`producer_module_key` is the module that emitted the event and owns the event contract. It answers "which module produced this fact for downstream consumers?"
+
+`subject_module_key`, `subject_resource_type`, and `subject_resource_id` are the primary ResourceRef the event is about. In the common case, producer and subject module are the same. They can differ when a module emits an integration/workflow fact about a resource owned by another module, but that should be intentional and rare; canonical domain state should still be owned by the subject's module.
+
+`tenant_sequence_no` is a monotonic ordering key for the tenant's domain-event stream. It should be unique within `tenant_id` and assigned transactionally with the event. It is not a business number, not gapless accounting numbering, and not a replacement for `occurred_at`; gaps are acceptable if transactions roll back or sequence allocation is skipped.
+
 ## Audit events
 
 Audit events capture evidence: actor, principal kind, tenant, legal entity, action, target resource, checkpoint outcome, outcome stage/code, small supporting facts, request metadata, and timestamp. Audit must be reliable and queryable because both the business and delivery process require traceability.
@@ -175,7 +181,13 @@ System enforcement should be layered:
 - Database constraints should enforce local mode-specific invariants, such as `redacted_payload` requiring `redaction_profile` and redacted payload, and non-redacted modes leaving `redaction_profile` null. `stored_artifact` should create a matching `CORE_MEDIA_ASSETS` + `CORE_EVIDENCE_REFERENCES` pair; enforce this with the runtime wrapper, contract tests, and if needed a deferred trigger because it is a cross-row invariant.
 - Changes to evidence policies for sensitive endpoints should require product/security review, because switching from `stored_artifact` to `metadata_only` changes business evidence and security posture.
 
-For data access events, `serving_module_key` is the module that served the read/list/search/export/download surface, even when the returned data came from other modules. For example, `reporting.basic` may serve a report that includes billing and property resources.
+For data access events, `serving_module_key` is the module that served the read/list/search/export/download surface, even when the returned data came from other modules. It is the read-side equivalent of `producer_module_key`, but it uses a read-specific verb because a read evidence row is not a domain fact. For example, `reporting.basic` may serve a report that includes billing and property resources.
+
+ResourceRef role names should stay role-specific:
+
+- `subject_*`: the primary business resource a domain event or evidence artifact is about.
+- `target_*`: the resource an action, audit checkpoint, data access event, or media link was aimed at.
+- `source_*`: provenance of derived data, such as search documents or invoice line sources.
 
 `result_fingerprint_hash` should be understood narrowly: it is a SHA-256 fingerprint of a canonical result representation, not stored content. The representation must be identified by `result_fingerprint_schema`, such as `resource_refs_v1`. A typical `resource_refs_v1` fingerprint should use stable fields such as `module_key`, `resource_type`, `resource_id`, and optionally resource version or updated timestamp. It should not depend on mutable display names or labels. If the business needs to know exactly what was shown or exported later, the evidence mode must be `redacted_payload` or `stored_artifact`, not only `hash_only`.
 

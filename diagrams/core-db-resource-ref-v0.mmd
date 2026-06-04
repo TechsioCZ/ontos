@@ -122,7 +122,7 @@ erDiagram
     text auth_method "session|api_key|system|support_impersonation"
     text auth_context_ref "non-secret session/key/job ref"
     text access_kind "read|list|search|export|download"
-    text serving_module_key
+    text serving_module_key "read endpoint owner"
     text target_module_key "ResourceRef part nullable"
     text target_resource_type "ResourceRef part nullable"
     text target_resource_id "ResourceRef part nullable"
@@ -142,13 +142,13 @@ erDiagram
     uuid tenant_id FK
     uuid legal_entity_id FK "nullable"
     uuid action_invocation_id FK "nullable"
-    text producer_module_key
+    text producer_module_key "event emitter/contract owner"
     text event_type
-    text subject_module_key "ResourceRef part"
-    text subject_resource_type "ResourceRef part"
-    text subject_resource_id "ResourceRef part"
+    text subject_module_key "primary event subject ResourceRef part"
+    text subject_resource_type "primary event subject ResourceRef part"
+    text subject_resource_id "primary event subject ResourceRef part"
     jsonb payload_json
-    bigint sequence_no
+    bigint tenant_sequence_no "monotonic per tenant event stream"
     timestamptz occurred_at
   }
 
