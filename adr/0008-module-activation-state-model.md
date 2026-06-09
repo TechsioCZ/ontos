@@ -4,11 +4,11 @@ Status: Proposed
 
 ## Context
 
-Tenants may have different modules enabled. Modules may need to be suspended, made read-only, quarantined, deprecated, or archived without deleting history. Legal-entity-specific differences are module configuration, not Core module activation.
+Tenants may have different modules enabled. Modules may need to be inactive, suspended, made read-only, quarantined, deprecated, or archived without deleting history. Legal-entity-specific differences are module configuration, not Core module activation.
 
 ## Decision
 
-Installed MicroVertical code is deployed with the application. Runtime module state controls availability per tenant. States include active, read-only, suspended, quarantined, deprecated, and archived.
+Installed MicroVertical code is deployed with the application. Runtime module state controls availability per tenant. States include inactive, active, read-only, suspended, quarantined, deprecated, and archived.
 
 If a module is active for a tenant but only configured for some legal entities, the owning module stores that in its own settings tables, for example `RENTAL_SHORT_TERM_LEGAL_ENTITY_SETTINGS`.
 

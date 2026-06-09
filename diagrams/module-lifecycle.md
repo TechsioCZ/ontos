@@ -2,7 +2,8 @@
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Active
+  [*] --> Inactive
+  Inactive --> Active
   Active --> ReadOnly
   Active --> Suspended
   Active --> Quarantined
@@ -10,7 +11,10 @@ stateDiagram-v2
   Suspended --> Active
   Quarantined --> Active
   Active --> Deprecated
+  Deprecated --> Active
+  Deprecated --> ReadOnly
   Deprecated --> Archived
+  Inactive --> Archived
   Suspended --> Archived
   Quarantined --> Archived
 ```

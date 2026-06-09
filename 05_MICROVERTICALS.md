@@ -44,7 +44,7 @@ Examples of MicroVertical concerns: what a reservation means, how a lease contra
 
 ## Runtime activation
 
-In V0, MicroVertical code is part of the application deployment. A module can be activated, suspended, read-only, quarantined, deprecated, or archived per tenant without restarting the server. Legal-entity-specific setup belongs in the owning module's settings tables. Runtime activation controls whether UI contributions appear, whether actions are invokable, whether public resources are enabled, and how historical data is displayed.
+In V0, MicroVertical code is part of the application deployment. A module can be inactive, active, read-only, suspended, quarantined, deprecated, or archived per tenant without restarting the server. Legal-entity-specific setup belongs in the owning module's settings tables. Runtime activation controls whether UI contributions appear, whether actions are invokable, whether public resources are enabled, and how historical data is displayed.
 
 Adding a brand-new MicroVertical with new code requires deployment in V0. Later versions may support generated/schema-defined modules or sandboxed modules, but that is explicitly not a V0 requirement.
 
@@ -52,6 +52,7 @@ Adding a brand-new MicroVertical with new code requires deployment in V0. Later 
 
 | State | Meaning |
 |---|---|
+| Inactive | Module is installed in the application but not enabled for the tenant. Historical data, if any exists, remains preserved subject to permissions. |
 | Active | Module is available for normal read and write usage. |
 | Read-only | Data remains visible but write actions are disabled. |
 | Suspended | Module is not available in the customer’s current package or payment state; historical data remains preserved. |
@@ -59,13 +60,15 @@ Adding a brand-new MicroVertical with new code requires deployment in V0. Later 
 | Deprecated | Module is being replaced but still exists for compatibility. |
 | Archived | Module is no longer operational but its historical data remains available for audit/reporting as permitted. |
 
+Normal Shell navigation should show `active`, `read_only`, and `deprecated` modules, with visible state indicators for non-active visible states. It should hide `inactive`, `suspended`, `quarantined`, and `archived` modules from ordinary navigation while preserving historical data access through explicit permitted paths when needed.
+
 The key rule is that module deactivation must not destroy company memory. Historical resources, media links, audit, events, invoices, and module-owned links remain addressable subject to permissions.
 
 ## OntOS Module Manifest discipline
 
 Every OntOS Business Module must declare its public contract through an OntOS Module Manifest. The manifest is not optional documentation; it is the public runtime and tooling boundary for activation, dependencies, and cross-module contracts.
 
-The manifest should include public module identity, activation, dependencies, APIs, component exports, public resource types, public events, search descriptors, and report descriptors.
+The manifest should include public module identity, activation, dependencies, Action descriptors, APIs, component exports, public resource types, public events, search descriptors, and report descriptors.
 
 It should not include private implementation details such as database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, tests, relation catalogs, or private read models. Those can be validated by internal tooling, but they are not public module contract.
 
@@ -75,7 +78,7 @@ The first draft Effect Schema-defined manifest shape is described in `14_ONTOS_M
 
 ## Dependency rules
 
-OntOS Business Modules may depend on Core and on explicit public contracts of other business modules. They should not import another module's internal tables, command handlers, UI internals, or private utilities. Cross-module writes should go through actions or explicit Core-mediated mechanisms. Cross-module reads should use declared read models, ResourceRefs, or public query surfaces.
+OntOS Business Modules may depend on Core and on explicit public contracts of other business modules. They may import public manifest values, Action descriptors, public API clients, public component values, and public resource/event/search/report descriptors. They should not import another module's runtime registration, internal tables, command handlers, private routes, UI internals, migrations, fixtures, tests, or private utilities. Cross-module writes should go through Actions or explicit Core-mediated mechanisms. Cross-module reads should use declared read models, ResourceRefs, or public query surfaces.
 
 This matters because the long-term product depends on being able to add, replace, suspend, or generate modules without making the entire codebase a single implicit dependency graph.
 

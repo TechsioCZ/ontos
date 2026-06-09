@@ -43,7 +43,7 @@ Core is directionally ready for the rough V1 module idea, but it is not implemen
 
 1. **Module contract**
    - public module manifest
-   - private module implementation registry
+   - Vertical Runtime Registration and Installed Vertical Registry
    - route and navigation contributions
    - UI contribution guards
    - migrations
@@ -115,7 +115,7 @@ Still unproven for OntOS:
 - SpiceDB authorization checks.
 - Audit and outbox writes.
 - Effect SQL/Drizzle migrations.
-- Module registry and private implementation contract.
+- Installed Vertical Registry and Vertical Runtime Registration contract.
 
 The June PoC must prove these OntOS-specific guarantees.
 
@@ -284,22 +284,24 @@ Tasks:
 2. Add two dummy MicroVerticals:
    - `property.registry`
    - `accounting.core`
+   - use hyphenated folders such as `property-registry` and `accounting-core`, while keeping manifest ids and runtime keys dotted
 3. Mount both from Shell.
 4. Add a shared layout and module navigation placeholder.
-5. Add a visible boundary indicator if feasible.
+5. Add visible boundary indicators for each MicroVertical.
 
 Acceptance:
 
 - The app runs locally.
 - Shell can show both MicroVerticals.
 - Each MicroVertical owns its own route/page/component area.
+- Each MicroVertical route visibly shows its module id, filesystem folder name, tenant module state, and that the page is rendered from the owning MicroVertical.
 - No product feature is implemented beyond placeholders.
 
 Deliverables:
 
 - runnable app
 - screenshot or short video
-- notes on boundary mechanics
+- notes on boundary mechanics and visible boundary markers
 
 ### Day 2: Module Manifest And Private Registry
 
@@ -311,28 +313,58 @@ Tasks:
    - display name
    - activation default
    - dependencies
-   - public resources
-   - public APIs/actions placeholder
-2. Add private implementation registry:
+   - public resource descriptors:
+     - `property.unit`
+     - `accounting.draft_entry`
+   - public component descriptors:
+     - `PropertyUnitCard`
+     - `AccountingDraftEntryCard`
+   - public API placeholder
+   - public Action descriptors placeholder:
+     - `property.registry.createUnit`
+     - `accounting.core.createDraftEntry`
+   - public search descriptors:
+     - `property.unit.search_result`
+     - `accounting.draft_entry.search_result`
+   - public report descriptors:
+     - `property.unit.inventory`
+     - `accounting.draft_entry.summary`
+2. Add Vertical Runtime Registration and Installed Vertical Registry:
    - routes
    - actions
    - migrations
    - handlers
    - search/report descriptors if easy
 3. Register both dummy modules.
-4. Add a basic boundary/import rule if feasible.
+4. Represent both MVP modules as `active` for the demo tenant using a fixture shaped like `CORE_TENANT_MODULE_STATES`.
+5. Add `pnpm check:boundaries` and wire it into `pnpm check`; use UltraModern's generated boundary checker if available, with OntOS-specific rules added as needed.
 
 Acceptance:
 
 - Shell discovers modules through registry.
+- Shell treats both MVP MicroVerticals as active.
+- Shell navigation follows the initial module-state visibility rule: show active/read-only/deprecated, hide inactive/suspended/quarantined/archived.
 - Public manifest does not contain private implementation paths.
-- Private registry exists and is explicit.
+- Both MVP MicroVerticals expose placeholder resource, component, Action, search, and report descriptors; handlers/query implementations are stubbed or explicitly not implemented.
+- Vertical Runtime Registration exists for each MicroVertical and the Shell-owned Installed Vertical Registry is explicit.
+- `pnpm check` runs `pnpm check:boundaries`.
 
 Deliverables:
 
 - manifest example
 - registry example
 - short note: what belongs in manifest vs private registry
+
+### Day 1/2 Batch Evidence
+
+When Day 1 and Day 2 are implemented together, completion evidence should include:
+
+- exact UltraModern.js create package version and scaffold commands used
+- `pnpm check` passing, including `pnpm check:boundaries`
+- local app run command and URL
+- screenshots showing Shell navigation and both MicroVertical boundary markers
+- changed-file summary with the public manifest files, Vertical Runtime Registration files, Installed Vertical Registry, and boundary-check wiring called out
+- notes on any scaffold limitations or places where UltraModern generated behavior shaped the implementation
 
 ### Day 3: Core Action Runtime
 
@@ -525,4 +557,3 @@ In June, every task must do at least one of these:
 - create reusable module scaffolding
 
 Everything else waits.
-

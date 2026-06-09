@@ -5,12 +5,16 @@ OntOS is a delivery-bound property/rental ERP with strong platform foundations. 
 ## Language
 
 **OntOS**:
-The system being built. In V0 it is a property/rental ERP with platform-shaped foundations; in the long-term vision it can grow into a temporal company ontology system.
+The system being built. In V1 it is a property/rental ERP with platform-shaped foundations; in the long-term vision it can grow into a temporal company ontology system.
 _Avoid_: TERP
 
 **OntOS V0**:
-The first production delivery of OntOS. It prioritizes concrete ERP workflows for multi-company property/rental operations, billing, accounting handoff, documents, permissions, audit, and reporting.
-_Avoid_: Platform-first release, ontology-first release
+The preparation phase for OntOS: Core implementation, architecture, ADRs, documentation, PoC work, module contracts, schema contracts, and delivery controls.
+_Avoid_: First production ERP delivery, customer ERP release, platform-only product release
+
+**OntOS V1**:
+The first mandatory production ERP delivery of OntOS, targeted for the end of 2026. It prioritizes concrete ERP workflows for multi-company property/rental operations, billing, accounting handoff, documents, permissions, audit, and reporting.
+_Avoid_: V0, architecture-only release, ontology-first release
 
 **Strong Foundations**:
 The small set of architectural invariants that prevent expensive rework: registered Actions for writes, tenant/legal-entity isolation, separated authentication/authorization/business policy, ResourceRef-based cross-module references, audit and outbox in the write path, and manifest-declared public module boundaries.
@@ -33,8 +37,20 @@ The Foundational Module that models shared organizational business structure suc
 _Avoid_: Core organization model, company registry, legal-entity registry, holding registry, ownership ledger
 
 **OntOS Module Manifest**:
-The OntOS-specific Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. It declares public identity, activation, dependencies, APIs, components, public resource types, public events, search, and reports. It should rely on TypeScript/Effect/React inference wherever possible, using real typed values instead of manually-authored import/export strings. It does not publish a permission model or a static relation catalog; authorization is owned by SpiceDB, the OntOS Policy Layer, and API/action enforcement, while relations are dynamic runtime/domain data. It must not declare private implementation details such as database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, or tests.
+The OntOS-specific Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. It declares public identity, activation, dependencies, Action descriptors, APIs, components, public resource types, public events, search, and reports. It should rely on TypeScript/Effect/React inference wherever possible, using real typed values instead of manually-authored import/export strings. It does not publish a permission model or a static relation catalog; authorization is owned by SpiceDB, the OntOS Policy Layer, and API/action enforcement, while relations are dynamic runtime/domain data. It must not declare private implementation details such as database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, or tests.
 _Avoid_: MicroVertical Manifest, database schema, implementation manifest, stringly typed import/export metadata
+
+**Action Descriptor**:
+An Effect Schema-backed public runtime value that describes an Action's stable key, request schema, response schema, idempotency rule, authorization requirement, audit profile, and module-state requirements. The descriptor is imported into the manifest from an action file, while its handler remains private.
+_Avoid_: Type-only interface, command handler, HTTP endpoint by itself, inline manifest blob
+
+**Vertical Runtime Registration**:
+The private per-MicroVertical runtime registration that binds the vertical's public OntOS Module Manifest to implementation hooks such as routes, navigation contributions, action handlers, migrations, workers, search implementations, and report implementations. In the MVP this lives beside the vertical manifest as `vertical.registration.ts`.
+_Avoid_: Public manifest, plugin marketplace, cross-module import surface, generic implementation file
+
+**Installed Vertical Registry**:
+The Shell/Core-owned internal registry of installed Vertical Runtime Registrations. In the MVP this is a statically imported allowlist named `installed.registry.ts`, not a runtime plugin marketplace.
+_Avoid_: Public manifest catalog, module marketplace, dynamic plugin loader
 
 **Principal**:
 An actor that can authenticate, invoke actions, or appear in audit and authorization. A Principal may represent internal staff, external manager staff, accountants, guests with portal access, integrations, service accounts, agents, or the system itself.

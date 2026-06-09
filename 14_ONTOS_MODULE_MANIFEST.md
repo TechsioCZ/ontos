@@ -16,8 +16,12 @@ Use these terms precisely:
 | OntOS Business Module | Product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. |
 | OntOS System Module | Core-owned capability such as `core.identity`, `core.authz`, `core.audit`, or `core.search`. |
 | OntOS Module Manifest | Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. |
+| Vertical Runtime Registration | Private per-MicroVertical runtime registration that binds the public manifest to private installed-module hooks such as routes, navigation, handlers, migrations, workers, search, and reports. |
+| Installed Vertical Registry | Shell/Core-owned internal registry of installed Vertical Runtime Registrations. |
 
 Avoid saying "MicroVertical Manifest" unless talking loosely. The precise term is "OntOS Module Manifest".
+
+Use dotted identifiers for domain/runtime keys and hyphenated names for filesystem folders. For example, the module id remains `property.registry`, action keys start with `property.registry.*`, and `CORE_TENANT_MODULE_STATES.module_key` stores `property.registry`; the MicroVertical folder should be `verticals/property-registry`.
 
 ## Scope
 
@@ -28,6 +32,7 @@ It should include:
 - module identity
 - activation behavior
 - module dependencies
+- public Action descriptors
 - public API contracts
 - public component exports
 - public resource types
@@ -52,6 +57,53 @@ It should not include:
 
 Domain tables, routes, navigation, handlers, fixtures, tests, and projection jobs still matter. They are owned by the implementation of the module, but they are not part of the public module contract.
 
+## Runtime Registration
+
+The Shell and Core discover runnable installed modules from the private Installed Vertical Registry, not from public manifests alone.
+
+Each MicroVertical should keep two paired contract files at the vertical root:
+
+```text
+verticals/property-registry/
+  vertical.manifest.ts
+  vertical.registration.ts
+```
+
+`vertical.manifest.ts` contains the public OntOS Module Manifest. `vertical.registration.ts` contains the private Vertical Runtime Registration that binds the public manifest to private hooks needed by the installed application runtime. The MicroVertical owns its route subtree, pages, and components; Shell composes registered route and navigation contributions, applies shared layout, and filters visibility through activation/module-state rules.
+
+```ts
+export const propertyRegistryRegistration =
+  defineVerticalRuntimeRegistration({
+    manifest: propertyRegistryManifest,
+    shell: {
+      nav: {
+        label: "Property Registry",
+        path: "/property"
+      },
+      routes: [PropertyRegistryRoute]
+    },
+    actions: {
+      [createUnitAction.key]: createUnitHandler
+    },
+    migrations: [],
+    handlers: {},
+    search: [],
+    reports: []
+  })
+```
+
+The public manifest remains the public contract. The runtime registration is an internal wiring surface for Shell/Core only. Other MicroVerticals should depend on public Action/API/client/component values exposed through manifests, not on another module's runtime registration.
+
+For the MVP, the Installed Vertical Registry can be a statically imported list owned by the Shell/Core, named `installed.registry.ts`:
+
+```text
+apps/shell/src/verticals/installed.registry.ts
+```
+
+This is an explicit installed-module allowlist, not a runtime plugin marketplace.
+
+Day 1/2 should represent tenant module state with a fixture that mirrors `CORE_TENANT_MODULE_STATES`. Both MVP MicroVerticals, `property.registry` and `accounting.core`, should be `active` for the demo tenant until persistent module state is implemented. Normal Shell navigation should include `active`, `read_only`, and `deprecated` modules and hide `inactive`, `suspended`, `quarantined`, and `archived` modules. Each MVP MicroVertical route should visibly show its module id, filesystem folder name, tenant module state, and that the route/page is rendered by the owning MicroVertical.
+
 ## Authoring Model
 
 The source artifact should be a typed module manifest, not a loose JSON file.
@@ -62,6 +114,7 @@ String keys are acceptable only when they are stable business/runtime identifier
 
 ```ts
 import { defineOntosModuleManifest } from "@ontos/core/module-manifest"
+import { createUnitAction } from "./src/actions/create-unit.action"
 import { PropertyUnitClient } from "./public-api"
 import { PropertyUnitCard } from "./public-components"
 
@@ -101,6 +154,9 @@ export const PropertyRegistryManifest = defineOntosModuleManifest({
     externalSystems: []
   },
   publicSurface: {
+    actions: [
+      createUnitAction
+    ],
     api: {
       PropertyUnitClient
     },
@@ -125,6 +181,7 @@ Generated outputs may include:
 - Markdown reference docs
 - dependency graph
 - import-boundary rules
+- serializable metadata derived from public Action descriptors
 - serializable metadata derived from public API client values
 - serializable metadata derived from public component values
 
@@ -140,8 +197,7 @@ dependencies: {
     "core.identity",
     "core.authz",
     "core.modules",
-    "core.actions",
-      "core.actions"
+    "core.actions"
   ],
   modules: [
     {
@@ -164,6 +220,64 @@ Suggested module dependency activation modes:
 | `enable_together_when_available` | The runtime may suggest or perform bundled activation. |
 | `optional_enhancement` | The module works without it, but exposes extra API/components when present. |
 | `integration_required_for_api` | Only specific public API capabilities require the dependency. |
+
+## Actions
+
+Actions are first-class public descriptors in the manifest, but they should not be authored inline inside `vertical.manifest.ts`.
+
+Each action should live in its own public descriptor file and use Effect Schema-backed runtime values:
+
+```text
+verticals/property-registry/
+  vertical.manifest.ts
+  vertical.registration.ts
+  src/actions/
+    create-unit.action.ts
+    create-unit.handler.ts
+```
+
+```ts
+import { Schema } from "effect"
+import { defineVerticalAction } from "@ontos/core/actions"
+
+export const CreateUnitRequest = Schema.Struct({
+  legalEntityId: Schema.UUID,
+  displayName: Schema.NonEmptyString
+})
+
+export const CreateUnitResponse = Schema.Struct({
+  unitRef: ResourceRefSchema
+})
+
+export const createUnitAction = defineVerticalAction({
+  key: "property.registry.createUnit",
+  request: CreateUnitRequest,
+  response: CreateUnitResponse,
+  idempotency: "required",
+  authz: {
+    permission: "property.registry.unit.create"
+  },
+  audit: {
+    profile: "standard"
+  },
+  moduleState: {
+    writesRequire: "active"
+  }
+})
+```
+
+Rules:
+
+- Action descriptors are public runtime values, not type-only TypeScript interfaces.
+- Request and response contracts should be Effect Schema values so Core can validate at runtime and infer TypeScript types.
+- Action keys are stable runtime identifiers and should include the module key, for example `property.registry.createUnit`.
+- Action descriptors belong in `src/actions/*.action.ts` and are imported into `vertical.manifest.ts`.
+- Action handlers belong in private `src/actions/*.handler.ts` files and are wired only through `vertical.registration.ts`.
+- Handlers should return `Effect.Effect<Success, DomainError, Requirements>` rather than raw promises where practical, so required services and typed errors remain visible.
+- Handler dependencies should be provided through Effect `Context`/`Layer` services such as repositories, clocks, transaction context, authorization adapters, or policy services.
+- If an Action is also exposed over HTTP, Effect `HttpApi` can reuse the same schemas/descriptors, but HTTP transport is not the source of truth for the Action.
+
+Day 1/2 should include placeholder Action descriptors so the manifest and registration shape is proven before the Core action runtime exists. `property.registry` should declare `property.registry.createUnit` because Day 3 will run that Action through Core. `accounting.core` should declare a placeholder such as `accounting.core.createDraftEntry` to prove a second module can expose an Action descriptor. These descriptors should be wired to stub handlers or explicit not-implemented handlers in `vertical.registration.ts`; no real ERP behavior should be implemented on Day 1/2.
 
 ## Public API
 
@@ -213,6 +327,13 @@ Rules:
 
 Build-time enforcement should use the manifest as the allowlist. A consumer may use components exposed through the producer manifest; private component paths remain blocked.
 
+For Day 1/2, each MVP MicroVertical should expose one placeholder public component descriptor so the manifest can verify component allowlisting:
+
+- `property.registry`: `PropertyUnitCard`.
+- `accounting.core`: `AccountingDraftEntryCard`.
+
+These components should be inert boundary-verification components, not production product UI.
+
 ## Routes And Navigation
 
 Routes and navigation should not be public manifest surface by default.
@@ -257,6 +378,13 @@ resourceTypes: [
 Storage strategy, table names, and column bindings are intentionally absent. They belong to implementation metadata, migrations, or generated internal catalogs, not to the public manifest.
 
 Per-public-surface stability, such as `stable` or `experimental` API/component wrappers, may become useful later for build warnings and generated documentation. It is intentionally deferred from the V0 manifest until there is tooling that enforces it.
+
+For Day 1/2, expose enough placeholder public resource descriptors to verify the manifest thesis for both MVP MicroVerticals:
+
+- `property.registry` should expose `property.unit`.
+- `accounting.core` should expose `accounting.draft_entry`.
+
+These are descriptor placeholders only. They prove ResourceRef/search/report descriptor shape; they do not imply real property or accounting workflow implementation.
 
 ## Links And Relations
 
@@ -318,6 +446,13 @@ reports: [
 
 Projection mechanics, indexing jobs, and report query implementation stay private.
 
+For Day 1/2, each MVP MicroVertical should also expose placeholder search and report descriptors so the public manifest can be validated across more than one surface:
+
+- `property.registry`: `property.unit.search_result` and `property.unit.inventory`.
+- `accounting.core`: `accounting.draft_entry.search_result` and `accounting.draft_entry.summary`.
+
+These descriptors should have no production query implementation beyond stubs in `vertical.registration.ts`.
+
 ## Enforcement
 
 Manifest validation should check:
@@ -333,17 +468,28 @@ Manifest validation should check:
 - public events have payload schemas
 - no private implementation fields are present
 
+Package exports and import rules should separate public and private vertical surfaces:
+
+- Other MicroVerticals may import public manifest values, Action descriptors, public API clients, public component values, and public resource/event/search/report descriptors.
+- Shell/Core may import `vertical.registration.ts` for the Installed Vertical Registry.
+- Ordinary MicroVertical consumers must not import `vertical.registration.ts`.
+- No consumer should import private handlers, private routes, private tables, private migrations, fixtures, or tests from another MicroVertical.
+- Generated package exports should expose public surfaces such as `./vertical.manifest` and selected public descriptors, while keeping `./vertical.registration` unavailable except through the Shell/Core allowlist.
+
+The MVP should expose one stable command for these checks: `pnpm check:boundaries`. If UltraModern generates a boundary checker, `check:boundaries` should call that generated checker and add any OntOS-specific rules that are not covered. If the generated scaffold has no suitable checker, `check:boundaries` can be a small import-scanning script. In either case, `pnpm check` should run `check:boundaries`.
+
 Build-time validation should additionally check import boundaries:
 
-- Other modules may use only API/client/component values exposed through producer manifests.
+- Other modules may use only Action/API/client/component/resource values exposed through producer manifests.
 - Private module paths are blocked.
 - A consumer cannot import a public component unless it is exposed through the producer manifest.
 - A consumer cannot call a public API unless the producing module declares it.
+- A consumer cannot invoke an Action unless the producing module declares it.
+- Only Shell/Core may import vertical runtime registrations.
 - Activation dependency checks can be generated from manifest dependencies.
 
 ## Open Questions
 
-1. Should the manifest live beside each module as `manifest.ts`, with generated JSON under a central catalog?
-2. Should Core system modules use the same Effect Schema shape or a smaller `system_module` variant?
-3. Which dependency activation modes are enough for V0?
-4. Should public deep links be modeled as API/link-builder exports, or should they stay entirely outside the manifest for V0?
+1. Should Core system modules use the same Effect Schema shape or a smaller `system_module` variant?
+2. Which dependency activation modes are enough for V0?
+3. Should public deep links be modeled as API/link-builder exports, or should they stay entirely outside the manifest for V0?

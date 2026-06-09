@@ -559,7 +559,7 @@ erDiagram
     uuid tenant_module_state_id PK
     uuid tenant_id FK
     text module_key
-    text state "active|read_only|suspended|quarantined|archived"
+    text state "inactive|active|read_only|suspended|quarantined|deprecated|archived"
     uuid last_change_id FK
     timestamptz created_at
     timestamptz updated_at
