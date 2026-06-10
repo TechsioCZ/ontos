@@ -1,0 +1,23 @@
+{
+  "private": true,
+  "name": "@mvp/shared-contracts",
+  "version": "0.1.0",
+  "description": "Route, ownership, and topology contract placeholders.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./federated-public-component": "./src/federated-public-component.tsx"
+  },
+  "scripts": {
+    "typecheck": "node -e \"const fs = require('node:fs'); const { execFileSync, spawnSync } = require('node:child_process'); const bin = execFileSync('effect-tsgo', ['get-exe-path'], { encoding: 'utf8' }).trim(); if (process.platform !== 'win32') fs.chmodSync(bin, 0o755); const result = spawnSync(bin, ['--noEmit', '-p', 'tsconfig.json'], { stdio: 'inherit' }); process.exit(result.status ?? 1);\""
+  },
+  "dependencies": {
+    "@module-federation/runtime": "2.5.1",
+    "react": "^19.2.7"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.14.0",
+    "@types/react": "^19.2.17",
+    "@typescript/native-preview": "7.0.0-dev.20260606.1"
+  }
+}

@@ -1,0 +1,40 @@
+packages:
+  - apps/*
+  - verticals/*
+  - packages/*
+
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeExclude:
+  - '@bleedingdev/modern-js-*'
+  - '@tanstack/react-router'
+  - '@tanstack/router-core'
+  - '@typescript/native-preview'
+  - '@typescript/native-preview-*'
+  - '@types/react'
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 1440
+blockExoticSubdeps: true
+engineStrict: true
+pmOnFail: error
+verifyDepsBeforeRun: error
+strictDepBuilds: true
+
+peerDependencyRules:
+  allowedVersions:
+    react: '>=19.0.0'
+    typescript: '>=6.0.0'
+
+overrides:
+  '@tanstack/react-router': 1.170.15
+  node-fetch: '^3.3.2'
+
+allowBuilds:
+  '@swc/core': true
+  core-js: true
+  esbuild: true
+  lefthook: true
+  msgpackr-extract: true
+  sharp: true
+  workerd: true

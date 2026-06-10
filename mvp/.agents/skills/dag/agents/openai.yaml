@@ -1,0 +1,4 @@
+interface:
+  display_name: "Graph: Plan Frontier"
+  short_description: "Current runnable lanes from project plans"
+  default_prompt: "Use $dag as the fast frontier/status lens for plan-backed work. Preserve the exact plan selection, including any --depends edges, or carry an explicit --graph-id; prefer --format json when handing graph_id, selection_hash, snapshot_path, or state_dir to subagent orchestration or helm."

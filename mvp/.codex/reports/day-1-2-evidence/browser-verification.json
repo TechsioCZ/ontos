@@ -1,0 +1,23 @@
+{
+  "baseUrl": "http://localhost:3020",
+  "checkedRoutes": [
+    "/en",
+    "/en/property-registry",
+    "/en/accounting-core"
+  ],
+  "evidence": [
+    {
+      "moduleId": "property.registry",
+      "markerCountOnLastPage": 1
+    },
+    {
+      "moduleId": "accounting.core",
+      "markerCountOnLastPage": 2
+    }
+  ],
+  "screenshots": [
+    "shell-home.png",
+    "property-registry.png",
+    "accounting-core.png"
+  ]
+}
