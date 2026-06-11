@@ -60,6 +60,10 @@ _Avoid_: User, employee, contact
 The Core-owned mapping from a stable externally authenticated subject to an OntOS Principal. BetterAuth owns users, sessions, API keys, key verification, and impersonation sessions; Core only stores the non-secret binding needed to resolve the effective Principal for actions, audit, and SpiceDB subjects. System jobs use system/service Principals without pretending to be external auth bindings.
 _Avoid_: Credential store, API key table, session table, runtime credential reference, user profile
 
+**Tenant-Scoped BetterAuth User**:
+A BetterAuth user account belongs to exactly one OntOS Tenant in the current product model. If the same real person needs access to multiple tenants, they use separate tenant-scoped BetterAuth user accounts rather than one global BetterAuth user with multiple tenant bindings.
+_Avoid_: Global multi-tenant user account, shared cross-tenant login
+
 **Evidence Artifact**:
 A durable file, export, generated document, import source, signed document, or compliance bundle retained as proof for audit, compliance, or later investigation. An Evidence Artifact is the content being retained, not the index entry that makes it discoverable. Its stable content identity is the hash of the exact stored bytes, not the display filename or surrounding metadata.
 _Avoid_: Raw payload, trace, log line, media attachment by default

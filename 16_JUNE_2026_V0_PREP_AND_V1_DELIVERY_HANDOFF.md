@@ -366,92 +366,104 @@ When Day 1 and Day 2 are implemented together, completion evidence should includ
 - changed-file summary with the public manifest files, Vertical Runtime Registration files, Installed Vertical Registry, and boundary-check wiring called out
 - notes on any scaffold limitations or places where UltraModern generated behavior shaped the implementation
 
-### Day 3: Core Action Runtime
+### Day 3: Database, Context, BetterAuth, SpiceDB, And Policy Gates
 
 Tasks:
 
-1. Implement one fake/minimal Action:
-   - `property.registry.createUnit`
-2. Validate input with Effect Schema.
-3. Resolve tenant context.
-4. Resolve principal context, stubbed if necessary.
-5. Check module active state.
-6. Call authorization adapter, stubbed if necessary.
-7. Run policy hook, even if trivial.
-8. Execute handler.
-9. Return typed result.
+1. Add local database setup and one full documented initial SQL schema from the current docs.
+2. Spike `@effect/sql-pg`.
+3. Spike `@effect/sql-drizzle`.
+4. Decide whether Drizzle is usable for Core tables, using raw SQL where constraints must stay explicit.
+5. Seed demo tenant, legal entity, principal, principal auth binding, and tenant module states for:
+   - `property.registry`
+   - `accounting.core`
+6. Add BetterAuth stub or minimal BetterAuth integration. Since the current `mvp/` code has no BetterAuth implementation yet, a strict BetterAuth-shaped stub is acceptable if it resolves through `CORE_PRINCIPAL_AUTH_BINDINGS`.
+7. Add runtime tenant, legal-entity, and principal context resolution from the seeded database.
+8. Add SpiceDB adapter interface.
+9. Add real SpiceDB check or strict fake with the same contract.
+10. Add module-state write gate.
+11. Add trivial policy hook.
+12. Add scenario buttons in `accounting.core` to exercise missing context, blocked module state, authorization denied, policy denied, and validation denied without adding extra public Actions.
+13. Include tenant-safe constraint evidence.
+14. Include idempotency uniqueness or document why it was not implemented yet.
 
 Acceptance:
 
-- Action cannot run without tenant and principal context.
-- Action cannot run if module state blocks writes.
-- Action has a stable descriptor.
-- Handler does not bypass Core runtime.
-
-Deliverables:
-
-- action descriptor
-- action runtime wrapper
-- demo request/result
-
-### Day 4: Effect SQL, Drizzle, And Migrations Spike
-
-Tasks:
-
-1. Spike `@effect/sql-pg`.
-2. Spike `@effect/sql-drizzle`.
-3. Decide whether Drizzle is usable for Core tables.
-4. Create minimal migration set:
-   - tenants
-   - legal entities, if easy
-   - principals
-   - principal auth bindings
-   - tenant module states
-   - action invocations
-   - audit events
-   - outbox messages
-   - property units
-5. Include at least one tenant-safe constraint.
-6. Include idempotency uniqueness or document why it was not implemented.
-
-Acceptance:
-
-- Migrations run locally.
-- One action writes to Postgres.
+- Database initializes locally from the full documented PoC schema.
+- Demo tenant, legal entity, principal, auth binding, and module states are loaded from the database, not hard-coded at the button call site.
+- BetterAuth-shaped subject resolution maps to an OntOS Principal through Core binding logic.
+- SpiceDB-shaped authorization fails closed.
+- Module active/read-only/inactive state is checked from persisted state.
+- Policy hook can allow and deny.
 - The developer can explain how tenant isolation will be enforced.
 - Critical constraints are not hidden behind unclear ORM behavior.
 
 Deliverables:
 
-- migration files
+- init SQL schema and seed path
 - schema notes
 - Effect SQL/Drizzle recommendation
+- BetterAuth/principal binding stub or minimal integration
+- SpiceDB adapter contract or strict fake
+- module-state and policy gate demo output
 
-### Day 5: Authz, Audit, Outbox, And Demo
+### Day 4: Core Action Runtime And Canonical Write
 
 Tasks:
 
-1. Add BetterAuth stub or minimal BetterAuth integration.
-2. Add principal binding logic or strict stub.
-3. Add SpiceDB adapter interface.
-4. Add real SpiceDB check or strict fake with same contract.
-5. Write action invocation row.
-6. Write audit row.
-7. Write outbox row.
-8. Run the create-unit demo end to end.
-9. Write final PoC result note.
+1. Implement `executeAction` as the Core runtime wrapper.
+2. Resolve Action descriptors from the Installed Vertical Registry.
+3. Run `property.registry.createUnit` through Core.
+4. Validate Action input with Effect Schema.
+5. Resolve tenant, legal entity, and principal context through the Day 3 context path.
+6. Check module state, authorization, and policy through the Day 3 gates.
+7. Execute the private handler only through Core.
+8. Have the successful handler write a minimal tenant-scoped canonical row through the selected SQL path.
+9. Return a typed result, preferably a ResourceRef-shaped value.
+10. Keep `accounting.core.createDraftEntry` as the probe Action for negative-path buttons.
 
 Acceptance:
 
-- Unauthorized action fails closed.
-- Successful action produces canonical row, action invocation, audit event, and outbox message.
+- Action cannot run without tenant and principal context.
+- Action cannot run if module state blocks writes.
+- Unauthorized Action fails closed.
+- Invalid input is rejected before handler execution.
+- Handler does not bypass Core runtime.
+- Successful Action writes tenant-scoped canonical data through Effect SQL/Drizzle or the selected SQL path.
+- Action has a stable descriptor.
+
+Deliverables:
+
+- action runtime wrapper
+- widened Action descriptor shape if needed
+- create-unit handler implementation for the proof row only
+- demo request/result from button harness and/or test
+
+### Day 5: Action Invocation, Audit, Outbox, Idempotency, And Final Demo
+
+Tasks:
+
+1. Write `CORE_ACTION_INVOCATIONS` lifecycle rows.
+2. Enforce or explicitly document idempotency handling for non-idempotent writes.
+3. Write audit checkpoints for received/authn/authz/policy/validation/executed/rejected/failed as appropriate for the proof.
+4. Write a domain event for successful `property.registry.createUnit`.
+5. Write an outbox message for the successful domain event.
+6. Run the create-unit demo end to end from button click through Core checks, canonical write, action invocation, audit, domain event, and outbox.
+7. Keep failure-path buttons proving context/authz/policy/validation rejection behavior.
+8. Write final PoC result note.
+
+Acceptance:
+
+- Successful Action produces canonical row, action invocation, audit event, domain event, and outbox message.
+- Rejected Action produces useful action/audit evidence without running the handler.
+- Idempotency behavior is enforced or the exception is explicit and bounded.
 - PoC result note says proceed/revise/drop for each major decision.
 
 Deliverables:
 
 - runnable demo
-- final PoC notes
 - screenshots or short video
+- final PoC notes
 - list of proven assumptions
 - list of failed assumptions
 - recommended ADR status updates
