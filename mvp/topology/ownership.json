@@ -74,6 +74,42 @@
           ]
         }
       }
+    },
+    {
+      "id": "property-registry",
+      "package": "@mvp/property-registry",
+      "path": "verticals/property-registry",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/property-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#property-registry",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#property-registry"
+          ]
+        }
+      }
+    },
+    {
+      "id": "accounting-core",
+      "package": "@mvp/accounting-core",
+      "path": "verticals/accounting-core",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/accounting-core.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#accounting-core",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#accounting-core"
+          ]
+        }
+      }
     }
   ]
 }

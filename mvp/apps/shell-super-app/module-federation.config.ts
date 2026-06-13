@@ -9,11 +9,45 @@ const pluginI18nVersion = (require('@modern-js/plugin-i18n/package.json') as { v
 const pluginTanstackVersion = (
   require('@modern-js/plugin-tanstack/package.json') as { version: string }
 ).version;
-const propertyRegistryManifestUrl =
-  process.env['PROPERTY_REGISTRY_REMOTE_URL'] ?? 'http://localhost:3021/mf-manifest.json';
 const runtimeVersion = (require('@modern-js/runtime/package.json') as { version: string }).version;
 const reactVersion = (require('react/package.json') as { version: string }).version;
 const reactDomVersion = (require('react-dom/package.json') as { version: string }).version;
+
+const cloudflareDeployEnabled = process.env['MODERNJS_DEPLOY'] === 'cloudflare';
+const cloudflareWorkersDevSubdomain =
+  process.env['ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN']?.trim();
+const requireCloudflarePublicUrls =
+  process.env['ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'] === 'true';
+
+const createRemoteManifestUrl = (options: {
+  manifestEnv: string;
+  mfName: string;
+  port: number;
+  publicUrlEnv: string;
+  workerName: string;
+}) => {
+  const configuredManifest = process.env[options.manifestEnv]?.trim();
+  if (configuredManifest !== undefined && configuredManifest.length > 0) {
+    return configuredManifest;
+  }
+
+  const configuredPublicUrl = process.env[options.publicUrlEnv]?.trim();
+  if (configuredPublicUrl !== undefined && configuredPublicUrl.length > 0) {
+    return `${options.mfName}@${configuredPublicUrl.replace(/\/+$/u, '')}/mf-manifest.json`;
+  }
+
+  if (cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined) {
+    return `${options.mfName}@https://${options.workerName}.${cloudflareWorkersDevSubdomain}.workers.dev/mf-manifest.json`;
+  }
+
+  if (cloudflareDeployEnabled && requireCloudflarePublicUrls) {
+    throw new Error(
+      `Cloudflare deploy needs ${options.publicUrlEnv}, ${options.manifestEnv}, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN for remote ${options.mfName}.`,
+    );
+  }
+
+  return `${options.mfName}@http://localhost:${options.port}/mf-manifest.json`;
+};
 
 export default createModuleFederationConfig({
   bridge: {
@@ -25,13 +59,26 @@ export default createModuleFederationConfig({
   dts: {
     displayErrorInTerminal: true,
     generateTypes: {
-      compilerInstance: '--package typescript -- tsc',
+      compilerInstance: 'tsgo',
     },
   },
   filename: 'remoteEntry.js',
   name: 'shellSuperApp',
   remotes: {
-    propertyRegistry: `propertyRegistry@${propertyRegistryManifestUrl}`,
+    accountingCore: createRemoteManifestUrl({
+      manifestEnv: 'VERTICAL_ACCOUNTING_CORE_MF_MANIFEST',
+      mfName: 'verticalAccountingCore',
+      port: 4102,
+      publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_ACCOUNTING_CORE',
+      workerName: 'mvp-accounting-core',
+    }),
+    propertyRegistry: createRemoteManifestUrl({
+      manifestEnv: 'VERTICAL_PROPERTY_REGISTRY_MF_MANIFEST',
+      mfName: 'verticalPropertyRegistry',
+      port: 4101,
+      publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY',
+      workerName: 'mvp-property-registry',
+    }),
   },
   shared: {
     '@modern-js/plugin-i18n/runtime': {

@@ -31,10 +31,13 @@ overrides:
   node-fetch: '^3.3.2'
 
 allowBuilds:
+  '@prisma/client': true
   '@swc/core': true
+  better-sqlite3: true
   core-js: true
   esbuild: true
   lefthook: true
   msgpackr-extract: true
+  protobufjs: true
   sharp: true
   workerd: true

@@ -1,41 +1,51 @@
-import { defineVerticalManifest } from '@mvp/shared-contracts';
+import { defineVerticalManifest, moduleFederationRemoteSpecifier } from '@mvp/shared-contracts';
+import type { ModuleFederationComponentLocator, VerticalManifest } from '@mvp/shared-contracts';
 import { createUnitAction } from './src/actions/create-unit.action.ts';
+
+export const propertyUnitCardLocator = {
+  exportName: 'PropertyUnitCard',
+  exposedModule: './PropertyUnitCard',
+  kind: 'module-federation',
+  remote: 'propertyRegistry',
+} satisfies ModuleFederationComponentLocator;
+
+export const propertyUnitCardRemoteSpecifier =
+  moduleFederationRemoteSpecifier(propertyUnitCardLocator);
 
 export const propertyRegistryManifest = defineVerticalManifest({
   actions: [createUnitAction],
-  activationDefault: 'inactive',
-  components: [
+  displayName: 'Property Registry',
+  folder: 'property-registry',
+  moduleId: 'property.registry',
+  publicComponents: [
     {
-      displayName: 'Property unit card',
-      id: 'PropertyUnitCard',
-      locator: {
-        exportName: 'PropertyUnitCard',
-        exposedModule: './PropertyUnitCard',
-        kind: 'module-federation',
-        remote: 'propertyRegistry',
-      },
+      key: 'PropertyUnitCard',
+      label: 'Property unit card',
+      moduleFederation: propertyUnitCardLocator,
+      resourceKey: 'property.unit',
     },
   ],
-  dependencies: [],
-  displayName: 'Property Registry',
-  id: 'property.registry',
-  kind: 'microvertical',
   reports: [
     {
-      displayName: 'Property unit inventory',
-      id: 'property.unit.inventory',
+      key: 'property.unit.inventory',
+      label: 'Property unit inventory',
+      resourceKey: 'property.unit',
     },
   ],
   resources: [
     {
-      displayName: 'Property unit',
-      id: 'property.unit',
+      key: 'property.unit',
+      label: 'Property unit',
+      ownedByModuleId: 'property.registry',
     },
   ],
   search: [
     {
-      displayName: 'Property unit search result',
-      id: 'property.unit.search_result',
+      key: 'property.unit.search_result',
+      label: 'Property unit search result',
+      resourceKey: 'property.unit',
     },
   ],
-});
+} satisfies VerticalManifest);
+
+export default propertyRegistryManifest;

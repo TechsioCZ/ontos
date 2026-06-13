@@ -1,20 +1,3 @@
-@layer ultramodern-vertical-accounting-core {
-  [data-app-id='accounting-core'] {
-    min-height: 100vh;
-    padding: 24px;
-    background: #f8fafc;
-    color: #1c1917;
-  }
-
-  [data-app-id='accounting-core'] dt {
-    color: #0369a1;
-    font-size: 12px;
-    font-weight: 800;
-    text-transform: uppercase;
-  }
-
-  [data-app-id='accounting-core'] dd {
-    margin: 0;
-    font-weight: 700;
-  }
-}
+@import 'tailwindcss' prefix(accountingcore) source(none);
+@source '..';
+@import '@mvp/shared-design-tokens/tokens.css';

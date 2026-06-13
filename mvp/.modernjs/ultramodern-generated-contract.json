@@ -4,18 +4,18 @@
   "packageManager": {
     "source": "package.json",
     "manager": "pnpm",
-    "version": "11.5.2",
+    "version": "11.5.3",
     "toolchain": "mise"
   },
   "versions": {
     "typescript": "6.0.3",
-    "typescriptNativePreview": "7.0.0-dev.20260606.1",
+    "typescriptNativePreview": "7.0.0-dev.20260610.1",
     "moduleFederation": "2.5.1",
     "tanstackRouter": "1.170.15",
     "i18next": "26.3.1",
     "zephyrRspackPlugin": "1.1.1",
     "zephyrAgent": "1.1.1",
-    "wrangler": "4.98.0"
+    "wrangler": "4.99.0"
   },
   "cssFederation": {
     "schemaVersion": 1,
@@ -93,15 +93,17 @@
           "moduleFederationPlugin",
           "zephyrRspackPlugin"
         ],
+        "dev": {
+          "assetPrefix": "/"
+        },
         "output": {
           "assetPrefix": {
             "envFallbackOrder": [
               "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
               "MODERN_PUBLIC_SITE_URL",
-              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN",
-              "SHELL_SUPER_APP_PORT"
+              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN"
             ],
-            "defaultLocalhostPort": 3020
+            "default": "/"
           },
           "disableTsChecker": true,
           "distPath": {
@@ -127,6 +129,15 @@
         },
         "source": {
           "mainEntryName": "index",
+          "siteUrl": {
+            "envFallbackOrder": [
+              "MODERN_PUBLIC_SITE_URL",
+              "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
+              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN",
+              "SHELL_SUPER_APP_PORT"
+            ],
+            "defaultLocalhostPort": 3020
+          },
           "siteUrlGlobal": "ULTRAMODERN_SITE_URL"
         }
       },
@@ -290,6 +301,38 @@
               "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
             }
           },
+          "qualityGates": {
+            "publicRoutes": {
+              "requireSitemapWhenPresent": true,
+              "requireRobotsSitemapConsistency": true,
+              "requireWebManifestWhenPresent": true
+            },
+            "statusCodes": {
+              "notFoundRoute": "/__ultramodern-smoke-missing",
+              "unknownRouteStatus": 404
+            },
+            "indexing": {
+              "previewNoindex": true,
+              "productionPublicRoutesIndexable": true
+            },
+            "assets": {
+              "cssPreloadRequired": true,
+              "cssResponseRequired": true,
+              "cacheControlRequiredForCss": true,
+              "sourcemapsPubliclyReferenced": false
+            },
+            "budgets": {
+              "ssrHtmlMaxBytes": 250000,
+              "mfManifestMaxBytes": 500000,
+              "localeJsonMaxBytes": 100000,
+              "sitemapXmlMaxBytes": 500000,
+              "cssAssetMaxBytes": 750000
+            },
+            "csp": {
+              "finalMode": "report-only-dogfood",
+              "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+            }
+          },
           "evidence": {
             "proofScript": "scripts/proof-cloudflare-version.mjs",
             "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
@@ -420,10 +463,13 @@
       },
       "routes": {
         "source": "route-owned",
+        "metadataAuthoring": "colocated-route-meta",
+        "generatedManifest": true,
         "metadataExport": "./src/routes/ultramodern-route-metadata",
         "localisedUrls": {},
         "owned": [
           {
+            "descriptionKey": "shell.seo.description",
             "mfBoundaryId": "shellSuperApp",
             "namespace": "shell",
             "ownerAppId": "shell-super-app",
@@ -444,10 +490,63 @@
         "publicnessDefault": "private-app-screen",
         "generatedRouteMap": true,
         "manualOverrides": [],
+        "publicHead": {
+          "authoring": "colocated-route-meta",
+          "generator": "./src/routes/ultramodern-route-head",
+          "renderer": "@modern-js/runtime/head Helmet",
+          "ssr": true,
+          "title": {
+            "required": true,
+            "source": "route.titleKey"
+          },
+          "description": {
+            "required": true,
+            "source": "route.descriptionKey"
+          },
+          "canonical": {
+            "publicIndexableOnly": true,
+            "source": "localized canonical route URL"
+          },
+          "alternates": {
+            "hreflang": [
+              "en",
+              "cs"
+            ],
+            "xDefault": "en"
+          },
+          "openGraph": {
+            "publicIndexableOnly": true,
+            "required": [
+              "og:title",
+              "og:description",
+              "og:url",
+              "og:type"
+            ]
+          },
+          "twitter": {
+            "publicIndexableOnly": true,
+            "required": [
+              "twitter:card",
+              "twitter:title",
+              "twitter:description"
+            ]
+          },
+          "structuredData": {
+            "publicIndexableOnly": true,
+            "type": "WebPage",
+            "sanitizesHtmlOpenBracket": true
+          },
+          "privateRouteRobots": "noindex, nofollow"
+        },
         "publicSurface": {
+          "authoring": "colocated-route-meta",
+          "artifactLifecycle": "build-and-deploy-output",
+          "generatedManifest": "./src/routes/ultramodern-route-metadata",
           "source": "route-owned-public-routes",
           "metadataExport": "./src/routes/ultramodern-route-metadata",
-          "staticRoot": "config/public",
+          "generator": "scripts/generate-public-surface-assets.mjs",
+          "outputRoot": "dist/public",
+          "cloudflareOutputRoot": ".output/public",
           "privateRoutePolicy": "omit-from-generated-public-surface",
           "files": [
             "robots.txt"
@@ -457,16 +556,51 @@
             "llms.txt",
             "security.txt"
           ],
+          "languages": [
+            "en",
+            "cs"
+          ],
+          "contentExpansion": {
+            "authoring": "route-owned-esm-provider",
+            "defaultProviderFile": "route.sitemap.mjs",
+            "entryExport": "default-or-entries",
+            "paramsSource": "params-or-localeParams",
+            "draftPolicy": "omit-draft-by-default",
+            "indexablePolicy": "omit-indexable-false",
+            "lifecycle": "executed-during-public-surface-generation"
+          },
+          "contentSources": [],
           "publicRoutes": [],
+          "routeEntries": [],
           "concreteUrlPaths": []
         }
       },
       "moduleFederation": {
         "name": "shellSuperApp",
+        "verticalRefs": [
+          "property-registry",
+          "accounting-core"
+        ],
+        "remotes": [
+          {
+            "id": "property-registry",
+            "alias": "propertyRegistry",
+            "name": "verticalPropertyRegistry",
+            "manifestEnv": "VERTICAL_PROPERTY_REGISTRY_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4101/mf-manifest.json"
+          },
+          {
+            "id": "accounting-core",
+            "alias": "accountingCore",
+            "name": "verticalAccountingCore",
+            "manifestEnv": "VERTICAL_ACCOUNTING_CORE_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4102/mf-manifest.json"
+          }
+        ],
         "exposes": [],
         "dts": {
           "displayErrorInTerminal": true,
-          "compilerInstance": "--package typescript -- tsc"
+          "compilerInstance": "tsgo"
         },
         "browserSafeExposesOnly": true,
         "zephyrRspackPlugin": "1.1.1"
@@ -478,6 +612,1222 @@
         "build": "d8373a68d162dd99",
         "deployProfile": "cloudflare-ssr-mf-effect-v1",
         "uiSurface": "ui"
+      }
+    },
+    {
+      "id": "property-registry",
+      "package": "@mvp/property-registry",
+      "path": "verticals/property-registry",
+      "kind": "vertical",
+      "config": {
+        "preset": "presetUltramodern",
+        "plugins": [
+          "appTools",
+          "tanstackRouterPlugin",
+          "i18nPlugin",
+          "bffPlugin",
+          "moduleFederationPlugin",
+          "zephyrRspackPlugin"
+        ],
+        "dev": {
+          "assetPrefix": "http://localhost:4101/"
+        },
+        "output": {
+          "assetPrefix": {
+            "envFallbackOrder": [
+              "ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY",
+              "MODERN_PUBLIC_SITE_URL",
+              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN"
+            ],
+            "default": "/"
+          },
+          "disableTsChecker": true,
+          "distPath": {
+            "html": "./"
+          },
+          "polyfill": "off",
+          "splitRouteChunks": true
+        },
+        "performance": {
+          "rsdoctor": {
+            "enabledByEnv": "ULTRAMODERN_RSDOCTOR=true",
+            "disableClientServer": true
+          }
+        },
+        "rspack": {
+          "output": {
+            "uniqueName": "verticalPropertyRegistry",
+            "chunkLoadingGlobal": "__ULTRAMODERN_VERTICAL_PROPERTY_REGISTRY_LOADED_CHUNKS__"
+          }
+        },
+        "html": {
+          "outputStructure": "flat"
+        },
+        "source": {
+          "mainEntryName": "index",
+          "siteUrl": {
+            "envFallbackOrder": [
+              "MODERN_PUBLIC_SITE_URL",
+              "ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY",
+              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN",
+              "VERTICAL_PROPERTY_REGISTRY_PORT"
+            ],
+            "defaultLocalhostPort": 4101
+          },
+          "siteUrlGlobal": "ULTRAMODERN_SITE_URL"
+        },
+        "bff": {
+          "runtimeFramework": "effect",
+          "prefix": "/property-registry-api",
+          "openapi": "/openapi.json"
+        }
+      },
+      "styling": {
+        "tailwind": true,
+        "postcssPlugins": [
+          "@tailwindcss/postcss"
+        ],
+        "prefix": "propertyregistry",
+        "source": "..",
+        "sourceMode": "source(none)",
+        "federation": {
+          "owner": {
+            "id": "property-registry",
+            "package": "@mvp/property-registry",
+            "team": "super-app-platform"
+          },
+          "role": "vertical-css",
+          "rootSelector": "[data-app-id=\"property-registry\"]",
+          "classPrefix": "propertyregistry:",
+          "layers": {
+            "shared": [
+              "ultramodern-shared-tokens"
+            ],
+            "owned": [
+              "ultramodern-vertical-property-registry"
+            ],
+            "imports": [
+              "ultramodern-shared-tokens"
+            ]
+          },
+          "entrypoints": {
+            "layoutImport": "src/routes/layout.tsx",
+            "css": [
+              "src/routes/index.css"
+            ],
+            "federationEntry": "src/federation-entry.tsx"
+          },
+          "assets": {
+            "shared": [
+              "@mvp/shared-design-tokens/tokens.css"
+            ],
+            "owned": [
+              "src/routes/index.css"
+            ],
+            "emittedBy": "modern-rspack-css-extraction",
+            "contentHash": true
+          },
+          "dedupe": {
+            "strategy": "shared-token-package-plus-css-content-hash",
+            "sharedPackage": "@mvp/shared-design-tokens",
+            "sharedLayers": [
+              "ultramodern-shared-tokens"
+            ],
+            "runtimeLoad": "once-per-content-hash",
+            "duplicateBaseStylesAllowed": false
+          },
+          "ssr": {
+            "cloudflare": true,
+            "firstPaintRequired": true,
+            "linkEmission": "modern-ssr-css-assets",
+            "verticalCss": "federated-manifest-owned-css"
+          }
+        }
+      },
+      "deploy": {
+        "target": "cloudflare",
+        "cloudflare": {
+          "target": "cloudflare",
+          "workerName": "mvp-property-registry",
+          "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY",
+          "compatibilityDate": "2026-06-02",
+          "compatibilityFlags": [
+            "nodejs_compat",
+            "global_fetch_strictly_public"
+          ],
+          "assetsBinding": "ASSETS",
+          "routes": {
+            "ssr": "/en",
+            "mfManifest": "/mf-manifest.json",
+            "locale": "/locales/en/property-registry.json",
+            "effectReadiness": "/property-registry-api/effect/property-registry/readiness"
+          },
+          "security": {
+            "enabled": true,
+            "headers": {
+              "referrerPolicy": "strict-origin-when-cross-origin",
+              "contentTypeOptions": "nosniff",
+              "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+            },
+            "contentSecurityPolicy": {
+              "mode": "report-only",
+              "directives": {
+                "base-uri": [
+                  "'self'"
+                ],
+                "connect-src": [
+                  "'self'",
+                  "https:",
+                  "http:",
+                  "wss:",
+                  "ws:"
+                ],
+                "default-src": [
+                  "'self'"
+                ],
+                "font-src": [
+                  "'self'",
+                  "data:",
+                  "https:",
+                  "http:"
+                ],
+                "form-action": [
+                  "'self'"
+                ],
+                "frame-ancestors": [
+                  "'self'"
+                ],
+                "img-src": [
+                  "'self'",
+                  "data:",
+                  "blob:",
+                  "https:",
+                  "http:"
+                ],
+                "manifest-src": [
+                  "'self'",
+                  "https:",
+                  "http:"
+                ],
+                "object-src": [
+                  "'none'"
+                ],
+                "script-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "'unsafe-eval'",
+                  "https:",
+                  "http:",
+                  "blob:"
+                ],
+                "style-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https:",
+                  "http:"
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:"
+                ]
+              },
+              "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+            },
+            "noindex": {
+              "workersDev": true,
+              "localhost": true,
+              "previewHostnames": []
+            },
+            "cookies": {
+              "mutateSetCookie": false,
+              "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
+            }
+          },
+          "qualityGates": {
+            "publicRoutes": {
+              "requireSitemapWhenPresent": true,
+              "requireRobotsSitemapConsistency": true,
+              "requireWebManifestWhenPresent": true
+            },
+            "statusCodes": {
+              "notFoundRoute": "/__ultramodern-smoke-missing",
+              "unknownRouteStatus": 404
+            },
+            "indexing": {
+              "previewNoindex": true,
+              "productionPublicRoutesIndexable": true
+            },
+            "assets": {
+              "cssPreloadRequired": true,
+              "cssResponseRequired": true,
+              "cacheControlRequiredForCss": true,
+              "sourcemapsPubliclyReferenced": false
+            },
+            "budgets": {
+              "ssrHtmlMaxBytes": 250000,
+              "mfManifestMaxBytes": 500000,
+              "localeJsonMaxBytes": 100000,
+              "sitemapXmlMaxBytes": 500000,
+              "cssAssetMaxBytes": 750000
+            },
+            "csp": {
+              "finalMode": "report-only-dogfood",
+              "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+            }
+          },
+          "evidence": {
+            "proofScript": "scripts/proof-cloudflare-version.mjs",
+            "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+          }
+        },
+        "worker": {
+          "compatibilityDate": "2026-06-02",
+          "name": "mvp-property-registry",
+          "security": {
+            "enabled": true,
+            "headers": {
+              "referrerPolicy": "strict-origin-when-cross-origin",
+              "contentTypeOptions": "nosniff",
+              "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+            },
+            "contentSecurityPolicy": {
+              "mode": "report-only",
+              "directives": {
+                "base-uri": [
+                  "'self'"
+                ],
+                "connect-src": [
+                  "'self'",
+                  "https:",
+                  "http:",
+                  "wss:",
+                  "ws:"
+                ],
+                "default-src": [
+                  "'self'"
+                ],
+                "font-src": [
+                  "'self'",
+                  "data:",
+                  "https:",
+                  "http:"
+                ],
+                "form-action": [
+                  "'self'"
+                ],
+                "frame-ancestors": [
+                  "'self'"
+                ],
+                "img-src": [
+                  "'self'",
+                  "data:",
+                  "blob:",
+                  "https:",
+                  "http:"
+                ],
+                "manifest-src": [
+                  "'self'",
+                  "https:",
+                  "http:"
+                ],
+                "object-src": [
+                  "'none'"
+                ],
+                "script-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "'unsafe-eval'",
+                  "https:",
+                  "http:",
+                  "blob:"
+                ],
+                "style-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https:",
+                  "http:"
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:"
+                ]
+              },
+              "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+            },
+            "noindex": {
+              "workersDev": true,
+              "localhost": true,
+              "previewHostnames": []
+            },
+            "cookies": {
+              "mutateSetCookie": false,
+              "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
+            }
+          },
+          "ssr": true
+        },
+        "output": {
+          "flat": true,
+          "htmlDistPath": "./"
+        }
+      },
+      "ssr": {
+        "mode": "string",
+        "moduleFederationAppSSR": true
+      },
+      "i18n": {
+        "plugin": "@modern-js/plugin-i18n",
+        "backend": {
+          "enabled": true,
+          "loadPath": "/locales/{{lng}}/{{ns}}.json"
+        },
+        "reactI18next": false,
+        "languages": [
+          "en",
+          "cs"
+        ],
+        "fallbackLanguage": "en",
+        "namespace": "property-registry",
+        "namespaces": [
+          "property-registry",
+          "translation"
+        ],
+        "publicDir": [
+          "./locales",
+          "./assets"
+        ],
+        "localisedUrls": {},
+        "resourceOwnership": {
+          "ownerAppId": "property-registry",
+          "source": "route-owned",
+          "staticJson": "./locales/{lng}/property-registry.json"
+        }
+      },
+      "routes": {
+        "source": "route-owned",
+        "metadataAuthoring": "colocated-route-meta",
+        "generatedManifest": true,
+        "metadataExport": "./src/routes/ultramodern-route-metadata",
+        "localisedUrls": {},
+        "owned": [
+          {
+            "descriptionKey": "property-registry.seo.description",
+            "mfBoundaryId": "verticalPropertyRegistry",
+            "namespace": "property-registry",
+            "ownerAppId": "property-registry",
+            "indexable": false,
+            "public": false,
+            "publicSurface": "private-app-screen",
+            "canonicalPath": "/",
+            "id": "property-registry-home",
+            "localisedPaths": {
+              "cs": "/",
+              "en": "/"
+            },
+            "titleKey": "property-registry.title"
+          }
+        ],
+        "publicRoutes": [],
+        "privateByDefault": true,
+        "publicnessDefault": "private-app-screen",
+        "generatedRouteMap": true,
+        "manualOverrides": [],
+        "publicHead": {
+          "authoring": "colocated-route-meta",
+          "generator": "./src/routes/ultramodern-route-head",
+          "renderer": "@modern-js/runtime/head Helmet",
+          "ssr": true,
+          "title": {
+            "required": true,
+            "source": "route.titleKey"
+          },
+          "description": {
+            "required": true,
+            "source": "route.descriptionKey"
+          },
+          "canonical": {
+            "publicIndexableOnly": true,
+            "source": "localized canonical route URL"
+          },
+          "alternates": {
+            "hreflang": [
+              "en",
+              "cs"
+            ],
+            "xDefault": "en"
+          },
+          "openGraph": {
+            "publicIndexableOnly": true,
+            "required": [
+              "og:title",
+              "og:description",
+              "og:url",
+              "og:type"
+            ]
+          },
+          "twitter": {
+            "publicIndexableOnly": true,
+            "required": [
+              "twitter:card",
+              "twitter:title",
+              "twitter:description"
+            ]
+          },
+          "structuredData": {
+            "publicIndexableOnly": true,
+            "type": "WebPage",
+            "sanitizesHtmlOpenBracket": true
+          },
+          "privateRouteRobots": "noindex, nofollow"
+        },
+        "publicSurface": {
+          "authoring": "colocated-route-meta",
+          "artifactLifecycle": "build-and-deploy-output",
+          "generatedManifest": "./src/routes/ultramodern-route-metadata",
+          "source": "route-owned-public-routes",
+          "metadataExport": "./src/routes/ultramodern-route-metadata",
+          "generator": "scripts/generate-public-surface-assets.mjs",
+          "outputRoot": "dist/public",
+          "cloudflareOutputRoot": ".output/public",
+          "privateRoutePolicy": "omit-from-generated-public-surface",
+          "files": [
+            "robots.txt"
+          ],
+          "omittedByDefault": [
+            "api-catalog.json",
+            "llms.txt",
+            "security.txt"
+          ],
+          "languages": [
+            "en",
+            "cs"
+          ],
+          "contentExpansion": {
+            "authoring": "route-owned-esm-provider",
+            "defaultProviderFile": "route.sitemap.mjs",
+            "entryExport": "default-or-entries",
+            "paramsSource": "params-or-localeParams",
+            "draftPolicy": "omit-draft-by-default",
+            "indexablePolicy": "omit-indexable-false",
+            "lifecycle": "executed-during-public-surface-generation"
+          },
+          "contentSources": [],
+          "publicRoutes": [],
+          "routeEntries": [],
+          "concreteUrlPaths": []
+        }
+      },
+      "moduleFederation": {
+        "name": "verticalPropertyRegistry",
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
+        "dts": {
+          "displayErrorInTerminal": true,
+          "compilerInstance": "tsgo"
+        },
+        "browserSafeExposesOnly": true,
+        "zephyrRspackPlugin": "1.1.1"
+      },
+      "marker": {
+        "appId": "property-registry",
+        "packageName": "@mvp/property-registry",
+        "version": "0.1.0",
+        "build": "56fdaea94be0f3ad",
+        "deployProfile": "cloudflare-ssr-mf-effect-v1",
+        "uiSurface": "ui",
+        "apiSurface": "effect-bff"
+      },
+      "effect": {
+        "runtime": "effect",
+        "import": "@modern-js/plugin-bff/effect-edge",
+        "prefix": "/property-registry-api",
+        "openapi": "/openapi.json",
+        "workerEntry": "worker/__modern_bff_effect.js",
+        "contract": "./shared/effect/api",
+        "client": "./effect/client",
+        "readiness": {
+          "endpoint": "/effect/property-registry/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "effectBff"
+          ]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-effect-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listPropertyRegistry",
+            "method": "GET",
+            "path": "/effect/property-registry",
+            "resource": "workspace-items",
+            "owner": "property-registry"
+          },
+          "workspaceDetail": {
+            "client": "getPropertyRegistry",
+            "method": "GET",
+            "path": "/effect/property-registry/:id",
+            "resource": "workspace-item",
+            "owner": "property-registry"
+          },
+          "workspaceCreate": {
+            "client": "createPropertyRegistry",
+            "method": "POST",
+            "path": "/effect/property-registry",
+            "resource": "propertyRegistry",
+            "owner": "property-registry"
+          }
+        },
+        "group": "propertyRegistry",
+        "notFound": "PropertyRegistryNotFound",
+        "operations": {
+          "list": {
+            "method": "GET",
+            "path": "/effect/property-registry",
+            "source": "generated-client"
+          },
+          "readiness": {
+            "method": "GET",
+            "path": "/effect/property-registry/readiness",
+            "source": "generated-client"
+          },
+          "get": {
+            "method": "GET",
+            "path": "/effect/property-registry/:id",
+            "source": "generated-client"
+          },
+          "create": {
+            "method": "POST",
+            "path": "/effect/property-registry",
+            "source": "generated-client"
+          }
+        }
+      }
+    },
+    {
+      "id": "accounting-core",
+      "package": "@mvp/accounting-core",
+      "path": "verticals/accounting-core",
+      "kind": "vertical",
+      "config": {
+        "preset": "presetUltramodern",
+        "plugins": [
+          "appTools",
+          "tanstackRouterPlugin",
+          "i18nPlugin",
+          "bffPlugin",
+          "moduleFederationPlugin",
+          "zephyrRspackPlugin"
+        ],
+        "dev": {
+          "assetPrefix": "http://localhost:4102/"
+        },
+        "output": {
+          "assetPrefix": {
+            "envFallbackOrder": [
+              "ULTRAMODERN_PUBLIC_URL_ACCOUNTING_CORE",
+              "MODERN_PUBLIC_SITE_URL",
+              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN"
+            ],
+            "default": "/"
+          },
+          "disableTsChecker": true,
+          "distPath": {
+            "html": "./"
+          },
+          "polyfill": "off",
+          "splitRouteChunks": true
+        },
+        "performance": {
+          "rsdoctor": {
+            "enabledByEnv": "ULTRAMODERN_RSDOCTOR=true",
+            "disableClientServer": true
+          }
+        },
+        "rspack": {
+          "output": {
+            "uniqueName": "verticalAccountingCore",
+            "chunkLoadingGlobal": "__ULTRAMODERN_VERTICAL_ACCOUNTING_CORE_LOADED_CHUNKS__"
+          }
+        },
+        "html": {
+          "outputStructure": "flat"
+        },
+        "source": {
+          "mainEntryName": "index",
+          "siteUrl": {
+            "envFallbackOrder": [
+              "MODERN_PUBLIC_SITE_URL",
+              "ULTRAMODERN_PUBLIC_URL_ACCOUNTING_CORE",
+              "ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN",
+              "VERTICAL_ACCOUNTING_CORE_PORT"
+            ],
+            "defaultLocalhostPort": 4102
+          },
+          "siteUrlGlobal": "ULTRAMODERN_SITE_URL"
+        },
+        "bff": {
+          "runtimeFramework": "effect",
+          "prefix": "/accounting-core-api",
+          "openapi": "/openapi.json"
+        }
+      },
+      "styling": {
+        "tailwind": true,
+        "postcssPlugins": [
+          "@tailwindcss/postcss"
+        ],
+        "prefix": "accountingcore",
+        "source": "..",
+        "sourceMode": "source(none)",
+        "federation": {
+          "owner": {
+            "id": "accounting-core",
+            "package": "@mvp/accounting-core",
+            "team": "super-app-platform"
+          },
+          "role": "vertical-css",
+          "rootSelector": "[data-app-id=\"accounting-core\"]",
+          "classPrefix": "accountingcore:",
+          "layers": {
+            "shared": [
+              "ultramodern-shared-tokens"
+            ],
+            "owned": [
+              "ultramodern-vertical-accounting-core"
+            ],
+            "imports": [
+              "ultramodern-shared-tokens"
+            ]
+          },
+          "entrypoints": {
+            "layoutImport": "src/routes/layout.tsx",
+            "css": [
+              "src/routes/index.css"
+            ],
+            "federationEntry": "src/federation-entry.tsx"
+          },
+          "assets": {
+            "shared": [
+              "@mvp/shared-design-tokens/tokens.css"
+            ],
+            "owned": [
+              "src/routes/index.css"
+            ],
+            "emittedBy": "modern-rspack-css-extraction",
+            "contentHash": true
+          },
+          "dedupe": {
+            "strategy": "shared-token-package-plus-css-content-hash",
+            "sharedPackage": "@mvp/shared-design-tokens",
+            "sharedLayers": [
+              "ultramodern-shared-tokens"
+            ],
+            "runtimeLoad": "once-per-content-hash",
+            "duplicateBaseStylesAllowed": false
+          },
+          "ssr": {
+            "cloudflare": true,
+            "firstPaintRequired": true,
+            "linkEmission": "modern-ssr-css-assets",
+            "verticalCss": "federated-manifest-owned-css"
+          }
+        }
+      },
+      "deploy": {
+        "target": "cloudflare",
+        "cloudflare": {
+          "target": "cloudflare",
+          "workerName": "mvp-accounting-core",
+          "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_ACCOUNTING_CORE",
+          "compatibilityDate": "2026-06-02",
+          "compatibilityFlags": [
+            "nodejs_compat",
+            "global_fetch_strictly_public"
+          ],
+          "assetsBinding": "ASSETS",
+          "routes": {
+            "ssr": "/en",
+            "mfManifest": "/mf-manifest.json",
+            "locale": "/locales/en/accounting-core.json",
+            "effectReadiness": "/accounting-core-api/effect/accounting-core/readiness"
+          },
+          "security": {
+            "enabled": true,
+            "headers": {
+              "referrerPolicy": "strict-origin-when-cross-origin",
+              "contentTypeOptions": "nosniff",
+              "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+            },
+            "contentSecurityPolicy": {
+              "mode": "report-only",
+              "directives": {
+                "base-uri": [
+                  "'self'"
+                ],
+                "connect-src": [
+                  "'self'",
+                  "https:",
+                  "http:",
+                  "wss:",
+                  "ws:"
+                ],
+                "default-src": [
+                  "'self'"
+                ],
+                "font-src": [
+                  "'self'",
+                  "data:",
+                  "https:",
+                  "http:"
+                ],
+                "form-action": [
+                  "'self'"
+                ],
+                "frame-ancestors": [
+                  "'self'"
+                ],
+                "img-src": [
+                  "'self'",
+                  "data:",
+                  "blob:",
+                  "https:",
+                  "http:"
+                ],
+                "manifest-src": [
+                  "'self'",
+                  "https:",
+                  "http:"
+                ],
+                "object-src": [
+                  "'none'"
+                ],
+                "script-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "'unsafe-eval'",
+                  "https:",
+                  "http:",
+                  "blob:"
+                ],
+                "style-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https:",
+                  "http:"
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:"
+                ]
+              },
+              "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+            },
+            "noindex": {
+              "workersDev": true,
+              "localhost": true,
+              "previewHostnames": []
+            },
+            "cookies": {
+              "mutateSetCookie": false,
+              "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
+            }
+          },
+          "qualityGates": {
+            "publicRoutes": {
+              "requireSitemapWhenPresent": true,
+              "requireRobotsSitemapConsistency": true,
+              "requireWebManifestWhenPresent": true
+            },
+            "statusCodes": {
+              "notFoundRoute": "/__ultramodern-smoke-missing",
+              "unknownRouteStatus": 404
+            },
+            "indexing": {
+              "previewNoindex": true,
+              "productionPublicRoutesIndexable": true
+            },
+            "assets": {
+              "cssPreloadRequired": true,
+              "cssResponseRequired": true,
+              "cacheControlRequiredForCss": true,
+              "sourcemapsPubliclyReferenced": false
+            },
+            "budgets": {
+              "ssrHtmlMaxBytes": 250000,
+              "mfManifestMaxBytes": 500000,
+              "localeJsonMaxBytes": 100000,
+              "sitemapXmlMaxBytes": 500000,
+              "cssAssetMaxBytes": 750000
+            },
+            "csp": {
+              "finalMode": "report-only-dogfood",
+              "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+            }
+          },
+          "evidence": {
+            "proofScript": "scripts/proof-cloudflare-version.mjs",
+            "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+          }
+        },
+        "worker": {
+          "compatibilityDate": "2026-06-02",
+          "name": "mvp-accounting-core",
+          "security": {
+            "enabled": true,
+            "headers": {
+              "referrerPolicy": "strict-origin-when-cross-origin",
+              "contentTypeOptions": "nosniff",
+              "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+            },
+            "contentSecurityPolicy": {
+              "mode": "report-only",
+              "directives": {
+                "base-uri": [
+                  "'self'"
+                ],
+                "connect-src": [
+                  "'self'",
+                  "https:",
+                  "http:",
+                  "wss:",
+                  "ws:"
+                ],
+                "default-src": [
+                  "'self'"
+                ],
+                "font-src": [
+                  "'self'",
+                  "data:",
+                  "https:",
+                  "http:"
+                ],
+                "form-action": [
+                  "'self'"
+                ],
+                "frame-ancestors": [
+                  "'self'"
+                ],
+                "img-src": [
+                  "'self'",
+                  "data:",
+                  "blob:",
+                  "https:",
+                  "http:"
+                ],
+                "manifest-src": [
+                  "'self'",
+                  "https:",
+                  "http:"
+                ],
+                "object-src": [
+                  "'none'"
+                ],
+                "script-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "'unsafe-eval'",
+                  "https:",
+                  "http:",
+                  "blob:"
+                ],
+                "style-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https:",
+                  "http:"
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:"
+                ]
+              },
+              "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+            },
+            "noindex": {
+              "workersDev": true,
+              "localhost": true,
+              "previewHostnames": []
+            },
+            "cookies": {
+              "mutateSetCookie": false,
+              "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
+            }
+          },
+          "ssr": true
+        },
+        "output": {
+          "flat": true,
+          "htmlDistPath": "./"
+        }
+      },
+      "ssr": {
+        "mode": "string",
+        "moduleFederationAppSSR": true
+      },
+      "i18n": {
+        "plugin": "@modern-js/plugin-i18n",
+        "backend": {
+          "enabled": true,
+          "loadPath": "/locales/{{lng}}/{{ns}}.json"
+        },
+        "reactI18next": false,
+        "languages": [
+          "en",
+          "cs"
+        ],
+        "fallbackLanguage": "en",
+        "namespace": "accounting-core",
+        "namespaces": [
+          "accounting-core",
+          "translation"
+        ],
+        "publicDir": [
+          "./locales",
+          "./assets"
+        ],
+        "localisedUrls": {},
+        "resourceOwnership": {
+          "ownerAppId": "accounting-core",
+          "source": "route-owned",
+          "staticJson": "./locales/{lng}/accounting-core.json"
+        }
+      },
+      "routes": {
+        "source": "route-owned",
+        "metadataAuthoring": "colocated-route-meta",
+        "generatedManifest": true,
+        "metadataExport": "./src/routes/ultramodern-route-metadata",
+        "localisedUrls": {},
+        "owned": [
+          {
+            "descriptionKey": "accounting-core.seo.description",
+            "mfBoundaryId": "verticalAccountingCore",
+            "namespace": "accounting-core",
+            "ownerAppId": "accounting-core",
+            "indexable": false,
+            "public": false,
+            "publicSurface": "private-app-screen",
+            "canonicalPath": "/",
+            "id": "accounting-core-home",
+            "localisedPaths": {
+              "cs": "/",
+              "en": "/"
+            },
+            "titleKey": "accounting-core.title"
+          }
+        ],
+        "publicRoutes": [],
+        "privateByDefault": true,
+        "publicnessDefault": "private-app-screen",
+        "generatedRouteMap": true,
+        "manualOverrides": [],
+        "publicHead": {
+          "authoring": "colocated-route-meta",
+          "generator": "./src/routes/ultramodern-route-head",
+          "renderer": "@modern-js/runtime/head Helmet",
+          "ssr": true,
+          "title": {
+            "required": true,
+            "source": "route.titleKey"
+          },
+          "description": {
+            "required": true,
+            "source": "route.descriptionKey"
+          },
+          "canonical": {
+            "publicIndexableOnly": true,
+            "source": "localized canonical route URL"
+          },
+          "alternates": {
+            "hreflang": [
+              "en",
+              "cs"
+            ],
+            "xDefault": "en"
+          },
+          "openGraph": {
+            "publicIndexableOnly": true,
+            "required": [
+              "og:title",
+              "og:description",
+              "og:url",
+              "og:type"
+            ]
+          },
+          "twitter": {
+            "publicIndexableOnly": true,
+            "required": [
+              "twitter:card",
+              "twitter:title",
+              "twitter:description"
+            ]
+          },
+          "structuredData": {
+            "publicIndexableOnly": true,
+            "type": "WebPage",
+            "sanitizesHtmlOpenBracket": true
+          },
+          "privateRouteRobots": "noindex, nofollow"
+        },
+        "publicSurface": {
+          "authoring": "colocated-route-meta",
+          "artifactLifecycle": "build-and-deploy-output",
+          "generatedManifest": "./src/routes/ultramodern-route-metadata",
+          "source": "route-owned-public-routes",
+          "metadataExport": "./src/routes/ultramodern-route-metadata",
+          "generator": "scripts/generate-public-surface-assets.mjs",
+          "outputRoot": "dist/public",
+          "cloudflareOutputRoot": ".output/public",
+          "privateRoutePolicy": "omit-from-generated-public-surface",
+          "files": [
+            "robots.txt"
+          ],
+          "omittedByDefault": [
+            "api-catalog.json",
+            "llms.txt",
+            "security.txt"
+          ],
+          "languages": [
+            "en",
+            "cs"
+          ],
+          "contentExpansion": {
+            "authoring": "route-owned-esm-provider",
+            "defaultProviderFile": "route.sitemap.mjs",
+            "entryExport": "default-or-entries",
+            "paramsSource": "params-or-localeParams",
+            "draftPolicy": "omit-draft-by-default",
+            "indexablePolicy": "omit-indexable-false",
+            "lifecycle": "executed-during-public-surface-generation"
+          },
+          "contentSources": [],
+          "publicRoutes": [],
+          "routeEntries": [],
+          "concreteUrlPaths": []
+        }
+      },
+      "moduleFederation": {
+        "name": "verticalAccountingCore",
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
+        "dts": {
+          "displayErrorInTerminal": true,
+          "compilerInstance": "tsgo"
+        },
+        "browserSafeExposesOnly": true,
+        "zephyrRspackPlugin": "1.1.1"
+      },
+      "marker": {
+        "appId": "accounting-core",
+        "packageName": "@mvp/accounting-core",
+        "version": "0.1.0",
+        "build": "f8e72a9e938880d4",
+        "deployProfile": "cloudflare-ssr-mf-effect-v1",
+        "uiSurface": "ui",
+        "apiSurface": "effect-bff"
+      },
+      "effect": {
+        "runtime": "effect",
+        "import": "@modern-js/plugin-bff/effect-edge",
+        "prefix": "/accounting-core-api",
+        "openapi": "/openapi.json",
+        "workerEntry": "worker/__modern_bff_effect.js",
+        "contract": "./shared/effect/api",
+        "client": "./effect/client",
+        "readiness": {
+          "endpoint": "/effect/accounting-core/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "effectBff"
+          ]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-effect-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listAccountingCore",
+            "method": "GET",
+            "path": "/effect/accounting-core",
+            "resource": "workspace-items",
+            "owner": "accounting-core"
+          },
+          "workspaceDetail": {
+            "client": "getAccountingCore",
+            "method": "GET",
+            "path": "/effect/accounting-core/:id",
+            "resource": "workspace-item",
+            "owner": "accounting-core"
+          },
+          "workspaceCreate": {
+            "client": "createAccountingCore",
+            "method": "POST",
+            "path": "/effect/accounting-core",
+            "resource": "accountingCore",
+            "owner": "accounting-core"
+          }
+        },
+        "group": "accountingCore",
+        "notFound": "AccountingCoreNotFound",
+        "operations": {
+          "list": {
+            "method": "GET",
+            "path": "/effect/accounting-core",
+            "source": "generated-client"
+          },
+          "readiness": {
+            "method": "GET",
+            "path": "/effect/accounting-core/readiness",
+            "source": "generated-client"
+          },
+          "get": {
+            "method": "GET",
+            "path": "/effect/accounting-core/:id",
+            "source": "generated-client"
+          },
+          "create": {
+            "method": "POST",
+            "path": "/effect/accounting-core",
+            "source": "generated-client"
+          }
+        }
       }
     }
   ]

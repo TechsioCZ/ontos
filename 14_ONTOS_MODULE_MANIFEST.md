@@ -322,6 +322,7 @@ Rules:
 - Props are inferred from the component type, for example `React.ComponentProps<typeof InvoicePreview>`.
 - Add Effect Schema only when runtime validation or generated documentation truly needs it.
 - Consumers should use the values exposed by the producer manifest, for example `BillingManifest.publicSurface.components.InvoicePreview`.
+- Cross-MicroVertical public component consumption must use the generated Module Federation exposure/remote wiring. A consuming MicroVertical must not import another MicroVertical's component source file directly, even when the component is listed in the producer manifest.
 - Components must not depend on another module's private state or private imports.
 - Internal UI components remain private and must not appear in the manifest.
 
@@ -332,7 +333,7 @@ For Day 1/2, each MVP MicroVertical should expose one placeholder public compone
 - `property.registry`: `PropertyUnitCard`.
 - `accounting.core`: `AccountingDraftEntryCard`.
 
-These components should be inert boundary-verification components, not production product UI.
+These components should be inert boundary-verification components, not production product UI. Day 2 generated code must prove at least one cross-MicroVertical component consumption path through Module Federation, using the manifest-exposed public component and generated federated component wrapper/client rather than a direct workspace import.
 
 ## Routes And Navigation
 

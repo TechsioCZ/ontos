@@ -4,17 +4,58 @@ import path from 'node:path';
 
 const root = process.cwd();
 const packageScope = 'mvp';
-const expectedPnpmVersion = '11.5.2';
+const expectedPnpmVersion = '11.5.3';
 const tailwindEnabled = true;
-const fullStackVerticals = [];
+const fullStackVerticals = [
+  {
+    id: 'property-registry',
+    domain: 'property-registry',
+    stem: 'property-registry',
+    group: 'propertyRegistry',
+    path: 'verticals/property-registry',
+    mfName: 'verticalPropertyRegistry',
+    apiPrefix: '/property-registry-api',
+    tailwindPrefix: 'propertyregistry',
+    zephyrAlias: 'propertyRegistry',
+    packageName: '@mvp/property-registry',
+    port: 4101,
+    exposes: ['./Route', './Widget'],
+    componentPaths: ['verticals/property-registry/src/components/property-registry-widget.tsx'],
+    namespace: 'property-registry',
+    routePagePaths: [],
+    routeMetaPaths: ['verticals/property-registry/src/routes/[lang]/route.meta.ts'],
+    localisedUrls: {},
+    verticalRefs: [],
+  },
+  {
+    id: 'accounting-core',
+    domain: 'accounting-core',
+    stem: 'accounting-core',
+    group: 'accountingCore',
+    path: 'verticals/accounting-core',
+    mfName: 'verticalAccountingCore',
+    apiPrefix: '/accounting-core-api',
+    tailwindPrefix: 'accountingcore',
+    zephyrAlias: 'accountingCore',
+    packageName: '@mvp/accounting-core',
+    port: 4102,
+    exposes: ['./Route', './Widget'],
+    componentPaths: ['verticals/accounting-core/src/components/accounting-core-widget.tsx'],
+    namespace: 'accounting-core',
+    routePagePaths: [],
+    routeMetaPaths: ['verticals/accounting-core/src/routes/[lang]/route.meta.ts'],
+    localisedUrls: {},
+    verticalRefs: [],
+  },
+];
 const shellNamespace = 'shell';
 const oldRemotePaths = ['apps/remotes'];
 const expectedBuildScript =
-  'pnpm --filter @mvp/property-registry run build && pnpm --filter @mvp/accounting-core run build && pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types';
+  'ULTRAMODERN_ZEPHYR=false pnpm -r --filter "./verticals/*" run build && ULTRAMODERN_ZEPHYR=false pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types';
 const expectedCloudflareBuildScript =
-  'pnpm --filter "./apps/shell-super-app" run cloudflare:build && pnpm mf:types';
+  'pnpm -r --filter "./verticals/*" run cloudflare:build && pnpm --filter "./apps/shell-super-app" run cloudflare:build && pnpm mf:types';
 const expectedCloudflareDeployScript =
-  'pnpm --filter "./apps/shell-super-app" run cloudflare:deploy';
+  'pnpm -r --filter "./verticals/*" run cloudflare:deploy && pnpm --filter "./apps/shell-super-app" run cloudflare:deploy';
 const expectedCloudflareSecurity = {
   enabled: true,
   headers: {
@@ -51,8 +92,8 @@ const expectedCloudflareSecurity = {
     reason: 'Generated Cloudflare worker does not own application Set-Cookie headers.',
   },
 };
-const publicSurfaceRequiredAssetPaths = ['config/public/robots.txt'];
-const publicSurfaceOptionalAssetPaths = [
+const publicSurfaceManagedSourceAssetPaths = [
+  'config/public/robots.txt',
   'config/public/sitemap.xml',
   'config/public/site.webmanifest',
 ];
@@ -80,27 +121,162 @@ const assertNotExists = (relativePath) => {
   assert(!fs.existsSync(path.join(root, relativePath)), `Unexpected ${relativePath}`);
 };
 const assertPublicSurfaceAssets = (appPath, publicRoutes) => {
-  const robots = readText(`${appPath}/config/public/robots.txt`);
-  if ((publicRoutes ?? []).length === 0) {
-    assert(
-      robots.includes('Disallow: /'),
-      `${appPath} robots.txt must disallow crawling when no public routes exist`,
-    );
-    for (const relativePath of publicSurfaceOptionalAssetPaths) {
-      assertNotExists(`${appPath}/${relativePath}`);
-    }
-    return;
+  for (const relativePath of publicSurfaceManagedSourceAssetPaths) {
+    assertNotExists(`${appPath}/${relativePath}`);
   }
-  const sitemap = readText(`${appPath}/config/public/sitemap.xml`);
-  const manifest = readJson(`${appPath}/config/public/site.webmanifest`);
-  assert(!sitemap.includes('<lastmod>'), `${appPath} sitemap must omit build-time lastmod values`);
+  void publicRoutes;
+};
+const assertPublicSurfaceContract = (appId, publicSurface) => {
   assert(
-    typeof manifest.name === 'string' && manifest.name.length > 0,
-    `${appPath} web manifest must include a safe app name`,
+    publicSurface?.artifactLifecycle === 'build-and-deploy-output',
+    `${appId} public surface artifacts must be build/deploy outputs`,
   );
   assert(
-    typeof manifest.start_url === 'string' && manifest.start_url.startsWith('/'),
-    `${appPath} web manifest start_url must be a public route path`,
+    publicSurface?.generator === 'scripts/generate-public-surface-assets.mjs',
+    `${appId} public surface generator script is incorrect`,
+  );
+  assert(
+    publicSurface?.outputRoot === 'dist/public',
+    `${appId} public surface dist outputRoot is incorrect`,
+  );
+  assert(
+    publicSurface?.cloudflareOutputRoot === '.output/public',
+    `${appId} public surface Cloudflare outputRoot is incorrect`,
+  );
+  assert(
+    !('staticRoot' in (publicSurface ?? {})),
+    `${appId} public surface must not point at source config/public`,
+  );
+  assert(
+    (publicSurface?.files ?? []).includes('robots.txt'),
+    `${appId} public surface must always emit robots.txt`,
+  );
+  assert(
+    publicSurface?.contentExpansion?.authoring === 'route-owned-esm-provider',
+    `${appId} public content expansion authoring is incorrect`,
+  );
+  assert(
+    publicSurface?.contentExpansion?.defaultProviderFile === 'route.sitemap.mjs',
+    `${appId} public content expansion provider file is incorrect`,
+  );
+  assert(
+    publicSurface?.contentExpansion?.draftPolicy === 'omit-draft-by-default',
+    `${appId} public content expansion draft policy is incorrect`,
+  );
+  assert(
+    publicSurface?.contentExpansion?.indexablePolicy === 'omit-indexable-false',
+    `${appId} public content expansion indexable policy is incorrect`,
+  );
+  assert(
+    Array.isArray(publicSurface?.contentSources),
+    `${appId} public content sources must be an array`,
+  );
+  if ((publicSurface?.publicRoutes ?? []).length === 0) {
+    assert(
+      !(publicSurface?.files ?? []).includes('sitemap.xml'),
+      `${appId} private public surface must omit sitemap.xml`,
+    );
+    assert(
+      !(publicSurface?.files ?? []).includes('site.webmanifest'),
+      `${appId} private public surface must omit site.webmanifest`,
+    );
+  } else {
+    assert(
+      (publicSurface?.files ?? []).includes('sitemap.xml'),
+      `${appId} public surface must emit sitemap.xml when public routes exist`,
+    );
+    assert(
+      (publicSurface?.files ?? []).includes('site.webmanifest'),
+      `${appId} public surface must emit site.webmanifest when public routes exist`,
+    );
+  }
+};
+const assertPublicHeadContract = (appId, publicHead, headModule) => {
+  assert(
+    publicHead?.generator === './src/routes/ultramodern-route-head',
+    `${appId} public head generator is incorrect`,
+  );
+  assert(
+    publicHead?.renderer === '@modern-js/runtime/head Helmet',
+    `${appId} public head renderer is incorrect`,
+  );
+  assert(publicHead?.ssr === true, `${appId} public head must be SSR-rendered`);
+  assert(
+    publicHead?.title?.source === 'route.titleKey',
+    `${appId} public head title must come from route metadata`,
+  );
+  assert(
+    publicHead?.description?.source === 'route.descriptionKey',
+    `${appId} public head description must come from route metadata`,
+  );
+  assert(
+    publicHead?.canonical?.publicIndexableOnly === true,
+    `${appId} canonical links must be public/indexable only`,
+  );
+  assert(
+    publicHead?.structuredData?.sanitizesHtmlOpenBracket === true,
+    `${appId} structured data must sanitize HTML open brackets`,
+  );
+  assert(
+    publicHead?.privateRouteRobots === 'noindex, nofollow',
+    `${appId} private route robots policy is incorrect`,
+  );
+  for (const snippet of [
+    "from '@modern-js/runtime/head'",
+    '<title>{title}</title>',
+    'name="description"',
+    'name="robots"',
+    'rel="canonical"',
+    'rel="alternate"',
+    'property="og:title"',
+    'property="og:description"',
+    'name="twitter:card"',
+    'application/ld+json',
+    "replaceAll('<', '\\\\u003c')",
+  ]) {
+    assert(headModule.includes(snippet), `${appId} route head module is missing ${snippet}`);
+  }
+};
+const assertCloudflareQualityGates = (appId, qualityGates) => {
+  assert(
+    qualityGates?.publicRoutes?.requireSitemapWhenPresent === true,
+    `${appId} quality gates must require sitemap for public routes`,
+  );
+  assert(
+    qualityGates?.publicRoutes?.requireRobotsSitemapConsistency === true,
+    `${appId} quality gates must require robots/sitemap consistency`,
+  );
+  assert(
+    qualityGates?.statusCodes?.unknownRouteStatus === 404,
+    `${appId} quality gates must require 404 unknown routes`,
+  );
+  assert(
+    qualityGates?.indexing?.previewNoindex === true,
+    `${appId} quality gates must require preview noindex`,
+  );
+  assert(
+    qualityGates?.indexing?.productionPublicRoutesIndexable === true,
+    `${appId} quality gates must require production public routes to be indexable`,
+  );
+  assert(
+    qualityGates?.assets?.cssPreloadRequired === true,
+    `${appId} quality gates must require CSS preload evidence`,
+  );
+  assert(
+    qualityGates?.assets?.sourcemapsPubliclyReferenced === false,
+    `${appId} quality gates must reject public sourcemap references`,
+  );
+  assert(
+    typeof qualityGates?.budgets?.ssrHtmlMaxBytes === 'number',
+    `${appId} quality gates must define SSR HTML byte budget`,
+  );
+  assert(
+    typeof qualityGates?.budgets?.mfManifestMaxBytes === 'number',
+    `${appId} quality gates must define MF manifest byte budget`,
+  );
+  assert(
+    qualityGates?.csp?.finalMode === 'report-only-dogfood',
+    `${appId} CSP final mode decision is missing`,
   );
 };
 const expectedWorkerName = (packageSuffix) => `${packageScope}-${packageSuffix}`.slice(0, 63);
@@ -163,6 +339,7 @@ const requiredPaths = [
   'scripts/assert-mf-types.mjs',
   'scripts/bootstrap-agent-skills.mjs',
   'scripts/check-ultramodern-i18n-boundaries.mjs',
+  'scripts/generate-public-surface-assets.mjs',
   'scripts/proof-cloudflare-version.mjs',
   'scripts/setup-agent-reference-repos.mjs',
   'apps/shell-super-app/package.json',
@@ -177,9 +354,10 @@ const requiredPaths = [
   `apps/shell-super-app/locales/cs/${shellNamespace}.json`,
   'apps/shell-super-app/src/routes/index.css',
   'apps/shell-super-app/src/routes/layout.tsx',
+  'apps/shell-super-app/src/routes/ultramodern-route-head.tsx',
   'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
   'apps/shell-super-app/src/routes/[lang]/page.tsx',
-  ...publicSurfaceRequiredAssetPaths.map((relativePath) => `apps/shell-super-app/${relativePath}`),
+  ...['apps/shell-super-app/src/routes/[lang]/route.meta.ts'],
   'packages/shared-contracts/src/index.ts',
   'packages/shared-design-tokens/src/index.ts',
   'packages/shared-design-tokens/src/tokens.css',
@@ -204,10 +382,11 @@ for (const vertical of fullStackVerticals) {
     `${vertical.path}/locales/cs/${vertical.namespace}.json`,
     `${vertical.path}/src/routes/index.css`,
     `${vertical.path}/src/routes/layout.tsx`,
+    `${vertical.path}/src/routes/ultramodern-route-head.tsx`,
     `${vertical.path}/src/routes/ultramodern-route-metadata.ts`,
     `${vertical.path}/src/routes/[lang]/page.tsx`,
-    ...publicSurfaceRequiredAssetPaths.map((relativePath) => `${vertical.path}/${relativePath}`),
     ...vertical.routePagePaths,
+    ...vertical.routeMetaPaths,
   );
 }
 
@@ -327,8 +506,7 @@ assert(
   'Root i18n boundary script must call @modern-js/code-tools',
 );
 assert(
-  rootPackage.scripts?.['mf:types'] ===
-    'node ./scripts/assert-mf-types.mjs verticals/property-registry',
+  rootPackage.scripts?.['mf:types'] === 'node ./scripts/assert-mf-types.mjs',
   'Root must expose mf:types',
 );
 assert(
@@ -350,7 +528,7 @@ assert(
 );
 assert(
   rootPackage.scripts?.postinstall ===
-    "oxfmt . '!repos/**' '!**/@mf-types/**' && node ./scripts/bootstrap-agent-skills.mjs --postinstall && node ./scripts/setup-agent-reference-repos.mjs",
+    "oxfmt . '!repos/**' && node ./scripts/bootstrap-agent-skills.mjs --postinstall && node ./scripts/setup-agent-reference-repos.mjs",
   'Root postinstall must format, bootstrap agent skills, initialize git/hooks, and install reference repositories',
 );
 const agentReferenceRepoSetup = readText('scripts/setup-agent-reference-repos.mjs');
@@ -419,6 +597,18 @@ assert(
 
 const shellPackage = readJson('apps/shell-super-app/package.json');
 const shellModernConfig = readText('apps/shell-super-app/modern.config.ts');
+const shellRouteHead = readText('apps/shell-super-app/src/routes/ultramodern-route-head.tsx');
+const shellRouteMetadata = readText(
+  'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
+);
+assert(
+  shellRouteMetadata.includes('@generated by @modern-js/create'),
+  'Shell route metadata compatibility manifest must be marked generated',
+);
+assert(
+  shellRouteMetadata.includes("authoring: 'colocated-route-meta'"),
+  'Shell route metadata manifest must advertise colocated authoring',
+);
 const expectedZephyrDependencies = Object.fromEntries(
   fullStackVerticals.map((vertical) => [
     vertical.zephyrAlias,
@@ -478,6 +668,7 @@ assert(
     JSON.stringify(expectedCloudflareSecurity),
   'Shell Cloudflare security contract is incorrect',
 );
+assertCloudflareQualityGates('shell-super-app', shellContract?.deploy?.cloudflare?.qualityGates);
 assert(
   shellContract?.deploy?.worker?.compatibilityDate === expectedCloudflareCompatibilityDate,
   'Shell worker compatibilityDate is incorrect',
@@ -495,6 +686,45 @@ assert(
 assert(
   shellModernConfig.includes('name: cloudflareWorkerName'),
   'Shell modern.config.ts must wire deploy.worker.name',
+);
+assert(
+  shellModernConfig.includes('const assetPrefix ='),
+  'Shell modern.config.ts must derive a dedicated asset prefix',
+);
+assert(
+  shellModernConfig.includes("assetPrefix: '/'"),
+  'Shell modern.config.ts must keep dev assets origin-relative',
+);
+assert(
+  shellModernConfig.includes('assetPrefix,'),
+  'Shell modern.config.ts must wire output.assetPrefix to the derived asset prefix',
+);
+assert(
+  shellContract?.config?.dev?.assetPrefix === '/',
+  'Shell dev asset prefix must stay origin-relative',
+);
+assert(
+  shellContract?.config?.output?.assetPrefix?.default === '/',
+  'Shell asset prefix must default to origin-relative paths',
+);
+assert(
+  JSON.stringify(shellContract?.config?.output?.assetPrefix?.envFallbackOrder) ===
+    JSON.stringify([
+      'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
+      'MODERN_PUBLIC_SITE_URL',
+      'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+    ]),
+  'Shell asset prefix env fallback order is incorrect',
+);
+assert(
+  JSON.stringify(shellContract?.config?.source?.siteUrl?.envFallbackOrder) ===
+    JSON.stringify([
+      'MODERN_PUBLIC_SITE_URL',
+      'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
+      'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+      'SHELL_SUPER_APP_PORT',
+    ]),
+  'Shell site URL env fallback order is incorrect',
 );
 assert(
   shellContract?.config?.rspack?.output?.uniqueName === 'shellSuperApp',
@@ -553,6 +783,14 @@ assert(
 );
 assert(shellContract?.routes?.privateByDefault === true, 'Shell routes must be private by default');
 assert(
+  shellContract?.routes?.metadataAuthoring === 'colocated-route-meta',
+  'Shell route metadata authoring mode is incorrect',
+);
+assert(
+  shellContract?.routes?.generatedManifest === true,
+  'Shell route metadata manifest must be generated',
+);
+assert(
   shellContract?.routes?.publicnessDefault === 'private-app-screen',
   'Shell route publicness default is incorrect',
 );
@@ -560,14 +798,17 @@ assert(
   JSON.stringify(shellContract?.routes?.publicRoutes ?? []) === '[]',
   'Shell must not expose generated public routes by default',
 );
+assertPublicHeadContract('shell-super-app', shellContract?.routes?.publicHead, shellRouteHead);
+assertPublicSurfaceContract('shell-super-app', shellContract?.routes?.publicSurface);
 assert(
   (shellContract?.routes?.owned ?? []).every(
     (route) =>
       route.public === false &&
       route.indexable === false &&
-      route.publicSurface === 'private-app-screen',
+      route.publicSurface === 'private-app-screen' &&
+      typeof route.descriptionKey === 'string',
   ),
-  'Shell owned routes must be non-indexable private app screens by default',
+  'Shell owned routes must be non-indexable private app screens by default and include description keys',
 );
 assertPublicSurfaceAssets('apps/shell-super-app', shellContract?.routes?.publicRoutes ?? []);
 assert(
@@ -585,6 +826,16 @@ assert(!('effectServices' in topology), 'Default APIs must be vertical-owned, no
 for (const vertical of fullStackVerticals) {
   const packageJson = readJson(`${vertical.path}/package.json`);
   const modernConfig = readText(`${vertical.path}/modern.config.ts`);
+  const routeHead = readText(`${vertical.path}/src/routes/ultramodern-route-head.tsx`);
+  const routeMetadata = readText(`${vertical.path}/src/routes/ultramodern-route-metadata.ts`);
+  assert(
+    routeMetadata.includes('@generated by @modern-js/create'),
+    `${vertical.id} route metadata compatibility manifest must be marked generated`,
+  );
+  assert(
+    routeMetadata.includes("authoring: 'colocated-route-meta'"),
+    `${vertical.id} route metadata manifest must advertise colocated authoring`,
+  );
   assert(packageJson.name === vertical.packageName, `${vertical.id} package name is incorrect`);
   assert(
     packageJson.scripts?.['cloudflare:deploy'] ===
@@ -668,6 +919,7 @@ for (const vertical of fullStackVerticals) {
       JSON.stringify(expectedCloudflareSecurity),
     `${vertical.id} Cloudflare security contract is incorrect`,
   );
+  assertCloudflareQualityGates(vertical.id, contractEntry?.deploy?.cloudflare?.qualityGates);
   assert(
     contractEntry?.deploy?.worker?.compatibilityDate === expectedCloudflareCompatibilityDate,
     `${vertical.id} worker compatibilityDate is incorrect`,
@@ -683,6 +935,39 @@ for (const vertical of fullStackVerticals) {
   assert(
     modernConfig.includes('name: cloudflareWorkerName'),
     `${vertical.id} modern.config.ts must wire deploy.worker.name`,
+  );
+  assert(
+    modernConfig.includes('const assetPrefix ='),
+    `${vertical.id} modern.config.ts must derive a dedicated asset prefix`,
+  );
+  assert(
+    modernConfig.includes('const localDevAssetPrefix ='),
+    `${vertical.id} modern.config.ts must derive a dedicated local dev asset prefix`,
+  );
+  assert(
+    modernConfig.includes('assetPrefix: localDevAssetPrefix'),
+    `${vertical.id} modern.config.ts must use a self-origin dev asset prefix for MF remotes`,
+  );
+  assert(
+    modernConfig.includes('assetPrefix,'),
+    `${vertical.id} modern.config.ts must wire output.assetPrefix to the derived asset prefix`,
+  );
+  assert(
+    contractEntry?.config?.dev?.assetPrefix === `http://localhost:${vertical.port}/`,
+    `${vertical.id} dev asset prefix must point at its own localhost origin`,
+  );
+  assert(
+    contractEntry?.config?.output?.assetPrefix?.default === '/',
+    `${vertical.id} asset prefix must default to origin-relative paths`,
+  );
+  assert(
+    JSON.stringify(contractEntry?.config?.output?.assetPrefix?.envFallbackOrder) ===
+      JSON.stringify([
+        `ULTRAMODERN_PUBLIC_URL_${vertical.id.replace(/-/g, '_').toUpperCase()}`,
+        'MODERN_PUBLIC_SITE_URL',
+        'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+      ]),
+    `${vertical.id} asset prefix env fallback order is incorrect`,
   );
   assert(
     contractEntry?.deploy?.cloudflare?.routes?.effectReadiness ===
@@ -707,7 +992,7 @@ for (const vertical of fullStackVerticals) {
     `${vertical.id} MF exposes are incorrect`,
   );
   assert(
-    contractEntry?.moduleFederation?.dts?.compilerInstance === '--package typescript -- tsc',
+    contractEntry?.moduleFederation?.dts?.compilerInstance === 'tsgo',
     `${vertical.id} must keep mandatory DTS compiler`,
   );
   assert(
@@ -762,6 +1047,14 @@ for (const vertical of fullStackVerticals) {
     `${vertical.id} routes must be route-owned`,
   );
   assert(
+    contractEntry?.routes?.metadataAuthoring === 'colocated-route-meta',
+    `${vertical.id} route metadata authoring mode is incorrect`,
+  );
+  assert(
+    contractEntry?.routes?.generatedManifest === true,
+    `${vertical.id} route metadata manifest must be generated`,
+  );
+  assert(
     contractEntry?.routes?.metadataExport === './src/routes/ultramodern-route-metadata',
     `${vertical.id} route metadata export is incorrect`,
   );
@@ -777,14 +1070,17 @@ for (const vertical of fullStackVerticals) {
     JSON.stringify(contractEntry?.routes?.publicRoutes ?? []) === '[]',
     `${vertical.id} must not expose generated public routes by default`,
   );
+  assertPublicHeadContract(vertical.id, contractEntry?.routes?.publicHead, routeHead);
+  assertPublicSurfaceContract(vertical.id, contractEntry?.routes?.publicSurface);
   assert(
     (contractEntry?.routes?.owned ?? []).every(
       (route) =>
         route.public === false &&
         route.indexable === false &&
-        route.publicSurface === 'private-app-screen',
+        route.publicSurface === 'private-app-screen' &&
+        typeof route.descriptionKey === 'string',
     ),
-    `${vertical.id} owned routes must be non-indexable private app screens by default`,
+    `${vertical.id} owned routes must be non-indexable private app screens by default and include description keys`,
   );
   assertPublicSurfaceAssets(vertical.path, contractEntry?.routes?.publicRoutes ?? []);
   assert(

@@ -19,16 +19,66 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
-    "navigation": {
-      "microverticals": "Navigace MicroVerticalů"
-    },
     "remoteUnavailable": "Remote vertical je nedostupný",
     "remotes": {},
     "routes": {
-      "accountingCore": "Accounting Core",
-      "propertyRegistry": "Property Registry",
       "home": "Domů"
     },
+    "seo": {
+      "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
+    },
     "title": "UltraModern Workspace"
+  },
+  "property-registry": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "actions": "Akce",
+      "directory": "Adresář",
+      "done": "Akce dokončena",
+      "home": "Domů",
+      "recordDetail": "Detail záznamu",
+      "review": "Revize akce",
+      "unavailable": "Nedostupné",
+      "workspaces": "Pracovní prostory"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "property-registry",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "PropertyRegistry Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu."
+  },
+  "accounting-core": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "actions": "Akce",
+      "directory": "Adresář",
+      "done": "Akce dokončena",
+      "home": "Domů",
+      "recordDetail": "Detail záznamu",
+      "review": "Revize akce",
+      "unavailable": "Nedostupné",
+      "workspaces": "Pracovní prostory"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "accounting-core",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "AccountingCore Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu."
   }
 }

@@ -245,18 +245,16 @@ Rationale: The PoC is meant to prove the real authentication-to-principal bounda
 
 Question: If `mvp/scripts/init.sql` uses the ERD as the OntOS schema source of truth, where should BetterAuth's own tables be defined?
 
-Decision: BetterAuth uses the same Postgres database for now, but its schema should be managed through the standard Better Auth CLI migration path.
+Decision: BetterAuth uses the same Postgres database for now, and its local MVP tables are initialized by `mvp/scripts/init.sql` in the `auth` schema.
 
 Required behavior:
 
-- `mvp/scripts/init.sql`: OntOS schema from the ERD.
-- `pnpm db:auth:migrate`: runs the Better Auth CLI migration against the same Postgres database.
-- `mvp/scripts/seed.sql`: demo seed data after OntOS and BetterAuth schema are available.
-- `mvp/scripts/better-auth.sql`: fallback only if Better Auth CLI migration cannot work in this workspace.
+- `mvp/scripts/init.sql`: OntOS schema from the ERD plus BetterAuth's required local tables in `auth`.
+- `mvp/scripts/seed.sql`: demo seed data after the schema is available.
 
 The ERD remains the source of truth for OntOS tables only. BetterAuth is the explicit exception because it owns its own authentication/session persistence model.
 
-Rationale: Official Better Auth documentation provides a CLI migration/generation workflow for database schema management. Day 3 should use the standard Better Auth path instead of hand-maintaining third-party auth tables, unless the CLI blocks the PoC.
+Rationale: Day 3 now uses a scratch-only database bootstrap. Keeping the auth table definitions in `init.sql` makes a fresh local database deterministic without a separate schema-management step.
 
 ### 12. Should Day 3 use real SpiceDB or a strict fake?
 
@@ -319,7 +317,7 @@ Question: Should Day 3 write any module-owned business/canonical data?
 
 Decision: No. Day 3 performs setup and gate checks only.
 
-Day 3 may initialize schema, run BetterAuth migrations, seed data, authenticate users, resolve context, check module write permission, check module state, check policy, and display results. After setup/seed, Day 3 runtime checks must not write canonical rows, Action rows, audit rows, domain events, outbox messages, or other application evidence rows. The first runtime canonical module-owned write should happen on Day 4 through `property.registry.createUnit`.
+Day 3 may initialize schema, seed data, authenticate users, resolve context, check module write permission, check module state, check policy, and display results. After setup/seed, Day 3 runtime checks must not write canonical rows, Action rows, audit rows, domain events, outbox messages, or other application evidence rows. The first runtime canonical module-owned write should happen on Day 4 through `property.registry.createUnit`.
 
 Rationale: Day 3 proves foundations and access gates. Day 4 proves Action execution and canonical writes.
 
@@ -638,7 +636,7 @@ Recommended path:
 21_DAY_3_IMPLEMENTATION_SUMMARY.md
 ```
 
-The summary should include Docker commands, DB connection/env names, BetterAuth migration command, seed command, demo credentials, SpiceDB schema/seed command, scenario descriptions, what was proven, what failed or was deferred, and recommendations for SQL/Drizzle, BetterAuth, and SpiceDB.
+The summary should include Docker commands, DB connection/env names, schema initialization command, seed command, demo credentials, SpiceDB schema/seed command, scenario descriptions, what was proven, what failed or was deferred, and recommendations for SQL/Drizzle, BetterAuth, and SpiceDB.
 
 Rationale: The project architecture and handoff documents live at the repository root, so Day 3 evidence should be discoverable alongside them.
 
@@ -663,7 +661,7 @@ Decision: Day 3 is done when:
 
 1. `pnpm install` succeeds after new dependencies.
 2. `pnpm db:reset` starts Postgres and applies OntOS schema.
-3. BetterAuth migration runs against the same Postgres database.
+3. BetterAuth tables initialize in the same Postgres database.
 4. Seed command creates tenants, legal entities, principals, bindings, module states, BetterAuth demo users, and SpiceDB relationships.
 5. SpiceDB runs in Docker and has schema plus relationships loaded.
 6. `pnpm check` passes, or any failing gate is documented with exact reason.

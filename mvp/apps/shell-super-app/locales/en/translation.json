@@ -24,6 +24,61 @@
     "routes": {
       "home": "Home"
     },
+    "seo": {
+      "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
+    },
     "title": "UltraModern Workspace"
+  },
+  "property-registry": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "actions": "Actions",
+      "directory": "Directory",
+      "done": "Action complete",
+      "home": "Home",
+      "recordDetail": "Record detail",
+      "review": "Action review",
+      "unavailable": "Unavailable",
+      "workspaces": "Workspaces"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "property-registry",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "PropertyRegistry Vertical",
+    "widgetBody": "Owns a vertical route surface."
+  },
+  "accounting-core": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "actions": "Actions",
+      "directory": "Directory",
+      "done": "Action complete",
+      "home": "Home",
+      "recordDetail": "Record detail",
+      "review": "Action review",
+      "unavailable": "Unavailable",
+      "workspaces": "Workspaces"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "accounting-core",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "AccountingCore Vertical",
+    "widgetBody": "Owns a vertical route surface."
   }
 }

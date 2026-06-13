@@ -6,7 +6,7 @@ const generatedContractPath = path.join(root, '.modernjs/ultramodern-generated-c
 const generatedContract = fs.existsSync(generatedContractPath)
   ? JSON.parse(fs.readFileSync(generatedContractPath, 'utf-8'))
   : undefined;
-const defaultAppDirs = [];
+const defaultAppDirs = ['verticals/property-registry', 'verticals/accounting-core'];
 
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
@@ -34,10 +34,7 @@ for (const appDir of appDirs) {
   const contractEntry = generatedContract?.apps?.find(
     (app) => app.path === appDir.replace(/\\/g, '/'),
   );
-  if (
-    contractEntry &&
-    contractEntry.moduleFederation?.dts?.compilerInstance !== '--package typescript -- tsc'
-  ) {
+  if (contractEntry && contractEntry.moduleFederation?.dts?.compilerInstance !== 'tsgo') {
     throw new Error(`Module Federation DTS must use the workspace TypeScript compiler: ${appDir}`);
   }
 

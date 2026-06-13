@@ -154,10 +154,9 @@ function modernLoaderToTanstack<TLoader extends (args: any) => any>(
 
       const href = getLoaderHref(ctx);
 
-      const request =
-        baseRequest !== undefined
-          ? new Request(baseRequest, { signal })
-          : new Request(href, { signal });
+      const request = baseRequest !== undefined
+        ? new Request(baseRequest, { signal })
+        : new Request(href, { signal });
 
       const params = mapParamsForModernLoader(getLoaderParams(ctx), opts.hasSplat);
 
@@ -176,41 +175,40 @@ function modernLoaderToTanstack<TLoader extends (args: any) => any>(
   };
 }
 
+
+
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
+  
   staticData: createRouteStaticData({
-    modernRouteId: 'layout',
+    modernRouteId: "layout",
   }),
 });
 
 const route__lang__page = createRoute({
   getParentRoute: () => rootRoute,
-  path: '$lang',
+  path: "$lang",
   staticData: createRouteStaticData({
-    modernRouteId: '(lang)/page',
+    modernRouteId: "(lang)/page",
   }),
 });
 
 const route__lang__accountingCore_page = createRoute({
   getParentRoute: () => rootRoute,
-  path: '$lang/accounting-core',
+  path: "$lang/accounting-core",
   staticData: createRouteStaticData({
-    modernRouteId: '(lang)/accounting-core/page',
+    modernRouteId: "(lang)/accounting-core/page",
   }),
 });
 
 const route__lang__propertyRegistry_page = createRoute({
   getParentRoute: () => rootRoute,
-  path: '$lang/property-registry',
+  path: "$lang/property-registry",
   staticData: createRouteStaticData({
-    modernRouteId: '(lang)/property-registry/page',
+    modernRouteId: "(lang)/property-registry/page",
   }),
 });
 
-export const routeTree = rootRoute.addChildren([
-  route__lang__page,
-  route__lang__accountingCore_page,
-  route__lang__propertyRegistry_page,
-]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__accountingCore_page, route__lang__propertyRegistry_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

@@ -571,9 +571,9 @@ erDiagram
     text module_key
     text previous_state "nullable for initial state"
     text new_state
-    uuid changed_by_principal_id FK "effective actor, nullable for system/migration"
+    uuid changed_by_principal_id FK "effective actor, nullable for system"
     uuid action_invocation_id FK "required for user/support"
-    text change_source "user|support|system|migration"
+    text change_source "user|support|system"
     text reason
     timestamptz occurred_at
   }

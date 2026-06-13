@@ -49,8 +49,6 @@ Useful individual commands:
 
 ```bash
 pnpm db:init
-pnpm db:auth:migrate
-pnpm db:auth:generate
 pnpm db:seed
 pnpm spicedb:seed
 pnpm check
@@ -108,9 +106,9 @@ The Docker daemon was not running in this environment:
 failed to connect to the docker API at unix:///Users/jiprochazka/.docker/run/docker.sock
 ```
 
-Because of that, the live Postgres migration/seed, live SpiceDB seed, and browser-click scenario proof were not run here.
+Because of that, the live Postgres schema/seed, live SpiceDB seed, and browser-click scenario proof were not run here.
 
 ## Deviations
 
-- BetterAuth/auth are pinned to `1.6.15`, not `1.6.16`, because this repository enforces `minimumReleaseAge: 1440` and `1.6.16` was published on 2026-06-10 inside the cutoff. `1.6.15` was published on 2026-06-08 and uses the same official CLI migration path.
+- BetterAuth/auth are pinned to `1.6.15`, not `1.6.16`, because this repository enforces `minimumReleaseAge: 1440` and `1.6.16` was published on 2026-06-10 inside the cutoff. `1.6.15` was published on 2026-06-08 and exposes the same table shape used by the local SQL bootstrap.
 - SpiceDB uses Dockerized `authzed/spicedb:latest` with the memory datastore for Day 3. Seed scripts make the state repeatable after service restart.

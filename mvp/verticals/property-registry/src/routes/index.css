@@ -1,20 +1,3 @@
-@layer ultramodern-vertical-property-registry {
-  [data-app-id='property-registry'] {
-    min-height: 100vh;
-    padding: 24px;
-    background: #f8fafc;
-    color: #1c1917;
-  }
-
-  [data-app-id='property-registry'] dt {
-    color: #047857;
-    font-size: 12px;
-    font-weight: 800;
-    text-transform: uppercase;
-  }
-
-  [data-app-id='property-registry'] dd {
-    margin: 0;
-    font-weight: 700;
-  }
-}
+@import 'tailwindcss' prefix(propertyregistry) source(none);
+@source '..';
+@import '@mvp/shared-design-tokens/tokens.css';

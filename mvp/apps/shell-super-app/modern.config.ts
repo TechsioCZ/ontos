@@ -1,10 +1,10 @@
 // @effect-diagnostics processEnv:off
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import { bffPlugin } from '@modern-js/plugin-bff';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
-import moduleFederationConfig from './module-federation.config.ts';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
 type ZephyrRspackConfig = Parameters<ReturnType<typeof withZephyrRspack>>[0];
@@ -41,11 +41,19 @@ const inferredCloudflareUrl =
   cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
     ? `https://${cloudflareWorkerName}.${cloudflareWorkersDevSubdomain}.workers.dev`
     : undefined;
+// Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
+// the per-app deployment URL only fills in when no site origin is configured.
 const siteUrl =
-  configuredCloudflareUrl ||
   configuredSiteUrl ||
+  configuredCloudflareUrl ||
   inferredCloudflareUrl ||
   `http://localhost:${port}`;
+// Asset origin prefers the per-app deployment URL (each MF app serves its own
+// assets). Without an explicit public URL, assets must stay origin-relative so
+// the app works behind tunnels and proxies (an absolute localhost assetPrefix
+// makes pages served via e.g. ngrok fetch scripts from localhost, which Chrome
+// blocks behind a Local Network Access permission prompt).
+const assetPrefix = configuredCloudflareUrl || configuredSiteUrl || inferredCloudflareUrl || '/';
 
 if (
   cloudflareDeployEnabled &&
@@ -62,6 +70,16 @@ if (
 export default defineConfig(
   presetUltramodern(
     {
+      bff: {
+        effect: {
+          entry: './api/effect/index',
+          openapi: {
+            path: '/openapi.json',
+          },
+        },
+        prefix: '/shell-super-app-api',
+        runtimeFramework: 'effect',
+      },
       ...(cloudflareDeployEnabled
         ? {
             deploy: {
@@ -118,11 +136,16 @@ export default defineConfig(
             },
           }
         : {}),
+      dev: {
+        // Keep dev assets origin-relative too; the default absolute
+        // http://localhost:<port> prefix breaks pages served through tunnels.
+        assetPrefix: '/',
+      },
       html: {
         outputStructure: 'flat',
       },
       output: {
-        assetPrefix: siteUrl,
+        assetPrefix,
         disableTsChecker: true,
         distPath: {
           html: './',
@@ -167,7 +190,8 @@ export default defineConfig(
           },
           reactI18next: false,
         }),
-        moduleFederationPlugin({ config: moduleFederationConfig }),
+        bffPlugin(),
+        moduleFederationPlugin(),
         zephyrRspackPlugin(),
       ],
       server: {

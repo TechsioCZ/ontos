@@ -154,10 +154,9 @@ function modernLoaderToTanstack<TLoader extends (args: any) => any>(
 
       const href = getLoaderHref(ctx);
 
-      const request =
-        baseRequest !== undefined
-          ? new Request(baseRequest, { signal })
-          : new Request(href, { signal });
+      const request = baseRequest !== undefined
+        ? new Request(baseRequest, { signal })
+        : new Request(href, { signal });
 
       const params = mapParamsForModernLoader(getLoaderParams(ctx), opts.hasSplat);
 
@@ -176,21 +175,24 @@ function modernLoaderToTanstack<TLoader extends (args: any) => any>(
   };
 }
 
+
+
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
+  
   staticData: createRouteStaticData({
-    modernRouteId: 'layout',
+    modernRouteId: "layout",
   }),
 });
 
-const route_page = createRoute({
+const route__lang__page = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/',
+  path: "$lang",
   staticData: createRouteStaticData({
-    modernRouteId: 'page',
+    modernRouteId: "(lang)/page",
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route_page]);
+export const routeTree = rootRoute.addChildren([route__lang__page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

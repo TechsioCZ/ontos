@@ -1,0 +1,28 @@
+{
+  "property-registry": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "actions": "Actions",
+      "directory": "Directory",
+      "done": "Action complete",
+      "home": "Home",
+      "recordDetail": "Record detail",
+      "review": "Action review",
+      "unavailable": "Unavailable",
+      "workspaces": "Workspaces"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "property-registry",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Property Registry Vertical",
+    "widgetBody": "Owns a vertical route surface."
+  }
+}

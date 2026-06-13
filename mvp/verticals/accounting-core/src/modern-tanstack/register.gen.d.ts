@@ -7,3 +7,9 @@ declare module '@modern-js/plugin-tanstack/runtime' {
     router: typeof router0;
   }
 }
+
+declare module '@modern-js/plugin-i18n/runtime' {
+  interface UltramodernCanonicalRoutes {
+    '/': Record<string, never>;
+  }
+}

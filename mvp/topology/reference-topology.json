@@ -7,11 +7,25 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@mvp/shell-super-app",
-    "verticalRefs": [],
+    "verticalRefs": [
+      "property-registry",
+      "accounting-core"
+    ],
     "moduleFederation": {
       "role": "host",
       "name": "shellSuperApp",
-      "remotes": [],
+      "remotes": [
+        {
+          "id": "property-registry",
+          "name": "verticalPropertyRegistry",
+          "manifestUrl": "http://localhost:4101/mf-manifest.json"
+        },
+        {
+          "id": "accounting-core",
+          "name": "verticalAccountingCore",
+          "manifestUrl": "http://localhost:4102/mf-manifest.json"
+        }
+      ],
       "ssr": true,
       "sharedContractVersion": "mf-ssr-contract-v1"
     },
@@ -111,6 +125,38 @@
           "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
         }
       },
+      "qualityGates": {
+        "publicRoutes": {
+          "requireSitemapWhenPresent": true,
+          "requireRobotsSitemapConsistency": true,
+          "requireWebManifestWhenPresent": true
+        },
+        "statusCodes": {
+          "notFoundRoute": "/__ultramodern-smoke-missing",
+          "unknownRouteStatus": 404
+        },
+        "indexing": {
+          "previewNoindex": true,
+          "productionPublicRoutesIndexable": true
+        },
+        "assets": {
+          "cssPreloadRequired": true,
+          "cssResponseRequired": true,
+          "cacheControlRequiredForCss": true,
+          "sourcemapsPubliclyReferenced": false
+        },
+        "budgets": {
+          "ssrHtmlMaxBytes": 250000,
+          "mfManifestMaxBytes": 500000,
+          "localeJsonMaxBytes": 100000,
+          "sitemapXmlMaxBytes": 500000,
+          "cssAssetMaxBytes": 750000
+        },
+        "csp": {
+          "finalMode": "report-only-dogfood",
+          "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+        }
+      },
       "evidence": {
         "proofScript": "scripts/proof-cloudflare-version.mjs",
         "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
@@ -131,7 +177,484 @@
       }
     }
   },
-  "verticals": [],
+  "verticals": [
+    {
+      "id": "property-registry",
+      "kind": "vertical",
+      "domain": "property-registry",
+      "package": "@mvp/property-registry",
+      "path": "verticals/property-registry",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalPropertyRegistry",
+        "manifestUrl": "http://localhost:4101/mf-manifest.json",
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
+        "ssr": true,
+        "fallbackTelemetryEvent": "modernjs:mv-runtime-parity",
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "api": {
+        "effect": {
+          "runtime": "effect",
+          "bff": {
+            "prefix": "/property-registry-api",
+            "openapi": "/openapi.json"
+          },
+          "contract": {
+            "export": "./shared/effect/api",
+            "path": "verticals/property-registry/shared/effect/api.ts"
+          },
+          "client": {
+            "export": "./effect/client",
+            "path": "verticals/property-registry/src/effect/property-registry-client.ts"
+          },
+          "serverEntry": "verticals/property-registry/api/effect/index.ts",
+          "basePath": "/property-registry-api/effect/property-registry",
+          "consumedBy": [
+            "shell-super-app",
+            "property-registry"
+          ],
+          "readiness": {
+            "endpoint": "/effect/property-registry/readiness",
+            "marker": {
+              "ui": "ultramodernUiMarker",
+              "api": "ultramodernApiMarker",
+              "skew": "none"
+            },
+            "checks": [
+              "moduleFederation",
+              "ssr",
+              "translations",
+              "effectBff"
+            ]
+          },
+          "requestContext": {
+            "propagatedHeaders": [
+              "accept-language",
+              "authorization",
+              "traceparent",
+              "x-correlation-id",
+              "x-tenant-id",
+              "x-ultramodern-env",
+              "x-vertical-version-id"
+            ],
+            "source": "shell-to-vertical-effect-client"
+          },
+          "domainOperations": {
+            "workspaceFeed": {
+              "client": "listPropertyRegistry",
+              "method": "GET",
+              "path": "/effect/property-registry",
+              "resource": "workspace-items",
+              "owner": "property-registry"
+            },
+            "workspaceDetail": {
+              "client": "getPropertyRegistry",
+              "method": "GET",
+              "path": "/effect/property-registry/:id",
+              "resource": "workspace-item",
+              "owner": "property-registry"
+            },
+            "workspaceCreate": {
+              "client": "createPropertyRegistry",
+              "method": "POST",
+              "path": "/effect/property-registry",
+              "resource": "propertyRegistry",
+              "owner": "property-registry"
+            }
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "mvp-property-registry",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROPERTY_REGISTRY",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/property-registry.json",
+          "effectReadiness": "/property-registry-api/effect/property-registry/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          },
+          "cookies": {
+            "mutateSetCookie": false,
+            "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "evidence": {
+          "proofScript": "scripts/proof-cloudflare-version.mjs",
+          "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+        }
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/property-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#property-registry",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#property-registry"
+          ]
+        }
+      }
+    },
+    {
+      "id": "accounting-core",
+      "kind": "vertical",
+      "domain": "accounting-core",
+      "package": "@mvp/accounting-core",
+      "path": "verticals/accounting-core",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalAccountingCore",
+        "manifestUrl": "http://localhost:4102/mf-manifest.json",
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
+        "ssr": true,
+        "fallbackTelemetryEvent": "modernjs:mv-runtime-parity",
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "api": {
+        "effect": {
+          "runtime": "effect",
+          "bff": {
+            "prefix": "/accounting-core-api",
+            "openapi": "/openapi.json"
+          },
+          "contract": {
+            "export": "./shared/effect/api",
+            "path": "verticals/accounting-core/shared/effect/api.ts"
+          },
+          "client": {
+            "export": "./effect/client",
+            "path": "verticals/accounting-core/src/effect/accounting-core-client.ts"
+          },
+          "serverEntry": "verticals/accounting-core/api/effect/index.ts",
+          "basePath": "/accounting-core-api/effect/accounting-core",
+          "consumedBy": [
+            "shell-super-app",
+            "accounting-core"
+          ],
+          "readiness": {
+            "endpoint": "/effect/accounting-core/readiness",
+            "marker": {
+              "ui": "ultramodernUiMarker",
+              "api": "ultramodernApiMarker",
+              "skew": "none"
+            },
+            "checks": [
+              "moduleFederation",
+              "ssr",
+              "translations",
+              "effectBff"
+            ]
+          },
+          "requestContext": {
+            "propagatedHeaders": [
+              "accept-language",
+              "authorization",
+              "traceparent",
+              "x-correlation-id",
+              "x-tenant-id",
+              "x-ultramodern-env",
+              "x-vertical-version-id"
+            ],
+            "source": "shell-to-vertical-effect-client"
+          },
+          "domainOperations": {
+            "workspaceFeed": {
+              "client": "listAccountingCore",
+              "method": "GET",
+              "path": "/effect/accounting-core",
+              "resource": "workspace-items",
+              "owner": "accounting-core"
+            },
+            "workspaceDetail": {
+              "client": "getAccountingCore",
+              "method": "GET",
+              "path": "/effect/accounting-core/:id",
+              "resource": "workspace-item",
+              "owner": "accounting-core"
+            },
+            "workspaceCreate": {
+              "client": "createAccountingCore",
+              "method": "POST",
+              "path": "/effect/accounting-core",
+              "resource": "accountingCore",
+              "owner": "accounting-core"
+            }
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "mvp-accounting-core",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_ACCOUNTING_CORE",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/accounting-core.json",
+          "effectReadiness": "/accounting-core-api/effect/accounting-core/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          },
+          "cookies": {
+            "mutateSetCookie": false,
+            "reason": "Generated Cloudflare worker does not own application Set-Cookie headers."
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "evidence": {
+          "proofScript": "scripts/proof-cloudflare-version.mjs",
+          "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+        }
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/accounting-core.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#accounting-core",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#accounting-core"
+          ]
+        }
+      }
+    }
+  ],
   "sharedPackages": [
     {
       "id": "shared-contracts",

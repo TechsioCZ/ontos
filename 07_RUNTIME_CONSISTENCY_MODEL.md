@@ -20,7 +20,7 @@ Suggested invariants:
 
 - `change_source in ('user', 'support')` requires `action_invocation_id` and `changed_by_principal_id`.
 - `change_source = 'support'` should point to an action invocation with `auth_method = 'support_impersonation'` or another explicit support auth method.
-- `change_source in ('system', 'migration')` may use a system/service principal or leave `changed_by_principal_id` null when the source is otherwise clear.
+- `change_source = 'system'` may use a system/service principal or leave `changed_by_principal_id` null when the source is otherwise clear.
 - When `action_invocation_id` is present, `changed_by_principal_id` should match the action invocation's effective `principal_id`.
 
 ## Why actions before events

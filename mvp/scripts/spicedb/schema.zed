@@ -1,0 +1,13 @@
+definition user {}
+
+definition module {
+  relation writer: user
+
+  permission write = writer
+}
+
+definition protected_resource {
+  relation reader: user
+
+  permission read = reader
+}

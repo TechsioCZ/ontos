@@ -1,26 +1,10 @@
+import { flattenLocaleResource } from '@mvp/shared-contracts';
 import { defineRuntimeConfig } from '@modern-js/runtime';
 import { ultramodernBoundaryDebuggerPlugin } from '@modern-js/runtime/boundary-debugger';
 import { createInstance } from 'i18next';
 import csResource from '../locales/cs/shell.json';
 import enResource from '../locales/en/shell.json';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
-
-type LocaleResource = string | { readonly [key: string]: LocaleResource };
-
-const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<string, string> => {
-  if (typeof resource === 'string') {
-    return prefix.length > 0 ? { [prefix]: resource } : {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(resource).flatMap(([key, value]) => {
-      const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
-      return typeof value === 'string'
-        ? [[nextKey, value]]
-        : Object.entries(flattenLocaleResource(value, nextKey));
-    }),
-  );
-};
 
 const i18nInstance = createInstance();
 const resources = {
@@ -54,6 +38,22 @@ export default defineRuntimeConfig({
             ownerTeam: 'super-app-platform',
             packageName: '@mvp/shell-super-app',
             role: 'host',
+          },
+          {
+            appId: 'property-registry',
+            label: 'PropertyRegistry Vertical',
+            mfName: 'verticalPropertyRegistry',
+            ownerTeam: 'super-app-platform',
+            packageName: '@mvp/property-registry',
+            role: 'vertical',
+          },
+          {
+            appId: 'accounting-core',
+            label: 'AccountingCore Vertical',
+            mfName: 'verticalAccountingCore',
+            ownerTeam: 'super-app-platform',
+            packageName: '@mvp/accounting-core',
+            role: 'vertical',
           },
         ],
         schemaVersion: 1,

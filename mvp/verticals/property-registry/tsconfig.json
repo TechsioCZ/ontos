@@ -1,8 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "jsx": "react-jsx",
-    "types": ["react"]
-  },
-  "include": ["src", "modern.config.ts", "module-federation.config.ts", "vertical.manifest.ts", "vertical.registration.ts"]
+  "include": [
+    "src",
+    "modern.config.ts",
+    "module-federation.config.ts",
+    "api",
+    "shared"
+  ]
 }

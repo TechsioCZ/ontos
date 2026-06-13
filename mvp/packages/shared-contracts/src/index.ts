@@ -1,8 +1,11 @@
-export const ultramodernWorkspaceContract = {
-  ownership: 'topology/ownership.json',
-  preset: 'presetUltramodern',
-  topology: 'topology/reference-topology.json',
-} as const;
+export type ModuleActivationState =
+  | 'inactive'
+  | 'active'
+  | 'read_only'
+  | 'suspended'
+  | 'quarantined'
+  | 'deprecated'
+  | 'archived';
 
 export const moduleActivationStates = [
   'inactive',
@@ -12,9 +15,7 @@ export const moduleActivationStates = [
   'quarantined',
   'deprecated',
   'archived',
-] as const;
-
-export type ModuleActivationState = (typeof moduleActivationStates)[number];
+] as const satisfies readonly ModuleActivationState[];
 
 export const visibleModuleActivationStates = [
   'active',
@@ -22,90 +23,88 @@ export const visibleModuleActivationStates = [
   'deprecated',
 ] as const satisfies readonly ModuleActivationState[];
 
-export type VisibleModuleActivationState = (typeof visibleModuleActivationStates)[number];
-
 export interface TenantModuleState {
   readonly moduleId: string;
   readonly state: ModuleActivationState;
-}
-
-export interface PublicResourceDescriptor {
-  readonly id: string;
-  readonly displayName: string;
-}
-
-export interface PublicComponentDescriptor {
-  readonly id: string;
-  readonly displayName: string;
-  readonly locator?: PublicComponentLocator;
+  readonly tenantId: string;
 }
 
 export interface ModuleFederationComponentLocator {
+  readonly exposedModule: `./${string}`;
+  readonly exportName?: string;
   readonly kind: 'module-federation';
   readonly remote: string;
-  readonly exposedModule: `./${string}`;
-  readonly exportName: string;
 }
 
-export type PublicComponentLocator = ModuleFederationComponentLocator;
-
-export interface PublicActionDescriptor {
-  readonly id: string;
-  readonly displayName: string;
-  readonly inputSchema: unknown;
-  readonly outputSchema: unknown;
+export interface VerticalResourceDescriptor {
+  readonly key: string;
+  readonly label: string;
+  readonly ownedByModuleId: string;
 }
 
-export interface PublicSearchDescriptor {
-  readonly id: string;
-  readonly displayName: string;
+export interface VerticalPublicComponentDescriptor {
+  readonly key: string;
+  readonly label: string;
+  readonly moduleFederation: ModuleFederationComponentLocator;
+  readonly resourceKey?: string;
 }
 
-export interface PublicReportDescriptor {
-  readonly id: string;
-  readonly displayName: string;
+export interface VerticalActionDescriptor<TRequestSchema = unknown, TResponseSchema = unknown> {
+  readonly auditProfile?: 'minimal' | 'standard' | 'sensitive';
+  readonly key: string;
+  readonly label: string;
+  readonly requestSchema: TRequestSchema;
+  readonly responseSchema: TResponseSchema;
+  readonly targetModuleId: string;
+  readonly writesCanonicalRows: boolean;
+}
+
+export interface VerticalSearchDescriptor {
+  readonly key: string;
+  readonly label: string;
+  readonly resourceKey: string;
+}
+
+export interface VerticalReportDescriptor {
+  readonly key: string;
+  readonly label: string;
+  readonly resourceKey: string;
 }
 
 export interface VerticalManifest {
-  readonly id: string;
-  readonly kind: 'microvertical';
+  readonly actions: readonly VerticalActionDescriptor[];
+  readonly dependencies?: readonly string[];
   readonly displayName: string;
-  readonly activationDefault: ModuleActivationState;
-  readonly dependencies: readonly string[];
-  readonly resources: readonly PublicResourceDescriptor[];
-  readonly components: readonly PublicComponentDescriptor[];
-  readonly actions: readonly PublicActionDescriptor[];
-  readonly search: readonly PublicSearchDescriptor[];
-  readonly reports: readonly PublicReportDescriptor[];
+  readonly folder: string;
+  readonly moduleId: string;
+  readonly publicComponents: readonly VerticalPublicComponentDescriptor[];
+  readonly reports: readonly VerticalReportDescriptor[];
+  readonly resources: readonly VerticalResourceDescriptor[];
+  readonly search: readonly VerticalSearchDescriptor[];
 }
 
-export interface VerticalRouteRegistration {
-  readonly path: string;
-  readonly navigationLabel: string;
-  readonly boundaryMarker: {
-    readonly moduleId: string;
-    readonly folderName: string;
-    readonly renderedFrom: string;
+export interface VerticalRouteContribution {
+  readonly label: string;
+  readonly moduleFederation: ModuleFederationComponentLocator;
+  readonly path: `/${string}`;
+}
+
+export interface VerticalRuntimeRegistration {
+  readonly boundaryMarker: string;
+  readonly handlers: Readonly<Record<string, unknown>>;
+  readonly manifest: VerticalManifest;
+  readonly navigation: {
+    readonly label: string;
+    readonly route: `/${string}`;
   };
-}
-
-export interface VerticalRuntimeRegistration<
-  TManifest extends VerticalManifest = VerticalManifest,
-> {
-  readonly manifest: TManifest;
-  readonly route: VerticalRouteRegistration;
-  readonly actions: Readonly<Record<string, () => never>>;
-  readonly migrations: readonly never[];
-  readonly handlers: Readonly<Record<string, () => never>>;
-  readonly searchHandlers: Readonly<Record<string, () => never>>;
-  readonly reportHandlers: Readonly<Record<string, () => never>>;
+  readonly routes: readonly VerticalRouteContribution[];
 }
 
 export const defineVerticalManifest = <const TManifest extends VerticalManifest>(
   manifest: TManifest,
 ) => manifest;
 
-export const defineVerticalAction = <const TAction extends PublicActionDescriptor>(
+export const defineVerticalAction = <const TAction extends VerticalActionDescriptor>(
   action: TAction,
 ) => action;
 
@@ -116,26 +115,42 @@ export const defineVerticalRegistration = <const TRegistration extends VerticalR
 export const moduleFederationRemoteSpecifier = (locator: ModuleFederationComponentLocator) =>
   `${locator.remote}/${locator.exposedModule.replace(/^\.\//u, '')}`;
 
-export const isVisibleModuleState = (
-  state: ModuleActivationState,
-): state is VisibleModuleActivationState =>
-  visibleModuleActivationStates.includes(state as VisibleModuleActivationState);
+export const isVisibleModuleState = (state: ModuleActivationState) =>
+  visibleModuleActivationStates.includes(state as (typeof visibleModuleActivationStates)[number]);
 
-export const resolveVisibleVerticals = <const TRegistration extends VerticalRuntimeRegistration>({
-  registrations,
-  tenantModuleStates,
-}: {
-  readonly registrations: readonly TRegistration[];
-  readonly tenantModuleStates: readonly TenantModuleState[];
-}) =>
-  registrations.flatMap((registration) => {
+export const resolveVisibleVerticals = <TRegistration extends VerticalRuntimeRegistration>(
+  registrations: readonly TRegistration[],
+  tenantModuleStates: readonly TenantModuleState[],
+) =>
+  registrations.filter((registration) => {
     const tenantState = tenantModuleStates.find(
-      (moduleState) => moduleState.moduleId === registration.manifest.id,
+      (item) => item.moduleId === registration.manifest.moduleId,
     );
-
-    if (tenantState === undefined || !isVisibleModuleState(tenantState.state)) {
-      return [];
-    }
-
-    return [{ ...registration, tenantState }];
+    return tenantState !== undefined && isVisibleModuleState(tenantState.state);
   });
+
+export type LocaleResource = string | { readonly [key: string]: LocaleResource };
+
+export const flattenLocaleResource = (
+  resource: LocaleResource,
+  prefix = '',
+): Record<string, string> => {
+  if (typeof resource === 'string') {
+    return prefix.length > 0 ? { [prefix]: resource } : {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(resource).flatMap(([key, value]) => {
+      const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
+      return typeof value === 'string'
+        ? [[nextKey, value]]
+        : Object.entries(flattenLocaleResource(value, nextKey));
+    }),
+  );
+};
+
+export const ultramodernWorkspaceContract = {
+  ownership: 'topology/ownership.json',
+  preset: 'presetUltramodern',
+  topology: 'topology/reference-topology.json',
+} as const;

@@ -2,5 +2,6 @@ node_modules/
 dist/
 build/
 @mf-types/
+**/@mf-types/
 .modernjs/cache/
 .modernjs/agent-reference-repos-tmp/

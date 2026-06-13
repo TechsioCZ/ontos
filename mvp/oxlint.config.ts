@@ -15,7 +15,8 @@ export default defineConfig({
     'repos/**',
     '.modern',
     '.modernjs',
-    '**/router.gen.ts',
+    '**/@mf-types/**',
     '**/routeTree.gen.ts',
+    '**/router.gen.ts',
   ],
 });

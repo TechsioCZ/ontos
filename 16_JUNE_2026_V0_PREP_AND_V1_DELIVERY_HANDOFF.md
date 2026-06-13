@@ -319,6 +319,7 @@ Tasks:
    - public component descriptors:
      - `PropertyUnitCard`
      - `AccountingDraftEntryCard`
+   - Module Federation exposure metadata or generated wrapper/client wiring for public components so cross-MicroVertical component consumption does not use direct source imports.
    - public API placeholder
    - public Action descriptors placeholder:
      - `property.registry.createUnit`
@@ -338,6 +339,7 @@ Tasks:
 3. Register both dummy modules.
 4. Represent both MVP modules as `active` for the demo tenant using a fixture shaped like `CORE_TENANT_MODULE_STATES`.
 5. Add `pnpm check:boundaries` and wire it into `pnpm check`; use UltraModern's generated boundary checker if available, with OntOS-specific rules added as needed.
+6. Add one Day 2 proof that a MicroVertical can consume another MicroVertical's public component through Module Federation using the manifest-exposed public component surface. The proof may be inert and UI-only, but it must not import the producer's component source file directly.
 
 Acceptance:
 
@@ -346,6 +348,7 @@ Acceptance:
 - Shell navigation follows the initial module-state visibility rule: show active/read-only/deprecated, hide inactive/suspended/quarantined/archived.
 - Public manifest does not contain private implementation paths.
 - Both MVP MicroVerticals expose placeholder resource, component, Action, search, and report descriptors; handlers/query implementations are stubbed or explicitly not implemented.
+- At least one cross-MicroVertical public component is consumed through Module Federation-generated exposure/remote wiring, with the manifest as the allowlist and no direct import from another MicroVertical's private source path.
 - Vertical Runtime Registration exists for each MicroVertical and the Shell-owned Installed Vertical Registry is explicit.
 - `pnpm check` runs `pnpm check:boundaries`.
 
@@ -353,6 +356,7 @@ Deliverables:
 
 - manifest example
 - registry example
+- Module Federation public component consumption example
 - short note: what belongs in manifest vs private registry
 
 ### Day 1/2 Batch Evidence

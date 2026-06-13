@@ -183,6 +183,16 @@ Reports:
 
 Changes: Added these concrete descriptor keys to `14_ONTOS_MODULE_MANIFEST.md` and the Day 2 handoff.
 
+### 12a. How should generated code consume cross-MicroVertical public components?
+
+Question: If one MicroVertical embeds another MicroVertical's public component, should generated code use direct workspace imports or Module Federation?
+
+Decision: Generated Day 2 code must use Module Federation-generated exposure/remote wiring for cross-MicroVertical public component consumption. The producer manifest remains the allowlist for which public components are available, but the consuming MicroVertical must not import the producer's component source file directly.
+
+Required proof: Day 2 should include one inert UI-only example where one MVP MicroVertical consumes another MVP MicroVertical's manifest-exposed public component through the generated federated component wrapper/client.
+
+Changes: Added to `14_ONTOS_MODULE_MANIFEST.md` and the Day 2 checklist in `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md`.
+
 ### 13. Who owns routes and pages?
 
 Question: Should Shell own all routes and render vertical components, or should MicroVerticals own route subtrees?
