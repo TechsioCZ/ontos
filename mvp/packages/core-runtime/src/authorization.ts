@@ -19,12 +19,20 @@ export interface ModuleWriteAuthorizationInput {
   moduleKey: string;
 }
 
+export interface ModuleActionAttemptAuthorizationInput {
+  context: RuntimeContext;
+  moduleKey: string;
+}
+
 export interface ResourceReadAuthorizationInput {
   context: RuntimeContext;
   resourceId: string;
 }
 
 export interface AuthorizationAdapter {
+  checkModuleActionAttempt: (
+    input: ModuleActionAttemptAuthorizationInput,
+  ) => Promise<AuthorizationDecision>;
   checkModuleWrite: (input: ModuleWriteAuthorizationInput) => Promise<AuthorizationDecision>;
   checkResourceRead: (input: ResourceReadAuthorizationInput) => Promise<AuthorizationDecision>;
 }
@@ -48,7 +56,7 @@ interface SpiceDbPermissionInput {
   catchMessage: string;
   deniedMessage: string;
   env: CoreRuntimeEnv;
-  permission: 'read' | 'write';
+  permission: 'attempt_action' | 'read' | 'write';
   resourceObjectId: string;
   resourceObjectType: 'module' | 'protected_resource';
   subjectObjectId: string;
@@ -128,6 +136,17 @@ const checkSpiceDbPermission = async (
 export const createSpiceDbAuthorizationAdapter = (
   env: CoreRuntimeEnv = readCoreRuntimeEnv(),
 ): AuthorizationAdapter => ({
+  checkModuleActionAttempt(input) {
+    return checkSpiceDbPermission({
+      catchMessage: 'SpiceDB action affordance check failed closed.',
+      deniedMessage: `SpiceDB denied attempt_action on '${input.moduleKey}' for '${input.context.principal.displayName}'.`,
+      env,
+      permission: 'attempt_action',
+      resourceObjectId: moduleObjectId(input.context.tenant.slug, input.moduleKey),
+      resourceObjectType: 'module',
+      subjectObjectId: input.context.principal.providerSubjectId,
+    });
+  },
   checkModuleWrite(input) {
     return checkSpiceDbPermission({
       catchMessage: 'SpiceDB authorization check failed closed.',

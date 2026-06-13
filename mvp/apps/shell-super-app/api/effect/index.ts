@@ -9,6 +9,8 @@ import {
 import {
   checkModuleStateGate,
   checkModuleWritePermission,
+  checkActionAttemptCapabilityForSession,
+  executeActionForSession,
   checkPolicyGate,
   checkProtectedResourceRead,
   getCurrentRuntimeContext,
@@ -18,6 +20,7 @@ import {
 import type { DemoUserKey } from '@mvp/core-runtime';
 import { day3ShellEffectApi, day3ShellOperationContexts } from '@mvp/shared-effect-api';
 import type { OperationContext } from '@mvp/shared-effect-api';
+import { serverInstalledVerticalRegistrations } from './runtime-registrations.ts';
 
 const operationAttributes = (operationContext: OperationContext) => ({
   'modernjs.operation.id': operationContext.operationId,
@@ -125,6 +128,39 @@ const day3RuntimeLayer = HttpApiBuilder.group(day3ShellEffectApi, 'day3Runtime',
         requestHeaders.pipe(
           Effect.flatMap((headers) =>
             Effect.promise(() => checkProtectedResourceRead({ ...payload, headers })),
+          ),
+        ),
+      ),
+    )
+    .handle('checkActionAttemptCapability', ({ payload }) =>
+      withOperationSpan(
+        day3ShellOperationContexts.checkActionAttemptCapability,
+        requestHeaders.pipe(
+          Effect.flatMap((headers) =>
+            Effect.promise(() =>
+              checkActionAttemptCapabilityForSession({
+                actionKey: payload.actionKey,
+                headers,
+                registrations: serverInstalledVerticalRegistrations,
+              }),
+            ),
+          ),
+        ),
+      ),
+    )
+    .handle('executeCreateUnitAction', ({ payload }) =>
+      withOperationSpan(
+        day3ShellOperationContexts.executeCreateUnitAction,
+        requestHeaders.pipe(
+          Effect.flatMap((headers) =>
+            Effect.promise(() =>
+              executeActionForSession({
+                actionKey: 'property.registry.createUnit',
+                headers,
+                payload,
+                registrations: serverInstalledVerticalRegistrations,
+              }),
+            ),
           ),
         ),
       ),

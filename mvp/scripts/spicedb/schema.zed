@@ -1,8 +1,10 @@
 definition user {}
 
 definition module {
+  relation action_caller: user
   relation writer: user
 
+  permission attempt_action = action_caller
   permission write = writer
 }
 

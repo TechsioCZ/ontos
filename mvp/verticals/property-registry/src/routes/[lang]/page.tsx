@@ -9,12 +9,12 @@ import {
 import PropertyUnitCard from '../../components/property-unit-card';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { ultramodernUiMarker } from '../../ultramodern-build';
-import {
-  propertyRegistryRegistration,
-  propertyRegistryTenantModuleState,
-} from '../../vertical.registration';
+import { propertyRegistryBoundaryMarker } from '../../boundary-marker';
 
 const supportedLanguages = ['en', 'cs'] as const;
+const propertyRegistryTenantModuleState = {
+  state: 'active',
+} as const;
 
 export default function PropertyRegistryHome() {
   const { i18nInstance, language } = useModernI18n();
@@ -85,7 +85,7 @@ export default function PropertyRegistryHome() {
       </p>
       <section
         className="propertyregistry:mt-8 propertyregistry:grid propertyregistry:gap-4 propertyregistry:lg:grid-cols-[minmax(0,1fr)_24rem]"
-        data-ontos-active-boundary={propertyRegistryRegistration.boundaryMarker}
+        data-ontos-active-boundary={propertyRegistryBoundaryMarker}
         data-ontos-module-id="property.registry"
       >
         <div className="propertyregistry:rounded-lg propertyregistry:border propertyregistry:border-stone-900/10 propertyregistry:bg-white propertyregistry:p-5">

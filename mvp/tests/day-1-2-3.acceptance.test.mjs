@@ -22,24 +22,25 @@ test('workspace uses latest allowed UltraModern .120 generator packages', () => 
 
 test('Day 1 and Day 2 shell registry exposes active MicroVertical descriptors', () => {
   const registry = read('apps/shell-super-app/src/verticals/installed.registry.ts');
+  const serverRegistry = read('apps/shell-super-app/api/effect/runtime-registrations.ts');
   const discovery = read('apps/shell-super-app/src/verticals/module-discovery.ts');
   const propertyManifest = read('verticals/property-registry/vertical.manifest.ts');
   const propertyAction = read('verticals/property-registry/src/actions/create-unit.action.ts');
-  const accountingManifest = read('verticals/accounting-core/src/vertical.manifest.ts');
-  const accountingManifestEntrypoint = read('verticals/accounting-core/vertical.manifest.ts');
+  const accountingManifest = read('verticals/accounting-core/vertical.manifest.ts');
   const accountingAction = read(
     'verticals/accounting-core/src/actions/create-draft-entry.action.ts',
   );
 
-  assert.match(registry, /@mvp\/property-registry\/vertical\.registration/u);
-  assert.match(registry, /@mvp\/accounting-core\/vertical\.registration/u);
+  assert.match(registry, /@mvp\/property-registry\/vertical\.manifest/u);
+  assert.match(registry, /@mvp\/accounting-core\/vertical\.manifest/u);
+  assert.match(serverRegistry, /@mvp\/property-registry\/vertical\.registration/u);
+  assert.match(serverRegistry, /@mvp\/accounting-core\/vertical\.registration/u);
   assert.match(registry, /moduleId:\s*'property\.registry'/u);
   assert.match(registry, /moduleId:\s*'accounting\.core'/u);
   assert.match(propertyAction, /key:\s*'property\.registry\.createUnit'/u);
   assert.match(accountingAction, /key:\s*createDraftEntryActionId/u);
   assert.match(propertyManifest, /key:\s*'property\.unit'/u);
   assert.match(accountingManifest, /key:\s*'accounting\.draft_entry'/u);
-  assert.match(accountingManifestEntrypoint, /src\/vertical\.manifest/u);
   assert.match(registry, /state:\s*'active'/u);
   assert.match(discovery, /resolveVisibleVerticals/u);
 });
@@ -54,7 +55,7 @@ test('cross-MicroVertical public components are consumed through Module Federati
   );
 
   const propertyManifest = read('verticals/property-registry/vertical.manifest.ts');
-  const accountingManifest = read('verticals/accounting-core/src/vertical.manifest.ts');
+  const accountingManifest = read('verticals/accounting-core/vertical.manifest.ts');
 
   assert.match(propertyManifest, /PropertyUnitCard/u);
   assert.match(accountingManifest, /AccountingDraftEntryCard/u);
@@ -93,6 +94,7 @@ test('Day 3 shared Effect API declares all six required Shell operations', () =>
 
 test('Day 3 Shell BFF delegates to Core public APIs and does not write runtime evidence rows', () => {
   const shellBff = read('apps/shell-super-app/api/effect/index.ts');
+  const serverRegistry = read('apps/shell-super-app/api/effect/runtime-registrations.ts');
   const shellUi = read('apps/shell-super-app/src/routes/vertical-components.tsx');
   const shellClient = read('apps/shell-super-app/src/effect/day3-runtime-client.ts');
 
@@ -151,4 +153,79 @@ test('Core runtime public export surface is present when the package exists', ()
   ]) {
     assert.match(index, new RegExp(`export .*${exportName}`, 'u'));
   }
+});
+
+test('Day 4 create-unit action goes through Core, SpiceDB, and typed Drizzle writes', () => {
+  const sharedApi = read('packages/shared-effect-api/src/index.ts');
+  const shellBff = read('apps/shell-super-app/api/effect/index.ts');
+  const serverRegistry = read('apps/shell-super-app/api/effect/runtime-registrations.ts');
+  const shellClient = read('apps/shell-super-app/src/effect/day3-runtime-client.ts');
+  const shellUi = read('apps/shell-super-app/src/routes/vertical-components.tsx');
+  const actionRuntime = read('packages/core-runtime/src/action-runtime.ts');
+  const authorization = read('packages/core-runtime/src/authorization.ts');
+  const drizzleSchema = read('packages/core-runtime/src/db/schema.ts');
+  const propertyQueries = read('verticals/property-registry/src/db/property-queries.ts');
+  const propertyAction = read('verticals/property-registry/src/actions/create-unit.action.ts');
+  const propertyHandler = read('verticals/property-registry/src/actions/create-unit.handler.ts');
+  const spiceDbSchema = read('scripts/spicedb/schema.zed');
+  const spiceDbSeed = read('scripts/seed-spicedb.mjs');
+
+  assert.match(sharedApi, /checkActionAttemptCapability/u);
+  assert.match(sharedApi, /executeCreateUnitAction/u);
+  assert.match(sharedApi, /\/effect\/day4\/create-unit/u);
+  assert.match(shellBff, /checkActionAttemptCapabilityForSession/u);
+  assert.match(shellBff, /executeActionForSession/u);
+  assert.match(shellBff, /serverInstalledVerticalRegistrations/u);
+  assert.match(serverRegistry, /serverInstalledVerticalRegistrations/u);
+  assert.doesNotMatch(shellBff, /drizzle|propertyUnits|insert|update|delete|upsert/u);
+  assert.match(shellClient, /\/effect\/day4\/check-action-attempt-capability/u);
+  assert.match(shellClient, /\/effect\/day4\/create-unit/u);
+  assert.match(shellUi, /data-day4-action-button/u);
+  assert.match(shellUi, /actionCapability\?\.allowed !== true/u);
+  assert.doesNotMatch(shellUi, /demoUserKey === 'demo-viewer-a'.*disabled/u);
+
+  assert.match(actionRuntime, /Schema\.decodeUnknownSync/u);
+  assert.match(actionRuntime, /checkModuleWriteState/u);
+  assert.match(actionRuntime, /checkModuleWrite/u);
+  assert.match(actionRuntime, /evaluateWritePolicy/u);
+  assert.match(authorization, /checkModuleActionAttempt/u);
+  assert.match(authorization, /permission:\s*'attempt_action'/u);
+
+  assert.match(drizzleSchema, /export const propertyUnits/u);
+  assert.match(drizzleSchema, /export type PropertyUnitInsert/u);
+  assert.equal(
+    existsSync(path.join(root, 'packages/core-runtime/src/db/property-queries.ts')),
+    false,
+  );
+  assert.match(propertyQueries, /db\s*\n\s*\.insert\(propertyUnits\)/u);
+  assert.match(propertyQueries, /satisfies PropertyUnitInsert/u);
+  assert.match(propertyQueries, /code: input\.code/u);
+  assert.doesNotMatch(propertyQueries, /\.insert\(propertyUnits\)[\s\S]*?\.onConflictDoUpdate/u);
+  assert.doesNotMatch(propertyQueries, /randomBytes|toString\('hex'\)|slugCode/u);
+  assert.doesNotMatch(propertyQueries, /sql`|db\.execute|postgres\(/u);
+  assert.match(propertyAction, /writesCanonicalRows:\s*true/u);
+  assert.match(propertyHandler, /createPropertyUnitProof/u);
+  assert.match(propertyHandler, /unitCodeWithRandomSuffix/u);
+  assert.match(propertyHandler, /randomBytes\(4\)\.toString\('hex'\)/u);
+  assert.doesNotMatch(propertyHandler, /Effect\.succeed|not_implemented/u);
+
+  assert.match(spiceDbSchema, /relation action_caller: user/u);
+  assert.match(spiceDbSchema, /permission attempt_action = action_caller/u);
+  assert.match(
+    spiceDbSeed,
+    /\['module:tenant-a_property-registry', 'action_caller', 'user:ba-user-demo-admin-a'\]/u,
+  );
+  assert.match(
+    spiceDbSeed,
+    /\['module:tenant-a_property-registry', 'writer', 'user:ba-user-demo-admin-a'\]/u,
+  );
+  assert.match(
+    spiceDbSeed,
+    /\['module:tenant-b_property-registry', 'action_caller', 'user:ba-user-demo-admin-b'\]/u,
+  );
+  assert.doesNotMatch(
+    spiceDbSeed,
+    /\['module:tenant-b_property-registry', 'writer', 'user:ba-user-demo-admin-b'\]/u,
+  );
+  assert.doesNotMatch(spiceDbSeed, /ba-user-demo-viewer-a.*action_caller/u);
 });

@@ -1,6 +1,8 @@
 // oxlint-disable no-barrel-file
 // @effect-diagnostics asyncFunction:off
-import { auth } from './auth/index.ts';
+import { auth } from './auth/better-auth.config.ts';
+import { checkActionAttemptCapability, executeAction } from './action-runtime.ts';
+import type { RuntimeActionRegistration } from './action-runtime.ts';
 import { spiceDbAuthorizationAdapter } from './authorization.ts';
 import type { AuthorizationAdapter } from './authorization.ts';
 import { resolveRuntimeContextResult } from './context.ts';
@@ -10,7 +12,11 @@ import type { PolicyInput } from './policy.ts';
 import type { RuntimeContextInput, SerializableGateResult } from './types.ts';
 
 export * from './authorization.ts';
+export * from './action-runtime.ts';
 export * from './context.ts';
+export type { CoreDb } from './db/client.ts';
+export { propertyBuildings, propertyProperties, propertyUnits } from './db/schema.ts';
+export type { PropertyUnitInsert } from './db/schema.ts';
 export * from './module-state.ts';
 export * from './policy.ts';
 export type * from './types.ts';
@@ -352,6 +358,45 @@ export const checkModuleWritePermission = async (
       tenantId: request.tenantId,
     },
     didWriteRuntimeRows: false as const,
+  };
+};
+
+export const checkActionAttemptCapabilityForSession = async (request: {
+  actionKey: string;
+  headers: Headers;
+  registrations: readonly RuntimeActionRegistration[];
+}) => {
+  const session = await getBetterAuthSession(request.headers);
+  const result = await checkActionAttemptCapability({
+    actionKey: request.actionKey,
+    providerSubjectId: session.user.id,
+    registrations: request.registrations,
+  });
+
+  return {
+    capability: result,
+    didWriteRuntimeRows: false as const,
+  };
+};
+
+export const executeActionForSession = async (request: {
+  actionKey: string;
+  headers: Headers;
+  payload: unknown;
+  registrations: readonly RuntimeActionRegistration[];
+}) => {
+  const session = await getBetterAuthSession(request.headers);
+  const result = await executeAction({
+    actionKey: request.actionKey,
+    authContextRef: `better-auth:session:${session.session.id}`,
+    payload: request.payload,
+    providerSubjectId: session.user.id,
+    registrations: request.registrations,
+  });
+
+  return {
+    didWriteRuntimeRows: false as const,
+    result,
   };
 };
 

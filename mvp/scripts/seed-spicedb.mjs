@@ -40,8 +40,9 @@ resetSpiceDb();
 runZed(['schema', 'write', '/spicedb/schema.zed']);
 
 for (const relationship of [
+  ['module:tenant-a_property-registry', 'action_caller', 'user:ba-user-demo-admin-a'],
   ['module:tenant-a_property-registry', 'writer', 'user:ba-user-demo-admin-a'],
-  ['module:tenant-b_property-registry', 'writer', 'user:ba-user-demo-admin-b'],
+  ['module:tenant-b_property-registry', 'action_caller', 'user:ba-user-demo-admin-b'],
   ['protected_resource:resource-a', 'reader', 'user:ba-user-demo-admin-a'],
   ['protected_resource:resource-b', 'reader', 'user:ba-user-demo-viewer-a'],
   ['protected_resource:resource-c', 'reader', 'user:ba-user-demo-admin-a'],
@@ -50,4 +51,4 @@ for (const relationship of [
   runZed(['relationship', 'touch', ...relationship]);
 }
 
-console.log('Seeded SpiceDB module writer and protected-resource reader relationships for Day 3.');
+console.log('Seeded SpiceDB module action/write and protected-resource reader relationships.');

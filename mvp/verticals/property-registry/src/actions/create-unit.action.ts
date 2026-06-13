@@ -4,15 +4,19 @@ import { Schema } from '@modern-js/plugin-bff/effect-client';
 export const propertyUnitCreatePayloadSchema = Schema.Struct({
   displayName: Schema.String,
   floorLabel: Schema.optional(Schema.String),
-  tenantModuleState: Schema.optional(Schema.String),
 });
 
 export const propertyUnitCreateResultSchema = Schema.Struct({
   actionId: Schema.Literal('property.registry.createUnit'),
-  didWriteCanonicalRows: Schema.Literal(false),
+  didWriteCanonicalRows: Schema.Literal(true),
   moduleId: Schema.Literal('property.registry'),
   resourceId: Schema.Literal('property.unit'),
-  status: Schema.Literal('not_implemented'),
+  resourceRef: Schema.Struct({
+    moduleId: Schema.Literal('property.registry'),
+    resourceId: Schema.Literal('property.unit'),
+    resourceKey: Schema.String,
+  }),
+  status: Schema.Literal('created'),
   unitId: Schema.String,
 });
 
@@ -25,7 +29,7 @@ export const createUnitAction = defineVerticalAction({
   requestSchema: propertyUnitCreatePayloadSchema,
   responseSchema: propertyUnitCreateResultSchema,
   targetModuleId: 'property.registry',
-  writesCanonicalRows: false,
+  writesCanonicalRows: true,
 });
 
 export const createUnitActionDescriptor = createUnitAction;

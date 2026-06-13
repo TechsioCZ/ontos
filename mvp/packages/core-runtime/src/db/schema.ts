@@ -1,4 +1,4 @@
-import { pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
+import { jsonb, numeric, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 const coreSchema = pgSchema('core');
 
@@ -56,3 +56,44 @@ export const coreTenantModuleStates = coreSchema.table('tenant_module_states', {
   tenantModuleStateId: uuid('tenant_module_state_id').primaryKey(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
 });
+
+const propertySchema = pgSchema('property');
+
+export const propertyProperties = propertySchema.table('properties', {
+  addressJson: jsonb('address_json').notNull(),
+  code: text('code').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  legalEntityId: uuid('legal_entity_id').notNull(),
+  lifecycleState: text('lifecycle_state').notNull(),
+  name: text('name').notNull(),
+  propertyId: uuid('property_id').defaultRandom().primaryKey(),
+  tenantId: uuid('tenant_id').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
+export const propertyBuildings = propertySchema.table('buildings', {
+  buildingId: uuid('building_id').defaultRandom().primaryKey(),
+  code: text('code').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  lifecycleState: text('lifecycle_state').notNull(),
+  name: text('name').notNull(),
+  propertyId: uuid('property_id').notNull(),
+  tenantId: uuid('tenant_id').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
+export const propertyUnits = propertySchema.table('units', {
+  areaM2: numeric('area_m2').notNull(),
+  buildingId: uuid('building_id').notNull(),
+  code: text('code').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  floorLabel: text('floor_label').notNull(),
+  lifecycleState: text('lifecycle_state').notNull(),
+  tenantId: uuid('tenant_id').notNull(),
+  unitId: uuid('unit_id').defaultRandom().primaryKey(),
+  unitType: text('unit_type').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
+export type PropertyUnitInsert = typeof propertyUnits.$inferInsert;
+export type PropertyUnitRow = typeof propertyUnits.$inferSelect;

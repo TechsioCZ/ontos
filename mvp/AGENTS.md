@@ -72,6 +72,9 @@ Agents may read files under `repos/` to understand upstream patterns, APIs, and 
 - Use `create <domain> --vertical` as the growth path for real business
   MicroVerticals.
 - Prefer Effect for BFF code.
+- Each vertical that owns persistent tables must use its own Postgres schema.
+- Use Drizzle together with Effect for application database interaction unless
+  the task or an explicit project decision says otherwise.
 - Prefer TanStack Router for app routing.
 - Keep UI-kit or design-system code as ordinary vertical or shared package code, not a special core path.
 - Keep generated packages explicit and publishable: stable `exports`, correct declarations, small public APIs, and clear ownership metadata.

@@ -16,5 +16,5 @@ export const readCoreRuntimeEnv = (): CoreRuntimeEnv => ({
   databaseUrl: process.env['DATABASE_URL'] ?? 'postgres://ontos:ontos@localhost:5432/ontos',
   spiceDbEndpoint: process.env['SPICEDB_ENDPOINT'] ?? 'localhost:50051',
   spiceDbInsecure: process.env['SPICEDB_INSECURE'] !== 'false',
-  spiceDbPresharedKey: process.env['SPICEDB_PRESHARED_KEY'] ?? 'local-dev-spicedb-key',
+  spiceDbPresharedKey: process.env['SPICEDB_PRESHARED_KEY'] ?? 'local-spicedb-key',
 });

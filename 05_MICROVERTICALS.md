@@ -42,6 +42,8 @@ Examples of Core concerns: BetterAuth binding, authorization adapter, principal 
 
 Examples of MicroVertical concerns: what a reservation means, how a lease contract is created, how invoice lines are sourced, how an internal delivery ticket links to a project, which reports a property module exposes.
 
+Each MicroVertical that owns persistent domain data must own a dedicated Postgres schema. Module-owned tables live in that schema, not in `public` and not in another vertical's schema. Cross-module data access must go through public module contracts, ResourceRefs, Actions, or explicit Core-mediated read/query surfaces rather than direct table coupling.
+
 ## Runtime activation
 
 In V0, MicroVertical code is part of the application deployment. A module can be inactive, active, read-only, suspended, quarantined, deprecated, or archived per tenant without restarting the server. Legal-entity-specific setup belongs in the owning module's settings tables. Runtime activation controls whether UI contributions appear, whether actions are invokable, whether public resources are enabled, and how historical data is displayed.

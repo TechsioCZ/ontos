@@ -8,6 +8,10 @@ Postgres is the canonical operational store. It should contain module-owned doma
 
 Postgres is where constraints, indexes, migrations, accounting/reporting queries, and auditability must be reliable.
 
+Every vertical that owns database tables must have its own Postgres schema. Core-owned tables live in `core`, BetterAuth tables live in `auth`, and vertical-owned tables live in that vertical's schema, such as `property` or `accounting`. The `public` schema is not a home for OntOS application tables.
+
+All application database interaction must use Drizzle together with Effect unless a specific decision explicitly states otherwise. Raw SQL is reserved for schema/bootstrap work or narrowly documented cases where Drizzle cannot express the required database behavior clearly.
+
 ## Neo4j
 
 Neo4j is an optional graph projection of the company ontology. It may become useful for multi-hop relationships, impact analysis, visual exploration, and future AI context. It should be rebuilt from Postgres if introduced. It should not be required to issue an invoice, create a lease, create a reservation, or enforce core permissions in V0.

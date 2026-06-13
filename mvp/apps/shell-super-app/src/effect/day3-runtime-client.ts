@@ -4,6 +4,7 @@ import type {
   DemoUserKey,
   ProtectedResourceReadRequest,
   RuntimeContext,
+  CreateUnitActionRequest,
 } from '@mvp/shared-effect-api';
 
 interface SignInDemoUserResponse {
@@ -33,6 +34,34 @@ export interface ProtectedResourceReadDecision {
 interface ProtectedResourceReadResponse {
   readonly decision: ProtectedResourceReadDecision;
   readonly didWriteRuntimeRows: false;
+}
+
+export interface ActionAttemptCapability {
+  readonly actionKey: string;
+  readonly allowed: boolean;
+  readonly moduleId?: string;
+  readonly ok: boolean;
+  readonly reason: string;
+  readonly stage?: string;
+}
+
+interface CheckActionAttemptCapabilityResponse {
+  readonly capability: ActionAttemptCapability;
+  readonly didWriteRuntimeRows: false;
+}
+
+export interface ExecuteActionResult {
+  readonly actionKey: string;
+  readonly code?: string;
+  readonly message?: string;
+  readonly ok: boolean;
+  readonly result?: unknown;
+  readonly stage?: string;
+}
+
+interface ExecuteCreateUnitActionResponse {
+  readonly didWriteRuntimeRows: false;
+  readonly result: ExecuteActionResult;
 }
 
 const requestJson = async <TResponse>(
@@ -80,6 +109,21 @@ export const signOutDemoUser = () =>
 
 export const checkProtectedResourceRead = (request: ProtectedResourceReadRequest) =>
   requestJson<ProtectedResourceReadResponse>('/effect/day3/check-protected-resource-read', {
+    body: request,
+    method: 'POST',
+  });
+
+export const checkActionAttemptCapability = (actionKey: string) =>
+  requestJson<CheckActionAttemptCapabilityResponse>(
+    '/effect/day4/check-action-attempt-capability',
+    {
+      body: { actionKey },
+      method: 'POST',
+    },
+  );
+
+export const executeCreateUnitAction = (request: CreateUnitActionRequest) =>
+  requestJson<ExecuteCreateUnitActionResponse>('/effect/day4/create-unit', {
     body: request,
     method: 'POST',
   });

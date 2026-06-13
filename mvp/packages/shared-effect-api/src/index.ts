@@ -28,6 +28,24 @@ export const protectedResourceReadDecisionSchema = Schema.Struct({
   userId: Schema.String,
 });
 
+export const actionAttemptCapabilitySchema = Schema.Struct({
+  actionKey: Schema.String,
+  allowed: Schema.Boolean,
+  moduleId: Schema.optional(Schema.String),
+  ok: Schema.Boolean,
+  reason: Schema.String,
+  stage: Schema.optional(Schema.String),
+});
+
+export const executeActionResultSchema = Schema.Struct({
+  actionKey: Schema.String,
+  code: Schema.optional(Schema.String),
+  message: Schema.optional(Schema.String),
+  ok: Schema.Boolean,
+  result: Schema.optional(Schema.Unknown),
+  stage: Schema.optional(Schema.String),
+});
+
 export const betterAuthUserSummarySchema = Schema.Struct({
   email: Schema.String,
   id: Schema.String,
@@ -90,6 +108,15 @@ export const protectedResourceReadRequestSchema = Schema.Struct({
   ]),
 });
 
+export const checkActionAttemptCapabilityRequestSchema = Schema.Struct({
+  actionKey: Schema.String,
+});
+
+export const createUnitActionRequestSchema = Schema.Struct({
+  displayName: Schema.String,
+  floorLabel: Schema.optional(Schema.String),
+});
+
 export const signInDemoUserResponseSchema = Schema.Struct({
   context: runtimeContextSchema,
   didWriteRuntimeRows: Schema.Literal(false),
@@ -128,11 +155,24 @@ export const checkProtectedResourceReadResponseSchema = Schema.Struct({
   didWriteRuntimeRows: Schema.Literal(false),
 });
 
+export const checkActionAttemptCapabilityResponseSchema = Schema.Struct({
+  capability: actionAttemptCapabilitySchema,
+  didWriteRuntimeRows: Schema.Literal(false),
+});
+
+export const executeCreateUnitActionResponseSchema = Schema.Struct({
+  didWriteRuntimeRows: Schema.Literal(false),
+  result: executeActionResultSchema,
+});
+
 export type DemoUserKey = 'demo-admin-a' | 'demo-viewer-a' | 'demo-admin-b';
 export type RuntimeContext = typeof runtimeContextSchema.Type;
 export type ModuleGateRequest = typeof moduleGateRequestSchema.Type;
 export type PolicyGateRequest = typeof policyGateRequestSchema.Type;
 export type ProtectedResourceReadRequest = typeof protectedResourceReadRequestSchema.Type;
+export type CheckActionAttemptCapabilityRequest =
+  typeof checkActionAttemptCapabilityRequestSchema.Type;
+export type CreateUnitActionRequest = typeof createUnitActionRequestSchema.Type;
 
 export interface OperationContext {
   method: string;
@@ -191,6 +231,22 @@ export const day3ShellEffectApi = HttpApi.make('Day3ShellEffectApi').add(
           success: checkProtectedResourceReadResponseSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'checkActionAttemptCapability',
+        '/effect/day4/check-action-attempt-capability',
+        {
+          payload: checkActionAttemptCapabilityRequestSchema,
+          success: checkActionAttemptCapabilityResponseSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('executeCreateUnitAction', '/effect/day4/create-unit', {
+        payload: createUnitActionRequestSchema,
+        success: executeCreateUnitActionResponseSchema,
+      }),
     ),
 );
 
@@ -218,6 +274,18 @@ export const day3ShellOperationContexts = {
     operationId: 'Day3ShellEffectApi:day3Runtime:checkProtectedResourceRead',
     routePath: '/effect/day3/check-protected-resource-read',
     source: 'shell-day3-runtime-panel',
+  },
+  checkActionAttemptCapability: {
+    method: 'POST',
+    operationId: 'Day3ShellEffectApi:day3Runtime:checkActionAttemptCapability',
+    routePath: '/effect/day4/check-action-attempt-capability',
+    source: 'shell-day4-action-panel',
+  },
+  executeCreateUnitAction: {
+    method: 'POST',
+    operationId: 'Day3ShellEffectApi:day3Runtime:executeCreateUnitAction',
+    routePath: '/effect/day4/create-unit',
+    source: 'shell-day4-action-panel',
   },
   getCurrentRuntimeContext: {
     method: 'GET',

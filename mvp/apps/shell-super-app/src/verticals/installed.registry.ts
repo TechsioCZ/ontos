@@ -1,13 +1,62 @@
-import type { ModuleFederationComponentLocator, TenantModuleState } from '@mvp/shared-contracts';
-import { propertyRegistryRegistration } from '@mvp/property-registry/vertical.registration';
-import { accountingCoreRegistration } from '@mvp/accounting-core/vertical.registration';
+import { defineVerticalRegistration } from '@mvp/shared-contracts';
+import type {
+  ModuleFederationComponentLocator,
+  TenantModuleState,
+  VerticalRuntimeRegistration,
+} from '@mvp/shared-contracts';
+import { propertyRegistryManifest } from '@mvp/property-registry/vertical.manifest';
+import { accountingCoreManifest } from '@mvp/accounting-core/vertical.manifest';
 
 export const DEMO_TENANT_ID = 'tenant.demo' as const;
 export const DEMO_LEGAL_ENTITY_ID = 'tenant.demo.main-legal-entity' as const;
 
+const propertyRegistryRouteLocator = {
+  exportName: 'default',
+  exposedModule: './Route',
+  kind: 'module-federation',
+  remote: 'propertyRegistry',
+} as const satisfies ModuleFederationComponentLocator;
+
+const accountingCoreRouteLocator = {
+  exportName: 'default',
+  exposedModule: './Route',
+  kind: 'module-federation',
+  remote: 'accountingCore',
+} as const satisfies ModuleFederationComponentLocator;
+
 export const installedVerticalRegistrations = [
-  propertyRegistryRegistration,
-  accountingCoreRegistration,
+  defineVerticalRegistration({
+    boundaryMarker: 'verticalPropertyRegistry',
+    handlers: {},
+    manifest: propertyRegistryManifest,
+    navigation: {
+      label: 'Property Registry',
+      route: '/property-registry',
+    },
+    routes: [
+      {
+        label: 'Property Registry',
+        moduleFederation: propertyRegistryRouteLocator,
+        path: '/property-registry',
+      },
+    ],
+  } satisfies VerticalRuntimeRegistration),
+  defineVerticalRegistration({
+    boundaryMarker: 'verticalAccountingCore',
+    handlers: {},
+    manifest: accountingCoreManifest,
+    navigation: {
+      label: 'Accounting Core',
+      route: '/accounting-core',
+    },
+    routes: [
+      {
+        label: 'Accounting Core',
+        moduleFederation: accountingCoreRouteLocator,
+        path: '/accounting-core',
+      },
+    ],
+  } satisfies VerticalRuntimeRegistration),
 ] as const;
 
 export const CORE_TENANT_MODULE_STATES = [

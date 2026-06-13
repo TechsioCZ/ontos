@@ -6,12 +6,18 @@ import type { DemoUserKey, RuntimeContext } from '@mvp/shared-effect-api';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
+  checkActionAttemptCapability,
   checkProtectedResourceRead,
+  executeCreateUnitAction,
   getCurrentRuntimeContext,
   signInDemoUser,
   signOutDemoUser,
 } from '../effect/day3-runtime-client';
-import type { ProtectedResourceReadDecision } from '../effect/day3-runtime-client';
+import type {
+  ActionAttemptCapability,
+  ExecuteActionResult,
+  ProtectedResourceReadDecision,
+} from '../effect/day3-runtime-client';
 import { CORE_TENANT_MODULE_STATES } from '../verticals/installed.registry';
 import {
   findInstalledVerticalByModuleId,
@@ -235,11 +241,30 @@ const demoUserKeyFromContext = (context: RuntimeContext | null): DemoUserKey | n
   return null;
 };
 
+const createUnitActionKey = 'property.registry.createUnit';
+
+const unitIdFromActionResult = (result: ExecuteActionResult | null): string | null => {
+  if (result?.ok !== true || typeof result.result !== 'object' || result.result === null) {
+    return null;
+  }
+
+  const value = result.result as { unitId?: unknown };
+
+  return typeof value.unitId === 'string' ? value.unitId : null;
+};
+
 const RuntimeContextPanel = () => {
   const [runtimeContext, setRuntimeContext] = useState<RuntimeContext | null>(null);
   const [status, setStatus] = useState('Loading runtime context...');
   const [pendingOperation, setPendingOperation] = useState<string | null>(null);
   const [readDecision, setReadDecision] = useState<ProtectedResourceReadDecision | null>(null);
+  const [actionCapability, setActionCapability] = useState<ActionAttemptCapability | null>(null);
+  const [actionResult, setActionResult] = useState<ExecuteActionResult | null>(null);
+
+  const refreshActionCapability = async () => {
+    const response = await checkActionAttemptCapability(createUnitActionKey);
+    setActionCapability(response.capability);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -251,12 +276,14 @@ const RuntimeContextPanel = () => {
           return;
         }
         setRuntimeContext(response.context);
+        await refreshActionCapability();
         setStatus(`Signed in as ${response.context.betterAuthUser.email}.`);
       } catch (error) {
         if (cancelled) {
           return;
         }
         setRuntimeContext(null);
+        setActionCapability(null);
         setStatus(error instanceof Error ? error.message : 'Runtime context unavailable.');
       }
     };
@@ -275,6 +302,8 @@ const RuntimeContextPanel = () => {
     try {
       const response = await signInDemoUser(demoUserKey);
       setRuntimeContext(response.context);
+      await refreshActionCapability();
+      setActionResult(null);
       setStatus(`Signed in as ${demoUserLabels[demoUserKey]}.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Sign-in request failed.');
@@ -290,6 +319,8 @@ const RuntimeContextPanel = () => {
     try {
       await signOutDemoUser();
       setRuntimeContext(null);
+      setActionCapability(null);
+      setActionResult(null);
       setStatus('Signed out.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Sign-out request failed.');
@@ -327,8 +358,41 @@ const RuntimeContextPanel = () => {
     }
   };
 
+  const runCreateUnitAction = async () => {
+    const demoUserKey = demoUserKeyFromContext(runtimeContext);
+
+    if (demoUserKey === null) {
+      setStatus('Sign in before creating a property unit.');
+      return;
+    }
+
+    setPendingOperation(createUnitActionKey);
+    setActionResult(null);
+    setStatus(`${demoUserLabels[demoUserKey]} submitting property.registry.createUnit...`);
+
+    try {
+      const response = await executeCreateUnitAction({
+        displayName: `Day 4 proof unit for ${demoUserLabels[demoUserKey]}`,
+        floorLabel: '1',
+      });
+      setActionResult(response.result);
+      setStatus(
+        response.result.ok
+          ? `${demoUserLabels[demoUserKey]} created a unit through Core.`
+          : `${demoUserLabels[demoUserKey]} was rejected at ${response.result.stage ?? 'runtime'}.`,
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Create unit action failed.');
+    } finally {
+      setPendingOperation(null);
+    }
+  };
+
   const activeDemoUser = demoUserKeyFromContext(runtimeContext);
   const moduleStates = runtimeContext?.moduleStates ?? [];
+  const unitId = unitIdFromActionResult(actionResult);
+  const createUnitDisabled =
+    pendingOperation !== null || activeDemoUser === null || actionCapability?.allowed !== true;
 
   return (
     <section
@@ -435,6 +499,49 @@ const RuntimeContextPanel = () => {
           ))
         )}
       </div>
+      <section className="shell:mt-5 shell:border-t shell:border-stone-900/10 shell:pt-4">
+        <h3 className="shell:text-sm shell:font-black shell:text-stone-950">
+          Core action write proof
+        </h3>
+        <form
+          className="shell:mt-3 shell:grid shell:gap-2"
+          data-day4-action-capability={actionCapability?.allowed === true ? 'allowed' : 'denied'}
+          data-day4-active-demo-user={activeDemoUser ?? 'none'}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runCreateUnitAction();
+          }}
+        >
+          <button
+            className="shell:min-h-12 shell:rounded-md shell:border shell:border-stone-900/15 shell:bg-stone-950 shell:px-4 shell:py-2 shell:text-left shell:text-sm shell:font-bold shell:text-white shell:hover:bg-stone-800 shell:disabled:bg-stone-200 shell:disabled:text-stone-600"
+            data-day4-action-button=""
+            data-day4-action-key={createUnitActionKey}
+            disabled={createUnitDisabled}
+            type="submit"
+          >
+            Create property unit
+          </button>
+          <p className="shell:text-xs shell:font-semibold shell:leading-5 shell:text-stone-600">
+            {actionCapability?.reason ??
+              'Sign in to resolve the SpiceDB attempt_action capability.'}
+          </p>
+        </form>
+        <output
+          className={
+            actionResult?.ok === true
+              ? 'shell:mt-3 shell:block shell:rounded-md shell:bg-emerald-50 shell:px-3 shell:py-2 shell:text-sm shell:font-bold shell:text-emerald-950'
+              : 'shell:mt-3 shell:block shell:rounded-md shell:bg-red-50 shell:px-3 shell:py-2 shell:text-sm shell:font-bold shell:text-red-950'
+          }
+          data-day4-action-result={actionResult?.ok === true ? 'created' : 'none-or-rejected'}
+          data-day4-action-stage={actionResult?.stage ?? 'none'}
+        >
+          {actionResult === null
+            ? 'No create-unit action has been submitted.'
+            : actionResult.ok
+              ? `Created property.unit ${unitId ?? 'unknown'} through Core and Drizzle.`
+              : `Rejected at ${actionResult.stage ?? 'runtime'}: ${actionResult.message ?? 'No reason returned.'}`}
+        </output>
+      </section>
       <section className="shell:mt-5 shell:border-t shell:border-stone-900/10 shell:pt-4">
         <h3 className="shell:text-sm shell:font-black shell:text-stone-950">
           Protected resource read probes

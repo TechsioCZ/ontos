@@ -1,8 +1,8 @@
-import { createDraftEntryActionId } from './create-draft-entry.action';
+import { createDraftEntryActionId } from './create-draft-entry.action.ts';
 import type {
   CreateDraftEntryInput,
   CreateDraftEntryProbeResult,
-} from './create-draft-entry.action';
+} from './create-draft-entry.action.ts';
 
 export const createDraftEntryHandler = (
   input: CreateDraftEntryInput,
