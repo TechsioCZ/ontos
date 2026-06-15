@@ -25,9 +25,10 @@ The most important correction in this version is the MicroVertical model. An Ult
 17. `12_ROADMAP.md` — May PoC, June decisions, July–December 2026, 2027 business roadmap; read with the V0/V1 correction.
 18. `13_GRILL_QUESTIONS.md` — questions the agent should use to challenge the architecture.
 19. `14_ONTOS_MODULE_MANIFEST.md` — first Effect Schema-defined contract shape for OntOS Module Manifests.
-20. `adr/` — decision records. These are proposed decisions, not sacred law.
-21. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
-22. `appendix/` — source grounding and evidence notes.
+20. `22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md` — requirements for the fresh `mvp2/` CoreSDK/OperationalContext experiment.
+21. `adr/` — decision records. These are proposed decisions, not sacred law.
+22. `diagrams/` — Mermaid Markdown diagrams. They are separate so the prose stays readable and can be previewed in VS Code.
+23. `appendix/` — source grounding and evidence notes.
 
 ## Core thesis
 

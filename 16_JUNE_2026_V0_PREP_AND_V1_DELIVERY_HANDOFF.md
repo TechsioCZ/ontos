@@ -66,6 +66,7 @@ Core is directionally ready for the rough V1 module idea, but it is not implemen
    - domain events
    - outbox messages
    - evidence policy
+   - declared transaction/evidence behavior for success, denial, failure, and idempotency replay
 
 3. **Core schema invariants**
    - tenant-safe composite foreign keys
@@ -96,6 +97,36 @@ Core is directionally ready for the rough V1 module idea, but it is not implemen
    - archived
 
 Without these contracts, each MicroVertical will make different assumptions and Core will not safely support "any module."
+
+## Runtime Attempt Pipeline Requirement
+
+Do not introduce `SystemIntent` as a public domain object, public API concept, or generic persisted payload. The runtime may use an internal Core-owned execution context while processing a request; MVP2 should call this `OperationalContext`. Durable runtime evidence must stay in the existing Core concepts:
+
+- Write attempts are registered Actions backed by `CORE_ACTION_INVOCATIONS`, audit checkpoints, domain events, and outbox messages.
+- Read/list/search/export attempts are data-access operations backed by `CORE_DATA_ACCESS_EVENTS` and optional `CORE_EVIDENCE_REFERENCES`.
+- Shell/BFF surfaces are typed transport adapters inside the unified Application Runtime. They must not become a separate business layer.
+- Pipeline stages should return typed stage results. Do not pass a mutable bag through authn, authz, policy, validation, domain handling, audit, and outbox code.
+- Action handlers must not write Core runtime evidence directly. Core owns action invocation, audit checkpoint, domain-event, outbox, idempotency, and evidence-wrapper invariants; handlers own module domain state through services provided by Core.
+- Transaction behavior must be explicit:
+  - denied attempts write denial evidence without running the handler.
+  - successful writes commit domain data, action status, executed audit, domain event, and outbox in one canonical Postgres transaction.
+  - failures after execution starts must leave failure evidence even when canonical work rolls back.
+  - idempotency replay/conflict must be resolved before handler execution.
+- SpiceDB tuple writes for role/access-management Actions are a special consistency case because they are outside the Postgres transaction. The MVP must document their ordering, fail-closed behavior, and recovery path before treating role/access changes as production-ready.
+
+## MVP2 CoreSDK Experiment
+
+The next implementation experiment should happen in a fresh top-level `mvp2/` folder using the latest available UltraModern.js scaffold. Treat `mvp/` as the previous proof unless explicitly retiring it.
+
+MVP2 should prove the CoreSDK version of the runtime-attempt direction:
+
+- CoreSDK exports the safe server-side functions for public writes and reads.
+- Shell/BFF and MicroVertical server handlers call CoreSDK; they do not open top-level DB transactions or write audit/events/outbox directly.
+- CoreSDK builds `OperationalContext` for each operation and keeps it internal runtime context.
+- CoreSDK owns DB transaction boundaries, action invocation lifecycle, audit/logging, domain events, outbox, data-access evidence, idempotency, authorization, and policy checks.
+- MicroVertical handlers receive transaction-scoped services from CoreSDK instead of raw global DB access for public operations.
+
+Detailed requirements are in `22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md`.
 
 ## UltraModern.js Validation
 
@@ -166,15 +197,17 @@ The PoC succeeds only if it proves:
 4. Action input is validated with Effect Schema.
 5. Action writes through Effect SQL/Drizzle or a clearly comparable Effect SQL path.
 6. Postgres write includes tenant context.
-7. Action invocation row is written.
-8. Audit row is written.
-9. Outbox row is written.
+7. Action invocation row is written through Core, not by the module handler.
+8. Audit checkpoints are written for allowed, denied, and failed paths.
+9. Domain event and outbox rows are written for the successful write in the same canonical transaction as the domain row.
 10. BetterAuth user or stubbed equivalent resolves to an OntOS Principal.
 11. SpiceDB check or strict mock adapter gates the Action.
 12. Module active/read-only/inactive state is checked.
-13. A minimal read/list path works.
-14. A minimal export/report stub can run.
-15. The developer can explain what failed, what was proven, and what must change before production.
+13. A minimal read/list path runs through a Core data-access evidence wrapper.
+14. Denied read/search evidence is modeled with outcome semantics equivalent to audit checkpoints.
+15. A minimal export/report stub can run.
+16. Idempotency replay and idempotency conflict behavior are proven or explicitly cut with a bounded exception.
+17. The developer can explain what failed, what was proven, and what must change before production.
 
 The PoC fails if:
 
@@ -416,15 +449,16 @@ Deliverables:
 Tasks:
 
 1. Implement `executeAction` as the Core runtime wrapper.
-2. Resolve Action descriptors from the Installed Vertical Registry.
-3. Run `property.registry.createUnit` through Core.
-4. Validate Action input with Effect Schema.
-5. Resolve tenant, legal entity, and principal context through the Day 3 context path.
-6. Check module state, authorization, and policy through the Day 3 gates.
-7. Execute the private handler only through Core.
-8. Have the successful handler write a minimal tenant-scoped canonical row through the selected SQL path.
-9. Return a typed result, preferably a ResourceRef-shaped value.
-10. Keep `accounting.core.createDraftEntry` as the probe Action for negative-path buttons.
+2. Keep `OperationalContext` or any runtime attempt object internal to Core; do not add public `SystemIntent` APIs or generic intent persistence.
+3. Resolve Action descriptors from the Installed Vertical Registry.
+4. Run `property.registry.createUnit` through Core.
+5. Validate Action input with Effect Schema.
+6. Resolve tenant, legal entity, and principal context through the Day 3 context path.
+7. Check module state, authorization, and policy through the Day 3 gates.
+8. Execute the private handler only through Core.
+9. Have the successful handler write a minimal tenant-scoped canonical row through the selected SQL path.
+10. Return a typed result, preferably a ResourceRef-shaped value.
+11. Keep `accounting.core.createDraftEntry` as the probe Action for negative-path buttons.
 
 Acceptance:
 
@@ -435,6 +469,7 @@ Acceptance:
 - Handler does not bypass Core runtime.
 - Successful Action writes tenant-scoped canonical data through Effect SQL/Drizzle or the selected SQL path.
 - Action has a stable descriptor.
+- Shell/BFF code remains a typed transport adapter and does not own business workflow or Core evidence behavior.
 
 Deliverables:
 
@@ -448,19 +483,25 @@ Deliverables:
 Tasks:
 
 1. Write `CORE_ACTION_INVOCATIONS` lifecycle rows.
-2. Enforce or explicitly document idempotency handling for non-idempotent writes.
+2. Enforce idempotency handling for non-idempotent writes: required key, request hash, replay, running/pending, conflict, and failure retry policy.
 3. Write audit checkpoints for received/authn/authz/policy/validation/executed/rejected/failed as appropriate for the proof.
-4. Write a domain event for successful `property.registry.createUnit`.
-5. Write an outbox message for the successful domain event.
-6. Run the create-unit demo end to end from button click through Core checks, canonical write, action invocation, audit, domain event, and outbox.
-7. Keep failure-path buttons proving context/authz/policy/validation rejection behavior.
-8. Write final PoC result note.
+4. Write denial evidence for context/authz/policy/validation rejection without invoking the handler.
+5. Write a domain event for successful `property.registry.createUnit`.
+6. Write an outbox message for the successful domain event.
+7. Commit successful domain row, action status, executed audit, domain event, and outbox in one canonical Postgres transaction.
+8. Prove failure evidence survives when handler/canonical work fails.
+9. Add a minimal read/list path through a Core data-access evidence wrapper and record denied read/search evidence.
+10. Run the create-unit demo end to end from button click through Core checks, canonical write, action invocation, audit, domain event, and outbox.
+11. Keep failure-path buttons proving context/authz/policy/validation rejection behavior.
+12. Write final PoC result note.
 
 Acceptance:
 
-- Successful Action produces canonical row, action invocation, audit event, domain event, and outbox message.
+- Successful Action produces canonical row, action invocation, executed audit event, domain event, and outbox message in the intended transaction boundary.
 - Rejected Action produces useful action/audit evidence without running the handler.
-- Idempotency behavior is enforced or the exception is explicit and bounded.
+- Failed Action produces useful failure evidence without leaving partial canonical state.
+- Idempotency behavior is enforced, including replay and conflict cases, or the exception is explicit and bounded.
+- Read/list access evidence records allowed and denied outcomes.
 - PoC result note says proceed/revise/drop for each major decision.
 
 Deliverables:
@@ -470,6 +511,7 @@ Deliverables:
 - final PoC notes
 - list of proven assumptions
 - list of failed assumptions
+- transaction-boundary notes for denial, success, failure, and idempotency replay
 - recommended ADR status updates
 
 ## V1 Acceptance Matrix Draft

@@ -76,6 +76,18 @@ The Day 3 BFF probes only resolve context and return typed gate decisions. Runti
 
 Setup and seed scripts intentionally write schema, demo auth users, OntOS tenant/principal/module-state seed rows, and SpiceDB schema/relationships.
 
+## Updated MVP Runtime Requirements
+
+After the runtime-attempt validation on 2026-06-15, the next MVP work should not add `SystemIntent` as a public concept or generic persisted payload. Use the existing Action/DataAccess vocabulary:
+
+- write attempts are registered Actions backed by `CORE_ACTION_INVOCATIONS`, audit checkpoints, domain events, and outbox messages.
+- read/list/search/export attempts are data-access operations backed by `CORE_DATA_ACCESS_EVENTS` and optional `CORE_EVIDENCE_REFERENCES`.
+- Shell BFF handlers remain typed transport adapters inside the unified Application Runtime.
+- Core may use an internal `OperationalContext`, but stages should return typed results rather than mutating a shared bag.
+- Day 5 must prove denial, success, failure, and idempotency replay/conflict transaction boundaries before the MVP runtime is treated as production-ready.
+
+The follow-up experiment should be `mvp2/`, based on the latest UltraModern.js scaffold. It should use CoreSDK as the required server-side execution boundary and `OperationalContext` as internal runtime context. See `22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md`.
+
 ## Validation
 
 Passed:
