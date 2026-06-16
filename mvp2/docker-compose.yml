@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ontos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ontos}
+      POSTGRES_USER: ${POSTGRES_USER:-ontos}
+    ports:
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - ontos_mvp2_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres-init:
+    image: postgres:17-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-ontos}
+      POSTGRES_DB: ${POSTGRES_DB:-ontos}
+      POSTGRES_USER: ${POSTGRES_USER:-ontos}
+      SPICEDB_POSTGRES_DB: ${SPICEDB_POSTGRES_DB:-spicedb}
+    command:
+      - sh
+      - -ec
+      - |
+        if ! psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${POSTGRES_DB:-ontos}'" | grep -q 1; then
+          psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -c 'CREATE DATABASE "${POSTGRES_DB:-ontos}" OWNER "${POSTGRES_USER:-ontos}"'
+        fi
+        if ! psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${SPICEDB_POSTGRES_DB:-spicedb}'" | grep -q 1; then
+          psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -c 'CREATE DATABASE "${SPICEDB_POSTGRES_DB:-spicedb}" OWNER "${POSTGRES_USER:-ontos}"'
+        fi
+
+  spicedb-migrate:
+    image: authzed/spicedb:latest
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+    command:
+      - migrate
+      - head
+      - --datastore-engine=postgres
+      - --datastore-conn-uri=${SPICEDB_DATASTORE_URL:-postgres://ontos:ontos@postgres:5432/spicedb?sslmode=disable}
+
+  spicedb:
+    image: authzed/spicedb:latest
+    depends_on:
+      spicedb-migrate:
+        condition: service_completed_successfully
+    command:
+      - serve
+      - --grpc-preshared-key=${SPICEDB_PRESHARED_KEY:-local-spicedb-key}
+      - --datastore-engine=postgres
+      - --datastore-conn-uri=${SPICEDB_DATASTORE_URL:-postgres://ontos:ontos@postgres:5432/spicedb?sslmode=disable}
+    ports:
+      - '${SPICEDB_GRPC_PORT:-50051}:50051'
+      - '${SPICEDB_HTTP_PORT:-8443}:8443'
+    healthcheck:
+      test: ['CMD', 'grpc_health_probe', '-addr=localhost:50051', '-rpc-timeout=2s']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  ontos_mvp2_postgres:

@@ -1,5 +1,6 @@
 // @effect-diagnostics processEnv:off
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import { bffPlugin } from '@modern-js/plugin-bff';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
@@ -70,6 +71,16 @@ if (
 export default defineConfig(
   presetUltramodern(
     {
+      bff: {
+        effect: {
+          entry: './api/effect/index',
+          openapi: {
+            path: '/openapi.json',
+          },
+        },
+        prefix: '/shell-super-app-api',
+        runtimeFramework: 'effect',
+      },
       ...(cloudflareDeployEnabled
         ? {
             deploy: {
@@ -175,6 +186,7 @@ export default defineConfig(
           },
           reactI18next: false,
         }),
+        bffPlugin(),
         moduleFederationPlugin(),
         zephyrRspackPlugin(),
       ],

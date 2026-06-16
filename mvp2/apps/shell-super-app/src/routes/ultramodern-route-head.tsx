@@ -91,11 +91,11 @@ export const UltramodernRouteHead = () => {
   const t = i18nInstance['t'].bind(i18nInstance);
   const { canonical, alternates } = useLocalizedLocation();
   const route = resolveRouteMetadata(canonical);
-  const title = route ? t(route.titleKey) : appName;
-  const description = route ? t(route.descriptionKey) : appName;
+  const title = route === undefined ? appName : t(route.titleKey);
+  const description = route === undefined ? appName : t(route.descriptionKey);
   const canonicalUrl = absoluteUrl(alternates[fallbackLanguage] ?? `/${fallbackLanguage}`);
-  const indexable = route?.public === true && route?.indexable === true;
-  const jsonLd = indexable ? route?.jsonLd : undefined;
+  const indexable = route !== undefined && Boolean(route.public) && Boolean(route.indexable);
+  const jsonLd = indexable && route !== undefined ? route.jsonLd : undefined;
 
   return (
     <Helmet htmlAttributes={{ lang: i18nInstance.language ?? fallbackLanguage }}>
@@ -126,7 +126,9 @@ export const UltramodernRouteHead = () => {
           <meta content="summary_large_image" name="twitter:card" />
           <meta content={title} name="twitter:title" />
           <meta content={description} name="twitter:description" />
-          {jsonLd && <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>}
+          {jsonLd !== undefined && (
+            <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>
+          )}
         </>
       )}
     </Helmet>

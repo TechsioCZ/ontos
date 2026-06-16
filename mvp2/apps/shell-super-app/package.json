@@ -29,6 +29,7 @@
     "@tanstack/react-router": "1.170.15",
     "i18next": "26.3.1",
     "node-fetch": "^3.3.2",
+    "@mvp2/core-runtime": "workspace:*",
     "@mvp2/shared-contracts": "workspace:*",
     "@mvp2/shared-design-tokens": "workspace:*",
     "react": "^19.2.7",

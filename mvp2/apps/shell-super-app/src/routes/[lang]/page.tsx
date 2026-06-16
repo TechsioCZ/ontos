@@ -3,6 +3,7 @@ import ShellFrame from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { VerticalShowcase } from '../vertical-components';
 import { ultramodernUiMarker } from '../../ultramodern-build';
+import { AuthControls } from '../auth-controls';
 
 export default function ShellHome() {
   const { i18nInstance } = useModernI18n();
@@ -33,6 +34,7 @@ export default function ShellHome() {
               {t('shell.hero.secondary')}
             </span>
           </div>
+          <AuthControls />
         </div>
         <div className="shell:rounded-3xl shell:bg-white/90 shell:p-6 shell:shadow-2xl shell:shadow-stone-900/15">
           <div className="shell:grid shell:gap-4 shell:sm:grid-cols-2">
