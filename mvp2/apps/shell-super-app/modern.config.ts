@@ -195,7 +195,7 @@ export default defineConfig(
         publicDir: ['./locales', './assets'],
         ssr: {
           mode: 'string',
-          moduleFederationAppSSR: true,
+          moduleFederationAppSSR: false,
         },
       },
       source: {

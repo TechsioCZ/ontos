@@ -1,9 +1,9 @@
 import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import ShellFrame from '../shell-frame';
+import { AuthControls } from '../auth-controls';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { VerticalShowcase } from '../vertical-components';
 import { ultramodernUiMarker } from '../../ultramodern-build';
-import { AuthControls } from '../auth-controls';
 
 export default function ShellHome() {
   const { i18nInstance } = useModernI18n();
@@ -43,7 +43,7 @@ export default function ShellHome() {
                 {t('shell.hero.cardOneKicker')}
               </span>
               <strong className="shell:mt-3 shell:block shell:text-3xl shell:font-black shell:text-stone-950">
-                0
+                1
               </strong>
               <p className="shell:mt-2 shell:text-sm shell:font-semibold shell:text-stone-600">
                 {t('shell.hero.cardOne')}

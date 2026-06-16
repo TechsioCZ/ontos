@@ -1,3 +1,4 @@
+// @effect-diagnostics preferSchemaOverJson:off
 import {
   defineEffectBff,
   Effect,
@@ -20,14 +21,19 @@ const sessionCookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.at(-1);
 
 const jsonWithSetCookie = (body: unknown, setCookieHeaders: readonly string[]) =>
-  HttpServerResponse.raw(JSON.stringify(body), {
-    contentType: 'application/json; charset=utf-8',
-    headers:
-      setCookieHeaders.length === 0
-        ? undefined
+  Effect.sync(() => {
+    const setCookie = sessionCookieHeader(setCookieHeaders);
+
+    return HttpServerResponse.raw(JSON.stringify(body), {
+      contentType: 'application/json; charset=utf-8',
+      ...(setCookie === undefined
+        ? {}
         : {
-            'set-cookie': sessionCookieHeader(setCookieHeaders),
-          },
+            headers: {
+              'set-cookie': setCookie,
+            },
+          }),
+    });
   });
 
 const shellAuthLayer = HttpApiBuilder.group(shellAuthEffectApi, 'auth', (handlers) =>
@@ -46,7 +52,9 @@ const shellAuthLayer = HttpApiBuilder.group(shellAuthEffectApi, 'auth', (handler
               headers,
             }),
           ).pipe(
-            Effect.map(({ body, setCookieHeaders }) => jsonWithSetCookie(body, setCookieHeaders)),
+            Effect.flatMap(({ body, setCookieHeaders }) =>
+              jsonWithSetCookie(body, setCookieHeaders),
+            ),
           ),
         ),
       ),
@@ -55,7 +63,9 @@ const shellAuthLayer = HttpApiBuilder.group(shellAuthEffectApi, 'auth', (handler
       requestHeaders.pipe(
         Effect.flatMap((headers) =>
           Effect.promise(() => signOutDemoUser({ headers })).pipe(
-            Effect.map(({ body, setCookieHeaders }) => jsonWithSetCookie(body, setCookieHeaders)),
+            Effect.flatMap(({ body, setCookieHeaders }) =>
+              jsonWithSetCookie(body, setCookieHeaders),
+            ),
           ),
         ),
       ),

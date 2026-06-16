@@ -5,17 +5,36 @@ import path from 'node:path';
 const root = process.cwd();
 const packageScope = 'mvp2';
 const expectedNodeVersion = '26.3.0';
-const expectedPnpmVersion = '11.5.3';
 const tailwindEnabled = true;
-const fullStackVerticals = [];
+const fullStackVerticals = [
+  {
+    id: 'properties',
+    domain: 'properties',
+    stem: 'properties',
+    group: 'properties',
+    path: 'verticals/properties',
+    mfName: 'verticalProperties',
+    apiPrefix: '/properties-api',
+    tailwindPrefix: 'properties',
+    zephyrAlias: 'properties',
+    packageName: '@mvp2/properties',
+    exposes: ['./Route', './Widget'],
+    componentPaths: ['verticals/properties/src/components/properties-widget.tsx'],
+    namespace: 'properties',
+    routePagePaths: [],
+    routeMetaPaths: ['verticals/properties/src/routes/[lang]/route.meta.ts'],
+    localisedUrls: {},
+    verticalRefs: [],
+  },
+];
 const shellNamespace = 'shell';
 const oldRemotePaths = ['apps/remotes'];
 const expectedBuildScript =
-  'ULTRAMODERN_ZEPHYR=false pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types && pnpm performance:readiness';
+  'ULTRAMODERN_ZEPHYR=false pnpm -r --filter "./verticals/*" run build && ULTRAMODERN_ZEPHYR=false pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types && pnpm performance:readiness';
 const expectedCloudflareBuildScript =
-  'pnpm --filter "./apps/shell-super-app" run cloudflare:build && pnpm mf:types';
+  'pnpm -r --filter "./verticals/*" run cloudflare:build && pnpm --filter "./apps/shell-super-app" run cloudflare:build && pnpm mf:types';
 const expectedCloudflareDeployScript =
-  'pnpm --filter "./apps/shell-super-app" run cloudflare:deploy';
+  'pnpm -r --filter "./verticals/*" run cloudflare:deploy && pnpm --filter "./apps/shell-super-app" run cloudflare:deploy';
 const expectedCloudflareSecurity = {
   enabled: true,
   headers: {
@@ -344,20 +363,14 @@ const activePnpmVersion = execFileSync('pnpm', ['--pm-on-fail=ignore', '--versio
   stdio: ['ignore', 'pipe', 'pipe'],
 }).trim();
 const activeNodeVersion = process.versions.node;
-const minimumPnpmVersion = parseSemver(expectedPnpmVersion);
-const maximumPnpmVersion = {
-  major: minimumPnpmVersion.major,
-  minor: minimumPnpmVersion.minor + 1,
-  patch: 0,
-};
+const minimumPnpmVersion = { major: 11, minor: 0, patch: 0 };
 const currentPnpmVersion = parseSemver(activePnpmVersion);
 const minimumNodeVersion = { major: 26, minor: 0, patch: 0 };
 const currentNodeVersion = parseSemver(activeNodeVersion);
 
 assert(
-  compareSemver(currentPnpmVersion, minimumPnpmVersion) >= 0 &&
-    compareSemver(currentPnpmVersion, maximumPnpmVersion) < 0,
-  `Generated workspace requires pnpm >=${expectedPnpmVersion} <${maximumPnpmVersion.major}.${maximumPnpmVersion.minor}.${maximumPnpmVersion.patch}; active pnpm is ${activePnpmVersion}. Run mise install, then rerun pnpm from the activated shell.`,
+  compareSemver(currentPnpmVersion, minimumPnpmVersion) >= 0,
+  `Generated workspace requires pnpm >=11; active pnpm is ${activePnpmVersion}. Run mise install, then rerun pnpm from the activated shell.`,
 );
 assert(
   compareSemver(currentNodeVersion, minimumNodeVersion) >= 0,
@@ -463,8 +476,16 @@ const ownership = readJson('topology/ownership.json');
 const overlay = readJson('topology/local-overlays/development.json');
 
 assert(rootPackage.private === true, 'Root package must be private');
-assert(rootPackage.packageManager === `pnpm@${expectedPnpmVersion}`, 'Root must pin pnpm');
+assert(typeof rootPackage.packageManager === 'string', 'Root must declare packageManager');
+const packageManagerPnpmVersionMatch = /^pnpm@(\d+\.\d+\.\d+)$/u.exec(rootPackage.packageManager);
+assert(packageManagerPnpmVersionMatch, 'Root packageManager must pin pnpm with a semver version');
+const packageManagerPnpmVersion = packageManagerPnpmVersionMatch[1];
+assert(
+  compareSemver(parseSemver(packageManagerPnpmVersion), minimumPnpmVersion) >= 0,
+  'Root packageManager must use pnpm >=11',
+);
 assert(rootPackage.engines?.node === '>=26', 'Root must require Node >=26');
+assert(rootPackage.engines?.pnpm === '>=11', 'Root must require pnpm >=11');
 assert(
   generatedContract.node?.version === expectedNodeVersion,
   'Generated contract must record the Node toolchain version',
@@ -478,7 +499,7 @@ assert(
   'mise must pin the generated Node version',
 );
 assert(
-  readText('.mise.toml').includes(`pnpm = "${expectedPnpmVersion}"`),
+  readText('.mise.toml').includes(`pnpm = "${packageManagerPnpmVersion}"`),
   'mise must pin the generated pnpm version',
 );
 const workflowText = readText('.github/workflows/ultramodern-workspace-gates.yml');

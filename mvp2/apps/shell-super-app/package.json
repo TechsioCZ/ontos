@@ -3,7 +3,7 @@
   "name": "@mvp2/shell-super-app",
   "version": "0.1.0",
   "scripts": {
-    "dev": "modern dev",
+    "dev": "ULTRAMODERN_ZEPHYR=false modern dev",
     "build": "ULTRAMODERN_ZEPHYR=false modern build && node ../../scripts/generate-public-surface-assets.mjs --app shell-super-app --target dist",
     "cloudflare:build": "ULTRAMODERN_ZEPHYR=false MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-public-surface-assets.mjs --app shell-super-app --target dist && ULTRAMODERN_ZEPHYR=false MODERNJS_DEPLOY=cloudflare modern deploy && node ../../scripts/generate-public-surface-assets.mjs --app shell-super-app --target cloudflare",
     "cloudflare:deploy": "ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",

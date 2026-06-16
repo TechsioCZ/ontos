@@ -28,5 +28,24 @@
       "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
     },
     "title": "UltraModern Workspace"
+  },
+  "properties": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "properties",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Properties Vertical",
+    "widgetBody": "Vlastní routovanou plochu verticalu."
   }
 }

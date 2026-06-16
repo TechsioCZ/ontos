@@ -3,8 +3,13 @@
   "environment": "development",
   "preset": "presetUltramodern",
   "ports": {
-    "shell-super-app": 3020
+    "shell-super-app": 3020,
+    "properties": 4101
   },
-  "manifests": {},
-  "apis": {}
+  "manifests": {
+    "properties": "http://localhost:4101/mf-manifest.json"
+  },
+  "apis": {
+    "properties": "http://localhost:4101/properties-api"
+  }
 }

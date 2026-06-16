@@ -7,8 +7,11 @@ const appName = 'Shell Super App';
 const fallbackLanguage = 'en';
 const supportedLanguages = ['en', 'cs'] as const;
 type SupportedLanguage = (typeof supportedLanguages)[number];
-type RouteMetadata = (typeof ultramodernRouteMetadata)[number] & {
+type GeneratedRouteMetadata = (typeof ultramodernRouteMetadata)[number];
+type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'public'> & {
+  readonly indexable?: boolean;
   readonly jsonLd?: RouteJsonLd;
+  readonly public?: boolean;
 };
 
 const routeMetadata = ultramodernRouteMetadata as readonly RouteMetadata[];
@@ -94,8 +97,8 @@ export const UltramodernRouteHead = () => {
   const title = route === undefined ? appName : t(route.titleKey);
   const description = route === undefined ? appName : t(route.descriptionKey);
   const canonicalUrl = absoluteUrl(alternates[fallbackLanguage] ?? `/${fallbackLanguage}`);
-  const indexable = route !== undefined && Boolean(route.public) && Boolean(route.indexable);
-  const jsonLd = indexable && route !== undefined ? route.jsonLd : undefined;
+  const indexable = route === undefined ? false : route.public === true && route.indexable === true;
+  const jsonLd = indexable ? route?.jsonLd : undefined;
 
   return (
     <Helmet htmlAttributes={{ lang: i18nInstance.language ?? fallbackLanguage }}>
@@ -126,9 +129,7 @@ export const UltramodernRouteHead = () => {
           <meta content="summary_large_image" name="twitter:card" />
           <meta content={title} name="twitter:title" />
           <meta content={description} name="twitter:description" />
-          {jsonLd !== undefined && (
-            <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>
-          )}
+          {jsonLd && <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>}
         </>
       )}
     </Helmet>

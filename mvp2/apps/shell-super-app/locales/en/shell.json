@@ -28,5 +28,24 @@
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
     "title": "UltraModern Workspace"
+  },
+  "properties": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "properties",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Properties Vertical",
+    "widgetBody": "Owns a vertical route surface."
   }
 }

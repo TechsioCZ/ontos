@@ -7,7 +7,11 @@ export default defineConfig({
   },
   dialect: 'postgresql',
   out: './drizzle',
-  schema: ['./src/db/schema.ts', './src/db/auth-schema.ts'],
+  schema: [
+    './src/db/schema.ts',
+    './src/db/auth-schema.ts',
+    '../../verticals/properties/src/db/schema.ts',
+  ],
   strict: true,
   verbose: true,
 });
