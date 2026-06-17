@@ -1,6 +1,11 @@
 // @effect-diagnostics asyncFunction:off
 import { getCurrentAuthContext } from './auth/demo-auth.ts';
-import type { OperationContext } from './operation-context.ts';
+
+type ResolvedOperationIdentity = {
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+};
 
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type OperationContextAuthRequired = {
@@ -11,7 +16,7 @@ export type OperationContextAuthRequired = {
 export type ResolveOperationContextFromSessionResult =
   | {
       readonly _tag: 'Success';
-      readonly operationContext: OperationContext;
+      readonly operationContext: ResolvedOperationIdentity;
     }
   | {
       readonly _tag: 'Failure';

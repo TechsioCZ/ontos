@@ -1,6 +1,11 @@
 // @effect-diagnostics globalDate:off nodeBuiltinImport:off processEnv:off
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import type { OperationContext } from './operation-context.ts';
+
+type ResolvedOperationIdentity = {
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+};
 
 export interface VerticalGatewayTokenMissing {
   readonly _tag: 'VerticalGatewayTokenMissing';
@@ -15,14 +20,14 @@ export interface VerticalGatewayTokenInvalid {
 export type ResolveVerticalGatewayTokenResult =
   | {
       readonly _tag: 'Success';
-      readonly operationContext: OperationContext;
+      readonly operationContext: ResolvedOperationIdentity;
     }
   | {
       readonly _tag: 'Failure';
       readonly error: VerticalGatewayTokenMissing | VerticalGatewayTokenInvalid;
     };
 
-type VerticalGatewayTokenPayload = OperationContext & {
+type VerticalGatewayTokenPayload = ResolvedOperationIdentity & {
   aud: string;
   exp: number;
   iat: number;
@@ -73,7 +78,7 @@ export const createVerticalGatewayToken = ({
   ttlSeconds = 60,
 }: {
   audience: string;
-  operationContext: OperationContext;
+  operationContext: ResolvedOperationIdentity;
   ttlSeconds?: number;
 }) => {
   const nowSeconds = Math.floor(Date.now() / 1000);
