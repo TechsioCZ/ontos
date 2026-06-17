@@ -2,6 +2,7 @@ import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
+  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 
@@ -11,31 +12,31 @@ export const unitCreateResultSchema = Schema.Struct({
   status: Schema.Literal('ok'),
 });
 
-export interface OperationContext {
-  method: string;
-  operationId: string;
-  routePath: string;
-  source: 'client' | 'server' | 'generated-client' | 'effect-adapter' | 'data-platform' | 'unknown';
-  traceId?: string;
-}
+export const operationContextAuthRequiredSchema = Schema.TaggedStruct(
+  'OperationContextAuthRequired',
+  {
+    message: Schema.String,
+  },
+).pipe(HttpApiSchema.status(401));
+
+export type OperationContextAuthRequired = typeof operationContextAuthRequiredSchema.Type;
+
+export const createOperationContextAuthRequired = (
+  message: string,
+): OperationContextAuthRequired => ({
+  _tag: 'OperationContextAuthRequired',
+  message,
+});
 
 export const propertiesEffectApi = HttpApi.make('PropertiesEffectApi').add(
   HttpApiGroup.make('properties').add(
     HttpApiEndpoint.post('createUnit', '/effect/properties/unit', {
+      error: operationContextAuthRequiredSchema,
       payload: unitCreatePayloadSchema,
       success: unitCreateResultSchema,
     }),
   ),
 );
-
-export const propertiesOperationContexts = {
-  createUnit: {
-    method: 'POST',
-    operationId: 'PropertiesEffectApi:properties:createUnit',
-    routePath: '/effect/properties/unit',
-    source: 'generated-client',
-  },
-} satisfies Record<string, OperationContext>;
 
 export const propertiesApiContract = {
   apiPrefix: '/properties-api',

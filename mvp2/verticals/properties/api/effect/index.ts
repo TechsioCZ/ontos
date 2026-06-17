@@ -1,27 +1,54 @@
-import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
-import { propertiesEffectApi, propertiesOperationContexts } from '../../shared/effect/api.ts';
-import type { OperationContext } from '../../shared/effect/api.ts';
+import {
+  defineEffectBff,
+  Effect,
+  HttpApiBuilder,
+  HttpServerRequest,
+  Layer,
+} from '@modern-js/plugin-bff/effect-edge';
+import {
+  createOperationContextAuthRequired,
+  propertiesEffectApi,
+} from '../../shared/effect/api.ts';
+import { resolveVerticalGatewayToken } from '@mvp2/core-runtime';
+import type { OperationContext } from '@mvp2/core-runtime';
 
 const operationAttributes = (operationContext: OperationContext) => ({
-  'modernjs.operation.id': operationContext.operationId,
-  'modernjs.operation.method': operationContext.method,
-  'modernjs.operation.route': operationContext.routePath,
-  'modernjs.operation.source': operationContext.source,
-  ...(typeof operationContext.traceId === 'string'
-    ? { 'modernjs.trace.id': operationContext.traceId }
-    : {}),
+  'ontos.legal_entity.id': operationContext.legalEntityId,
+  'ontos.principal.id': operationContext.principalId,
+  'ontos.tenant.id': operationContext.tenantId,
 });
+
+const requestHeaders = HttpServerRequest.HttpServerRequest.pipe(
+  Effect.map((request) => new Headers(Object.entries(request.headers))),
+);
+
+const makeOperationContext = requestHeaders.pipe(
+  Effect.flatMap((headers) => {
+    const result = resolveVerticalGatewayToken({
+      audience: 'properties',
+      token: headers.get('x-ontos-operation-context'),
+    });
+
+    return result._tag === 'Success'
+      ? Effect.succeed(result.operationContext)
+      : Effect.fail(createOperationContextAuthRequired(result.error.message));
+  }),
+);
 
 const propertiesLayer = HttpApiBuilder.group(propertiesEffectApi, 'properties', (handlers) =>
   handlers.handle('createUnit', () =>
-    Effect.log('[properties-bff] createUnit handler called').pipe(
-      Effect.as({
-        status: 'ok' as const,
-      }),
-      Effect.withSpan('ultramodern.effect.properties.createUnit', {
-        attributes: operationAttributes(propertiesOperationContexts.createUnit),
-        kind: 'server',
-      }),
+    makeOperationContext.pipe(
+      Effect.flatMap((operationContext) =>
+        Effect.log('[properties-bff] createUnit handler called').pipe(
+          Effect.as({
+            status: 'ok' as const,
+          }),
+          Effect.withSpan('ultramodern.effect.properties.createUnit', {
+            attributes: operationAttributes(operationContext),
+            kind: 'server',
+          }),
+        ),
+      ),
     ),
   ),
 );

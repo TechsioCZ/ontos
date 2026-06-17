@@ -232,6 +232,9 @@ importers:
       '@module-federation/runtime':
         specifier: 2.5.1
         version: 2.5.1(node-fetch@3.3.2)
+      '@mvp2/core-runtime':
+        specifier: workspace:*
+        version: link:../../packages/core-runtime
       '@mvp2/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts

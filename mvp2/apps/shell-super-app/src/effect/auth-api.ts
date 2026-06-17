@@ -2,6 +2,7 @@ import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
+  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 
@@ -34,25 +35,40 @@ export const signInPayloadSchema = Schema.Struct({
   demoUserKey: Schema.Union([Schema.Literal('admin'), Schema.Literal('user')]),
 });
 
+export const operationContextAuthRequiredSchema = Schema.TaggedStruct(
+  'OperationContextAuthRequired',
+  {
+    message: Schema.String,
+  },
+).pipe(HttpApiSchema.status(401));
+
 export type AuthContextResponse = typeof authContextResponseSchema.Type;
 export type DemoUserKey = 'admin' | 'user';
+export type OperationContextAuthRequired = typeof operationContextAuthRequiredSchema.Type;
 
-export const shellAuthEffectApi = HttpApi.make('ShellAuthEffectApi').add(
-  HttpApiGroup.make('auth')
-    .add(
-      HttpApiEndpoint.get('context', '/effect/auth/context', {
-        success: authContextResponseSchema,
-      }),
-    )
-    .add(
-      HttpApiEndpoint.post('signIn', '/effect/auth/sign-in', {
-        payload: signInPayloadSchema,
-        success: authContextResponseSchema,
-      }),
-    )
-    .add(
-      HttpApiEndpoint.post('signOut', '/effect/auth/sign-out', {
-        success: authContextResponseSchema,
-      }),
-    ),
-);
+export const createOperationContextAuthRequired = (
+  message: string,
+): OperationContextAuthRequired => ({
+  _tag: 'OperationContextAuthRequired',
+  message,
+});
+
+const authGroup = HttpApiGroup.make('auth')
+  .add(
+    HttpApiEndpoint.get('context', '/effect/auth/context', {
+      success: authContextResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('signIn', '/effect/auth/sign-in', {
+      payload: signInPayloadSchema,
+      success: authContextResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('signOut', '/effect/auth/sign-out', {
+      success: authContextResponseSchema,
+    }),
+  );
+
+export const shellAuthEffectApi = HttpApi.make('ShellAuthEffectApi').add(authGroup);

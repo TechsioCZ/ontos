@@ -3,26 +3,31 @@ import {
   makeEffectHttpApiClient,
   runEffectRequest,
 } from '@modern-js/plugin-bff/effect-client';
-import {
-  propertiesApiContract,
-  propertiesEffectApi,
-  propertiesOperationContexts,
-} from '../../shared/effect/api';
-import type { OperationContext } from '../../shared/effect/api';
+import { propertiesApiContract, propertiesEffectApi } from '../../shared/effect/api';
 
 export { Effect, runEffectRequest };
 
 export interface PropertiesClientOptions {
   baseUrl?: string | URL;
   locale?: string;
-  operationContext?: OperationContext;
   traceparent?: string;
 }
 
 interface CreateUnitResult {
   readonly status: 'ok';
 }
-type CreateUnitEffect = Effect.Effect<CreateUnitResult, Error, never>;
+
+interface CreateUnitRequestFailed {
+  readonly _tag: 'CreateUnitRequestFailed';
+  readonly cause: unknown;
+}
+
+type CreateUnitEffect = Effect.Effect<CreateUnitResult, CreateUnitRequestFailed, never>;
+
+const createUnitRequestFailed = (cause: unknown): CreateUnitRequestFailed => ({
+  _tag: 'CreateUnitRequestFailed',
+  cause,
+});
 
 const defaultPropertiesApiBaseUrl =
   typeof ULTRAMODERN_PROPERTIES_API_URL === 'string'
@@ -34,17 +39,12 @@ const createPropertiesClient = (options: PropertiesClientOptions = {}) =>
     baseUrl: options.baseUrl ?? defaultPropertiesApiBaseUrl,
     requestContext: {
       ...(options.locale === undefined ? {} : { locale: options.locale }),
-      ...(options.operationContext === undefined
-        ? {}
-        : { operationContext: options.operationContext }),
       ...(options.traceparent === undefined ? {} : { traceparent: options.traceparent }),
     },
   });
 
 export const createUnit = (options: PropertiesClientOptions = {}): CreateUnitEffect =>
-  createPropertiesClient({
-    ...options,
-    operationContext: options.operationContext ?? propertiesOperationContexts.createUnit,
-  }).pipe(
+  createPropertiesClient(options).pipe(
     Effect.flatMap((client) => client.properties.createUnit({ payload: {} })),
-  ) as CreateUnitEffect;
+    Effect.mapError(createUnitRequestFailed),
+  );

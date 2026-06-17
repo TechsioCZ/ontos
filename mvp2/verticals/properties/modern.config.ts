@@ -50,7 +50,8 @@ const siteUrl =
   configuredCloudflareUrl ||
   inferredCloudflareUrl ||
   `http://localhost:${port}`;
-const apiBaseUrl = `${siteUrl.replace(/\/+$/u, '')}/properties-api`;
+const configuredPropertiesApiUrl = envValue('ULTRAMODERN_PROPERTIES_API_URL');
+const apiBaseUrl = configuredPropertiesApiUrl || '/shell-super-app-api/mv/properties';
 // Asset loading is intentionally independent from the canonical site URL and
 // deployment public URL. Vertical dev remotes need a self-origin asset prefix
 // so a shell on another localhost port does not resolve remote chunks locally.
