@@ -156,12 +156,12 @@ export const VerticalShowcase = () => {
       <div className="shell:grid shell:gap-4 shell:md:grid-cols-2">
         <div className="shell:grid shell:gap-3">
           <PropertiesWidget key="properties" />
-          <a
+          <Link
             className="shell:inline-flex shell:w-fit shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white shell:px-4 shell:py-2 shell:text-sm shell:font-bold shell:text-stone-950 shell:no-underline"
-            href="/properties/units"
+            to="/properties/units"
           >
             View Units
-          </a>
+          </Link>
         </div>
       </div>
     </section>

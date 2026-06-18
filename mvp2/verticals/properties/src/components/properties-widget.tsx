@@ -1,4 +1,4 @@
-import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { CreateUnitButton } from './create-unit-button';
 
 export default function PropertiesWidget() {
@@ -17,12 +17,12 @@ export default function PropertiesWidget() {
         <CreateUnitButton />
       </div>
       <div className="properties:mt-3">
-        <a
+        <Link
           className="properties:inline-flex properties:rounded-full properties:border properties:border-stone-900/15 properties:bg-white properties:px-4 properties:py-2 properties:text-sm properties:font-bold properties:text-stone-950 properties:no-underline"
-          href="/properties/units"
+          to="/properties/units"
         >
           View Units
-        </a>
+        </Link>
       </div>
     </section>
   );
