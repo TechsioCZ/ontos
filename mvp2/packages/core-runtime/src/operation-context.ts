@@ -1,7 +1,66 @@
 // oxlint-disable-next-line typescript/consistent-type-definitions
+export type OperationAccessKind = 'read' | 'list' | 'search' | 'export' | 'download';
+export type OperationActionInvocationStatus =
+  | 'received'
+  | 'replayed'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'rejected';
+export type OperationAuditOutcome = 'allowed' | 'denied' | 'succeeded' | 'failed';
+export type OperationAuditProfile = 'standard' | 'sensitive' | 'minimal';
+export type OperationAuditStage =
+  | 'system'
+  | 'authn'
+  | 'authz'
+  | 'policy'
+  | 'validation'
+  | 'execution';
+export type OperationEvidenceCaptureMode =
+  | 'metadata_only'
+  | 'hash_only'
+  | 'redacted_payload'
+  | 'stored_artifact';
+
 export type OperationContext<TAction> = {
   action: TAction;
+  actionKey: string;
+  actionInvocation?: {
+    actionInvocationId: string;
+    idempotencyKey?: string;
+    requestHash: string;
+    status: OperationActionInvocationStatus;
+  };
+  auditEvents?: ReadonlyArray<{
+    auditEventId: string;
+    auditProfile: OperationAuditProfile;
+    eventType: string;
+    outcome: OperationAuditOutcome;
+    outcomeCode: string;
+    outcomeStage: OperationAuditStage;
+  }>;
+  authorizationChecks?: ReadonlyArray<{
+    decision: 'allowed' | 'denied';
+    mode: 'placeholder';
+    provider: 'spicedb';
+    reason: string;
+  }>;
+  dataAccessEvents?: ReadonlyArray<{
+    accessKind: OperationAccessKind;
+    dataAccessEventId: string;
+    evidenceCaptureMode: OperationEvidenceCaptureMode;
+    evidencePolicyKey: string;
+    queryHash: string;
+    resultCount: number;
+    servingModuleKey: string;
+  }>;
   legalEntityId: string;
+  policyChecks?: ReadonlyArray<{
+    decision: 'allowed' | 'denied';
+    mode: 'placeholder';
+    policyKey: string;
+    reason: string;
+  }>;
   principalId: string;
   tenantId: string;
 };

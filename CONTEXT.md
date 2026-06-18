@@ -20,6 +20,10 @@ _Avoid_: V0, architecture-only release, ontology-first release
 The small set of architectural invariants that prevent expensive rework: registered Actions for writes, tenant/legal-entity isolation, separated authentication/authorization/business policy, ResourceRef-based cross-module references, audit and outbox in the write path, and manifest-declared public module boundaries.
 _Avoid_: Polished Forge, vibemodule primitives, exhaustive ontology metadata, rich graph UX, generic workflow engine, generalized plugin loading, full future AI readiness
 
+**CoreSDK**:
+The server-side OntOS boundary through which public writes and governed reads pass so Core can apply shared context, authorization, policy, evidence, transaction, event, and outbox semantics.
+_Avoid_: Direct handler path, BFF business layer, MicroVertical-owned runtime boundary
+
 **UltraModern.js MicroVertical**:
 The framework-level vertical slice concept in the UltraModern.js fork. It organizes frontend and backend behavior together inside the jointly deployable application. By itself, it does not define an OntOS manifest.
 _Avoid_: OntOS-specific manifest, standalone microservice, frontend-only module

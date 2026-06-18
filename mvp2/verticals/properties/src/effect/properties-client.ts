@@ -9,6 +9,7 @@ export { Effect, runEffectRequest };
 
 export interface PropertiesClientOptions {
   baseUrl?: string | URL;
+  idempotencyKey?: string;
   locale?: string;
   traceparent?: string;
 }
@@ -45,6 +46,16 @@ const createPropertiesClient = (options: PropertiesClientOptions = {}) =>
 
 export const createUnit = (options: PropertiesClientOptions = {}): CreateUnitEffect =>
   createPropertiesClient(options).pipe(
-    Effect.flatMap((client) => client.properties.createUnit({ payload: {} })),
+    Effect.flatMap((client) => {
+      type CreateUnitRequest = Parameters<typeof client.properties.createUnit>[0];
+      const request = {
+        ...(options.idempotencyKey === undefined
+          ? {}
+          : { headers: { 'idempotency-key': options.idempotencyKey } }),
+        payload: {},
+      } as CreateUnitRequest;
+
+      return client.properties.createUnit(request);
+    }),
     Effect.mapError(createUnitRequestFailed),
   );

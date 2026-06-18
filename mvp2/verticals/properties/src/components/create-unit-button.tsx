@@ -1,9 +1,11 @@
-// @effect-diagnostics globalConsole:off
+// @effect-diagnostics cryptoRandomUUID:off globalConsole:off
 import { createUnit, runEffectRequest } from '../effect/properties-client';
 
 const createUnitFromClick = () => {
+  const idempotencyKey = crypto.randomUUID();
+
   console.log('[properties-ui] Create Unit clicked');
-  void runEffectRequest(createUnit());
+  void runEffectRequest(createUnit({ idempotencyKey }));
 };
 
 export const CreateUnitButton = () => (

@@ -6,13 +6,19 @@ import {
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
 import {
+  createOperationDomainRejected,
+  createOperationExecutionFailed,
+  createOperationIdempotencyConflict,
+  createOperationIdempotencyKeyRequired,
+  createOperationIdempotencyReplayUnavailable,
   createOperationContextAuthRequired,
+  createOperationPersistenceFailed,
   propertiesEffectApi,
 } from '../../shared/effect/api.ts';
-import { resolveVerticalGatewayToken } from '@mvp2/core-runtime';
+import { type CoreSDKError, runAction } from '@mvp2/core-runtime';
 import type { OperationContext } from '@mvp2/core-runtime';
+import { createUnitActionRegistration } from '../../src/actions/create-unit.registration.ts';
 import type { CreateUnitAction } from '../../src/actions/create-unit.action.ts';
-import { createUnitHandler } from '../../src/actions/create-unit.handler.ts';
 
 const operationAttributes = <TAction>(operationContext: OperationContext<TAction>) => ({
   'ontos.legal_entity.id': operationContext.legalEntityId,
@@ -24,39 +30,65 @@ const requestHeaders = HttpServerRequest.HttpServerRequest.pipe(
   Effect.map((request) => new Headers(Object.entries(request.headers))),
 );
 
-const makeOperationContext = <TAction>(action: TAction) =>
-  requestHeaders.pipe(
-    Effect.flatMap((headers) => {
-      const result = resolveVerticalGatewayToken({
-        audience: 'properties',
-        token: headers.get('x-ontos-operation-context'),
+const coreSDKErrorToHttpError = (error: CoreSDKError) => {
+  switch (error._tag) {
+    case 'OperationDomainRejected':
+      return createOperationDomainRejected({
+        code: error.code,
+        message: error.message,
       });
+    case 'OperationExecutionFailed':
+      return createOperationExecutionFailed(error.message);
+    case 'OperationIdempotencyConflict':
+      return createOperationIdempotencyConflict(error.message);
+    case 'OperationIdempotencyKeyRequired':
+      return createOperationIdempotencyKeyRequired(error.message);
+    case 'OperationIdempotencyReplayUnavailable':
+      return createOperationIdempotencyReplayUnavailable(error.message);
+    case 'OperationPersistenceFailed':
+      return createOperationPersistenceFailed(error.message);
+    case 'OperationAuthRequired':
+    case 'OperationContextInvalid':
+      return createOperationContextAuthRequired(error.message);
+  }
+};
 
-      return result._tag === 'Success'
-        ? Effect.succeed({
-            ...result.operationContext,
-            action,
-          } satisfies OperationContext<TAction>)
-        : Effect.fail(createOperationContextAuthRequired(result.error.message));
+const runCreateUnitAction = ({
+  headers,
+  payload,
+}: {
+  readonly headers: Headers;
+  readonly payload: CreateUnitAction;
+}) =>
+  Effect.promise(() =>
+    runAction({
+      payload,
+      registration: createUnitActionRegistration,
+      transport: { headers },
     }),
+  ).pipe(
+    Effect.flatMap((result) =>
+      result._tag === 'OperationSucceeded'
+        ? Effect.succeed(result)
+        : Effect.fail(coreSDKErrorToHttpError(result)),
+    ),
   );
 
 const propertiesLayer = HttpApiBuilder.group(propertiesEffectApi, 'properties', (handlers) =>
-  handlers.handle('createUnit', () => {
-    const action: CreateUnitAction = {};
-
-    return makeOperationContext(action).pipe(
-      Effect.flatMap((operationContext) =>
-        Effect.log('[properties-bff] createUnit handler called').pipe(
-          Effect.as(createUnitHandler(operationContext)),
+  handlers.handle('createUnit', ({ payload }) =>
+    requestHeaders.pipe(
+      Effect.flatMap((headers) => runCreateUnitAction({ headers, payload })),
+      Effect.flatMap((result) =>
+        Effect.log('[properties-bff] createUnit action completed through CoreSDK').pipe(
+          Effect.as(result.response),
           Effect.withSpan('ultramodern.effect.properties.createUnit', {
-            attributes: operationAttributes(operationContext),
+            attributes: operationAttributes(result.context),
             kind: 'server',
           }),
         ),
       ),
-    );
-  }),
+    ),
+  ),
 );
 
 const layer = HttpApiBuilder.layer(propertiesEffectApi).pipe(Layer.provide(propertiesLayer));

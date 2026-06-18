@@ -11,6 +11,7 @@
     "build": "ULTRAMODERN_ZEPHYR=false pnpm -r --filter \"./verticals/*\" run build && ULTRAMODERN_ZEPHYR=false pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "format": "oxfmt . '!repos/**'",
     "format:check": "oxfmt --check . '!repos/**'",
+    "test": "node --test tests/*.test.mjs",
     "lint": "oxlint apps verticals packages",
     "lint:fix": "oxlint apps verticals packages --fix",
     "typecheck": "pnpm -r --filter \"@mvp2/*\" typecheck",
