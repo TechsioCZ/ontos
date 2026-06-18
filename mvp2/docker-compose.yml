@@ -66,5 +66,17 @@ services:
       timeout: 5s
       retries: 20
 
+  zed:
+    image: authzed/zed:latest
+    profiles:
+      - tools
+    depends_on:
+      spicedb:
+        condition: service_healthy
+    entrypoint:
+      - zed
+    volumes:
+      - ./scripts/spicedb:/spicedb:ro
+
 volumes:
   ontos_mvp2_postgres:

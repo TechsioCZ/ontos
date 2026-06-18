@@ -19,13 +19,17 @@ test('properties Effect BFF routes createUnit through CoreSDK registration', () 
 test('CoreSDK owns trusted context, idempotency, audit, policy gates, and transaction execution', () => {
   const coreSDK = read('packages/core-runtime/src/core-sdk.ts');
   const policy = read('packages/core-runtime/src/policy.ts');
+  const authorization = read('packages/core-runtime/src/spicedb-authorization.ts');
 
   assert.match(coreSDK, /resolveVerticalGatewayToken/u);
   assert.match(coreSDK, /x-ontos-operation-context/u);
   assert.match(coreSDK, /idempotency-key/u);
   assert.match(coreSDK, /actionInvocations/u);
   assert.match(coreSDK, /action\.received/u);
-  assert.match(coreSDK, /authorizeWithSpiceDbPlaceholder/u);
+  assert.match(coreSDK, /authorizeWithSpiceDb/u);
+  assert.match(coreSDK, /OperationAuthorizationDenied/u);
+  assert.match(authorization, /@authzed\/authzed-node/u);
+  assert.match(authorization, /objectType:\s*input\.subjectObjectType/u);
   assert.match(coreSDK, /evaluateActionPolicies/u);
   assert.match(coreSDK, /policyChecks:\s*registration\.policyChecks\s*\?\?\s*\[\]/u);
   assert.match(coreSDK, /OperationPolicyDenied/u);
@@ -54,11 +58,13 @@ test('properties HTTP contract maps CoreSDK typed errors to safe statuses', () =
   const bff = read('verticals/properties/api/effect/index.ts');
 
   assert.match(api, /OperationContextAuthRequired/u);
+  assert.match(api, /OperationAuthorizationDenied/u);
   assert.match(api, /OperationIdempotencyKeyRequired/u);
   assert.match(api, /OperationIdempotencyConflict/u);
   assert.match(api, /OperationDomainRejected/u);
   assert.match(api, /taggedMessageSchema/u);
   assert.match(api, /401/u);
+  assert.match(api, /403/u);
   assert.match(api, /428/u);
   assert.match(api, /HttpApiSchema\.status\(409\)/u);
   assert.match(api, /OperationExecutionFailed/u);
@@ -66,6 +72,7 @@ test('properties HTTP contract maps CoreSDK typed errors to safe statuses', () =
   assert.match(api, /Schema\.Union/u);
   assert.match(api, /unitCreateHeadersSchema/u);
   assert.match(api, /'idempotency-key'/u);
+  assert.match(bff, /OperationAuthorizationDenied/u);
   assert.match(bff, /coreSDKErrorToHttpError/u);
 });
 
@@ -103,10 +110,17 @@ test('readUnits records a Core data access event for each read action', () => {
 
   assert.match(action, /actionKey:\s*'property\.registry\.readUnits'/u);
   assert.match(action, /idempotency:\s*'optional'/u);
+  assert.match(action, /provider:\s*'spicedb'/u);
+  assert.match(action, /permission:\s*'read'/u);
+  assert.match(action, /resourceObjectType:\s*'resource_type'/u);
+  assert.match(action, /resourceObjectId:\s*'property\.unit'/u);
   assert.match(registration, /policyChecks:\s*\[\]/u);
   assert.match(handler, /services\.tx\s*\n\s*\.select/u);
   assert.match(handler, /services\.tx\.insert\(dataAccessEvents\)/u);
-  assert.match(handler, /actionInvocationId:\s*services\.context\.actionInvocation\?\.actionInvocationId/u);
+  assert.match(
+    handler,
+    /actionInvocationId:\s*services\.context\.actionInvocation\?\.actionInvocationId/u,
+  );
   assert.match(handler, /accessKind:\s*'list'/u);
   assert.match(handler, /targetResourceType:\s*'property\.unit'/u);
   assert.match(handler, /resultCount:\s*rows\.length/u);

@@ -8,6 +8,7 @@ import {
 import {
   createOperationDomainRejected,
   createOperationExecutionFailed,
+  createOperationAuthorizationDenied,
   createOperationIdempotencyConflict,
   createOperationIdempotencyKeyRequired,
   createOperationIdempotencyReplayUnavailable,
@@ -39,6 +40,15 @@ const coreSDKErrorToHttpError = (error: CoreSDKError) => {
       return createOperationDomainRejected({
         code: error.code,
         message: error.message,
+      });
+    case 'OperationAuthorizationDenied':
+      return createOperationAuthorizationDenied({
+        code: error.code,
+        message: error.message,
+        permission: error.permission,
+        provider: error.provider,
+        resourceObjectId: error.resourceObjectId,
+        resourceObjectType: error.resourceObjectType,
       });
     case 'OperationPolicyDenied':
       return createOperationPolicyDenied({

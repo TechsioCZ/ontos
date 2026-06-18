@@ -132,6 +132,44 @@ export const createOperationPolicyDenied = ({
   policyKey,
 });
 
+export const operationAuthorizationDeniedSchema = Schema.TaggedStruct(
+  'OperationAuthorizationDenied',
+  {
+    code: Schema.String,
+    message: Schema.String,
+    permission: Schema.String,
+    provider: Schema.Literal('spicedb'),
+    resourceObjectId: Schema.String,
+    resourceObjectType: Schema.String,
+  },
+).pipe(HttpApiSchema.status(403));
+
+export type OperationAuthorizationDenied = typeof operationAuthorizationDeniedSchema.Type;
+
+export const createOperationAuthorizationDenied = ({
+  code,
+  message,
+  permission,
+  provider,
+  resourceObjectId,
+  resourceObjectType,
+}: {
+  readonly code: string;
+  readonly message: string;
+  readonly permission: string;
+  readonly provider: 'spicedb';
+  readonly resourceObjectId: string;
+  readonly resourceObjectType: string;
+}): OperationAuthorizationDenied => ({
+  _tag: 'OperationAuthorizationDenied',
+  code,
+  message,
+  permission,
+  provider,
+  resourceObjectId,
+  resourceObjectType,
+});
+
 export const operationExecutionFailedSchema = taggedMessageSchema('OperationExecutionFailed', 500);
 
 export type OperationExecutionFailed = typeof operationExecutionFailedSchema.Type;
@@ -146,6 +184,7 @@ export const operationErrorSchema = Schema.Union([
   operationIdempotencyReplayUnavailableSchema,
   operationPersistenceFailedSchema,
   operationDomainRejectedSchema,
+  operationAuthorizationDeniedSchema,
   operationPolicyDeniedSchema,
   operationExecutionFailedSchema,
 ]).pipe(HttpApiSchema.status(409));

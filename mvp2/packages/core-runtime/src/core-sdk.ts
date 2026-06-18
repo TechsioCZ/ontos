@@ -14,6 +14,11 @@ import { db } from './db/client.ts';
 import { actionInvocations, auditEvents, dataAccessEvents } from './db/schema.ts';
 import type { PolicyCheck, PolicyDenied } from './policy.ts';
 import {
+  type SpiceDbAuthorizationChecker,
+  type SpiceDbPermissionCheckInput,
+  spiceDbAuthorizationChecker,
+} from './spicedb-authorization.ts';
+import {
   type VerticalGatewayTokenInvalid,
   type VerticalGatewayTokenMissing,
   resolveVerticalGatewayToken,
@@ -68,6 +73,16 @@ export interface OperationPolicyDenied {
   readonly policyKey: string;
 }
 
+export interface OperationAuthorizationDenied {
+  readonly _tag: 'OperationAuthorizationDenied';
+  readonly code: 'authorization_denied' | 'authorization_unavailable';
+  readonly message: string;
+  readonly permission: string;
+  readonly provider: 'spicedb';
+  readonly resourceObjectId: string;
+  readonly resourceObjectType: string;
+}
+
 export type OperationExecutionFailed = {
   readonly _tag: 'OperationExecutionFailed';
   readonly message: string;
@@ -81,6 +96,7 @@ export type CoreSDKError =
   | OperationIdempotencyReplayUnavailable
   | OperationPersistenceFailed
   | OperationDomainRejected
+  | OperationAuthorizationDenied
   | OperationPolicyDenied
   | OperationExecutionFailed;
 
@@ -97,10 +113,18 @@ export type OperationResult<TAction, TResponse> =
 export type ActionDescriptor = {
   readonly actionKey: string;
   readonly auditProfile: OperationAuditProfile;
+  readonly authorization?: ActionAuthorizationRequirement;
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
   readonly requestSchema: unknown;
   readonly responseSchema: unknown;
+};
+
+export type ActionAuthorizationRequirement = {
+  readonly permission: string;
+  readonly provider: 'spicedb';
+  readonly resourceObjectId: string;
+  readonly resourceObjectType: string;
 };
 
 export type ActionExecutionServices<TAction> = {
@@ -149,6 +173,10 @@ export type DataAccessRegistration<TRequest, TResponse> = {
 
 export type OperationTransport = {
   readonly headers: Headers;
+};
+
+export type RunActionOptions = {
+  readonly authorizationChecker?: SpiceDbAuthorizationChecker;
 };
 
 export type ActionDomainRejection = {
@@ -208,6 +236,28 @@ const policyDenied = (decision: PolicyDenied): OperationPolicyDenied => ({
 const executionFailed = (error: unknown): OperationExecutionFailed => ({
   _tag: 'OperationExecutionFailed',
   message: error instanceof Error ? error.message : 'Action execution failed.',
+});
+
+const authorizationDenied = ({
+  code,
+  message,
+  permission,
+  resourceObjectId,
+  resourceObjectType,
+}: {
+  readonly code: 'authorization_denied' | 'authorization_unavailable';
+  readonly message: string;
+  readonly permission: string;
+  readonly resourceObjectId: string;
+  readonly resourceObjectType: string;
+}): OperationAuthorizationDenied => ({
+  _tag: 'OperationAuthorizationDenied',
+  code,
+  message,
+  permission,
+  provider: 'spicedb',
+  resourceObjectId,
+  resourceObjectType,
 });
 
 const authRequired = (error: VerticalGatewayTokenMissing): OperationAuthRequired => ({
@@ -473,27 +523,95 @@ const writeAuditEvent = async <TAction>({
   });
 };
 
-const authorizeWithSpiceDbPlaceholder = async <TAction>({
+const toSpiceDbPermissionCheck = <TAction>(
+  context: OperationContext<TAction>,
+  requirement: ActionAuthorizationRequirement,
+): SpiceDbPermissionCheckInput => ({
+  permission: requirement.permission,
+  resourceObjectId: `${context.tenantId}_${requirement.resourceObjectId.replaceAll('.', '-')}`,
+  resourceObjectType: requirement.resourceObjectType,
+  subjectObjectId: context.principalId,
+  subjectObjectType: 'principal',
+});
+
+const authorizeWithSpiceDb = async <TAction>({
   auditProfile,
+  authorizationChecker,
   context,
+  requirement,
 }: {
   readonly auditProfile: OperationAuditProfile;
+  readonly authorizationChecker: SpiceDbAuthorizationChecker;
   readonly context: OperationContext<TAction>;
+  readonly requirement: ActionAuthorizationRequirement | undefined;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
+  if (requirement === undefined) {
+    return writeAuditEvent({
+      auditProfile,
+      context,
+      eventType: 'action.authorization.skipped',
+      outcome: 'allowed',
+      outcomeCode: 'spicedb_authorization_not_required',
+      outcomeStage: 'authz',
+    });
+  }
+
+  const check = toSpiceDbPermissionCheck(context, requirement);
+  const authorization = await authorizationChecker(check);
+
+  if (authorization._tag === 'Allowed') {
+    const checkedContext = attachAuthorizationCheck(context, {
+      decision: 'allowed',
+      mode: 'check_permission',
+      permission: check.permission,
+      provider: 'spicedb',
+      reason: 'SpiceDB checkPermission allowed.',
+      resourceObjectId: check.resourceObjectId,
+      resourceObjectType: check.resourceObjectType,
+    });
+
+    return writeAuditEvent({
+      auditProfile,
+      context: checkedContext,
+      eventType: 'action.authorization.allowed',
+      outcome: 'allowed',
+      outcomeCode: 'spicedb_check_permission_allowed',
+      outcomeStage: 'authz',
+    });
+  }
+
+  const reason = authorization.message;
   const checkedContext = attachAuthorizationCheck(context, {
-    decision: 'allowed',
-    mode: 'placeholder',
+    decision: 'denied',
+    mode: 'check_permission',
+    permission: check.permission,
     provider: 'spicedb',
-    reason: 'SpiceDB check is intentionally skipped for now.',
+    reason,
+    resourceObjectId: check.resourceObjectId,
+    resourceObjectType: check.resourceObjectType,
+  });
+  const rejectedContext = await markActionInvocationStatus(checkedContext, 'rejected');
+  const auditedContext = await writeAuditEvent({
+    auditProfile,
+    context: rejectedContext,
+    eventType: 'action.authorization.denied',
+    outcome: 'denied',
+    outcomeCode:
+      authorization._tag === 'Unavailable' ? 'spicedb_authorization_unavailable' : 'spicedb_denied',
+    outcomeStage: 'authz',
   });
 
-  return writeAuditEvent({
-    auditProfile,
-    context: checkedContext,
-    eventType: 'action.authorization.allowed',
-    outcome: 'allowed',
-    outcomeCode: 'spicedb_placeholder_allowed',
-    outcomeStage: 'authz',
+  if ('_tag' in auditedContext) {
+    return auditedContext;
+  }
+
+  return authorizationDenied({
+    code:
+      authorization._tag === 'Unavailable' ? 'authorization_unavailable' : 'authorization_denied',
+    message: reason,
+    permission: check.permission,
+    resourceObjectId: check.resourceObjectId,
+    resourceObjectType: check.resourceObjectType,
   });
 };
 
@@ -650,10 +768,12 @@ const writeDataAccessEvent = async <TRequest>({
 };
 
 export const runAction = async <TAction, TResponse>({
+  options = {},
   payload,
   registration,
   transport,
 }: {
+  readonly options?: RunActionOptions;
   readonly payload: TAction;
   readonly registration: ActionRegistration<TAction, TResponse>;
   readonly transport: OperationTransport;
@@ -696,9 +816,11 @@ export const runAction = async <TAction, TResponse>({
     return receivedContext;
   }
 
-  const authorizedContext = await authorizeWithSpiceDbPlaceholder({
+  const authorizedContext = await authorizeWithSpiceDb({
     auditProfile: descriptor.auditProfile,
+    authorizationChecker: options.authorizationChecker ?? spiceDbAuthorizationChecker,
     context: receivedContext,
+    requirement: descriptor.authorization,
   });
 
   if ('_tag' in authorizedContext) {

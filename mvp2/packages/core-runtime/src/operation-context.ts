@@ -41,9 +41,12 @@ export type OperationContext<TAction> = {
   }>;
   authorizationChecks?: ReadonlyArray<{
     decision: 'allowed' | 'denied';
-    mode: 'placeholder';
+    mode: 'check_permission' | 'placeholder';
+    permission?: string;
     provider: 'spicedb';
     reason: string;
+    resourceObjectId?: string;
+    resourceObjectType?: string;
   }>;
   dataAccessEvents?: ReadonlyArray<{
     accessKind: OperationAccessKind;

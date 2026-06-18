@@ -18,6 +18,7 @@
     "cloudflare:build": "pnpm -r --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types",
     "cloudflare:deploy": "pnpm -r --filter \"./verticals/*\" run cloudflare:deploy && pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",
     "cloudflare:proof": "node ./scripts/proof-cloudflare-version.mjs --out .codex/reports/cloudflare-version-proof/public-url-proof.json",
+    "spicedb:seed": "node ./scripts/seed-spicedb.mjs",
     "skills:install": "node ./scripts/bootstrap-agent-skills.mjs",
     "skills:check": "node ./scripts/bootstrap-agent-skills.mjs --check",
     "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mjs",
