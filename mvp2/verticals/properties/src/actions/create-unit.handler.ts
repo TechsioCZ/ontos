@@ -8,11 +8,11 @@ export interface CreateUnitResult {
 }
 
 export const createUnitHandler = async (
-  _input: CreateUnitAction,
+  input: CreateUnitAction,
   services: ActionExecutionServices<CreateUnitAction>,
 ): Promise<CreateUnitResult> => {
   await services.tx.insert(unit).values({
-    name: 'New unit',
+    name: input,
   });
 
   return {

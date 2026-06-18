@@ -16,8 +16,9 @@ test('properties Effect BFF routes createUnit through CoreSDK registration', () 
   assert.doesNotMatch(bff, /createUnitHandler/u);
 });
 
-test('CoreSDK owns trusted context, idempotency, audit, placeholder gates, and transaction execution', () => {
+test('CoreSDK owns trusted context, idempotency, audit, policy gates, and transaction execution', () => {
   const coreSDK = read('packages/core-runtime/src/core-sdk.ts');
+  const policy = read('packages/core-runtime/src/policy.ts');
 
   assert.match(coreSDK, /resolveVerticalGatewayToken/u);
   assert.match(coreSDK, /x-ontos-operation-context/u);
@@ -25,7 +26,11 @@ test('CoreSDK owns trusted context, idempotency, audit, placeholder gates, and t
   assert.match(coreSDK, /actionInvocations/u);
   assert.match(coreSDK, /action\.received/u);
   assert.match(coreSDK, /authorizeWithSpiceDbPlaceholder/u);
-  assert.match(coreSDK, /evaluatePolicyPlaceholder/u);
+  assert.match(coreSDK, /evaluateActionPolicies/u);
+  assert.match(coreSDK, /policyChecks:\s*registration\.policyChecks\s*\?\?\s*\[\]/u);
+  assert.match(coreSDK, /OperationPolicyDenied/u);
+  assert.match(policy, /PolicyCheck<TData>/u);
+  assert.match(policy, /rejectStringStartingWithNewPolicy/u);
   assert.match(coreSDK, /db\.transaction/u);
   assert.match(coreSDK, /const \{ descriptor, handler \} = registration/u);
   assert.match(coreSDK, /handler\(payload,\s*\{\s*context:\s*policyCheckedContext,\s*tx/u);
@@ -67,6 +72,7 @@ test('properties HTTP contract maps CoreSDK typed errors to safe statuses', () =
 test('createUnit descriptor and client provide required operation metadata', () => {
   const action = read('verticals/properties/src/actions/create-unit.action.ts');
   const handler = read('verticals/properties/src/actions/create-unit.handler.ts');
+  const policy = read('verticals/properties/src/actions/create-unit.policy.ts');
   const registration = read('verticals/properties/src/actions/create-unit.registration.ts');
   const client = read('verticals/properties/src/effect/properties-client.ts');
   const button = read('verticals/properties/src/components/create-unit-button.tsx');
@@ -75,8 +81,15 @@ test('createUnit descriptor and client provide required operation metadata', () 
   assert.match(action, /auditProfile:\s*'standard'/u);
   assert.match(action, /idempotency:\s*'required'/u);
   assert.match(handler, /services\.tx\.insert\(unit\)/u);
-  assert.match(handler, /name:\s*'New unit'/u);
+  assert.match(handler, /name:\s*input/u);
+  assert.match(policy, /rejectCreateUnitNameEndingWithUnitPolicy/u);
+  assert.match(policy, /endsWith\('unit'\)/u);
   assert.match(registration, /satisfies ActionRegistration/u);
+  assert.match(registration, /rejectStringStartingWithNewPolicy/u);
+  assert.match(registration, /rejectCreateUnitNameEndingWithUnitPolicy/u);
   assert.match(client, /'idempotency-key'/u);
+  assert.match(client, /payload:\s*options\.unitName/u);
   assert.match(button, /crypto\.randomUUID/u);
+  assert.match(button, /unitName\s*=\s*'New unit'/u);
+  assert.match(button, /catch\s*\(error\)/u);
 });

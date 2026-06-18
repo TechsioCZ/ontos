@@ -57,7 +57,7 @@ export type OperationContext<TAction> = {
   legalEntityId: string;
   policyChecks?: ReadonlyArray<{
     decision: 'allowed' | 'denied';
-    mode: 'placeholder';
+    mode: 'action-policy' | 'placeholder';
     policyKey: string;
     reason: string;
   }>;

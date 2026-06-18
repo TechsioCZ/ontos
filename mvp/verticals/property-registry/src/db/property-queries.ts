@@ -5,7 +5,7 @@ import type { CoreDb, PropertyUnitInsert, RuntimeContext } from '@mvp/core-runti
 export interface CreatePropertyUnitProofInput {
   code: string;
   context: RuntimeContext;
-  floorLabel?: string;
+  name: string;
 }
 
 export interface CreatePropertyUnitProofResult {
@@ -79,8 +79,9 @@ export const createPropertyUnitProof = async (
     buildingId: building.buildingId,
     code: input.code,
     createdAt: now,
-    floorLabel: input.floorLabel ?? '1',
+    floorLabel: '1',
     lifecycleState: 'active',
+    name: input.name,
     tenantId: input.context.tenant.tenantId,
     unitType: 'demo',
     updatedAt: now,

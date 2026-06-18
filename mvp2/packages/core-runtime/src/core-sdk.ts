@@ -12,6 +12,7 @@ import type {
 } from './operation-context.ts';
 import { db } from './db/client.ts';
 import { actionInvocations, auditEvents, dataAccessEvents } from './db/schema.ts';
+import type { PolicyCheck, PolicyDenied } from './policy.ts';
 import {
   type VerticalGatewayTokenInvalid,
   type VerticalGatewayTokenMissing,
@@ -60,6 +61,13 @@ export type OperationDomainRejected = {
   readonly message: string;
 };
 
+export interface OperationPolicyDenied {
+  readonly _tag: 'OperationPolicyDenied';
+  readonly code: string;
+  readonly message: string;
+  readonly policyKey: string;
+}
+
 export type OperationExecutionFailed = {
   readonly _tag: 'OperationExecutionFailed';
   readonly message: string;
@@ -73,6 +81,7 @@ export type CoreSDKError =
   | OperationIdempotencyReplayUnavailable
   | OperationPersistenceFailed
   | OperationDomainRejected
+  | OperationPolicyDenied
   | OperationExecutionFailed;
 
 export type OperationSucceeded<TAction, TResponse> = {
@@ -107,6 +116,7 @@ export type ActionHandler<TAction, TResponse> = (
 export type ActionRegistration<TAction, TResponse> = {
   readonly descriptor: ActionDescriptor;
   readonly handler: ActionHandler<TAction, TResponse>;
+  readonly policyChecks?: readonly PolicyCheck<TAction>[];
 };
 
 export type DataAccessDescriptor = {
@@ -186,6 +196,13 @@ const domainRejected = (error: ActionDomainRejection): OperationDomainRejected =
   _tag: 'OperationDomainRejected',
   code: error.code,
   message: error.message,
+});
+
+const policyDenied = (decision: PolicyDenied): OperationPolicyDenied => ({
+  _tag: 'OperationPolicyDenied',
+  code: decision.code,
+  message: decision.reason,
+  policyKey: decision.policyKey,
 });
 
 const executionFailed = (error: unknown): OperationExecutionFailed => ({
@@ -480,26 +497,54 @@ const authorizeWithSpiceDbPlaceholder = async <TAction>({
   });
 };
 
-const evaluatePolicyPlaceholder = async <TAction>({
+const evaluateActionPolicies = async <TAction>({
   auditProfile,
   context,
+  policyChecks,
 }: {
   readonly auditProfile: OperationAuditProfile;
   readonly context: OperationContext<TAction>;
+  readonly policyChecks: readonly PolicyCheck<TAction>[];
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
-  const checkedContext = attachPolicyCheck(context, {
-    decision: 'allowed',
-    mode: 'placeholder',
-    policyKey: 'default',
-    reason: 'OntOS policy check is intentionally default-allowed for now.',
-  });
+  let checkedContext = context;
+  let deniedDecision: PolicyDenied | undefined;
+
+  for (const policyCheck of policyChecks) {
+    const decision = policyCheck(context.action);
+
+    checkedContext = attachPolicyCheck(checkedContext, {
+      decision: decision.ok ? 'allowed' : 'denied',
+      mode: 'action-policy',
+      policyKey: decision.policyKey,
+      reason: decision.reason,
+    });
+
+    if (!decision.ok) {
+      deniedDecision = decision;
+      break;
+    }
+  }
+
+  if (deniedDecision !== undefined) {
+    const rejectedContext = await markActionInvocationStatus(checkedContext, 'rejected');
+    const auditedContext = await writeAuditEvent({
+      auditProfile,
+      context: rejectedContext,
+      eventType: 'action.policy.denied',
+      outcome: 'denied',
+      outcomeCode: deniedDecision.code,
+      outcomeStage: 'policy',
+    });
+
+    return '_tag' in auditedContext ? auditedContext : policyDenied(deniedDecision);
+  }
 
   return writeAuditEvent({
     auditProfile,
     context: checkedContext,
     eventType: 'action.policy.allowed',
     outcome: 'allowed',
-    outcomeCode: 'policy_placeholder_allowed',
+    outcomeCode: 'action_policies_allowed',
     outcomeStage: 'policy',
   });
 };
@@ -660,9 +705,10 @@ export const runAction = async <TAction, TResponse>({
     return authorizedContext;
   }
 
-  const policyCheckedContext = await evaluatePolicyPlaceholder({
+  const policyCheckedContext = await evaluateActionPolicies({
     auditProfile: descriptor.auditProfile,
     context: authorizedContext,
+    policyChecks: registration.policyChecks ?? [],
   });
 
   if ('_tag' in policyCheckedContext) {

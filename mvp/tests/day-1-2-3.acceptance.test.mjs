@@ -200,11 +200,14 @@ test('Day 4 create-unit action goes through Core, SpiceDB, and typed Drizzle wri
   assert.match(propertyQueries, /db\s*\n\s*\.insert\(propertyUnits\)/u);
   assert.match(propertyQueries, /satisfies PropertyUnitInsert/u);
   assert.match(propertyQueries, /code: input\.code/u);
+  assert.match(propertyQueries, /name: input\.name/u);
   assert.doesNotMatch(propertyQueries, /\.insert\(propertyUnits\)[\s\S]*?\.onConflictDoUpdate/u);
   assert.doesNotMatch(propertyQueries, /randomBytes|toString\('hex'\)|slugCode/u);
   assert.doesNotMatch(propertyQueries, /sql`|db\.execute|postgres\(/u);
   assert.match(propertyAction, /writesCanonicalRows:\s*true/u);
+  assert.match(propertyAction, /name:\s*Schema\.String/u);
   assert.match(propertyHandler, /createPropertyUnitProof/u);
+  assert.match(propertyHandler, /name:\s*payload\.name/u);
   assert.match(propertyHandler, /unitCodeWithRandomSuffix/u);
   assert.match(propertyHandler, /randomBytes\(4\)\.toString\('hex'\)/u);
   assert.doesNotMatch(propertyHandler, /Effect\.succeed|not_implemented/u);

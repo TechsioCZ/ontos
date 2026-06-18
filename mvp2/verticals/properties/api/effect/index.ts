@@ -12,11 +12,12 @@ import {
   createOperationIdempotencyKeyRequired,
   createOperationIdempotencyReplayUnavailable,
   createOperationContextAuthRequired,
+  createOperationPolicyDenied,
   createOperationPersistenceFailed,
   propertiesEffectApi,
 } from '../../shared/effect/api.ts';
-import { type CoreSDKError, runAction } from '@mvp2/core-runtime';
-import type { OperationContext } from '@mvp2/core-runtime';
+import { runAction } from '@mvp2/core-runtime';
+import type { CoreSDKError, OperationContext } from '@mvp2/core-runtime';
 import { createUnitActionRegistration } from '../../src/actions/create-unit.registration.ts';
 import type { CreateUnitAction } from '../../src/actions/create-unit.action.ts';
 
@@ -36,6 +37,12 @@ const coreSDKErrorToHttpError = (error: CoreSDKError) => {
       return createOperationDomainRejected({
         code: error.code,
         message: error.message,
+      });
+    case 'OperationPolicyDenied':
+      return createOperationPolicyDenied({
+        code: error.code,
+        message: error.message,
+        policyKey: error.policyKey,
       });
     case 'OperationExecutionFailed':
       return createOperationExecutionFailed(error.message);

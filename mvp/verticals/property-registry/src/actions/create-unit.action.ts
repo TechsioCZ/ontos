@@ -2,8 +2,7 @@ import { defineVerticalAction } from '@mvp/shared-contracts';
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 
 export const propertyUnitCreatePayloadSchema = Schema.Struct({
-  displayName: Schema.String,
-  floorLabel: Schema.optional(Schema.String),
+  name: Schema.String,
 });
 
 export const propertyUnitCreateResultSchema = Schema.Struct({

@@ -6,7 +6,7 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 
-export const unitCreatePayloadSchema = Schema.Struct({});
+export const unitCreatePayloadSchema = Schema.String;
 
 export const unitCreateResultSchema = Schema.Struct({
   status: Schema.Literal('ok'),
@@ -99,6 +99,29 @@ export const createOperationDomainRejected = ({
   message,
 });
 
+export const operationPolicyDeniedSchema = Schema.TaggedStruct('OperationPolicyDenied', {
+  code: Schema.String,
+  message: Schema.String,
+  policyKey: Schema.String,
+}).pipe(HttpApiSchema.status(409));
+
+export type OperationPolicyDenied = typeof operationPolicyDeniedSchema.Type;
+
+export const createOperationPolicyDenied = ({
+  code,
+  message,
+  policyKey,
+}: {
+  readonly code: string;
+  readonly message: string;
+  readonly policyKey: string;
+}): OperationPolicyDenied => ({
+  _tag: 'OperationPolicyDenied',
+  code,
+  message,
+  policyKey,
+});
+
 export const operationExecutionFailedSchema = taggedMessageSchema('OperationExecutionFailed', 500);
 
 export type OperationExecutionFailed = typeof operationExecutionFailedSchema.Type;
@@ -113,8 +136,9 @@ export const operationErrorSchema = Schema.Union([
   operationIdempotencyReplayUnavailableSchema,
   operationPersistenceFailedSchema,
   operationDomainRejectedSchema,
+  operationPolicyDeniedSchema,
   operationExecutionFailedSchema,
-]);
+]).pipe(HttpApiSchema.status(409));
 
 export const propertiesEffectApi = HttpApi.make('PropertiesEffectApi').add(
   HttpApiGroup.make('properties').add(

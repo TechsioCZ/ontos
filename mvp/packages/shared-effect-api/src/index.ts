@@ -113,8 +113,7 @@ export const checkActionAttemptCapabilityRequestSchema = Schema.Struct({
 });
 
 export const createUnitActionRequestSchema = Schema.Struct({
-  displayName: Schema.String,
-  floorLabel: Schema.optional(Schema.String),
+  name: Schema.String,
 });
 
 export const signInDemoUserResponseSchema = Schema.Struct({

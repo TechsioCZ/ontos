@@ -89,6 +89,7 @@ export const propertyUnits = propertySchema.table('units', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   floorLabel: text('floor_label').notNull(),
   lifecycleState: text('lifecycle_state').notNull(),
+  name: text('name').notNull(),
   tenantId: uuid('tenant_id').notNull(),
   unitId: uuid('unit_id').defaultRandom().primaryKey(),
   unitType: text('unit_type').notNull(),

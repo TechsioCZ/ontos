@@ -372,8 +372,7 @@ const RuntimeContextPanel = () => {
 
     try {
       const response = await executeCreateUnitAction({
-        displayName: `Day 4 proof unit for ${demoUserLabels[demoUserKey]}`,
-        floorLabel: '1',
+        name: `Day 4 proof unit for ${demoUserLabels[demoUserKey]}`,
       });
       setActionResult(response.result);
       setStatus(

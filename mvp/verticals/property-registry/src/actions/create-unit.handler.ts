@@ -4,8 +4,8 @@ import { randomBytes } from 'node:crypto';
 import { createPropertyUnitProof } from '../db/property-queries.ts';
 import type { PropertyUnitCreatePayload, PropertyUnitCreateResult } from './create-unit.action.ts';
 
-const slugCode = (displayName: string): string => {
-  const slug = displayName
+const slugCode = (name: string): string => {
+  const slug = name
     .toLowerCase()
     .replaceAll(/[^a-z0-9]+/gu, '-')
     .replaceAll(/^-|-$/gu, '');
@@ -13,17 +13,17 @@ const slugCode = (displayName: string): string => {
   return slug.length === 0 ? 'day4-unit' : slug;
 };
 
-const unitCodeWithRandomSuffix = (displayName: string): string =>
-  `${slugCode(displayName)}-${randomBytes(4).toString('hex')}`;
+const unitCodeWithRandomSuffix = (name: string): string =>
+  `${slugCode(name)}-${randomBytes(4).toString('hex')}`;
 
 export const createUnitHandler: RuntimeActionHandler<
   PropertyUnitCreatePayload,
   PropertyUnitCreateResult
 > = async ({ context, db, payload }) => {
   const created = await createPropertyUnitProof(db, {
-    code: unitCodeWithRandomSuffix(payload.displayName),
+    code: unitCodeWithRandomSuffix(payload.name),
     context,
-    ...(payload.floorLabel === undefined ? {} : { floorLabel: payload.floorLabel }),
+    name: payload.name,
   });
 
   return {

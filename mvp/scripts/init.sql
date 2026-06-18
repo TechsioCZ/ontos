@@ -388,6 +388,7 @@ create table if not exists property.units (
   tenant_id uuid not null references core.tenants(tenant_id),
   building_id uuid not null references property.buildings(building_id),
   code text not null,
+  name text not null,
   unit_type text not null,
   floor_label text not null,
   area_m2 numeric not null,
@@ -396,6 +397,9 @@ create table if not exists property.units (
   updated_at timestamptz not null default now(),
   unique (tenant_id, building_id, code)
 );
+
+alter table property.units
+  add column if not exists name text not null default 'Unnamed unit';
 
 create table if not exists property.short_term_legal_entity_settings (
   settings_id uuid primary key default gen_random_uuid(),
