@@ -12,6 +12,16 @@ export const unitCreateResultSchema = Schema.Struct({
   status: Schema.Literal('ok'),
 });
 
+export const unitReadPayloadSchema = Schema.Struct({});
+
+export const unitReadItemSchema = Schema.Struct({
+  createdAt: Schema.String,
+  name: Schema.String,
+  unitId: Schema.String,
+});
+
+export const unitReadResultSchema = Schema.Array(unitReadItemSchema);
+
 export const unitCreateHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optional(Schema.String),
 });
@@ -141,14 +151,21 @@ export const operationErrorSchema = Schema.Union([
 ]).pipe(HttpApiSchema.status(409));
 
 export const propertiesEffectApi = HttpApi.make('PropertiesEffectApi').add(
-  HttpApiGroup.make('properties').add(
-    HttpApiEndpoint.post('createUnit', '/effect/properties/unit', {
-      error: operationErrorSchema,
-      headers: unitCreateHeadersSchema,
-      payload: unitCreatePayloadSchema,
-      success: unitCreateResultSchema,
-    }),
-  ),
+  HttpApiGroup.make('properties')
+    .add(
+      HttpApiEndpoint.post('createUnit', '/effect/properties/unit', {
+        error: operationErrorSchema,
+        headers: unitCreateHeadersSchema,
+        payload: unitCreatePayloadSchema,
+        success: unitCreateResultSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('readUnits', '/effect/properties/units/read', {
+        error: operationErrorSchema,
+        success: unitReadResultSchema,
+      }),
+    ),
 );
 
 export const propertiesApiContract = {

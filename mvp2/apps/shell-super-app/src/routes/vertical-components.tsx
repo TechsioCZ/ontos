@@ -101,6 +101,7 @@ const createHydratedRemote = (specifier: string) =>
   };
 
 const PropertiesWidget = createHydratedRemote('properties/Widget');
+const PropertiesRoute = createHydratedRemote('properties/Route');
 
 export const Header = () => {
   const { i18nInstance } = useModernI18n();
@@ -153,8 +154,26 @@ export const VerticalShowcase = () => {
       data-modern-boundary-id="shellSuperApp"
     >
       <div className="shell:grid shell:gap-4 shell:md:grid-cols-2">
-        <PropertiesWidget key="properties" />
+        <div className="shell:grid shell:gap-3">
+          <PropertiesWidget key="properties" />
+          <a
+            className="shell:inline-flex shell:w-fit shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white shell:px-4 shell:py-2 shell:text-sm shell:font-bold shell:text-stone-950 shell:no-underline"
+            href="/properties/units"
+          >
+            View Units
+          </a>
+        </div>
       </div>
     </section>
   );
 };
+
+export const PropertiesRouteSurface = () => (
+  <section
+    className="shell:mx-auto shell:mt-12 shell:max-w-7xl"
+    data-modern-boundary-id="shellSuperApp"
+    data-ontos-module-id="properties"
+  >
+    <PropertiesRoute />
+  </section>
+);

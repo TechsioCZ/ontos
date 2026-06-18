@@ -20,6 +20,8 @@ import { runAction } from '@mvp2/core-runtime';
 import type { CoreSDKError, OperationContext } from '@mvp2/core-runtime';
 import { createUnitActionRegistration } from '../../src/actions/create-unit.registration.ts';
 import type { CreateUnitAction } from '../../src/actions/create-unit.action.ts';
+import { readUnitsActionRegistration } from '../../src/actions/read-units.registration.ts';
+import type { ReadUnitsAction } from '../../src/actions/read-units.action.ts';
 
 const operationAttributes = <TAction>(operationContext: OperationContext<TAction>) => ({
   'ontos.legal_entity.id': operationContext.legalEntityId,
@@ -81,21 +83,53 @@ const runCreateUnitAction = ({
     ),
   );
 
+const readUnitsActionPayload: ReadUnitsAction = {};
+
+const runReadUnitsAction = ({ headers }: { readonly headers: Headers }) =>
+  Effect.promise(() =>
+    runAction({
+      payload: readUnitsActionPayload,
+      registration: readUnitsActionRegistration,
+      transport: { headers },
+    }),
+  ).pipe(
+    Effect.flatMap((result) =>
+      result._tag === 'OperationSucceeded'
+        ? Effect.succeed(result)
+        : Effect.fail(coreSDKErrorToHttpError(result)),
+    ),
+  );
+
 const propertiesLayer = HttpApiBuilder.group(propertiesEffectApi, 'properties', (handlers) =>
-  handlers.handle('createUnit', ({ payload }) =>
-    requestHeaders.pipe(
-      Effect.flatMap((headers) => runCreateUnitAction({ headers, payload })),
-      Effect.flatMap((result) =>
-        Effect.log('[properties-bff] createUnit action completed through CoreSDK').pipe(
-          Effect.as(result.response),
-          Effect.withSpan('ultramodern.effect.properties.createUnit', {
-            attributes: operationAttributes(result.context),
-            kind: 'server',
-          }),
+  handlers
+    .handle('createUnit', ({ payload }) =>
+      requestHeaders.pipe(
+        Effect.flatMap((headers) => runCreateUnitAction({ headers, payload })),
+        Effect.flatMap((result) =>
+          Effect.log('[properties-bff] createUnit action completed through CoreSDK').pipe(
+            Effect.as(result.response),
+            Effect.withSpan('ultramodern.effect.properties.createUnit', {
+              attributes: operationAttributes(result.context),
+              kind: 'server',
+            }),
+          ),
+        ),
+      ),
+    )
+    .handle('readUnits', () =>
+      requestHeaders.pipe(
+        Effect.flatMap((headers) => runReadUnitsAction({ headers })),
+        Effect.flatMap((result) =>
+          Effect.log('[properties-bff] readUnits action completed through CoreSDK').pipe(
+            Effect.as(result.response),
+            Effect.withSpan('ultramodern.effect.properties.readUnits', {
+              attributes: operationAttributes(result.context),
+              kind: 'server',
+            }),
+          ),
         ),
       ),
     ),
-  ),
 );
 
 const layer = HttpApiBuilder.layer(propertiesEffectApi).pipe(Layer.provide(propertiesLayer));

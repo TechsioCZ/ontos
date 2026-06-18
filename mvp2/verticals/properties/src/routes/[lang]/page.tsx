@@ -46,6 +46,15 @@ export default function PropertiesHome() {
       <div className="properties:mt-6">
         <CreateUnitButton />
       </div>
+      <div className="properties:mt-4">
+        <Link
+          className="properties:inline-flex properties:rounded-full properties:border properties:border-stone-900/15 properties:bg-white properties:px-4 properties:py-2 properties:text-sm properties:font-bold properties:text-stone-950 properties:no-underline"
+          params={{ lang: language }}
+          to="/$lang/properties/units"
+        >
+          View Units
+        </Link>
+      </div>
     </main>
   );
 }

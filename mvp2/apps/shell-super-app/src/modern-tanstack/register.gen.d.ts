@@ -11,5 +11,6 @@ declare module '@modern-js/plugin-tanstack/runtime' {
 declare module '@modern-js/plugin-i18n/runtime' {
   interface UltramodernCanonicalRoutes {
     '/': Record<string, never>;
+    '/properties/units': Record<string, never>;
   }
 }

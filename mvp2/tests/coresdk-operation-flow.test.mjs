@@ -90,6 +90,27 @@ test('createUnit descriptor and client provide required operation metadata', () 
   assert.match(client, /'idempotency-key'/u);
   assert.match(client, /payload:\s*options\.unitName/u);
   assert.match(button, /crypto\.randomUUID/u);
-  assert.match(button, /unitName\s*=\s*'New unit'/u);
+  assert.match(button, /unitName\s*=\s*"xNew unitx"/u);
   assert.match(button, /catch\s*\(error\)/u);
+});
+
+test('readUnits records a Core data access event for each read action', () => {
+  const action = read('verticals/properties/src/actions/read-units.action.ts');
+  const handler = read('verticals/properties/src/actions/read-units.handler.ts');
+  const registration = read('verticals/properties/src/actions/read-units.registration.ts');
+  const api = read('verticals/properties/shared/effect/api.ts');
+  const bff = read('verticals/properties/api/effect/index.ts');
+
+  assert.match(action, /actionKey:\s*'property\.registry\.readUnits'/u);
+  assert.match(action, /idempotency:\s*'optional'/u);
+  assert.match(registration, /policyChecks:\s*\[\]/u);
+  assert.match(handler, /services\.tx\s*\n\s*\.select/u);
+  assert.match(handler, /services\.tx\.insert\(dataAccessEvents\)/u);
+  assert.match(handler, /actionInvocationId:\s*services\.context\.actionInvocation\?\.actionInvocationId/u);
+  assert.match(handler, /accessKind:\s*'list'/u);
+  assert.match(handler, /targetResourceType:\s*'property\.unit'/u);
+  assert.match(handler, /resultCount:\s*rows\.length/u);
+  assert.match(api, /HttpApiEndpoint\.post\('readUnits'/u);
+  assert.match(bff, /readUnitsActionRegistration/u);
+  assert.match(bff, /runAction/u);
 });

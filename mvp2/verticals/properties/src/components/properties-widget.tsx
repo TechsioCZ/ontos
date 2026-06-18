@@ -16,6 +16,14 @@ export default function PropertiesWidget() {
       <div className="properties:mt-4">
         <CreateUnitButton />
       </div>
+      <div className="properties:mt-3">
+        <a
+          className="properties:inline-flex properties:rounded-full properties:border properties:border-stone-900/15 properties:bg-white properties:px-4 properties:py-2 properties:text-sm properties:font-bold properties:text-stone-950 properties:no-underline"
+          href="/properties/units"
+        >
+          View Units
+        </a>
+      </div>
     </section>
   );
 }
