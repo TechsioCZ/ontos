@@ -65,6 +65,13 @@ export default createModuleFederationConfig({
   filename: 'remoteEntry.js',
   name: 'shellSuperApp',
   remotes: {
+    accounting: createRemoteManifestUrl({
+      manifestEnv: 'VERTICAL_ACCOUNTING_MF_MANIFEST',
+      mfName: 'verticalAccounting',
+      port: 4102,
+      publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_ACCOUNTING',
+      workerName: 'mvp2-accounting',
+    }),
     properties: createRemoteManifestUrl({
       manifestEnv: 'VERTICAL_PROPERTIES_MF_MANIFEST',
       mfName: 'verticalProperties',

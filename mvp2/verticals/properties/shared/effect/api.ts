@@ -10,6 +10,7 @@ export const unitCreatePayloadSchema = Schema.String;
 
 export const unitCreateResultSchema = Schema.Struct({
   status: Schema.Literal('ok'),
+  unitId: Schema.String,
 });
 
 export const unitReadPayloadSchema = Schema.Struct({});

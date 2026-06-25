@@ -429,30 +429,67 @@ export const outboxMessages = coreSchema.table(
     payloadJson: jsonb('payload_json')
       .notNull()
       .default(sql`'{}'::jsonb`),
-    status: text('status').notNull(),
-    attemptsCount: integer('attempts_count').default(0).notNull(),
-    availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+    matchedAt: timestamp('matched_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (table) => [
-    index('core_outbox_messages_pending_idx').on(table.status, table.availableAt),
-    check(
-      'core_outbox_messages_status_ck',
-      sql`${table.status} in ('pending', 'processing', 'done', 'dead')`,
-    ),
+    index('core_outbox_messages_unmatched_idx')
+      .on(table.createdAt)
+      .where(sql`${table.matchedAt} is null`),
   ],
 );
 
-export const outboxAttempts = coreSchema.table('outbox_attempts', {
-  outboxAttemptId: uuid('outbox_attempt_id').defaultRandom().primaryKey(),
-  outboxMessageId: uuid('outbox_message_id')
-    .notNull()
-    .references(() => outboxMessages.outboxMessageId, { onDelete: 'cascade' }),
-  workerId: text('worker_id').notNull(),
-  startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
-  finishedAt: timestamp('finished_at', { withTimezone: true }),
-  errorMessage: text('error_message'),
-});
+export const outboxDeliveries = coreSchema.table(
+  'outbox_deliveries',
+  {
+    outboxDeliveryId: uuid('outbox_delivery_id').defaultRandom().primaryKey(),
+    outboxMessageId: uuid('outbox_message_id')
+      .notNull()
+      .references(() => outboxMessages.outboxMessageId, { onDelete: 'cascade' }),
+    workerKey: text('worker_key').notNull(),
+    executingModuleKey: text('executing_module_key').notNull(),
+    status: text('status').default('pending').notNull(),
+    attemptsCount: integer('attempts_count').default(0).notNull(),
+    availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
+    claimedBy: text('claimed_by'),
+    claimedAt: timestamp('claimed_at', { withTimezone: true }),
+    claimExpiresAt: timestamp('claim_expires_at', { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('core_outbox_deliveries_message_worker_uk').on(
+      table.outboxMessageId,
+      table.workerKey,
+    ),
+    index('core_outbox_deliveries_pending_idx')
+      .on(table.availableAt)
+      .where(sql`${table.status} = 'pending'`),
+    index('core_outbox_deliveries_message_idx').on(table.outboxMessageId),
+    index('core_outbox_deliveries_worker_status_idx').on(table.workerKey, table.status),
+    check(
+      'core_outbox_deliveries_status_ck',
+      sql`${table.status} in ('pending', 'processing', 'done', 'dead')`,
+    ),
+    check('core_outbox_deliveries_attempts_count_ck', sql`${table.attemptsCount} >= 0`),
+  ],
+);
+
+export const outboxAttempts = coreSchema.table(
+  'outbox_attempts',
+  {
+    outboxAttemptId: uuid('outbox_attempt_id').defaultRandom().primaryKey(),
+    outboxDeliveryId: uuid('outbox_delivery_id')
+      .notNull()
+      .references(() => outboxDeliveries.outboxDeliveryId, { onDelete: 'cascade' }),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    errorMessage: text('error_message'),
+  },
+  (table) => [
+    index('core_outbox_attempts_delivery_started_idx').on(table.outboxDeliveryId, table.startedAt),
+  ],
+);
 
 export const mediaAssets = coreSchema.table(
   'media_assets',

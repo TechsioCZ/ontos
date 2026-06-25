@@ -20,6 +20,7 @@ export interface CreateUnitOptions extends PropertiesClientOptions {
 
 interface CreateUnitResult {
   readonly status: 'ok';
+  readonly unitId: string;
 }
 
 interface ReadUnitResult {

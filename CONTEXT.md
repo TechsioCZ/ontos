@@ -48,6 +48,10 @@ _Avoid_: MicroVertical Manifest, database schema, implementation manifest, strin
 An Effect Schema-backed public runtime value that describes an Action's stable key, request schema, response schema, idempotency rule, authorization requirement, audit profile, and module-state requirements. The descriptor is imported into the manifest from an action file, while its handler remains private.
 _Avoid_: Type-only interface, command handler, HTTP endpoint by itself, inline manifest blob
 
+**Outbox Worker**:
+A module-owned asynchronous consumer of Outbox Messages for declared event topics. It reacts to committed facts after the originating Action succeeds; its descriptor is public module contract while its handler and registration remain private implementation.
+_Avoid_: Picker, deployment unit, Worker Runtime, synchronous subscriber
+
 **Vertical Runtime Registration**:
 The private per-MicroVertical runtime registration that binds the vertical's public OntOS Module Manifest to implementation hooks such as routes, navigation contributions, action handlers, migrations, workers, search implementations, and report implementations. In the MVP this lives beside the vertical manifest as `vertical.registration.ts`.
 _Avoid_: Public manifest, plugin marketplace, cross-module import surface, generic implementation file

@@ -1,23 +1,13 @@
 // @effect-diagnostics asyncFunction:off globalConsole:off
-import { useState } from "react";
-import { readUnits, runEffectRequest } from "../effect/properties-client";
+import { useState } from 'react';
+import { readUnits, runEffectRequest } from '../effect/properties-client';
+import { requestErrorMessage } from './request-error-message';
 
 interface ReadUnit {
   readonly createdAt: string;
   readonly name: string;
   readonly unitId: string;
 }
-
-const errorMessage = (error: unknown): string =>
-  typeof error === "object" &&
-  error !== null &&
-  "cause" in error &&
-  typeof error.cause === "object" &&
-  error.cause !== null &&
-  "message" in error.cause &&
-  typeof error.cause.message === "string"
-    ? error.cause.message
-    : "Read Units failed.";
 
 const readUnitsFromClick = async ({
   setIsLoading,
@@ -28,16 +18,16 @@ const readUnitsFromClick = async ({
   readonly setStatus: (status: string) => void;
   readonly setUnits: (units: readonly ReadUnit[]) => void;
 }) => {
-  console.log("[properties-ui] Read Units clicked");
+  console.log('[properties-ui] Read Units clicked');
   setIsLoading(true);
-  setStatus("Reading units...");
+  setStatus('Reading units...');
 
   try {
     const units = await runEffectRequest(readUnits());
     setUnits(units);
-    setStatus(units.length === 0 ? "No units found." : `${units.length} units found.`);
+    setStatus(units.length === 0 ? 'No units found.' : `${units.length} units found.`);
   } catch (error) {
-    setStatus(errorMessage(error));
+    setStatus(requestErrorMessage(error, 'Read Units failed.'));
   } finally {
     setIsLoading(false);
   }
@@ -56,7 +46,7 @@ export const ReadUnitsButton = () => {
         onClick={() => void readUnitsFromClick({ setIsLoading, setStatus, setUnits })}
         type="button"
       >
-        {isLoading ? "Reading Units" : "Read Units"}
+        {isLoading ? 'Reading Units' : 'Read Units'}
       </button>
       {status === null ? null : (
         <p className="properties:text-sm properties:font-medium properties:text-stone-700">

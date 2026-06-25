@@ -10,7 +10,7 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
-const widgetCount = Number('1');
+const widgetCount = Number('2');
 
 interface RemoteComponentModule {
   default: ComponentType;
@@ -102,6 +102,7 @@ const createHydratedRemote = (specifier: string) =>
 
 const PropertiesWidget = createHydratedRemote('properties/Widget');
 const PropertiesRoute = createHydratedRemote('properties/Route');
+const AccountingWidget = createHydratedRemote('accounting/Widget');
 
 export const Header = () => {
   const { i18nInstance } = useModernI18n();
@@ -163,6 +164,7 @@ export const VerticalShowcase = () => {
             View Units
           </Link>
         </div>
+        <AccountingWidget key="accounting" />
       </div>
     </section>
   );

@@ -12,3 +12,8 @@ declare module 'properties/Widget' {
   const Component: React.ComponentType<Record<string, never>>;
   export default Component;
 }
+
+declare module 'accounting/Widget' {
+  const Component: React.ComponentType<Record<string, never>>;
+  export default Component;
+}

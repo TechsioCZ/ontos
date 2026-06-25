@@ -11,6 +11,7 @@ type ZephyrRspackConfig = Parameters<ReturnType<typeof withZephyrRspack>>[0];
 
 const zephyrEnabled = process.env['ULTRAMODERN_ZEPHYR'] !== 'false';
 const cloudflareDeployEnabled = process.env['MODERNJS_DEPLOY'] === 'cloudflare';
+const chunkLoadingGlobal = '__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__';
 
 const zephyrRspackPlugin = () => ({
   name: 'ultramodern-zephyr-rspack-plugin',
@@ -209,15 +210,27 @@ export default defineConfig(
           overrideBrowserslist: ['defaults'],
         },
         bundlerChain: (chain) => {
-          chain.output
-            .uniqueName('shellSuperApp')
-            .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
+          chain.output.uniqueName('shellSuperApp').chunkLoadingGlobal(chunkLoadingGlobal);
           chain.ignoreWarnings([
             {
               message: /the request of a dependency is an expression/u,
               module: /modern-js-plugin-i18n/u,
             },
           ]);
+        },
+        rspack: (config) => {
+          config.output.chunkLoadingGlobal = chunkLoadingGlobal;
+          for (const plugin of config.plugins as {
+            constructor?: { name?: string };
+            opts?: { chunkLoadingGlobal?: string };
+          }[]) {
+            if (plugin.constructor?.name === 'LoadablePlugin') {
+              plugin.opts = {
+                ...plugin.opts,
+                chunkLoadingGlobal,
+              };
+            }
+          }
         },
       },
     },

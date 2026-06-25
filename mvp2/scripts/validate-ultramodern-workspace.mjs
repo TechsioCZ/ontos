@@ -26,6 +26,25 @@ const fullStackVerticals = [
     localisedUrls: {},
     verticalRefs: [],
   },
+  {
+    id: 'accounting',
+    domain: 'accounting',
+    stem: 'accounting',
+    group: 'accounting',
+    path: 'verticals/accounting',
+    mfName: 'verticalAccounting',
+    apiPrefix: '/accounting-api',
+    tailwindPrefix: 'accounting',
+    zephyrAlias: 'accounting',
+    packageName: '@mvp2/accounting',
+    exposes: ['./Route', './Widget'],
+    componentPaths: ['verticals/accounting/src/components/accounting-widget.tsx'],
+    namespace: 'accounting',
+    routePagePaths: [],
+    routeMetaPaths: ['verticals/accounting/src/routes/[lang]/route.meta.ts'],
+    localisedUrls: {},
+    verticalRefs: [],
+  },
 ];
 const shellNamespace = 'shell';
 const oldRemotePaths = ['apps/remotes'];

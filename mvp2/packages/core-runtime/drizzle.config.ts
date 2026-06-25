@@ -11,6 +11,7 @@ export default defineConfig({
     './src/db/schema.ts',
     './src/db/auth-schema.ts',
     '../../verticals/properties/src/db/schema.ts',
+    '../../verticals/accounting/src/db/schema.ts',
   ],
   strict: true,
   verbose: true,

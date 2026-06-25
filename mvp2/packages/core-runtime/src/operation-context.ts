@@ -1,3 +1,5 @@
+import type { OutboxMessage } from './outbox-message.ts';
+
 // oxlint-disable-next-line typescript/consistent-type-definitions
 export type OperationAccessKind = 'read' | 'list' | 'search' | 'export' | 'download';
 export type OperationActionInvocationStatus =
@@ -23,6 +25,7 @@ export type OperationEvidenceCaptureMode =
   | 'stored_artifact';
 
 export type OperationContext<TAction> = {
+  addOutboxMessage?: (message: OutboxMessage<string, unknown>) => void;
   action: TAction;
   actionKey: string;
   actionInvocation?: {

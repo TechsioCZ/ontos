@@ -1,28 +1,18 @@
 // @effect-diagnostics asyncFunction:off cryptoRandomUUID:off globalConsole:off
-import { useState } from "react";
-import { createUnit, runEffectRequest } from "../effect/properties-client";
-
-const errorMessage = (error: unknown): string =>
-  typeof error === "object" &&
-  error !== null &&
-  "cause" in error &&
-  typeof error.cause === "object" &&
-  error.cause !== null &&
-  "message" in error.cause &&
-  typeof error.cause.message === "string"
-    ? error.cause.message
-    : "Create Unit failed.";
+import { useState } from 'react';
+import { createUnit, runEffectRequest } from '../effect/properties-client';
+import { requestErrorMessage } from './request-error-message';
 
 const createUnitFromClick = async (setStatus: (status: string) => void) => {
   const idempotencyKey = crypto.randomUUID();
-  const unitName = "xNew unitx";
+  const unitName = 'xNew unitx';
 
-  console.log("[properties-ui] Create Unit clicked");
+  console.log('[properties-ui] Create Unit clicked');
   try {
     await runEffectRequest(createUnit({ idempotencyKey, unitName }));
-    setStatus("Unit created.");
+    setStatus('Unit created.');
   } catch (error) {
-    setStatus(errorMessage(error));
+    setStatus(requestErrorMessage(error, 'Create Unit failed.'));
   }
 };
 

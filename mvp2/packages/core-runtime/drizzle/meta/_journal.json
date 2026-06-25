@@ -22,6 +22,20 @@
       "when": 1781622293917,
       "tag": "0002_light_barracuda",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781800273909,
+      "tag": "0003_brief_hellfire_club",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782381837971,
+      "tag": "0004_wonderful_whizzer",
+      "breakpoints": true
     }
   ]
 }

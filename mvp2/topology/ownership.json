@@ -74,6 +74,24 @@
           ]
         }
       }
+    },
+    {
+      "id": "accounting",
+      "package": "@mvp2/accounting",
+      "path": "verticals/accounting",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/accounting.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#accounting",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#accounting"
+          ]
+        }
+      }
     }
   ]
 }

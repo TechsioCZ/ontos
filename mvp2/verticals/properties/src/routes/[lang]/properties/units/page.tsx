@@ -16,9 +16,7 @@ export default function PropertiesUnitsPage() {
       >
         Back to Properties
       </Link>
-      <h1 className="properties:mt-10 properties:text-4xl properties:font-black">
-        Property Units
-      </h1>
+      <h1 className="properties:mt-10 properties:text-4xl properties:font-black">Property Units</h1>
       <p className="properties:mt-3 properties:max-w-2xl properties:text-lg properties:text-stone-600">
         Read all units through the properties CoreSDK action flow.
       </p>

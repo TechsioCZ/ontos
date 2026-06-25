@@ -18,7 +18,10 @@
     "appId": "shell-super-app",
     "topology": "../../topology/reference-topology.json"
   },
-  "zephyr:dependencies": {},
+  "zephyr:dependencies": {
+    "properties": "@mvp2/properties@workspace:*",
+    "accounting": "@mvp2/accounting@workspace:*"
+  },
   "dependencies": {
     "@modern-js/plugin-tanstack": "npm:@bleedingdev/modern-js-plugin-tanstack@3.2.0-ultramodern.126",
     "@modern-js/plugin-i18n": "npm:@bleedingdev/modern-js-plugin-i18n@3.2.0-ultramodern.126",
@@ -35,7 +38,8 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "7.17.0",
-    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.2.0-ultramodern.126"
+    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.2.0-ultramodern.126",
+    "@mvp2/accounting": "workspace:*"
   },
   "devDependencies": {
     "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.2.0-ultramodern.126",

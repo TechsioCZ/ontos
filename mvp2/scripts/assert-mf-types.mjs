@@ -6,7 +6,7 @@ const generatedContractPath = path.join(root, '.modernjs/ultramodern-generated-c
 const generatedContract = fs.existsSync(generatedContractPath)
   ? JSON.parse(fs.readFileSync(generatedContractPath, 'utf-8'))
   : undefined;
-const defaultAppDirs = ['verticals/properties'];
+const defaultAppDirs = ['verticals/properties', 'verticals/accounting'];
 
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {

@@ -68,6 +68,9 @@ importers:
       '@module-federation/runtime':
         specifier: 2.5.1
         version: 2.5.1(node-fetch@3.3.2)
+      '@mvp2/accounting':
+        specifier: workspace:*
+        version: link:../../verticals/accounting
       '@mvp2/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -194,6 +197,34 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/outbox-worker:
+    dependencies:
+      '@mvp2/accounting':
+        specifier: workspace:*
+        version: link:../../verticals/accounting
+      '@mvp2/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@prisma/client@5.22.0)(@types/pg@8.20.0)(better-sqlite3@12.10.1)(kysely@0.29.2)(pg@8.21.0)(postgres@3.4.9)
+      effect:
+        specifier: 3.21.3
+        version: 3.21.3
+    devDependencies:
+      '@effect/tsgo':
+        specifier: 0.14.3
+        version: 0.14.3
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      '@typescript/native-preview':
+        specifier: 7.0.0-dev.20260610.1
+        version: 7.0.0-dev.20260610.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/shared-contracts:
     devDependencies:
       '@effect/tsgo':
@@ -211,6 +242,97 @@ importers:
       '@typescript/native-preview':
         specifier: 7.0.0-dev.20260610.1
         version: 7.0.0-dev.20260610.1
+
+  verticals/accounting:
+    dependencies:
+      '@modern-js/plugin-bff':
+        specifier: npm:@bleedingdev/modern-js-plugin-bff@3.2.0-ultramodern.126
+        version: '@bleedingdev/modern-js-plugin-bff@3.2.0-ultramodern.126(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.1)(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260610.1)(core-js@3.49.0)(react-dom@19.2.7(react@19.2.7))(react-server-dom-rspack@0.0.2(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)(tsconfig-paths@4.2.0)(tslib@2.8.1)(typescript@6.0.3)(webpack@5.107.2(postcss@8.5.15))(zod@4.4.3)'
+      '@modern-js/plugin-i18n':
+        specifier: npm:@bleedingdev/modern-js-plugin-i18n@3.2.0-ultramodern.126
+        version: '@bleedingdev/modern-js-plugin-i18n@3.2.0-ultramodern.126(@bleedingdev/modern-js-runtime@3.2.0-ultramodern.126(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(core-js@3.49.0)(react-dom@19.2.7(react@19.2.7))(react-server-dom-rspack@0.0.2(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7))(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(core-js@3.49.0)(i18next@26.3.1(typescript@6.0.3))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)'
+      '@modern-js/plugin-tanstack':
+        specifier: npm:@bleedingdev/modern-js-plugin-tanstack@3.2.0-ultramodern.126
+        version: '@bleedingdev/modern-js-plugin-tanstack@3.2.0-ultramodern.126(@bleedingdev/modern-js-runtime@3.2.0-ultramodern.126(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(core-js@3.49.0)(react-dom@19.2.7(react@19.2.7))(react-server-dom-rspack@0.0.2(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7))(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(core-js@3.49.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)'
+      '@modern-js/runtime':
+        specifier: npm:@bleedingdev/modern-js-runtime@3.2.0-ultramodern.126
+        version: '@bleedingdev/modern-js-runtime@3.2.0-ultramodern.126(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(core-js@3.49.0)(react-dom@19.2.7(react@19.2.7))(react-server-dom-rspack@0.0.2(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)'
+      '@module-federation/bridge-react':
+        specifier: 2.5.1
+        version: 2.5.1(node-fetch@3.3.2)(react-dom@19.2.7(react@19.2.7))(react-router-dom@7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-router@7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
+      '@module-federation/modern-js-v3':
+        specifier: 2.5.1
+        version: 2.5.1(@rsbuild/core@2.0.11(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(core-js@3.49.0))(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(react-dom@19.2.7(react@19.2.7))(react-router-dom@7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-router@7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)(typescript@6.0.3)(webpack@5.107.2(postcss@8.5.15))
+      '@module-federation/runtime':
+        specifier: 2.5.1
+        version: 2.5.1(node-fetch@3.3.2)
+      '@mvp2/core-runtime':
+        specifier: workspace:*
+        version: link:../../packages/core-runtime
+      '@mvp2/shared-contracts':
+        specifier: workspace:*
+        version: link:../../packages/shared-contracts
+      '@mvp2/shared-design-tokens':
+        specifier: workspace:*
+        version: link:../../packages/shared-design-tokens
+      '@tanstack/react-router':
+        specifier: 1.170.15
+        version: 1.170.15(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@prisma/client@5.22.0)(@types/pg@8.20.0)(better-sqlite3@12.10.1)(kysely@0.29.2)(pg@8.21.0)(postgres@3.4.9)
+      i18next:
+        specifier: 26.3.1
+        version: 26.3.1(typescript@6.0.3)
+      node-fetch:
+        specifier: ^3.3.2
+        version: 3.3.2
+      react:
+        specifier: ^19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: ^19.2.7
+        version: 19.2.7(react@19.2.7)
+      react-router-dom:
+        specifier: 7.17.0
+        version: 7.17.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+    devDependencies:
+      '@effect/tsgo':
+        specifier: 0.14.3
+        version: 0.14.3
+      '@modern-js/app-tools':
+        specifier: npm:@bleedingdev/modern-js-app-tools@3.2.0-ultramodern.126
+        version: '@bleedingdev/modern-js-app-tools@3.2.0-ultramodern.126(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.1)(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260610.1)(core-js@3.49.0)(react-dom@19.2.7(react@19.2.7))(react-server-dom-rspack@0.0.2(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)(tsconfig-paths@4.2.0)(tslib@2.8.1)(typescript@6.0.3)(webpack@5.107.2(postcss@8.5.15))'
+      '@tailwindcss/postcss':
+        specifier: ^4.3.0
+        version: 4.3.1
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.17)
+      '@typescript/native-preview':
+        specifier: 7.0.0-dev.20260610.1
+        version: 7.0.0-dev.20260610.1
+      postcss:
+        specifier: ^8.5.15
+        version: 8.5.15
+      tailwindcss:
+        specifier: ^4.3.0
+        version: 4.3.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      wrangler:
+        specifier: 4.99.0
+        version: 4.99.0
+      zephyr-rspack-plugin:
+        specifier: 1.1.1
+        version: 1.1.1(@rspack/core@2.0.8(@module-federation/runtime-tools@2.5.1(node-fetch@3.3.2))(@swc/helpers@0.5.23))(webpack@5.107.2(postcss@8.5.15))
 
   verticals/properties:
     dependencies:

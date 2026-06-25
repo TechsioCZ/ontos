@@ -8,7 +8,8 @@
     "kind": "shell",
     "package": "@mvp2/shell-super-app",
     "verticalRefs": [
-      "properties"
+      "properties",
+      "accounting"
     ],
     "moduleFederation": {
       "role": "host",
@@ -18,6 +19,11 @@
           "id": "properties",
           "name": "verticalProperties",
           "manifestUrl": "http://localhost:4101/mf-manifest.json"
+        },
+        {
+          "id": "accounting",
+          "name": "verticalAccounting",
+          "manifestUrl": "http://localhost:4102/mf-manifest.json"
         }
       ],
       "ssr": true,
@@ -398,6 +404,240 @@
           "tier": "tier-2-vertical",
           "references": [
             "docs/super-app-rfc-adr/blast-radius.md#properties"
+          ]
+        }
+      }
+    },
+    {
+      "id": "accounting",
+      "kind": "vertical",
+      "domain": "accounting",
+      "package": "@mvp2/accounting",
+      "path": "verticals/accounting",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalAccounting",
+        "manifestUrl": "http://localhost:4102/mf-manifest.json",
+        "exposes": [
+          "./Route",
+          "./Widget"
+        ],
+        "ssr": true,
+        "fallbackTelemetryEvent": "modernjs:mv-runtime-parity",
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "api": {
+        "effect": {
+          "runtime": "effect",
+          "bff": {
+            "prefix": "/accounting-api",
+            "openapi": "/openapi.json"
+          },
+          "contract": {
+            "export": "./shared/effect/api",
+            "path": "verticals/accounting/shared/effect/api.ts"
+          },
+          "client": {
+            "export": "./effect/client",
+            "path": "verticals/accounting/src/effect/accounting-client.ts"
+          },
+          "serverEntry": "verticals/accounting/api/effect/index.ts",
+          "basePath": "/accounting-api/effect/accounting",
+          "consumedBy": [
+            "shell-super-app",
+            "accounting"
+          ],
+          "readiness": {
+            "endpoint": "/effect/accounting/readiness",
+            "marker": {
+              "ui": "ultramodernUiMarker",
+              "api": "ultramodernApiMarker",
+              "skew": "none"
+            },
+            "checks": [
+              "moduleFederation",
+              "ssr",
+              "translations",
+              "effectBff"
+            ]
+          },
+          "requestContext": {
+            "propagatedHeaders": [
+              "accept-language",
+              "authorization",
+              "traceparent",
+              "x-correlation-id",
+              "x-tenant-id",
+              "x-ultramodern-env",
+              "x-vertical-version-id"
+            ],
+            "source": "shell-to-vertical-effect-client"
+          },
+          "domainOperations": {
+            "workspaceFeed": {
+              "client": "listAccounting",
+              "method": "GET",
+              "path": "/effect/accounting",
+              "resource": "workspace-items",
+              "owner": "accounting"
+            },
+            "workspaceDetail": {
+              "client": "getAccounting",
+              "method": "GET",
+              "path": "/effect/accounting/:id",
+              "resource": "workspace-item",
+              "owner": "accounting"
+            },
+            "workspaceCreate": {
+              "client": "createAccounting",
+              "method": "POST",
+              "path": "/effect/accounting",
+              "resource": "accounting",
+              "owner": "accounting"
+            }
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "mvp2-accounting",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_ACCOUNTING",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/accounting.json",
+          "effectReadiness": "/accounting-api/effect/accounting/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "evidence": {
+          "proofScript": "scripts/proof-cloudflare-version.mjs",
+          "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+        }
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/accounting.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#accounting",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#accounting"
           ]
         }
       }

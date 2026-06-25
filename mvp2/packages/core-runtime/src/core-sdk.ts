@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off globalDate:off nodeBuiltinImport:off
 import { createHash } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type {
   OperationAccessKind,
   OperationActionInvocationStatus,
@@ -11,7 +11,14 @@ import type {
   OperationEvidenceCaptureMode,
 } from './operation-context.ts';
 import { db } from './db/client.ts';
-import { actionInvocations, auditEvents, dataAccessEvents } from './db/schema.ts';
+import {
+  actionInvocations,
+  auditEvents,
+  dataAccessEvents,
+  domainEvents,
+  outboxMessages,
+} from './db/schema.ts';
+import type { OutboxMessage } from './outbox-message.ts';
 import type { PolicyCheck, PolicyDenied } from './policy.ts';
 import {
   type SpiceDbAuthorizationChecker,
@@ -110,14 +117,24 @@ export type OperationResult<TAction, TResponse> =
   | OperationSucceeded<TAction, TResponse>
   | CoreSDKError;
 
-export type ActionDescriptor = {
+export type ActionDescriptor<TAction = unknown, TResponse = unknown> = {
   readonly actionKey: string;
   readonly auditProfile: OperationAuditProfile;
   readonly authorization?: ActionAuthorizationRequirement;
+  readonly domainEvent?: ActionDomainEventDescriptor<TAction, TResponse>;
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
   readonly requestSchema: unknown;
   readonly responseSchema: unknown;
+};
+
+export type ActionDomainEventDescriptor<TAction, TResponse> = {
+  readonly eventType: string;
+  readonly payload?: (input: TAction, response: TResponse) => unknown;
+  readonly producerModuleKey: string;
+  readonly subjectModuleKey: string;
+  readonly subjectResourceId: (input: TAction, response: TResponse) => string;
+  readonly subjectResourceType: string;
 };
 
 export type ActionAuthorizationRequirement = {
@@ -138,7 +155,7 @@ export type ActionHandler<TAction, TResponse> = (
 ) => Promise<TResponse> | TResponse;
 
 export type ActionRegistration<TAction, TResponse> = {
-  readonly descriptor: ActionDescriptor;
+  readonly descriptor: ActionDescriptor<TAction, TResponse>;
   readonly handler: ActionHandler<TAction, TResponse>;
   readonly policyChecks?: readonly PolicyCheck<TAction>[];
 };
@@ -288,6 +305,18 @@ const stableStringify = (value: unknown): string => {
 const requestHash = (payload: unknown) =>
   createHash('sha256').update(stableStringify(payload)).digest('hex');
 
+const rowsFromResult = <TRow>(result: unknown): readonly TRow[] => {
+  if (Array.isArray(result)) {
+    return result as readonly TRow[];
+  }
+
+  if (result !== null && typeof result === 'object' && Symbol.iterator in result) {
+    return Array.from(result as Iterable<TRow>);
+  }
+
+  return [];
+};
+
 const resolveContext = <TAction>({
   action,
   actionKey,
@@ -359,6 +388,104 @@ const attachDataAccessEvent = <TRequest>(
   ...context,
   dataAccessEvents: [...(context.dataAccessEvents ?? []), dataAccessEvent],
 });
+
+const allocateTenantSequenceNo = async (tx: CoreTransaction, tenantId: string): Promise<bigint> => {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${tenantId})::bigint)`);
+
+  const result = await tx.execute(sql`
+    select coalesce(max(tenant_sequence_no), 0) + 1 as "tenantSequenceNo"
+    from core.domain_events
+    where tenant_id = ${tenantId}
+  `);
+  const row = rowsFromResult<{
+    readonly tenantSequenceNo: bigint | number | string;
+  }>(result).at(0);
+
+  if (row === undefined) {
+    throw new Error('Could not allocate tenant domain event sequence number.');
+  }
+
+  return BigInt(row.tenantSequenceNo);
+};
+
+const persistAutomaticDomainEvent = async <TAction, TResponse>({
+  context,
+  descriptor,
+  input,
+  response,
+  tx,
+}: {
+  readonly context: OperationContext<TAction>;
+  readonly descriptor: ActionDomainEventDescriptor<TAction, TResponse> | undefined;
+  readonly input: TAction;
+  readonly response: TResponse;
+  readonly tx: CoreTransaction;
+}): Promise<string | undefined> => {
+  if (descriptor === undefined) {
+    return undefined;
+  }
+
+  if (context.actionInvocation === undefined) {
+    throw new Error('Cannot create domain event without an action invocation.');
+  }
+
+  const tenantSequenceNo = await allocateTenantSequenceNo(tx, context.tenantId);
+  const [inserted] = await tx
+    .insert(domainEvents)
+    .values({
+      actionInvocationId: context.actionInvocation.actionInvocationId,
+      eventType: descriptor.eventType,
+      legalEntityId: context.legalEntityId,
+      payloadJson: descriptor.payload?.(input, response) ?? {},
+      producerModuleKey: descriptor.producerModuleKey,
+      subjectModuleKey: descriptor.subjectModuleKey,
+      subjectResourceId: descriptor.subjectResourceId(input, response),
+      subjectResourceType: descriptor.subjectResourceType,
+      tenantId: context.tenantId,
+      tenantSequenceNo,
+    })
+    .returning({
+      domainEventId: domainEvents.domainEventId,
+    });
+
+  if (inserted === undefined) {
+    throw new Error('CoreSDK could not persist the automatic domain event.');
+  }
+
+  return inserted.domainEventId;
+};
+
+const persistOutboxMessages = async ({
+  domainEventId,
+  messages,
+  producerModuleKey,
+  tenantId,
+  tx,
+}: {
+  readonly domainEventId: string | undefined;
+  readonly messages: readonly OutboxMessage<string, unknown>[];
+  readonly producerModuleKey: string | undefined;
+  readonly tenantId: string;
+  readonly tx: CoreTransaction;
+}): Promise<void> => {
+  if (messages.length === 0) {
+    return;
+  }
+
+  if (domainEventId === undefined || producerModuleKey === undefined) {
+    throw new Error('Outbox messages require an automatic action domain event descriptor.');
+  }
+
+  await tx.insert(outboxMessages).values(
+    messages.map((message) => ({
+      domainEventId,
+      payloadJson: message.payload ?? {},
+      producerModuleKey,
+      tenantId,
+      topic: message.topic,
+    })),
+  );
+};
 
 const findActionInvocation = async ({
   actionKey,
@@ -839,8 +966,28 @@ export const runAction = async <TAction, TResponse>({
 
   try {
     return await db.transaction(async (tx): Promise<OperationResult<TAction, TResponse>> => {
+      const handlerOutboxMessages: OutboxMessage<string, unknown>[] = [];
       const response = await handler(payload, {
+        context: {
+          ...policyCheckedContext,
+          addOutboxMessage: (message) => {
+            handlerOutboxMessages.push(message);
+          },
+        },
+        tx,
+      });
+      const domainEventId = await persistAutomaticDomainEvent({
         context: policyCheckedContext,
+        descriptor: descriptor.domainEvent,
+        input: payload,
+        response,
+        tx,
+      });
+      await persistOutboxMessages({
+        domainEventId,
+        messages: handlerOutboxMessages,
+        producerModuleKey: descriptor.domainEvent?.producerModuleKey,
+        tenantId: policyCheckedContext.tenantId,
         tx,
       });
       const completedContext = await markActionInvocationStatus(
