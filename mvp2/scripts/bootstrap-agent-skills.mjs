@@ -46,35 +46,6 @@ const requireGit = () => {
   );
 };
 
-const isInsideGitWorkTree = () => {
-  try {
-    return run('git', ['rev-parse', '--is-inside-work-tree']).trim() === 'true';
-  } catch {
-    return false;
-  }
-};
-
-const initializeGitRepository = () => {
-  if (isInsideGitWorkTree()) {
-    return;
-  }
-
-  try {
-    run('git', ['init', '-b', 'main'], { stdio: 'inherit' });
-  } catch {
-    run('git', ['init'], { stdio: 'inherit' });
-    run('git', ['branch', '-M', 'main'], { stdio: 'inherit' });
-  }
-};
-
-const installLefthook = () => {
-  try {
-    run('lefthook', ['install'], { stdio: 'inherit' });
-  } catch (error) {
-    console.warn(`Unable to install lefthook hooks: ${error.message}`);
-  }
-};
-
 const removeTree = (dir) =>
   fs.rmSync(dir, {
     force: true,
@@ -151,7 +122,6 @@ if (skipRequested) {
     process.exit(0);
   }
   console.log(reason);
-  installLefthook();
   process.exit(0);
 }
 
@@ -187,13 +157,11 @@ if (postinstall && !cloneOptIn) {
   console.log(
     'Skipping agent skill repository clones during postinstall. Run pnpm skills:install (or set ULTRAMODERN_AGENT_SKILLS=1 before installing) to fetch them.',
   );
-  installLefthook();
   process.exit(0);
 }
 
 fs.mkdirSync(installDir, { recursive: true });
 requireGit();
-initializeGitRepository();
 
 for (const source of [...requiredCloneSources, ...optionalCloneSources]) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ultramodern-skills-'));
@@ -227,5 +195,3 @@ for (const source of [...requiredCloneSources, ...optionalCloneSources]) {
     removeTree(tempDir);
   }
 }
-
-installLefthook();

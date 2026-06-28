@@ -1,9 +1,3 @@
-definition action {
-  relation allowed_principal: principal
-
-  permission execute = allowed_principal
-}
-
 definition principal {}
 
 definition resource_type {

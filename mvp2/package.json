@@ -26,6 +26,7 @@
     "skills:check": "node ./scripts/bootstrap-agent-skills.mjs --check",
     "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mjs",
     "agents:refs:check": "node ./scripts/setup-agent-reference-repos.mjs --check",
+    "lefthook:install": "node ./scripts/install-lefthook.mjs",
     "mf:types": "node ./scripts/assert-mf-types.mjs",
     "performance:readiness": "node ./scripts/ultramodern-performance-readiness.mjs",
     "contract:check": "node ./scripts/validate-ultramodern-workspace.mjs",

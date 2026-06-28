@@ -16,13 +16,6 @@ const skipRequested =
 const required = truthy(process.env.ULTRAMODERN_AGENT_REPOS_REQUIRED);
 const refresh = truthy(process.env.ULTRAMODERN_AGENT_REPOS_REFRESH);
 
-const gitIdentityEnv = {
-  GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'UltraModern Agent Reference Setup',
-  GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'ultramodern-agent-refs@local',
-  GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'UltraModern Agent Reference Setup',
-  GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'ultramodern-agent-refs@local',
-};
-
 const log = (message) => console.log(`[agent-reference-repos] ${message}`);
 const warn = (message) => console.warn(`[agent-reference-repos] ${message}`);
 
@@ -41,11 +34,6 @@ function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: options.cwd ?? root,
     encoding: 'utf-8',
-    env: {
-      ...process.env,
-      ...gitIdentityEnv,
-      ...(options.env ?? {}),
-    },
     stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
     timeout: options.timeout ?? 120000,
   });
@@ -80,103 +68,11 @@ function hasGit() {
   return result.status === 0;
 }
 
-function hasGitSubtree() {
-  const result = spawnSync('git', ['subtree', '-h'], {
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
+function currentCommit(repoPath) {
+  return run('git', ['rev-parse', 'HEAD'], {
+    cwd: repoPath,
+    timeout: 30000,
   });
-  return (
-    (result.status === 0 || result.status === 129) && result.stdout.includes('usage: git subtree')
-  );
-}
-
-function isGitWorkTree() {
-  const result = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: root,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return result.status === 0 && result.stdout.trim() === 'true';
-}
-
-function hasCommits() {
-  const result = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], {
-    cwd: root,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return result.status === 0;
-}
-
-function porcelainStatus() {
-  return run('git', ['status', '--porcelain'], { timeout: 30000 });
-}
-
-function commitInstallerChanges(message) {
-  run('git', ['commit', '--no-verify', '-m', message], {
-    timeout: 120000,
-  });
-}
-
-function ensureGitRepository() {
-  if (!isGitWorkTree()) {
-    if (checkOnly) {
-      fail('workspace is not a git repository');
-      return false;
-    }
-    log('initializing git repository for agent reference subtrees');
-    run('git', ['init'], { timeout: 30000 });
-  }
-
-  if (!hasCommits()) {
-    if (checkOnly) {
-      fail('workspace has no initial git commit');
-      return false;
-    }
-    log('creating initial workspace commit before adding reference subtrees');
-    run('git', ['add', '-A'], { timeout: 30000 });
-    commitInstallerChanges('Initialize UltraModern workspace');
-    return true;
-  }
-
-  const status = porcelainStatus();
-  if (status) {
-    fail(
-      'workspace has uncommitted changes; commit or stash them before installing reference subtrees',
-    );
-    return false;
-  }
-
-  return true;
-}
-
-function remoteCommit(repo) {
-  let output = run('git', ['ls-remote', repo.url, `refs/heads/${repo.ref}`], {
-    timeout: 120000,
-  });
-  if (!output) {
-    output = run('git', ['ls-remote', repo.url, repo.ref], {
-      timeout: 120000,
-    });
-  }
-  const [commit] = output.split(/\s+/);
-  if (!/^[a-f0-9]{40}$/i.test(commit ?? '')) {
-    throw new Error(`Could not resolve ${repo.url}#${repo.ref}`);
-  }
-  return commit;
-}
-
-function subtreeCommitExists(repo) {
-  const result = spawnSync(
-    'git',
-    ['log', '--grep', `git-subtree-dir: ${repo.path}`, '--format=%H', '-n', '1'],
-    {
-      cwd: root,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
-  return result.status === 0 && result.stdout.trim().length > 0;
 }
 
 function installedManifestEntry(repo) {
@@ -191,69 +87,8 @@ function installedManifestEntry(repo) {
   }
 }
 
-function assertSubtreePresent(repo) {
-  assertSafeRepoPath(repo.path);
-  const targetPath = path.join(root, repo.path);
-  if (!fs.existsSync(targetPath)) {
-    fail(`${repo.path} is missing`);
-    return undefined;
-  }
-  if (!subtreeCommitExists(repo)) {
-    fail(`${repo.path} is present but has no git-subtree commit evidence`);
-    return undefined;
-  }
-  return (
-    installedManifestEntry(repo) ?? {
-      id: repo.id,
-      name: repo.name,
-      url: repo.url,
-      ref: repo.ref,
-      path: repo.path,
-      readOnly: repo.readOnly !== false,
-      status: 'present',
-      strategy: 'git-subtree-squash',
-    }
-  );
-}
-
-function addSubtree(repo) {
-  assertSafeRepoPath(repo.path);
-  const targetPath = path.join(root, repo.path);
-  const existing = fs.existsSync(targetPath);
-
-  if (existing && !refresh) {
-    return assertSubtreePresent(repo);
-  }
-
-  if (existing && refresh) {
-    fail(`${repo.path} already exists; refresh for subtree references is intentionally manual`);
-    return undefined;
-  }
-
-  if (checkOnly) {
-    fail(`${repo.path} is missing`);
-    return undefined;
-  }
-
-  const commit = remoteCommit(repo);
-  log(`adding ${repo.name} as git subtree at ${repo.path} (${commit})`);
-  run('git', ['fetch', '--depth', '1', repo.url, repo.ref], {
-    timeout: 300000,
-  });
-  run(
-    'git',
-    [
-      'subtree',
-      'add',
-      '--prefix',
-      repo.path,
-      'FETCH_HEAD',
-      '--squash',
-      '-m',
-      `Add ${repo.name} agent reference repo`,
-    ],
-    { timeout: 600000 },
-  );
+function repoEntry(repo, status) {
+  const repoPath = path.join(root, repo.path);
 
   return {
     schemaVersion: 1,
@@ -261,13 +96,58 @@ function addSubtree(repo) {
     name: repo.name,
     url: repo.url,
     ref: repo.ref,
-    commit,
+    commit: currentCommit(repoPath),
     path: repo.path,
     readOnly: repo.readOnly !== false,
-    strategy: 'git-subtree-squash',
-    status: 'installed',
-    installedAt: new Date().toISOString(),
+    status,
+    strategy: 'git-clone',
   };
+}
+
+function assertClonePresent(repo) {
+  assertSafeRepoPath(repo.path);
+  const targetPath = path.join(root, repo.path);
+  if (!fs.existsSync(targetPath)) {
+    fail(`${repo.path} is missing`);
+    return undefined;
+  }
+  if (!fs.existsSync(path.join(targetPath, '.git'))) {
+    fail(`${repo.path} is present but is not a git clone`);
+    return undefined;
+  }
+
+  return installedManifestEntry(repo) ?? repoEntry(repo, 'present');
+}
+
+function installClone(repo) {
+  assertSafeRepoPath(repo.path);
+  const targetPath = path.join(root, repo.path);
+
+  if (fs.existsSync(targetPath) && !refresh) {
+    return assertClonePresent(repo);
+  }
+
+  if (fs.existsSync(targetPath)) {
+    fs.rmSync(targetPath, {
+      force: true,
+      maxRetries: 5,
+      recursive: true,
+      retryDelay: 100,
+    });
+  }
+
+  if (checkOnly) {
+    fail(`${repo.path} is missing`);
+    return undefined;
+  }
+
+  log(`cloning ${repo.name} into ${repo.path}`);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  run('git', ['clone', '--depth', '1', '--branch', repo.ref, repo.url, targetPath], {
+    timeout: 600000,
+  });
+
+  return repoEntry(repo, 'installed');
 }
 
 function writeManifest(entries) {
@@ -278,25 +158,14 @@ function writeManifest(entries) {
       {
         schemaVersion: 1,
         generatedAt: new Date().toISOString(),
-        strategy: 'git-subtree-squash',
         installDir: 'repos',
         repositories: entries,
+        strategy: 'git-clone',
       },
       null,
       2,
     )}\n`,
   );
-}
-
-function commitManifestIfChanged() {
-  const status = run('git', ['status', '--porcelain', '--', manifestPath], {
-    timeout: 30000,
-  });
-  if (!status) {
-    return;
-  }
-  run('git', ['add', manifestPath], { timeout: 30000 });
-  commitInstallerChanges('Record agent reference repo manifest');
 }
 
 function main() {
@@ -317,17 +186,10 @@ function main() {
     fail('git is required to install agent reference repositories');
     return;
   }
-  if (!hasGitSubtree()) {
-    fail('git subtree is required to install agent reference repositories');
-    return;
-  }
-  if (!ensureGitRepository()) {
-    return;
-  }
 
   const entries = [];
   for (const repo of config.repositories ?? []) {
-    const result = checkOnly ? assertSubtreePresent(repo) : addSubtree(repo);
+    const result = checkOnly ? assertClonePresent(repo) : installClone(repo);
     if (result) {
       entries.push(result);
     }
@@ -335,7 +197,6 @@ function main() {
 
   if (!checkOnly) {
     writeManifest(entries);
-    commitManifestIfChanged();
   }
 }
 

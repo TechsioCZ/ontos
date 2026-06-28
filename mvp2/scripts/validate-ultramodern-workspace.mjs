@@ -353,10 +353,11 @@ const assertCloudflareQualityGates = (appId, qualityGates) => {
   );
 };
 const extractAssetPrefixExpression = (modernConfig) => {
-  const match = /const assetPrefix =\n(?<expression>[\s\S]*?);/u.exec(modernConfig);
+  const match = /const assetPrefix =\s*(?<expression>[\s\S]*?);/u.exec(modernConfig);
   assert(match?.groups?.expression, 'modern.config.ts must assign assetPrefix');
   return match.groups.expression;
 };
+const normalizeSourceWhitespace = (value) => value.replace(/\s+/gu, ' ').trim();
 const expectedWorkerName = (packageSuffix) => `${packageScope}-${packageSuffix}`.slice(0, 63);
 const expectedChunkLoadingGlobal = (mfName) =>
   `__ULTRAMODERN_${mfName
@@ -419,6 +420,7 @@ const requiredPaths = [
   'scripts/bootstrap-agent-skills.mjs',
   'scripts/check-ultramodern-i18n-boundaries.mjs',
   'scripts/generate-public-surface-assets.mjs',
+  'scripts/install-lefthook.mjs',
   'scripts/proof-cloudflare-version.mjs',
   'scripts/setup-agent-reference-repos.mjs',
   'scripts/ultramodern-performance-readiness.config.mjs',
@@ -504,7 +506,7 @@ assert(
   'Root packageManager must use pnpm >=11',
 );
 assert(rootPackage.engines?.node === '>=26', 'Root must require Node >=26');
-assert(rootPackage.engines?.pnpm === '>=11', 'Root must require pnpm >=11');
+assert(rootPackage.engines?.pnpm === '>=11.5.3 <11.6.0', 'Root must require the pinned pnpm range');
 assert(
   generatedContract.node?.version === expectedNodeVersion,
   'Generated contract must record the Node toolchain version',
@@ -523,7 +525,8 @@ assert(
 );
 const workflowText = readText('.github/workflows/ultramodern-workspace-gates.yml');
 assert(
-  workflowText.includes(`node-version: "${expectedNodeVersion}"`),
+  workflowText.includes(`node-version: "${expectedNodeVersion}"`) ||
+    workflowText.includes(`node-version: '${expectedNodeVersion}'`),
   'CI workflow must pin the generated Node version',
 );
 assert(
@@ -676,6 +679,10 @@ assert(
   rootPackage.scripts?.['agents:refs:install'] === 'node ./scripts/setup-agent-reference-repos.mjs',
   'Root must expose agents:refs:install as the explicit reference repo installer',
 );
+assert(
+  rootPackage.scripts?.['lefthook:install'] === 'node ./scripts/install-lefthook.mjs',
+  'Root must expose Lefthook installation as an explicit script',
+);
 const agentSkillsBootstrap = readText('scripts/bootstrap-agent-skills.mjs');
 assert(
   agentSkillsBootstrap.includes('never installs system packages'),
@@ -685,20 +692,28 @@ assert(
   !agentSkillsBootstrap.includes("run('brew'") && !agentSkillsBootstrap.includes('runShell('),
   'Agent skills bootstrap must never invoke system package managers',
 );
+assert(
+  !agentSkillsBootstrap.includes("['init', '-b', 'main']") &&
+    !agentSkillsBootstrap.includes("['init']") &&
+    !agentSkillsBootstrap.includes("['lefthook', ['install']"),
+  'Agent skills bootstrap must not initialize git or install Lefthook hooks',
+);
 const agentReferenceRepoSetup = readText('scripts/setup-agent-reference-repos.mjs');
 assert(
-  agentReferenceRepoSetup.includes("['commit', '--no-verify', '-m', message]"),
-  'Agent reference repo installer commits must skip hooks during postinstall',
+  !agentReferenceRepoSetup.includes("['init']") &&
+    !agentReferenceRepoSetup.includes("['init', '-b', 'main']"),
+  'Agent reference repo installer must not initialize the parent workspace repository',
 );
 assert(
-  agentReferenceRepoSetup.includes("commitInstallerChanges('Initialize UltraModern workspace')"),
-  'Initial agent reference repo commit must use the installer commit helper',
+  !agentReferenceRepoSetup.includes("['commit'") &&
+    !agentReferenceRepoSetup.includes('GIT_AUTHOR_NAME') &&
+    !agentReferenceRepoSetup.includes('GIT_COMMITTER_NAME'),
+  'Agent reference repo installer must not create parent commits or synthetic git identity',
 );
 assert(
-  agentReferenceRepoSetup.includes(
-    "commitInstallerChanges('Record agent reference repo manifest')",
-  ),
-  'Agent reference repo manifest commit must use the installer commit helper',
+  agentReferenceRepoSetup.includes("strategy: 'git-clone'") &&
+    agentReferenceRepoSetup.includes("run('git', ['clone'"),
+  'Agent reference repo installer must use non-parent-mutating git clones',
 );
 
 const expectedAppIds = ['shell-super-app', ...fullStackVerticals.map((vertical) => vertical.id)];
@@ -892,7 +907,7 @@ assert(
 );
 const shellAssetPrefixExpression = extractAssetPrefixExpression(shellModernConfig);
 assert(
-  shellAssetPrefixExpression.includes(
+  normalizeSourceWhitespace(shellAssetPrefixExpression).includes(
     "configuredModernAssetPrefix || configuredUltramodernAssetPrefix || '/'",
   ),
   'Shell asset prefix fallback order is incorrect',
@@ -1053,6 +1068,14 @@ assert(
 assert(!('remotes' in topology), 'Topology must not expose legacy remotes; use verticals');
 assert(!('effectServices' in topology), 'Default APIs must be vertical-owned, not effectServices');
 
+const developmentManifestUrl = (vertical) =>
+  overlay.manifests?.[vertical.id] ??
+  `http://localhost:${overlay.ports?.[vertical.id]}/mf-manifest.json`;
+
+const developmentApiUrl = (vertical) =>
+  overlay.apis?.[vertical.id] ??
+  `http://localhost:${overlay.ports?.[vertical.id]}${vertical.apiPrefix}`;
+
 for (const vertical of fullStackVerticals) {
   const packageJson = readJson(`${vertical.path}/package.json`);
   const modernConfig = readText(`${vertical.path}/modern.config.ts`);
@@ -1182,7 +1205,7 @@ for (const vertical of fullStackVerticals) {
   );
   const verticalAssetPrefixExpression = extractAssetPrefixExpression(modernConfig);
   assert(
-    verticalAssetPrefixExpression.includes(
+    normalizeSourceWhitespace(verticalAssetPrefixExpression).includes(
       "configuredModernAssetPrefix || configuredUltramodernAssetPrefix || '/'",
     ),
     `${vertical.id} asset prefix fallback order is incorrect`,
@@ -1205,8 +1228,8 @@ for (const vertical of fullStackVerticals) {
     `${vertical.id} asset prefix must not infer workers.dev URLs`,
   );
   assert(
-    modernConfig.includes("assetPrefix: '/'"),
-    `${vertical.id} modern.config.ts must keep dev assets origin-relative`,
+    modernConfig.includes('assetPrefix: localDevAssetPrefix'),
+    `${vertical.id} modern.config.ts must use the local dev asset prefix`,
   );
   assert(
     modernConfig.includes('assetPrefix,'),
@@ -1445,11 +1468,11 @@ for (const vertical of fullStackVerticals) {
   );
   assert(overlay.ports?.[vertical.id], `${vertical.id} development port is missing`);
   assert(
-    overlay.manifests?.[vertical.id]?.includes('/mf-manifest.json'),
+    developmentManifestUrl(vertical).includes('/mf-manifest.json'),
     `${vertical.id} development manifest is missing`,
   );
   assert(
-    overlay.apis?.[vertical.id]?.endsWith(vertical.apiPrefix),
+    developmentApiUrl(vertical).endsWith(vertical.apiPrefix),
     `${vertical.id} development API URL is missing`,
   );
 }

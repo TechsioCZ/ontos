@@ -1,9 +1,8 @@
-// @effect-diagnostics globalConsole:off
 import type { OutboxWorkerHandler } from '@mvp2/core-runtime';
+import type { PropertiesUnitCreatedPayload } from '@mvp2/shared-contracts/properties-events';
 
-export const propertiesUnitCreatedWorkerHandler: OutboxWorkerHandler<unknown> = (input) => {
-  console.log('[accounting] properties.unit.created', {
-    context: input.context,
-    payload: input.payload,
-  });
+export const propertiesUnitCreatedWorkerHandler: OutboxWorkerHandler<
+  PropertiesUnitCreatedPayload
+> = () => {
+  // PoC proof handler: accounting subscribes to properties.unit.created without materializing yet.
 };

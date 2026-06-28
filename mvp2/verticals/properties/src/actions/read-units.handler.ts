@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 import type { ActionExecutionServices } from '@mvp2/core-runtime';
-import { dataAccessEvents } from '@mvp2/core-runtime';
+import { dataAccessEvents } from '@mvp2/core-runtime/db/schema';
 import { asc } from 'drizzle-orm';
 import { unit } from '../db/schema.ts';
 import type { ReadUnitsAction } from './read-units.action.ts';

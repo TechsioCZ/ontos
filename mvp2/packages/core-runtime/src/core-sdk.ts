@@ -3,22 +3,14 @@ import { createHash } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import { isInstalledModuleKey, type ModuleStateAccessKind } from '@mvp2/shared-contracts';
 import type {
-  OperationAccessKind,
   OperationActionInvocationStatus,
   OperationAuditOutcome,
   OperationAuditProfile,
   OperationAuditStage,
   OperationContext,
-  OperationEvidenceCaptureMode,
 } from './operation-context.ts';
 import { db } from './db/client.ts';
-import {
-  actionInvocations,
-  auditEvents,
-  dataAccessEvents,
-  domainEvents,
-  outboxMessages,
-} from './db/schema.ts';
+import { actionInvocations, auditEvents, domainEvents, outboxMessages } from './db/schema.ts';
 import type { OutboxMessage } from './outbox-message.ts';
 import type { PolicyCheck, PolicyDenied } from './policy.ts';
 import { checkModuleStateAccess } from './module-state.ts';
@@ -141,8 +133,12 @@ export type ActionDescriptor<TAction = unknown, TResponse = unknown> = {
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
   readonly moduleStateAccess?: ModuleStateAccessKind;
-  readonly requestSchema: unknown;
-  readonly responseSchema: unknown;
+  /**
+   * Transport-facing schemas owned by the Effect BFF/API contract.
+   * CoreSDK keeps them as descriptor metadata but does not parse transport payloads in this PoC.
+   */
+  readonly transportRequestSchema: unknown;
+  readonly transportResponseSchema: unknown;
 };
 
 export type ActionDomainEventDescriptor<TAction, TResponse> = {
@@ -175,35 +171,6 @@ export type ActionRegistration<TAction, TResponse> = {
   readonly descriptor: ActionDescriptor<TAction, TResponse>;
   readonly handler: ActionHandler<TAction, TResponse>;
   readonly policyChecks?: readonly PolicyCheck<TAction>[];
-};
-
-export type DataAccessDescriptor = {
-  readonly accessKey: string;
-  readonly accessKind: OperationAccessKind;
-  readonly evidenceCaptureMode?: OperationEvidenceCaptureMode;
-  readonly evidencePolicyKey: string;
-  readonly gatewayAudience: string;
-  readonly moduleStateAccess?: ModuleStateAccessKind;
-  readonly requestSchema: unknown;
-  readonly responseSchema: unknown;
-  readonly servingModuleKey: string;
-  readonly targetModuleKey?: string;
-  readonly targetResourceId?: string;
-  readonly targetResourceType?: string;
-};
-
-export type DataAccessExecutionServices<TRequest> = {
-  readonly context: OperationContext<TRequest>;
-};
-
-export type DataAccessHandler<TRequest, TResponse> = (
-  input: TRequest,
-  services: DataAccessExecutionServices<TRequest>,
-) => Promise<TResponse> | TResponse;
-
-export type DataAccessRegistration<TRequest, TResponse> = {
-  readonly descriptor: DataAccessDescriptor;
-  readonly handler: DataAccessHandler<TRequest, TResponse>;
 };
 
 export type OperationTransport = {
@@ -247,6 +214,8 @@ const idempotencyConflict = (): OperationIdempotencyConflict => ({
 
 const replayUnavailable = (): OperationIdempotencyReplayUnavailable => ({
   _tag: 'OperationIdempotencyReplayUnavailable',
+  // MVP2 records enough evidence to detect duplicate idempotency keys, but it does not persist
+  // serialized business responses for safe replay yet.
   message: 'Idempotent replay is recorded, but response replay is not implemented yet.',
 });
 
@@ -408,14 +377,6 @@ const attachPolicyCheck = <TAction>(
 ): OperationContext<TAction> => ({
   ...context,
   policyChecks: [...(context.policyChecks ?? []), policyCheck],
-});
-
-const attachDataAccessEvent = <TRequest>(
-  context: OperationContext<TRequest>,
-  dataAccessEvent: NonNullable<OperationContext<TRequest>['dataAccessEvents']>[number],
-): OperationContext<TRequest> => ({
-  ...context,
-  dataAccessEvents: [...(context.dataAccessEvents ?? []), dataAccessEvent],
 });
 
 const allocateTenantSequenceNo = async (tx: CoreTransaction, tenantId: string): Promise<bigint> => {
@@ -948,62 +909,6 @@ const persistExecutionFailure = async <TAction>({
   return '_tag' in auditedContext ? auditedContext : executionFailed(error);
 };
 
-const resultCount = (response: unknown): number => {
-  if (Array.isArray(response)) {
-    return response.length;
-  }
-
-  return response === null || response === undefined ? 0 : 1;
-};
-
-const writeDataAccessEvent = async <TRequest>({
-  context,
-  descriptor,
-  queryHash,
-  resultCount: count,
-}: {
-  readonly context: OperationContext<TRequest>;
-  readonly descriptor: DataAccessDescriptor;
-  readonly queryHash: string;
-  readonly resultCount: number;
-}): Promise<OperationContext<TRequest> | CoreSDKError> => {
-  const evidenceCaptureMode = descriptor.evidenceCaptureMode ?? 'metadata_only';
-  const [inserted] = await db
-    .insert(dataAccessEvents)
-    .values({
-      accessKind: descriptor.accessKind,
-      authMethod: 'session',
-      evidenceCaptureMode,
-      evidencePolicyKey: descriptor.evidencePolicyKey,
-      legalEntityId: context.legalEntityId,
-      principalId: context.principalId,
-      queryHash,
-      resultCount: count,
-      servingModuleKey: descriptor.servingModuleKey,
-      targetModuleKey: descriptor.targetModuleKey,
-      targetResourceId: descriptor.targetResourceId,
-      targetResourceType: descriptor.targetResourceType,
-      tenantId: context.tenantId,
-    })
-    .returning({
-      dataAccessEventId: dataAccessEvents.dataAccessEventId,
-    });
-
-  if (inserted === undefined) {
-    return persistenceFailed();
-  }
-
-  return attachDataAccessEvent(context, {
-    accessKind: descriptor.accessKind,
-    dataAccessEventId: inserted.dataAccessEventId,
-    evidenceCaptureMode,
-    evidencePolicyKey: descriptor.evidencePolicyKey,
-    queryHash,
-    resultCount: count,
-    servingModuleKey: descriptor.servingModuleKey,
-  });
-};
-
 export const runAction = async <TAction, TResponse>({
   options = {},
   payload,
@@ -1150,57 +1055,4 @@ export const runAction = async <TAction, TResponse>({
           error,
         });
   }
-};
-
-export const runDataAccess = async <TRequest, TResponse>({
-  query,
-  registration,
-  transport,
-}: {
-  readonly query: TRequest;
-  readonly registration: DataAccessRegistration<TRequest, TResponse>;
-  readonly transport: OperationTransport;
-}): Promise<OperationResult<TRequest, TResponse>> => {
-  const { descriptor, handler } = registration;
-  const context = resolveContext({
-    action: query,
-    actionKey: descriptor.accessKey,
-    audience: descriptor.gatewayAudience,
-    transport,
-  });
-
-  if ('_tag' in context) {
-    return context;
-  }
-
-  const moduleStateCheckedContext = await enforceModuleStateGate({
-    accessKind: descriptor.moduleStateAccess ?? 'read',
-    auditProfile: 'minimal',
-    context,
-    eventPrefix: 'data_access',
-    rejectInvocation: false,
-  });
-
-  if ('_tag' in moduleStateCheckedContext) {
-    return moduleStateCheckedContext;
-  }
-
-  const response = await handler(query, { context: moduleStateCheckedContext });
-  const queryHash = requestHash(query);
-  const eventContext = await writeDataAccessEvent({
-    context: moduleStateCheckedContext,
-    descriptor,
-    queryHash,
-    resultCount: resultCount(response),
-  });
-
-  if ('_tag' in eventContext) {
-    return eventContext;
-  }
-
-  return {
-    _tag: 'OperationSucceeded',
-    context: eventContext,
-    response,
-  } satisfies OperationSucceeded<TRequest, TResponse>;
 };

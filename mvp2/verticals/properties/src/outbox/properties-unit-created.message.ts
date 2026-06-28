@@ -1,10 +1,7 @@
 import { defineOutboxMessage } from '@mvp2/core-runtime';
-
-export type PropertiesUnitCreatedPayload = {
-  readonly name: string;
-  readonly unitId: string;
-};
+import { propertiesUnitCreatedTopic } from '@mvp2/shared-contracts/properties-events';
+import type { PropertiesUnitCreatedPayload } from '@mvp2/shared-contracts/properties-events';
 
 export const propertiesUnitCreatedOutboxMessage = defineOutboxMessage(
-  'properties.unit.created',
+  propertiesUnitCreatedTopic,
 )<PropertiesUnitCreatedPayload>;

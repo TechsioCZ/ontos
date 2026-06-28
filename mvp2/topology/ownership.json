@@ -8,16 +8,8 @@
       "path": "apps/shell-super-app",
       "ownership": {
         "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/wave2/shell-super-app.md",
-        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shell-super-app",
         "blastRadius": {
-          "tier": "tier-0-shell",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shell",
-            "docs/super-app-rfc-adr/wave2/rollback.md#shell-lkg"
-          ]
+          "tier": "tier-0-shell"
         }
       }
     },
@@ -27,15 +19,8 @@
       "path": "packages/shared-contracts",
       "ownership": {
         "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/wave2/shared-contracts.md",
-        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
-          "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
+          "tier": "tier-1-shared-contract"
         }
       }
     },
@@ -45,15 +30,8 @@
       "path": "packages/shared-design-tokens",
       "ownership": {
         "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/wave2/shared-design-tokens.md",
-        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
-          "tier": "tier-1-shared-contract",
-          "references": [
-            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
-          ]
+          "tier": "tier-1-shared-contract"
         }
       }
     },
@@ -63,15 +41,8 @@
       "path": "verticals/properties",
       "ownership": {
         "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/properties.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#properties",
         "blastRadius": {
-          "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#properties"
-          ]
+          "tier": "tier-2-vertical"
         }
       }
     },
@@ -81,15 +52,8 @@
       "path": "verticals/accounting",
       "ownership": {
         "team": "super-app-platform",
-        "slack": "#super-app-platform",
-        "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/accounting.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#accounting",
         "blastRadius": {
-          "tier": "tier-2-vertical",
-          "references": [
-            "docs/super-app-rfc-adr/blast-radius.md#accounting"
-          ]
+          "tier": "tier-2-vertical"
         }
       }
     }

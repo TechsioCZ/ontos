@@ -34,15 +34,3 @@ export const denyPolicy = (input: {
   policyKey: input.policyKey,
   reason: input.reason,
 });
-
-export const rejectStringStartingWithNewPolicy: PolicyCheck<string> = (value) =>
-  value.startsWith('New')
-    ? denyPolicy({
-        code: 'string_starts_with_new',
-        policyKey: 'core.string.startsWithNew',
-        reason: 'The value cannot start with "New".',
-      })
-    : allowPolicy({
-        policyKey: 'core.string.startsWithNew',
-        reason: 'The value does not start with "New".',
-      });

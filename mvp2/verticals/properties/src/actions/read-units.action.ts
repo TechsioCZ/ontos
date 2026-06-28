@@ -16,6 +16,6 @@ export const readUnitsActionDescriptor = {
   gatewayAudience: 'properties',
   idempotency: 'optional',
   moduleStateAccess: 'read',
-  requestSchema: unitReadPayloadSchema,
-  responseSchema: unitReadResultSchema,
+  transportRequestSchema: unitReadPayloadSchema,
+  transportResponseSchema: unitReadResultSchema,
 } satisfies ActionDescriptor<ReadUnitsAction, ReadUnitsResult>;

@@ -2,6 +2,18 @@ import { allowPolicy, denyPolicy } from '@mvp2/core-runtime';
 import type { PolicyCheck } from '@mvp2/core-runtime';
 import type { CreateUnitAction } from './create-unit.action.ts';
 
+export const rejectCreateUnitNameStartingWithNewPolicy: PolicyCheck<CreateUnitAction> = (value) =>
+  value.startsWith('New')
+    ? denyPolicy({
+        code: 'create_unit_name_starts_with_new',
+        policyKey: 'property.registry.createUnit.nameStartsWithNew',
+        reason: 'CreateUnitAction cannot use a value starting with "New".',
+      })
+    : allowPolicy({
+        policyKey: 'property.registry.createUnit.nameStartsWithNew',
+        reason: 'CreateUnitAction value does not start with "New".',
+      });
+
 export const rejectCreateUnitNameEndingWithUnitPolicy: PolicyCheck<CreateUnitAction> = (value) =>
   value.endsWith('unit')
     ? denyPolicy({

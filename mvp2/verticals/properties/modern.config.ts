@@ -56,13 +56,7 @@ const apiBaseUrl = configuredPropertiesApiUrl || '/shell-super-app-api/mv/proper
 // Asset loading is intentionally independent from the canonical site URL and
 // deployment public URL. Vertical dev remotes need a self-origin asset prefix
 // so a shell on another localhost port does not resolve remote chunks locally.
-const assetPrefix =
-  configuredModernAssetPrefix ||
-  configuredUltramodernAssetPrefix ||
-  configuredCloudflareUrl ||
-  configuredSiteUrl ||
-  inferredCloudflareUrl ||
-  '/';
+const assetPrefix = configuredModernAssetPrefix || configuredUltramodernAssetPrefix || '/';
 const localDevAssetPrefix =
   configuredModernAssetPrefix ||
   configuredUltramodernAssetPrefix ||

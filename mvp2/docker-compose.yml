@@ -22,16 +22,12 @@ services:
         condition: service_healthy
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-ontos}
-      POSTGRES_DB: ${POSTGRES_DB:-ontos}
       POSTGRES_USER: ${POSTGRES_USER:-ontos}
       SPICEDB_POSTGRES_DB: ${SPICEDB_POSTGRES_DB:-spicedb}
     command:
       - sh
       - -ec
       - |
-        if ! psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${POSTGRES_DB:-ontos}'" | grep -q 1; then
-          psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -c 'CREATE DATABASE "${POSTGRES_DB:-ontos}" OWNER "${POSTGRES_USER:-ontos}"'
-        fi
         if ! psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${SPICEDB_POSTGRES_DB:-spicedb}'" | grep -q 1; then
           psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -c 'CREATE DATABASE "${SPICEDB_POSTGRES_DB:-spicedb}" OWNER "${POSTGRES_USER:-ontos}"'
         fi

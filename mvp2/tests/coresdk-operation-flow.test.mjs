@@ -34,7 +34,6 @@ test('CoreSDK owns trusted context, idempotency, audit, policy gates, and transa
   assert.match(coreSDK, /policyChecks:\s*registration\.policyChecks\s*\?\?\s*\[\]/u);
   assert.match(coreSDK, /OperationPolicyDenied/u);
   assert.match(policy, /PolicyCheck<TData>/u);
-  assert.match(policy, /rejectStringStartingWithNewPolicy/u);
   assert.match(coreSDK, /db\.transaction/u);
   assert.match(coreSDK, /const \{ descriptor, handler \} = registration/u);
   assert.match(coreSDK, /handler\(payload,\s*\{/u);
@@ -44,7 +43,7 @@ test('CoreSDK owns trusted context, idempotency, audit, policy gates, and transa
   assert.match(coreSDK, /persistAutomaticDomainEvent/u);
   assert.match(coreSDK, /persistOutboxMessages/u);
   assert.match(coreSDK, /handlerOutboxMessages/u);
-  assert.match(coreSDK, /dataAccessEvents/u);
+  assert.doesNotMatch(coreSDK, /dataAccessEvents/u);
 });
 
 test('OperationContext carries CoreSDK enrichment objects', () => {
@@ -84,6 +83,7 @@ test('createUnit descriptor and client provide required operation metadata', () 
   const action = read('verticals/properties/src/actions/create-unit.action.ts');
   const handler = read('verticals/properties/src/actions/create-unit.handler.ts');
   const message = read('verticals/properties/src/outbox/properties-unit-created.message.ts');
+  const eventContract = read('packages/shared-contracts/src/properties-events.ts');
   const policy = read('verticals/properties/src/actions/create-unit.policy.ts');
   const registration = read('verticals/properties/src/actions/create-unit.registration.ts');
   const client = read('verticals/properties/src/effect/properties-client.ts');
@@ -91,7 +91,7 @@ test('createUnit descriptor and client provide required operation metadata', () 
 
   assert.match(action, /actionKey:\s*'property\.registry\.createUnit'/u);
   assert.match(action, /auditProfile:\s*'standard'/u);
-  assert.match(action, /eventType:\s*'properties\.unit\.created'/u);
+  assert.match(action, /eventType:\s*propertiesUnitCreatedTopic/u);
   assert.match(action, /subjectResourceId:\s*\(_input,\s*response\)\s*=>\s*response\.unitId/u);
   assert.match(action, /subjectResourceType:\s*'property\.unit'/u);
   assert.match(action, /idempotency:\s*'required'/u);
@@ -101,11 +101,16 @@ test('createUnit descriptor and client provide required operation metadata', () 
   assert.match(handler, /services\.context\.addOutboxMessage\?\.\(/u);
   assert.match(handler, /propertiesUnitCreatedOutboxMessage/u);
   assert.match(handler, /unitId:\s*inserted\.unitId/u);
-  assert.match(message, /defineOutboxMessage\(\s*'properties\.unit\.created',?\s*\)/u);
+  assert.match(eventContract, /propertiesUnitCreatedTopic = 'properties\.unit\.created'/u);
+  assert.match(eventContract, /PropertiesUnitCreatedPayload/u);
+  assert.match(message, /@mvp2\/shared-contracts\/properties-events/u);
+  assert.match(message, /defineOutboxMessage\(\s*propertiesUnitCreatedTopic,?\s*\)/u);
+  assert.match(policy, /rejectCreateUnitNameStartingWithNewPolicy/u);
+  assert.match(policy, /startsWith\('New'\)/u);
   assert.match(policy, /rejectCreateUnitNameEndingWithUnitPolicy/u);
   assert.match(policy, /endsWith\('unit'\)/u);
   assert.match(registration, /satisfies ActionRegistration/u);
-  assert.match(registration, /rejectStringStartingWithNewPolicy/u);
+  assert.match(registration, /rejectCreateUnitNameStartingWithNewPolicy/u);
   assert.match(registration, /rejectCreateUnitNameEndingWithUnitPolicy/u);
   assert.match(client, /readonly unitId:\s*string/u);
   assert.match(client, /'idempotency-key'/u);
@@ -129,6 +134,7 @@ test('readUnits records a Core data access event for each read action', () => {
   assert.match(action, /resourceObjectType:\s*'resource_type'/u);
   assert.match(action, /resourceObjectId:\s*'property\.unit'/u);
   assert.match(registration, /policyChecks:\s*\[\]/u);
+  assert.match(handler, /@mvp2\/core-runtime\/db\/schema/u);
   assert.match(handler, /services\.tx\s*\n\s*\.select/u);
   assert.match(handler, /services\.tx\.insert\(dataAccessEvents\)/u);
   assert.match(

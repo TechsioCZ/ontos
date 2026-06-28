@@ -7,6 +7,18 @@ const token = process.env['SPICEDB_PRESHARED_KEY'] ?? 'local-spicedb-key';
 
 const demoTenantId = '11111111-1111-4111-8111-111111111111';
 const adminPrincipalId = '33333333-3333-4333-8333-333333333333';
+const localDemoRelationships = [
+  {
+    relation: 'reader',
+    resource: `resource_type:${demoTenantId}_property-unit`,
+    subject: `principal:${adminPrincipalId}`,
+  },
+  {
+    relation: 'changer',
+    resource: `core_modules:${demoTenantId}_core-modules`,
+    subject: `principal:${adminPrincipalId}`,
+  },
+];
 
 const runDocker = (args) => {
   const result = spawnSync('docker', args, {
@@ -38,20 +50,15 @@ const runZed = (args) => {
 
 runDocker(['compose', 'up', '-d', '--wait', 'spicedb']);
 runZed(['schema', 'write', '/spicedb/schema.zed']);
-runZed([
-  'relationship',
-  'touch',
-  `resource_type:${demoTenantId}_property-unit`,
-  'reader',
-  `principal:${adminPrincipalId}`,
-]);
-runZed([
-  'relationship',
-  'touch',
-  `core_modules:${demoTenantId}_core-modules`,
-  'changer',
-  `principal:${adminPrincipalId}`,
-]);
+for (const relationship of localDemoRelationships) {
+  runZed([
+    'relationship',
+    'touch',
+    relationship.resource,
+    relationship.relation,
+    relationship.subject,
+  ]);
+}
 
 console.log(
   'Seeded SpiceDB property.unit read and core.modules change permissions for the Admin demo principal.',

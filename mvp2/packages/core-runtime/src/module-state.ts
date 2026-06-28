@@ -27,8 +27,6 @@ type CoreDbExecutor = typeof db | CoreTransaction;
 
 export const coreModulesResourceObjectType = 'core_modules';
 export const coreModulesResourceObjectId = 'core.modules';
-const demoTenantId = '11111111-1111-4111-8111-111111111111';
-const demoAdminPrincipalId = '33333333-3333-4333-8333-333333333333';
 
 export type ModuleStateAdminPermission = 'view' | 'change';
 
@@ -175,10 +173,6 @@ export const checkModuleStateAdminCapability = async ({
   readonly principalId: string;
   readonly tenantId: string;
 }) => {
-  if (tenantId === demoTenantId && principalId === demoAdminPrincipalId) {
-    return true;
-  }
-
   const decision = await authorizationChecker(
     toCoreModulesSpiceDbPermissionCheck({
       permission,

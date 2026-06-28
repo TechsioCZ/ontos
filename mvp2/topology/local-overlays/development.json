@@ -6,13 +6,5 @@
     "shell-super-app": 3020,
     "properties": 4101,
     "accounting": 4102
-  },
-  "manifests": {
-    "properties": "http://localhost:4101/mf-manifest.json",
-    "accounting": "http://localhost:4102/mf-manifest.json"
-  },
-  "apis": {
-    "properties": "http://localhost:4101/properties-api",
-    "accounting": "http://localhost:4102/accounting-api"
   }
 }

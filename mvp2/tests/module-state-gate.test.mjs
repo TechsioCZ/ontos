@@ -102,11 +102,14 @@ test('Shell gates module-federated remotes and gateway forwarding by backend-res
 
 test('SpiceDB schema and seed include governed core.modules state administration', () => {
   const moduleState = read('packages/core-runtime/src/module-state.ts');
+  const demoAuth = read('packages/core-runtime/src/auth/demo-auth.ts');
   const schema = read('scripts/spicedb/schema.zed');
   const seed = read('scripts/seed-spicedb.mjs');
 
-  assert.match(moduleState, /demoAdminPrincipalId/u);
-  assert.match(moduleState, /principalId === demoAdminPrincipalId/u);
+  assert.match(moduleState, /spiceDbAuthorizationChecker/u);
+  assert.doesNotMatch(moduleState, /demoAdminPrincipalId/u);
+  assert.doesNotMatch(moduleState, /principalId === demoAdminPrincipalId/u);
+  assert.doesNotMatch(demoAuth, /demoModuleStateAuthorizationChecker/u);
   assert.match(schema, /definition core_modules/u);
   assert.match(schema, /permission view = viewer \+ changer/u);
   assert.match(schema, /permission change = changer/u);

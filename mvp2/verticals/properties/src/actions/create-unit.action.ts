@@ -1,4 +1,5 @@
 import type { ActionDescriptor } from '@mvp2/core-runtime';
+import { propertiesUnitCreatedTopic } from '@mvp2/shared-contracts/properties-events';
 import { unitCreatePayloadSchema, unitCreateResultSchema } from '../../shared/effect/api.ts';
 
 export type CreateUnitAction = typeof unitCreatePayloadSchema.Type;
@@ -8,7 +9,7 @@ export const createUnitActionDescriptor = {
   actionKey: 'property.registry.createUnit',
   auditProfile: 'standard',
   domainEvent: {
-    eventType: 'properties.unit.created',
+    eventType: propertiesUnitCreatedTopic,
     payload: (input, response) => ({
       name: input,
       unitId: response.unitId,
@@ -21,6 +22,6 @@ export const createUnitActionDescriptor = {
   gatewayAudience: 'properties',
   idempotency: 'required',
   moduleStateAccess: 'mutate',
-  requestSchema: unitCreatePayloadSchema,
-  responseSchema: unitCreateResultSchema,
+  transportRequestSchema: unitCreatePayloadSchema,
+  transportResponseSchema: unitCreateResultSchema,
 } satisfies ActionDescriptor<CreateUnitAction, CreateUnitResult>;

@@ -278,7 +278,13 @@ const microVerticalGatewayLayer = HttpRouter.add('*', '/mv/:vertical/*', (reques
         Effect.flatMap((operationContext) =>
           Effect.promise(async () => {
             if (!isInstalledModuleKey(route.audience)) {
-              return { _tag: 'Allowed' as const };
+              return {
+                _tag: 'Denied' as const,
+                accessKind: 'load' as const,
+                moduleKey: route.audience,
+                outcomeCode: 'module_state_load_blocked' as const,
+                state: 'inactive',
+              };
             }
 
             const decision = await checkModuleStateAccess({
