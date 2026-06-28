@@ -22,7 +22,7 @@ test(
   async (t) => {
     const [
       { db, sqlClient },
-      { createVerticalGatewayToken, runAction },
+      { createVerticalGatewayToken, rowsFromResult, runAction },
       { sql },
       { materializeDeliveries },
       { claimDueDeliveries },
@@ -56,18 +56,6 @@ test(
         },
       },
       handler: () => undefined,
-    };
-
-    const rowsFromResult = (result) => {
-      if (Array.isArray(result)) {
-        return result;
-      }
-
-      if (result !== null && typeof result === 'object' && Symbol.iterator in result) {
-        return Array.from(result);
-      }
-
-      return [];
     };
 
     const one = async (query) => {

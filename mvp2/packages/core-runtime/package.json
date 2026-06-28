@@ -23,6 +23,7 @@
     "@effect/sql": "0.51.1",
     "@effect/sql-drizzle": "0.50.0",
     "@effect/sql-pg": "0.52.1",
+    "@mvp2/shared-contracts": "workspace:*",
     "better-auth": "1.6.18",
     "better-call": "1.3.6",
     "drizzle-orm": "0.45.2",

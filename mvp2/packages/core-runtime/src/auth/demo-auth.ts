@@ -1,7 +1,15 @@
 // @effect-diagnostics asyncFunction:off globalDate:off
 import { eq } from 'drizzle-orm';
-import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import { installedModuleKeys } from '@mvp2/shared-contracts';
+import {
+  legalEntities,
+  principalAuthBindings,
+  principals,
+  tenantModuleStates,
+  tenants,
+} from '../db/schema.ts';
 import { db } from '../db/client.ts';
+import { checkModuleStateAdminCapability, listTenantModuleStates } from '../module-state.ts';
 import { auth } from './config.ts';
 
 export type DemoUserKey = 'admin' | 'user';
@@ -98,6 +106,19 @@ const ensureCoreContext = async (userId: string, demoUserKey: DemoUserKey) => {
       updatedAt: now(),
     })
     .onConflictDoNothing();
+
+  await db
+    .insert(tenantModuleStates)
+    .values(
+      installedModuleKeys.map((moduleKey) => ({
+        createdAt: now(),
+        moduleKey,
+        state: 'active',
+        tenantId: demoTenant.id,
+        updatedAt: now(),
+      })),
+    )
+    .onConflictDoNothing();
 };
 
 const ensureBetterAuthUser = async (demoUserKey: DemoUserKey, headers: Headers) => {
@@ -187,26 +208,46 @@ const getAuthContextForUser = async (user: AuthUser) => {
     .where(eq(principalAuthBindings.providerSubjectId, user.id))
     .limit(1);
 
+  if (binding === undefined) {
+    return { context: null };
+  }
+
+  const moduleStates = await listTenantModuleStates(binding.tenantId);
+  const [canView, canChange] = await Promise.all([
+    checkModuleStateAdminCapability({
+      permission: 'view',
+      principalId: binding.principalId,
+      tenantId: binding.tenantId,
+    }),
+    checkModuleStateAdminCapability({
+      permission: 'change',
+      principalId: binding.principalId,
+      tenantId: binding.tenantId,
+    }),
+  ]);
+
   return {
-    context:
-      binding === undefined
-        ? null
-        : {
-            authBindingId: binding.authBindingId,
-            legalEntity: {
-              id: binding.legalEntityId,
-              name: binding.legalEntityName,
-            },
-            principal: {
-              displayName: binding.principalDisplayName,
-              id: binding.principalId,
-            },
-            tenant: {
-              id: binding.tenantId,
-              name: binding.tenantName,
-            },
-            user,
-          },
+    context: {
+      authBindingId: binding.authBindingId,
+      legalEntity: {
+        id: binding.legalEntityId,
+        name: binding.legalEntityName,
+      },
+      moduleStateAdmin: {
+        canChange,
+        canView,
+      },
+      moduleStates,
+      principal: {
+        displayName: binding.principalDisplayName,
+        id: binding.principalId,
+      },
+      tenant: {
+        id: binding.tenantId,
+        name: binding.tenantName,
+      },
+      user,
+    },
   };
 };
 

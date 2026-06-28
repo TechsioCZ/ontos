@@ -11,3 +11,11 @@ definition resource_type {
 
   permission read = reader
 }
+
+definition core_modules {
+  relation viewer: principal
+  relation changer: principal
+
+  permission view = viewer + changer
+  permission change = changer
+}

@@ -171,6 +171,41 @@ export const createOperationAuthorizationDenied = ({
   resourceObjectType,
 });
 
+export const operationModuleStateDeniedSchema = Schema.TaggedStruct('OperationModuleStateDenied', {
+  accessKind: Schema.Union([
+    Schema.Literal('load'),
+    Schema.Literal('read'),
+    Schema.Literal('mutate'),
+  ]),
+  code: Schema.String,
+  message: Schema.String,
+  moduleKey: Schema.String,
+  state: Schema.String,
+}).pipe(HttpApiSchema.status(403));
+
+export type OperationModuleStateDenied = typeof operationModuleStateDeniedSchema.Type;
+
+export const createOperationModuleStateDenied = ({
+  accessKind,
+  code,
+  message,
+  moduleKey,
+  state,
+}: {
+  readonly accessKind: 'load' | 'read' | 'mutate';
+  readonly code: string;
+  readonly message: string;
+  readonly moduleKey: string;
+  readonly state: string;
+}): OperationModuleStateDenied => ({
+  _tag: 'OperationModuleStateDenied',
+  accessKind,
+  code,
+  message,
+  moduleKey,
+  state,
+});
+
 export const operationExecutionFailedSchema = taggedMessageSchema('OperationExecutionFailed', 500);
 
 export type OperationExecutionFailed = typeof operationExecutionFailedSchema.Type;
@@ -186,6 +221,7 @@ export const operationErrorSchema = Schema.Union([
   operationPersistenceFailedSchema,
   operationDomainRejectedSchema,
   operationAuthorizationDeniedSchema,
+  operationModuleStateDeniedSchema,
   operationPolicyDeniedSchema,
   operationExecutionFailedSchema,
 ]).pipe(HttpApiSchema.status(409));

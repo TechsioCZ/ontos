@@ -1,3 +1,4 @@
+// @effect-diagnostics extendsNativeError:off
 export type UltramodernPublicSitemapChangeFrequency =
   | 'always'
   | 'hourly'
@@ -71,6 +72,83 @@ export const ultramodernWorkspaceContract = {
   preset: 'presetUltramodern',
   topology: 'topology/reference-topology.json',
 } as const;
+
+export const moduleActivationStates = [
+  'inactive',
+  'active',
+  'read_only',
+  'suspended',
+  'quarantined',
+  'deprecated',
+  'archived',
+] as const;
+
+export type ModuleActivationState = (typeof moduleActivationStates)[number];
+
+export const installedModuleKeys = ['properties', 'accounting'] as const;
+
+export type InstalledModuleKey = (typeof installedModuleKeys)[number];
+
+export const moduleStateAccessKinds = ['load', 'read', 'mutate'] as const;
+
+export type ModuleStateAccessKind = (typeof moduleStateAccessKinds)[number];
+
+export type TenantModuleState = {
+  readonly moduleKey: InstalledModuleKey;
+  readonly state: ModuleActivationState;
+};
+
+export const moduleStateAccessMatrix = {
+  active: {
+    load: true,
+    mutate: true,
+    read: true,
+  },
+  archived: {
+    load: false,
+    mutate: false,
+    read: false,
+  },
+  deprecated: {
+    load: true,
+    mutate: true,
+    read: true,
+  },
+  inactive: {
+    load: false,
+    mutate: false,
+    read: false,
+  },
+  quarantined: {
+    load: false,
+    mutate: false,
+    read: false,
+  },
+  read_only: {
+    load: true,
+    mutate: false,
+    read: true,
+  },
+  suspended: {
+    load: false,
+    mutate: false,
+    read: false,
+  },
+} as const satisfies Record<ModuleActivationState, Record<ModuleStateAccessKind, boolean>>;
+
+export const isInstalledModuleKey = (value: string): value is InstalledModuleKey =>
+  installedModuleKeys.includes(value as InstalledModuleKey);
+
+export const isModuleActivationState = (value: string): value is ModuleActivationState =>
+  moduleActivationStates.includes(value as ModuleActivationState);
+
+export const isModuleStateAccessAllowed = ({
+  accessKind,
+  state,
+}: {
+  readonly accessKind: ModuleStateAccessKind;
+  readonly state: ModuleActivationState;
+}) => moduleStateAccessMatrix[state][accessKind];
 
 export const tractorEventNames = {
   checkoutAddToCart: 'checkout:add-to-cart',
@@ -150,10 +228,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
-const isPositiveInteger = (value: unknown): value is number => Number.isInteger(value) && value > 0;
+const isPositiveInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value > 0;
 
 const isNonNegativeInteger = (value: unknown): value is number =>
-  Number.isInteger(value) && value >= 0;
+  typeof value === 'number' && Number.isInteger(value) && value >= 0;
 
 const hasOptionalString = (value: Record<string, unknown>, key: string) =>
   value[key] === undefined || isNonEmptyString(value[key]);
@@ -341,6 +420,10 @@ export const applyCheckoutCartEvent = (
   }
 
   const existing = lines[existingIndex];
+  if (existing === undefined) {
+    return createCheckoutCartSnapshot([...lines, nextLine]);
+  }
+
   return createCheckoutCartSnapshot(
     lines.map((line, index) =>
       index === existingIndex

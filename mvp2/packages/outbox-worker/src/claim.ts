@@ -1,8 +1,7 @@
 // @effect-diagnostics asyncFunction:off globalDate:off
 import { db } from '@mvp2/core-runtime/db/client';
-import type { CoreTransaction } from '@mvp2/core-runtime';
+import { rowsFromResult, type CoreTransaction } from '@mvp2/core-runtime';
 import { sql } from 'drizzle-orm';
-import { rowsFromResult } from './sql-result.ts';
 
 export type ClaimDeliveriesOptions = {
   readonly batchSize: number;

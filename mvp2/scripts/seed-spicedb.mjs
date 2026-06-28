@@ -45,5 +45,14 @@ runZed([
   'reader',
   `principal:${adminPrincipalId}`,
 ]);
+runZed([
+  'relationship',
+  'touch',
+  `core_modules:${demoTenantId}_core-modules`,
+  'changer',
+  `principal:${adminPrincipalId}`,
+]);
 
-console.log('Seeded SpiceDB property.unit read permission for the Admin demo principal.');
+console.log(
+  'Seeded SpiceDB property.unit read and core.modules change permissions for the Admin demo principal.',
+);

@@ -1,4 +1,4 @@
-// @effect-diagnostics preferSchemaOverJson:off processEnv:off globalFetchInEffect:off
+// @effect-diagnostics preferSchemaOverJson:off processEnv:off globalFetchInEffect:off asyncFunction:off globalConsoleInEffect:off
 import {
   defineEffectBff,
   Effect,
@@ -10,18 +10,29 @@ import {
 } from '@modern-js/plugin-bff/effect-edge';
 import {
   createVerticalGatewayToken,
+  checkModuleStateAccess,
+  checkModuleStateAdminCapability,
   getCurrentAuthContext,
   resolveOperationContextFromSession,
+  setTenantModuleState,
   signInDemoUser,
   signOutDemoUser,
 } from '@mvp2/core-runtime';
 import type { DemoUserKey } from '@mvp2/core-runtime';
+import { isInstalledModuleKey } from '@mvp2/shared-contracts';
 import {
+  createModuleStateAdminForbidden,
   createOperationContextAuthRequired,
   shellAuthEffectApi,
 } from '../../src/effect/auth-api.ts';
 
 const verticalRegistry = {
+  accounting: {
+    audience: 'accounting',
+    targetBaseUrl: (
+      process.env['VERTICAL_ACCOUNTING_BFF_URL'] ?? 'http://localhost:4102/accounting-api'
+    ).replace(/\/+$/u, ''),
+  },
   properties: {
     audience: 'properties',
     targetBaseUrl: (
@@ -37,8 +48,18 @@ interface MicroVerticalGatewayFailed {
   readonly message: string;
 }
 
+interface MicroVerticalUnavailable {
+  readonly _tag: 'MicroVerticalUnavailable';
+  readonly message: string;
+}
+
 const microVerticalGatewayFailed = (message: string): MicroVerticalGatewayFailed => ({
   _tag: 'MicroVerticalGatewayFailed',
+  message,
+});
+
+const microVerticalUnavailable = (message: string): MicroVerticalUnavailable => ({
+  _tag: 'MicroVerticalUnavailable',
   message,
 });
 
@@ -100,6 +121,48 @@ const shellAuthLayer = HttpApiBuilder.group(shellAuthEffectApi, 'auth', (handler
           ),
         ),
       ),
+    )
+    .handle('setModuleState', ({ payload }) =>
+      requestHeaders.pipe(
+        Effect.flatMap((headers) =>
+          Effect.promise(() => resolveOperationContextFromSession({ headers })).pipe(
+            Effect.flatMap((resolved) =>
+              resolved._tag === 'Success'
+                ? Effect.succeed(resolved.operationContext)
+                : Effect.fail(createOperationContextAuthRequired(resolved.error.message)),
+            ),
+            Effect.flatMap((operationContext) =>
+              Effect.promise(() =>
+                checkModuleStateAdminCapability({
+                  permission: 'change',
+                  principalId: operationContext.principalId,
+                  tenantId: operationContext.tenantId,
+                }),
+              ).pipe(
+                Effect.flatMap((canChange) =>
+                  canChange
+                    ? Effect.promise(async () => {
+                        await setTenantModuleState({
+                          changedByPrincipalId: operationContext.principalId,
+                          moduleKey: payload.moduleKey,
+                          newState: payload.state,
+                          ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+                          tenantId: operationContext.tenantId,
+                        });
+
+                        return getCurrentAuthContext({ headers });
+                      })
+                    : Effect.fail(
+                        createModuleStateAdminForbidden(
+                          'Module state changes are not allowed for this principal.',
+                        ),
+                      ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     ),
 );
 
@@ -123,6 +186,11 @@ const authRequiredResponse = (message: string) =>
 const gatewayFailedResponse = (message: string) =>
   HttpServerResponse.jsonUnsafe(microVerticalGatewayFailed(message), {
     status: 502,
+  });
+
+const gatewayUnavailableResponse = (message: string) =>
+  HttpServerResponse.jsonUnsafe(microVerticalUnavailable(message), {
+    status: 403,
   });
 
 const browserIdentityHeaders = new Set([
@@ -208,15 +276,51 @@ const microVerticalGatewayLayer = HttpRouter.add('*', '/mv/:vertical/*', (reques
 
       return makeOperationContext.pipe(
         Effect.flatMap((operationContext) =>
-          forwardMicroVerticalRequest({
-            operationContextToken: createVerticalGatewayToken({
-              audience: route.audience,
-              operationContext,
-            }),
-            request,
-            targetBaseUrl: route.targetBaseUrl,
-            wildcardPath: params['*'],
-          }),
+          Effect.promise(async () => {
+            if (!isInstalledModuleKey(route.audience)) {
+              return { _tag: 'Allowed' as const };
+            }
+
+            const decision = await checkModuleStateAccess({
+              accessKind: 'load',
+              moduleKey: route.audience,
+              tenantId: operationContext.tenantId,
+            });
+
+            if (decision._tag === 'Denied') {
+              console.warn(
+                JSON.stringify({
+                  accessKind: decision.accessKind,
+                  moduleKey: decision.moduleKey,
+                  outcomeCode: decision.outcomeCode,
+                  principalId: operationContext.principalId,
+                  state: decision.state,
+                  tenantId: operationContext.tenantId,
+                  type: 'module_state.gateway_denied',
+                }),
+              );
+            }
+
+            return decision;
+          }).pipe(
+            Effect.flatMap((decision) =>
+              decision._tag === 'Denied'
+                ? Effect.succeed(
+                    gatewayUnavailableResponse(
+                      `Module "${decision.moduleKey}" is not available in state "${decision.state}".`,
+                    ),
+                  )
+                : forwardMicroVerticalRequest({
+                    operationContextToken: createVerticalGatewayToken({
+                      audience: route.audience,
+                      operationContext,
+                    }),
+                    request,
+                    targetBaseUrl: route.targetBaseUrl,
+                    wildcardPath: params['*'],
+                  }),
+            ),
+          ),
         ),
         // oxlint-disable-next-line promise/prefer-await-to-callbacks -- This is Effect.catchTags, not Promise.catch.
         Effect.catchTags({

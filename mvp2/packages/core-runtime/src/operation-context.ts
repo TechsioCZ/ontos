@@ -60,6 +60,7 @@ export type OperationContext<TAction> = {
     resultCount: number;
     servingModuleKey: string;
   }>;
+  gatewayAudience: string;
   legalEntityId: string;
   policyChecks?: ReadonlyArray<{
     decision: 'allowed' | 'denied';

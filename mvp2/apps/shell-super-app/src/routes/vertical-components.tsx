@@ -9,8 +9,10 @@ import { getInstance, loadRemote } from '@module-federation/modern-js-v3/runtime
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-
-const widgetCount = Number('2');
+import { isModuleStateAccessAllowed } from '@mvp2/shared-contracts';
+import type { InstalledModuleKey, ModuleActivationState } from '@mvp2/shared-contracts';
+import { shellInstalledModules } from '../modules/installed-modules';
+import { useShellAuth } from './shell-auth-context';
 
 interface RemoteComponentModule {
   default: ComponentType;
@@ -100,9 +102,33 @@ const createHydratedRemote = (specifier: string) =>
     );
   };
 
-const PropertiesWidget = createHydratedRemote('properties/Widget');
-const PropertiesRoute = createHydratedRemote('properties/Route');
-const AccountingWidget = createHydratedRemote('accounting/Widget');
+const RemoteSlot = ({ specifier }: { readonly specifier: string }) => {
+  const Remote = useMemo(() => createHydratedRemote(specifier), [specifier]);
+
+  return <Remote />;
+};
+
+const useVisibleModules = () => {
+  const { context } = useShellAuth();
+  const stateByModule =
+    context === null
+      ? new Map<InstalledModuleKey, ModuleActivationState>()
+      : new Map<InstalledModuleKey, ModuleActivationState>(
+          context.moduleStates.map((moduleState) => [moduleState.moduleKey, moduleState.state]),
+        );
+
+  return shellInstalledModules.filter((module) => {
+    const state = stateByModule.get(module.moduleKey) ?? 'inactive';
+
+    return isModuleStateAccessAllowed({ accessKind: 'load', state });
+  });
+};
+
+export const VisibleModuleCount = () => {
+  const visibleModules = useVisibleModules();
+
+  return <>{visibleModules.length}</>;
+};
 
 export const Header = () => {
   const { i18nInstance } = useModernI18n();
@@ -127,10 +153,11 @@ export const Header = () => {
 export const StatusBadge = () => {
   const { i18nInstance } = useModernI18n();
   const t = i18nInstance['t'].bind(i18nInstance);
+  const visibleModules = useVisibleModules();
 
   return (
     <span className="shell:inline-flex shell:h-10 shell:shrink-0 shell:items-center shell:justify-center shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white shell:px-4 shell:text-sm shell:font-extrabold shell:text-stone-950 shell:shadow-lg shell:shadow-stone-900/5">
-      {widgetCount} {t('shell.hero.cardOneKicker')}
+      {visibleModules.length} {t('shell.hero.cardOneKicker')}
     </span>
   );
 };
@@ -138,8 +165,9 @@ export const StatusBadge = () => {
 export const VerticalShowcase = () => {
   const { i18nInstance } = useModernI18n();
   const t = i18nInstance['t'].bind(i18nInstance);
+  const visibleModules = useVisibleModules();
 
-  if (widgetCount === 0) {
+  if (visibleModules.length === 0) {
     return (
       <section className="shell:mx-auto shell:mt-12 shell:max-w-7xl shell:rounded-2xl shell:bg-white/90 shell:p-6 shell:shadow-xl shell:shadow-stone-900/10">
         <p className="shell:text-lg shell:font-bold shell:text-stone-700">
@@ -155,27 +183,47 @@ export const VerticalShowcase = () => {
       data-modern-boundary-id="shellSuperApp"
     >
       <div className="shell:grid shell:gap-4 shell:md:grid-cols-2">
-        <div className="shell:grid shell:gap-3">
-          <PropertiesWidget key="properties" />
-          <Link
-            className="shell:inline-flex shell:w-fit shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white shell:px-4 shell:py-2 shell:text-sm shell:font-bold shell:text-stone-950 shell:no-underline"
-            to="/properties/units"
-          >
-            View Units
-          </Link>
-        </div>
-        <AccountingWidget key="accounting" />
+        {visibleModules.map((module) => (
+          <div className="shell:grid shell:gap-3" key={module.moduleKey}>
+            <RemoteSlot specifier={module.widgetRemote} />
+            {module.routePath === undefined ? null : (
+              <Link
+                className="shell:inline-flex shell:w-fit shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white shell:px-4 shell:py-2 shell:text-sm shell:font-bold shell:text-stone-950 shell:no-underline"
+                to={module.routePath}
+              >
+                View {module.label}
+              </Link>
+            )}
+          </div>
+        ))}
       </div>
     </section>
   );
 };
 
-export const PropertiesRouteSurface = () => (
-  <section
-    className="shell:mx-auto shell:mt-12 shell:max-w-7xl"
-    data-modern-boundary-id="shellSuperApp"
-    data-ontos-module-id="properties"
-  >
-    <PropertiesRoute />
-  </section>
-);
+export const PropertiesRouteSurface = () => {
+  const { context } = useShellAuth();
+  const state =
+    context?.moduleStates.find((moduleState) => moduleState.moduleKey === 'properties')?.state ??
+    'inactive';
+
+  if (!isModuleStateAccessAllowed({ accessKind: 'load', state })) {
+    return (
+      <section className="shell:mx-auto shell:mt-12 shell:max-w-7xl shell:bg-white/90 shell:p-6 shell:shadow-xl shell:shadow-stone-900/10">
+        <p className="shell:text-lg shell:font-bold shell:text-stone-700">
+          Properties is not available.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      className="shell:mx-auto shell:mt-12 shell:max-w-7xl"
+      data-modern-boundary-id="shellSuperApp"
+      data-ontos-module-id="properties"
+    >
+      <RemoteSlot specifier="properties/Route" />
+    </section>
+  );
+};

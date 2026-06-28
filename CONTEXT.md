@@ -24,6 +24,14 @@ _Avoid_: Polished Forge, vibemodule primitives, exhaustive ontology metadata, ri
 The server-side OntOS boundary through which public writes and governed reads pass so Core can apply shared context, authorization, policy, evidence, transaction, event, and outbox semantics.
 _Avoid_: Direct handler path, BFF business layer, MicroVertical-owned runtime boundary
 
+**Module State Gate**:
+The Core-owned runtime gate that evaluates a tenant's OntOS Business Module state before SpiceDB authorization and the OntOS Policy Layer. It is not relationship authorization and not business policy; it decides whether a module is currently loadable, readable, or writable for that tenant.
+_Avoid_: Module permission, SpiceDB module permission, feature flag, package check by itself
+
+**Core Modules Capability**:
+The Core-owned capability for listing and changing tenant module states. It is always available to the Module State Gate so administrators cannot lock themselves out of module-state recovery, but SpiceDB authorization and policy still decide who can view or change module states.
+_Avoid_: Ordinary business module, customer vertical, unguarded admin bypass
+
 **UltraModern.js MicroVertical**:
 The framework-level vertical slice concept in the UltraModern.js fork. It organizes frontend and backend behavior together inside the jointly deployable application. By itself, it does not define an OntOS manifest.
 _Avoid_: OntOS-specific manifest, standalone microservice, frontend-only module

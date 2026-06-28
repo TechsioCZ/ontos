@@ -12,6 +12,7 @@ import {
   createOperationIdempotencyConflict,
   createOperationIdempotencyKeyRequired,
   createOperationIdempotencyReplayUnavailable,
+  createOperationModuleStateDenied,
   createOperationContextAuthRequired,
   createOperationPolicyDenied,
   createOperationPersistenceFailed,
@@ -36,12 +37,13 @@ const requestHeaders = HttpServerRequest.HttpServerRequest.pipe(
 
 const coreSDKErrorToHttpError = (error: CoreSDKError) => {
   switch (error._tag) {
-    case 'OperationDomainRejected':
+    case 'OperationDomainRejected': {
       return createOperationDomainRejected({
         code: error.code,
         message: error.message,
       });
-    case 'OperationAuthorizationDenied':
+    }
+    case 'OperationAuthorizationDenied': {
       return createOperationAuthorizationDenied({
         code: error.code,
         message: error.message,
@@ -50,25 +52,45 @@ const coreSDKErrorToHttpError = (error: CoreSDKError) => {
         resourceObjectId: error.resourceObjectId,
         resourceObjectType: error.resourceObjectType,
       });
-    case 'OperationPolicyDenied':
+    }
+    case 'OperationModuleStateDenied': {
+      return createOperationModuleStateDenied({
+        accessKind: error.accessKind,
+        code: error.code,
+        message: error.message,
+        moduleKey: error.moduleKey,
+        state: error.state,
+      });
+    }
+    case 'OperationPolicyDenied': {
       return createOperationPolicyDenied({
         code: error.code,
         message: error.message,
         policyKey: error.policyKey,
       });
-    case 'OperationExecutionFailed':
+    }
+    case 'OperationExecutionFailed': {
       return createOperationExecutionFailed(error.message);
-    case 'OperationIdempotencyConflict':
+    }
+    case 'OperationIdempotencyConflict': {
       return createOperationIdempotencyConflict(error.message);
-    case 'OperationIdempotencyKeyRequired':
+    }
+    case 'OperationIdempotencyKeyRequired': {
       return createOperationIdempotencyKeyRequired(error.message);
-    case 'OperationIdempotencyReplayUnavailable':
+    }
+    case 'OperationIdempotencyReplayUnavailable': {
       return createOperationIdempotencyReplayUnavailable(error.message);
-    case 'OperationPersistenceFailed':
+    }
+    case 'OperationPersistenceFailed': {
       return createOperationPersistenceFailed(error.message);
+    }
     case 'OperationAuthRequired':
-    case 'OperationContextInvalid':
+    case 'OperationContextInvalid': {
       return createOperationContextAuthRequired(error.message);
+    }
+    default: {
+      return createOperationExecutionFailed('Unhandled CoreSDK error.');
+    }
   }
 };
 

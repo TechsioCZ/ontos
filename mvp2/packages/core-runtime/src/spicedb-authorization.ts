@@ -25,6 +25,26 @@ export type SpiceDbAuthorizationChecker = (
   input: SpiceDbPermissionCheckInput,
 ) => Promise<SpiceDbAuthorizationDecision>;
 
+export const createTenantScopedSpiceDbPermissionCheck = ({
+  permission,
+  principalId,
+  resourceObjectId,
+  resourceObjectType,
+  tenantId,
+}: {
+  readonly permission: string;
+  readonly principalId: string;
+  readonly resourceObjectId: string;
+  readonly resourceObjectType: string;
+  readonly tenantId: string;
+}): SpiceDbPermissionCheckInput => ({
+  permission,
+  resourceObjectId: `${tenantId}_${resourceObjectId.replaceAll('.', '-')}`,
+  resourceObjectType,
+  subjectObjectId: principalId,
+  subjectObjectType: 'principal',
+});
+
 type CoreSpiceDbConfig = {
   readonly endpoint: string;
   readonly insecure: boolean;

@@ -1,10 +1,12 @@
 // @effect-diagnostics asyncFunction:off globalDate:off
 import { db } from '@mvp2/core-runtime/db/client';
-import type { OutboxWorkerRegistration } from '@mvp2/core-runtime';
-import type { CoreTransaction } from '@mvp2/core-runtime';
+import {
+  rowsFromResult,
+  type CoreTransaction,
+  type OutboxWorkerRegistration,
+} from '@mvp2/core-runtime';
 import { sql } from 'drizzle-orm';
 import { matchingRegistrationsForTopic } from './topic-matching.ts';
-import { rowsFromResult } from './sql-result.ts';
 
 export type MaterializeDeliveriesOptions = {
   readonly batchSize: number;

@@ -1,6 +1,7 @@
-// @effect-diagnostics asyncFunction:off globalDate:off nodeBuiltinImport:off
+// @effect-diagnostics asyncFunction:off globalDate:off nodeBuiltinImport:off globalConsole:off
 import { createHash } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
+import { isInstalledModuleKey, type ModuleStateAccessKind } from '@mvp2/shared-contracts';
 import type {
   OperationAccessKind,
   OperationActionInvocationStatus,
@@ -20,9 +21,11 @@ import {
 } from './db/schema.ts';
 import type { OutboxMessage } from './outbox-message.ts';
 import type { PolicyCheck, PolicyDenied } from './policy.ts';
+import { checkModuleStateAccess } from './module-state.ts';
+import { rowsFromResult } from './sql-result.ts';
 import {
+  createTenantScopedSpiceDbPermissionCheck,
   type SpiceDbAuthorizationChecker,
-  type SpiceDbPermissionCheckInput,
   spiceDbAuthorizationChecker,
 } from './spicedb-authorization.ts';
 import {
@@ -90,6 +93,18 @@ export interface OperationAuthorizationDenied {
   readonly resourceObjectType: string;
 }
 
+export interface OperationModuleStateDenied {
+  readonly _tag: 'OperationModuleStateDenied';
+  readonly accessKind: ModuleStateAccessKind;
+  readonly code:
+    | 'module_state_load_blocked'
+    | 'module_state_read_blocked'
+    | 'module_state_mutate_blocked';
+  readonly message: string;
+  readonly moduleKey: string;
+  readonly state: string;
+}
+
 export type OperationExecutionFailed = {
   readonly _tag: 'OperationExecutionFailed';
   readonly message: string;
@@ -104,6 +119,7 @@ export type CoreSDKError =
   | OperationPersistenceFailed
   | OperationDomainRejected
   | OperationAuthorizationDenied
+  | OperationModuleStateDenied
   | OperationPolicyDenied
   | OperationExecutionFailed;
 
@@ -124,6 +140,7 @@ export type ActionDescriptor<TAction = unknown, TResponse = unknown> = {
   readonly domainEvent?: ActionDomainEventDescriptor<TAction, TResponse>;
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
+  readonly moduleStateAccess?: ModuleStateAccessKind;
   readonly requestSchema: unknown;
   readonly responseSchema: unknown;
 };
@@ -166,6 +183,7 @@ export type DataAccessDescriptor = {
   readonly evidenceCaptureMode?: OperationEvidenceCaptureMode;
   readonly evidencePolicyKey: string;
   readonly gatewayAudience: string;
+  readonly moduleStateAccess?: ModuleStateAccessKind;
   readonly requestSchema: unknown;
   readonly responseSchema: unknown;
   readonly servingModuleKey: string;
@@ -277,6 +295,28 @@ const authorizationDenied = ({
   resourceObjectType,
 });
 
+const moduleStateDenied = ({
+  accessKind,
+  code,
+  moduleKey,
+  state,
+}: {
+  readonly accessKind: ModuleStateAccessKind;
+  readonly code:
+    | 'module_state_load_blocked'
+    | 'module_state_read_blocked'
+    | 'module_state_mutate_blocked';
+  readonly moduleKey: string;
+  readonly state: string;
+}): OperationModuleStateDenied => ({
+  _tag: 'OperationModuleStateDenied',
+  accessKind,
+  code,
+  message: `Module "${moduleKey}" is ${state}; ${accessKind} access is not allowed.`,
+  moduleKey,
+  state,
+});
+
 const authRequired = (error: VerticalGatewayTokenMissing): OperationAuthRequired => ({
   _tag: 'OperationAuthRequired',
   message: error.message,
@@ -305,18 +345,6 @@ const stableStringify = (value: unknown): string => {
 const requestHash = (payload: unknown) =>
   createHash('sha256').update(stableStringify(payload)).digest('hex');
 
-const rowsFromResult = <TRow>(result: unknown): readonly TRow[] => {
-  if (Array.isArray(result)) {
-    return result as readonly TRow[];
-  }
-
-  if (result !== null && typeof result === 'object' && Symbol.iterator in result) {
-    return Array.from(result as Iterable<TRow>);
-  }
-
-  return [];
-};
-
 const resolveContext = <TAction>({
   action,
   actionKey,
@@ -338,6 +366,7 @@ const resolveContext = <TAction>({
         ...result.operationContext,
         action,
         actionKey,
+        gatewayAudience: audience,
       }
     : result.error._tag === 'VerticalGatewayTokenMissing'
       ? authRequired(result.error)
@@ -600,36 +629,44 @@ const markActionInvocationStatus = async <TAction>(
 const writeAuditEvent = async <TAction>({
   auditProfile,
   context,
+  evidenceJson,
   eventType,
   executor = db,
   outcome,
   outcomeCode,
   outcomeStage,
+  targetModuleKey,
+  targetResourceId,
+  targetResourceType,
 }: {
   readonly auditProfile: OperationAuditProfile;
   readonly context: OperationContext<TAction>;
+  readonly evidenceJson?: Record<string, unknown>;
   readonly eventType: string;
   readonly executor?: CoreDbExecutor;
   readonly outcome: OperationAuditOutcome;
   readonly outcomeCode: string;
   readonly outcomeStage: OperationAuditStage;
+  readonly targetModuleKey?: string;
+  readonly targetResourceId?: string;
+  readonly targetResourceType?: string;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
-  if (context.actionInvocation === undefined) {
-    return persistenceFailed();
-  }
-
   const [inserted] = await executor
     .insert(auditEvents)
     .values({
-      actionInvocationId: context.actionInvocation.actionInvocationId,
+      actionInvocationId: context.actionInvocation?.actionInvocationId,
       auditProfile,
       authMethod: 'session',
+      evidenceJson: evidenceJson ?? {},
       eventType,
       legalEntityId: context.legalEntityId,
       outcome,
       outcomeCode,
       outcomeStage,
       principalId: context.principalId,
+      targetModuleKey,
+      targetResourceId,
+      targetResourceType,
       tenantId: context.tenantId,
     })
     .returning({
@@ -653,13 +690,14 @@ const writeAuditEvent = async <TAction>({
 const toSpiceDbPermissionCheck = <TAction>(
   context: OperationContext<TAction>,
   requirement: ActionAuthorizationRequirement,
-): SpiceDbPermissionCheckInput => ({
-  permission: requirement.permission,
-  resourceObjectId: `${context.tenantId}_${requirement.resourceObjectId.replaceAll('.', '-')}`,
-  resourceObjectType: requirement.resourceObjectType,
-  subjectObjectId: context.principalId,
-  subjectObjectType: 'principal',
-});
+) =>
+  createTenantScopedSpiceDbPermissionCheck({
+    permission: requirement.permission,
+    principalId: context.principalId,
+    resourceObjectId: requirement.resourceObjectId,
+    resourceObjectType: requirement.resourceObjectType,
+    tenantId: context.tenantId,
+  });
 
 const authorizeWithSpiceDb = async <TAction>({
   auditProfile,
@@ -740,6 +778,78 @@ const authorizeWithSpiceDb = async <TAction>({
     resourceObjectId: check.resourceObjectId,
     resourceObjectType: check.resourceObjectType,
   });
+};
+
+const enforceModuleStateGate = async <TAction>({
+  accessKind,
+  auditProfile,
+  context,
+  eventPrefix,
+  rejectInvocation,
+}: {
+  readonly accessKind: ModuleStateAccessKind | undefined;
+  readonly auditProfile: OperationAuditProfile;
+  readonly context: OperationContext<TAction>;
+  readonly eventPrefix: 'action' | 'data_access';
+  readonly rejectInvocation: boolean;
+}): Promise<OperationContext<TAction> | CoreSDKError> => {
+  if (accessKind === undefined) {
+    return context;
+  }
+
+  if (!isInstalledModuleKey(context.gatewayAudience)) {
+    return context;
+  }
+
+  const checked = await checkModuleStateAccess({
+    accessKind,
+    moduleKey: context.gatewayAudience,
+    tenantId: context.tenantId,
+  });
+
+  if (checked._tag === 'Allowed') {
+    return context;
+  }
+
+  const rejectedContext = rejectInvocation
+    ? await markActionInvocationStatus(context, 'rejected')
+    : context;
+  const auditedContext = await writeAuditEvent({
+    auditProfile,
+    context: rejectedContext,
+    eventType: `${eventPrefix}.module_state.denied`,
+    evidenceJson: {
+      accessKind: checked.accessKind,
+      moduleKey: checked.moduleKey,
+      state: checked.state,
+    },
+    outcome: 'denied',
+    outcomeCode: checked.outcomeCode,
+    outcomeStage: 'policy',
+    targetModuleKey: checked.moduleKey,
+  });
+
+  console.warn(
+    JSON.stringify({
+      accessKind: checked.accessKind,
+      actionKey: context.actionKey,
+      moduleKey: checked.moduleKey,
+      outcomeCode: checked.outcomeCode,
+      principalId: context.principalId,
+      state: checked.state,
+      tenantId: context.tenantId,
+      type: 'module_state.denied',
+    }),
+  );
+
+  return '_tag' in auditedContext
+    ? auditedContext
+    : moduleStateDenied({
+        accessKind: checked.accessKind,
+        code: checked.outcomeCode,
+        moduleKey: checked.moduleKey,
+        state: checked.state,
+      });
 };
 
 const evaluateActionPolicies = async <TAction>({
@@ -943,10 +1053,22 @@ export const runAction = async <TAction, TResponse>({
     return receivedContext;
   }
 
+  const moduleStateCheckedContext = await enforceModuleStateGate({
+    accessKind: descriptor.moduleStateAccess,
+    auditProfile: descriptor.auditProfile,
+    context: receivedContext,
+    eventPrefix: 'action',
+    rejectInvocation: true,
+  });
+
+  if ('_tag' in moduleStateCheckedContext) {
+    return moduleStateCheckedContext;
+  }
+
   const authorizedContext = await authorizeWithSpiceDb({
     auditProfile: descriptor.auditProfile,
     authorizationChecker: options.authorizationChecker ?? spiceDbAuthorizationChecker,
-    context: receivedContext,
+    context: moduleStateCheckedContext,
     requirement: descriptor.authorization,
   });
 
@@ -1051,10 +1173,22 @@ export const runDataAccess = async <TRequest, TResponse>({
     return context;
   }
 
-  const response = await handler(query, { context });
+  const moduleStateCheckedContext = await enforceModuleStateGate({
+    accessKind: descriptor.moduleStateAccess ?? 'read',
+    auditProfile: 'minimal',
+    context,
+    eventPrefix: 'data_access',
+    rejectInvocation: false,
+  });
+
+  if ('_tag' in moduleStateCheckedContext) {
+    return moduleStateCheckedContext;
+  }
+
+  const response = await handler(query, { context: moduleStateCheckedContext });
   const queryHash = requestHash(query);
   const eventContext = await writeDataAccessEvent({
-    context,
+    context: moduleStateCheckedContext,
     descriptor,
     queryHash,
     resultCount: resultCount(response),

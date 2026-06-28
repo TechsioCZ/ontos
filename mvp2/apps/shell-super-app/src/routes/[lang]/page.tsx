@@ -1,8 +1,9 @@
 import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import ShellFrame from '../shell-frame';
 import { AuthControls } from '../auth-controls';
+import { ModuleStateAdminPanel } from '../module-state-admin-panel';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
-import { VerticalShowcase } from '../vertical-components';
+import { VerticalShowcase, VisibleModuleCount } from '../vertical-components';
 import { ultramodernUiMarker } from '../../ultramodern-build';
 
 export default function ShellHome() {
@@ -35,6 +36,7 @@ export default function ShellHome() {
             </span>
           </div>
           <AuthControls />
+          <ModuleStateAdminPanel />
         </div>
         <div className="shell:rounded-3xl shell:bg-white/90 shell:p-6 shell:shadow-2xl shell:shadow-stone-900/15">
           <div className="shell:grid shell:gap-4 shell:sm:grid-cols-2">
@@ -43,7 +45,7 @@ export default function ShellHome() {
                 {t('shell.hero.cardOneKicker')}
               </span>
               <strong className="shell:mt-3 shell:block shell:text-3xl shell:font-black shell:text-stone-950">
-                2
+                <VisibleModuleCount />
               </strong>
               <p className="shell:mt-2 shell:text-sm shell:font-semibold shell:text-stone-600">
                 {t('shell.hero.cardOne')}

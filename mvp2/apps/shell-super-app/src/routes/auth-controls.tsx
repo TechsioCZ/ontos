@@ -1,40 +1,7 @@
-// @effect-diagnostics asyncFunction:off
-import { useEffect, useState } from 'react';
-import type { AuthContextResponse, DemoUserKey } from '../effect/auth-api';
-import {
-  getShellAuthContext,
-  runEffectRequest,
-  signInShellAuth,
-  signOutShellAuth,
-} from '../effect/auth-client';
+import { useShellAuth } from './shell-auth-context';
 
-export function AuthControls() {
-  const [authContext, setAuthContext] = useState<AuthContextResponse['context']>(null);
-  const [isPending, setIsPending] = useState(false);
-
-  useEffect(() => {
-    void runEffectRequest(getShellAuthContext()).then((result) => setAuthContext(result.context));
-  }, []);
-
-  const signIn = async (demoUserKey: DemoUserKey) => {
-    setIsPending(true);
-    try {
-      const result = await runEffectRequest(signInShellAuth(demoUserKey));
-      setAuthContext(result.context);
-    } finally {
-      setIsPending(false);
-    }
-  };
-
-  const signOut = async () => {
-    setIsPending(true);
-    try {
-      const result = await runEffectRequest(signOutShellAuth());
-      setAuthContext(result.context);
-    } finally {
-      setIsPending(false);
-    }
-  };
+export const AuthControls = () => {
+  const { context: authContext, isPending, signIn, signOut } = useShellAuth();
 
   return (
     <div className="shell:mt-7 shell:flex shell:flex-col shell:gap-3">
@@ -95,4 +62,4 @@ export function AuthControls() {
       )}
     </div>
   );
-}
+};

@@ -1,4 +1,8 @@
+import type { ActionDescriptor } from '@mvp2/core-runtime';
 import { unitReadPayloadSchema, unitReadResultSchema } from '../../shared/effect/api.ts';
+
+export type ReadUnitsAction = typeof unitReadPayloadSchema.Type;
+export type ReadUnitsResult = typeof unitReadResultSchema.Type;
 
 export const readUnitsActionDescriptor = {
   actionKey: 'property.registry.readUnits',
@@ -11,8 +15,7 @@ export const readUnitsActionDescriptor = {
   },
   gatewayAudience: 'properties',
   idempotency: 'optional',
+  moduleStateAccess: 'read',
   requestSchema: unitReadPayloadSchema,
   responseSchema: unitReadResultSchema,
-} as const;
-
-export type ReadUnitsAction = typeof unitReadPayloadSchema.Type;
+} satisfies ActionDescriptor<ReadUnitsAction, ReadUnitsResult>;

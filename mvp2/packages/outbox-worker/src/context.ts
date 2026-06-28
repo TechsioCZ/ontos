@@ -1,11 +1,11 @@
 // @effect-diagnostics asyncFunction:off
-import type {
-  CoreTransaction,
-  OutboxWorkerHandlerContext,
-  OutboxWorkerRegistration,
+import {
+  rowsFromResult,
+  type CoreTransaction,
+  type OutboxWorkerHandlerContext,
+  type OutboxWorkerRegistration,
 } from '@mvp2/core-runtime';
 import { sql } from 'drizzle-orm';
-import { rowsFromResult } from './sql-result.ts';
 
 export type WorkerExecutionEnvelope = {
   readonly context: OutboxWorkerHandlerContext;

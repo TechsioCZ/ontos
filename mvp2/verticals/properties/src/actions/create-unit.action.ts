@@ -20,6 +20,7 @@ export const createUnitActionDescriptor = {
   },
   gatewayAudience: 'properties',
   idempotency: 'required',
+  moduleStateAccess: 'mutate',
   requestSchema: unitCreatePayloadSchema,
   responseSchema: unitCreateResultSchema,
 } satisfies ActionDescriptor<CreateUnitAction, CreateUnitResult>;

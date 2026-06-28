@@ -4,7 +4,7 @@ import {
   runEffectRequest,
 } from '@modern-js/plugin-bff/effect-client';
 import { shellAuthEffectApi } from './auth-api';
-import type { DemoUserKey } from './auth-api';
+import type { DemoUserKey, SetModuleStatePayload } from './auth-api';
 
 export { Effect, runEffectRequest };
 
@@ -31,3 +31,11 @@ export const signInShellAuth = (demoUserKey: DemoUserKey, options: ShellAuthClie
 
 export const signOutShellAuth = (options: ShellAuthClientOptions = {}) =>
   createShellAuthClient(options).pipe(Effect.flatMap((client) => client.auth.signOut({})));
+
+export const setShellModuleState = (
+  payload: SetModuleStatePayload,
+  options: ShellAuthClientOptions = {},
+) =>
+  createShellAuthClient(options).pipe(
+    Effect.flatMap((client) => client.auth.setModuleState({ payload })),
+  );
