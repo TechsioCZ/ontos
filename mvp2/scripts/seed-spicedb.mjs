@@ -14,6 +14,11 @@ const localDemoRelationships = [
     subject: `principal:${adminPrincipalId}`,
   },
   {
+    relation: 'creator',
+    resource: `resource_type:${demoTenantId}_property-unit`,
+    subject: `principal:${adminPrincipalId}`,
+  },
+  {
     relation: 'changer',
     resource: `core_modules:${demoTenantId}_core-modules`,
     subject: `principal:${adminPrincipalId}`,
@@ -61,5 +66,5 @@ for (const relationship of localDemoRelationships) {
 }
 
 console.log(
-  'Seeded SpiceDB property.unit read and core.modules change permissions for the Admin demo principal.',
+  'Seeded SpiceDB property.unit read/create and core.modules change permissions for the Admin demo principal.',
 );

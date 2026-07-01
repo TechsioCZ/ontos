@@ -1,8 +1,6 @@
-import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import ShellFrame from '../shell-frame';
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { AuthControls } from '../auth-controls';
 import { ModuleStateAdminPanel } from '../module-state-admin-panel';
-import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { VerticalShowcase, VisibleModuleCount } from '../vertical-components';
 import { ultramodernUiMarker } from '../../ultramodern-build';
 
@@ -11,8 +9,7 @@ export default function ShellHome() {
   const t = i18nInstance['t'].bind(i18nInstance);
 
   return (
-    <ShellFrame>
-      <UltramodernRouteHead />
+    <>
       <section className="shell:mx-auto shell:grid shell:max-w-7xl shell:items-center shell:gap-8 shell:py-8 shell:md:grid-cols-[0.9fr_1.1fr] shell:lg:gap-14">
         <div className="shell:min-w-0">
           <p className="shell:text-xs shell:font-black shell:uppercase shell:tracking-[0.18em] shell:text-emerald-800">
@@ -25,12 +22,9 @@ export default function ShellHome() {
             {t('shell.hero.lede')}
           </p>
           <div className="shell:mt-7 shell:flex shell:flex-wrap shell:gap-3">
-            <Link
-              className="shell:inline-flex shell:min-h-11 shell:items-center shell:justify-center shell:rounded-full shell:bg-emerald-800 shell:px-5 shell:font-bold shell:text-white shell:shadow-lg shell:shadow-stone-900/10"
-              to="/"
-            >
+            <span className="shell:inline-flex shell:min-h-11 shell:items-center shell:justify-center shell:rounded-full shell:bg-emerald-800 shell:px-5 shell:font-bold shell:text-white shell:shadow-lg shell:shadow-stone-900/10">
               {t('shell.hero.primary')}
-            </Link>
+            </span>
             <span className="shell:inline-flex shell:min-h-11 shell:items-center shell:justify-center shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white/90 shell:px-5 shell:font-bold shell:text-stone-950 shell:shadow-lg shell:shadow-stone-900/10">
               {t('shell.hero.secondary')}
             </span>
@@ -66,9 +60,6 @@ export default function ShellHome() {
         </div>
       </section>
       <VerticalShowcase />
-      <p className="shell:sr-only" data-testid="ultramodern-preset">
-        presetUltramodern workspace
-      </p>
       <p
         className="shell:sr-only"
         data-build-marker={ultramodernUiMarker.build}
@@ -76,6 +67,6 @@ export default function ShellHome() {
       >
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
-    </ShellFrame>
+    </>
   );
 }

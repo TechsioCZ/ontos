@@ -1,4 +1,4 @@
-export const requestErrorMessage = (error: unknown, fallback: string): string =>
+export const effectRequestFailureMessage = (error: unknown, fallback: string): string =>
   typeof error === 'object' &&
   error !== null &&
   'cause' in error &&

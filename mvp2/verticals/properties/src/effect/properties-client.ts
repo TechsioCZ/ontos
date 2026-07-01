@@ -3,7 +3,12 @@ import {
   makeEffectHttpApiClient,
   runEffectRequest,
 } from '@modern-js/plugin-bff/effect-client';
-import { propertiesApiContract, propertiesEffectApi } from '../../shared/effect/api';
+import {
+  propertiesApiContract,
+  propertiesEffectApi,
+  type unitCreateResultSchema,
+  type unitReadResultSchema,
+} from '../../shared/effect/api';
 
 export { Effect, runEffectRequest };
 
@@ -18,18 +23,10 @@ export interface CreateUnitOptions extends PropertiesClientOptions {
   unitName: string;
 }
 
-interface CreateUnitResult {
-  readonly status: 'ok';
+type CreateUnitResult = typeof unitCreateResultSchema.Type & {
   readonly unitId: string;
-}
-
-interface ReadUnitResult {
-  readonly createdAt: string;
-  readonly name: string;
-  readonly unitId: string;
-}
-
-type ReadUnitsResult = readonly ReadUnitResult[];
+};
+type ReadUnitsResult = typeof unitReadResultSchema.Type;
 
 interface CreateUnitRequestFailed {
   readonly _tag: 'CreateUnitRequestFailed';
@@ -73,11 +70,13 @@ export const createUnit = (options: CreateUnitOptions): CreateUnitEffect =>
     Effect.flatMap((client) => {
       type CreateUnitRequest = Parameters<typeof client.properties.createUnit>[0];
       const request = {
-        ...(options.idempotencyKey === undefined
-          ? {}
-          : { headers: { 'idempotency-key': options.idempotencyKey } }),
+        headers: {
+          ...(options.idempotencyKey === undefined
+            ? {}
+            : { 'idempotency-key': options.idempotencyKey }),
+        },
         payload: options.unitName,
-      } as CreateUnitRequest;
+      } satisfies CreateUnitRequest;
 
       return client.properties.createUnit(request);
     }),

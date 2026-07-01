@@ -1,3 +1,4 @@
+// @effect-diagnostics processEnv:off
 import { defineRuntimeConfig } from '@modern-js/runtime';
 import { ultramodernBoundaryDebuggerPlugin } from '@modern-js/runtime/boundary-debugger';
 import { createInstance } from 'i18next';
@@ -28,6 +29,28 @@ const resources = {
   en: { [ultramodernRouteNamespace]: flattenLocaleResource(enResource) },
 } as const;
 
+const runtimePlugins =
+  process.env.NODE_ENV === 'production'
+    ? []
+    : [
+        ultramodernBoundaryDebuggerPlugin({
+          metadata: {
+            appId: 'shell-super-app',
+            boundaries: [
+              {
+                appId: 'shell-super-app',
+                label: 'Shell Super App',
+                mfName: 'shellSuperApp',
+                ownerTeam: 'super-app-platform',
+                packageName: '@mvp2/shell-super-app',
+                role: 'host',
+              },
+            ],
+            schemaVersion: 1,
+          },
+        }),
+      ];
+
 export default defineRuntimeConfig({
   i18n: {
     i18nInstance,
@@ -37,45 +60,12 @@ export default defineRuntimeConfig({
       interpolation: {
         escapeValue: false,
       },
-      ns: [ultramodernRouteNamespace, 'translation'],
+      ns: [ultramodernRouteNamespace],
       resources,
       supportedLngs: ['en', 'cs'],
     },
   },
-  plugins: [
-    ultramodernBoundaryDebuggerPlugin({
-      metadata: {
-        appId: 'shell-super-app',
-        boundaries: [
-          {
-            appId: 'shell-super-app',
-            label: 'Shell Super App',
-            mfName: 'shellSuperApp',
-            ownerTeam: 'super-app-platform',
-            packageName: '@mvp2/shell-super-app',
-            role: 'host',
-          },
-          {
-            appId: 'properties',
-            label: 'Properties Vertical',
-            mfName: 'verticalProperties',
-            ownerTeam: 'super-app-platform',
-            packageName: '@mvp2/properties',
-            role: 'vertical',
-          },
-          {
-            appId: 'accounting',
-            label: 'Accounting Vertical',
-            mfName: 'verticalAccounting',
-            ownerTeam: 'super-app-platform',
-            packageName: '@mvp2/accounting',
-            role: 'vertical',
-          },
-        ],
-        schemaVersion: 1,
-      },
-    }),
-  ],
+  plugins: runtimePlugins,
 
   router: {
     framework: 'tanstack',

@@ -1,16 +1,8 @@
-import type { OutboxWorkerRegistration } from '@mvp2/core-runtime';
-import { propertiesUnitCreatedWorkerRegistration } from '../../../verticals/accounting/src/workers/properties-unit-created.registration.mts';
+import { accountingOutboxWorkerRegistrations } from '@mvp2/accounting/outbox-workers';
+import type { OutboxWorkerRegistration } from '@mvp2/core-runtime/outbox';
 
 export type InstalledOutboxWorkerRegistration = OutboxWorkerRegistration<unknown>;
 
-export type InstalledOutboxWorkerRegistry = {
-  readonly registrations: readonly InstalledOutboxWorkerRegistration[];
-};
-
 export const installedOutboxWorkerRegistrations = [
-  propertiesUnitCreatedWorkerRegistration,
+  ...accountingOutboxWorkerRegistrations,
 ] satisfies readonly InstalledOutboxWorkerRegistration[];
-
-export const installedOutboxWorkerRegistry = {
-  registrations: installedOutboxWorkerRegistrations,
-} satisfies InstalledOutboxWorkerRegistry;

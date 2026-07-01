@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off
-import type { ActionExecutionServices } from '@mvp2/core-runtime';
+import type { ActionExecutionServices } from '@mvp2/core-runtime/sdk';
 import { unit } from '../db/schema.ts';
 import { propertiesUnitCreatedOutboxMessage } from '../outbox/properties-unit-created.message.ts';
 import type { CreateUnitAction, CreateUnitResult } from './create-unit.action.ts';

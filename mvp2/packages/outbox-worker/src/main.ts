@@ -1,4 +1,4 @@
-// @effect-diagnostics globalConsole:off nodeBuiltinImport:off processEnv:off
+// @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import { sqlClient } from '@mvp2/core-runtime/db/client';
 import { Effect, Fiber } from 'effect';
 import { readOutboxWorkerRuntimeConfig } from './config.ts';
@@ -21,15 +21,18 @@ const shutdown = (signal: string): void => {
   }
 
   shuttingDown = true;
-  console.info(`[outbox-worker] received ${signal}; shutting down`);
 
-  void Effect.runPromise(Fiber.interrupt(loopFiber))
-    .then(() => sqlClient.end({ timeout: 5 }))
+  void Effect.runPromise(
+    Effect.logInfo(`[outbox-worker] received ${signal}; shutting down`).pipe(
+      Effect.zipRight(Fiber.interrupt(loopFiber)),
+      Effect.zipRight(Effect.promise(() => sqlClient.end({ timeout: 5 }))),
+    ),
+  )
     .then(() => {
       process.exitCode = 0;
     })
     .catch((error: unknown) => {
-      console.error('[outbox-worker] shutdown failed', error);
+      void Effect.runPromise(Effect.logError('[outbox-worker] shutdown failed', error));
       process.exitCode = 1;
     });
 };
@@ -37,7 +40,9 @@ const shutdown = (signal: string): void => {
 process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));
 
-console.info('[outbox-worker] started', {
-  registrations: installedOutboxWorkerRegistrations.length,
-  runtimeId: config.runtimeId,
-});
+void Effect.runPromise(
+  Effect.logInfo('[outbox-worker] started', {
+    registrations: installedOutboxWorkerRegistrations.length,
+    runtimeId: config.runtimeId,
+  }),
+);

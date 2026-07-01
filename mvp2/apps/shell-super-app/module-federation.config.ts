@@ -53,16 +53,6 @@ export default createModuleFederationConfig({
   bridge: {
     enableBridgeRouter: false,
   },
-  dev: {
-    disableDynamicRemoteTypeHints: true,
-  },
-  dts: {
-    displayErrorInTerminal: true,
-    generateTypes: {
-      compilerInstance: 'tsgo',
-    },
-  },
-  filename: 'remoteEntry.js',
   name: 'shellSuperApp',
   remotes: {
     accounting: createRemoteManifestUrl({
@@ -117,5 +107,6 @@ export default createModuleFederationConfig({
       treeShaking: false,
     },
   },
+  // The independent shared build must not recursively apply the Rspack MF plugin.
   treeShakingSharedExcludePlugins: ['RspackModuleFederationPlugin'],
 });

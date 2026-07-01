@@ -1,112 +1,9 @@
-import {
-  classifyModuleFederationFallback,
-  createModuleFederationFallbackTelemetry,
-  emitModuleFederationFallbackTelemetry,
-  toModuleFederationFallbackAttributes,
-} from '@modern-js/runtime/module-federation';
-import { createLazyComponent } from '@module-federation/bridge-react';
-import { getInstance, loadRemote } from '@module-federation/modern-js-v3/runtime';
-import { Suspense, useEffect, useMemo, useState } from 'react';
-import type { ComponentType } from 'react';
 import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { isModuleStateAccessAllowed } from '@mvp2/shared-contracts';
 import type { InstalledModuleKey, ModuleActivationState } from '@mvp2/shared-contracts';
 import { shellInstalledModules } from '../modules/installed-modules';
+import { RemoteSlot } from './remote-slot';
 import { useShellAuth } from './shell-auth-context';
-
-interface RemoteComponentModule {
-  default: ComponentType;
-}
-
-const loadRemoteComponent = (specifier: string) =>
-  loadRemote<RemoteComponentModule>(specifier) as Promise<RemoteComponentModule>;
-
-const createRemoteFallback =
-  (specifier: string) =>
-  ({ error }: { error: Error }) => {
-    const { i18nInstance } = useModernI18n();
-    const t = i18nInstance['t'].bind(i18nInstance);
-    const classification = classifyModuleFederationFallback(error);
-    const entry = typeof window === 'undefined' ? undefined : window.location.href;
-    const telemetry = createModuleFederationFallbackTelemetry({
-      appName: 'shell-super-app',
-      classification,
-      error,
-      eventName: 'mf.client.remote.fallback',
-      exportName: 'default',
-      ...(entry === undefined ? {} : { entry }),
-      phase: 'load',
-      remote: specifier,
-      status: 'degraded',
-    });
-
-    useEffect(() => {
-      void emitModuleFederationFallbackTelemetry({
-        appName: telemetry.appName,
-        classification,
-        error,
-        eventName: telemetry.eventName,
-        exportName: 'default',
-        metadata: telemetry.metadata,
-        ...(telemetry.entry === undefined ? {} : { entry: telemetry.entry }),
-        phase: telemetry.phase,
-        remote: specifier,
-        status: 'degraded',
-      });
-    }, [classification, error, telemetry]);
-
-    return (
-      <div
-        className="shell:rounded-xl shell:border shell:border-red-900/20 shell:bg-red-50 shell:px-4 shell:py-3 shell:text-sm shell:font-semibold shell:text-red-900"
-        data-remote-error={error.name}
-        {...toModuleFederationFallbackAttributes(telemetry)}
-      >
-        {t('shell.remoteUnavailable')}
-      </div>
-    );
-  };
-
-const createHydratedRemote = (specifier: string) =>
-  function HydratedRemote() {
-    const [hydrated, setHydrated] = useState(false);
-
-    useEffect(() => {
-      setHydrated(true);
-    }, []);
-
-    const FederatedComponent = useMemo(() => {
-      if (!hydrated) {
-        return null;
-      }
-      const instance = getInstance();
-      if (instance === null || instance === undefined) {
-        return null;
-      }
-      return createLazyComponent({
-        export: 'default',
-        fallback: createRemoteFallback(specifier),
-        instance,
-        loader: () => loadRemoteComponent(specifier),
-        loading: null,
-      });
-    }, [hydrated]);
-
-    if (FederatedComponent === null) {
-      return null;
-    }
-
-    return (
-      <Suspense fallback={null}>
-        <FederatedComponent />
-      </Suspense>
-    );
-  };
-
-const RemoteSlot = ({ specifier }: { readonly specifier: string }) => {
-  const Remote = useMemo(() => createHydratedRemote(specifier), [specifier]);
-
-  return <Remote />;
-};
 
 const useVisibleModules = () => {
   const { context } = useShellAuth();
@@ -122,6 +19,15 @@ const useVisibleModules = () => {
 
     return isModuleStateAccessAllowed({ accessKind: 'load', state });
   });
+};
+
+const useModuleActivationState = (moduleKey: InstalledModuleKey) => {
+  const { context } = useShellAuth();
+
+  return (
+    context?.moduleStates.find((moduleState) => moduleState.moduleKey === moduleKey)?.state ??
+    'inactive'
+  );
 };
 
 export const VisibleModuleCount = () => {
@@ -191,7 +97,7 @@ export const VerticalShowcase = () => {
                 className="shell:inline-flex shell:w-fit shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white shell:px-4 shell:py-2 shell:text-sm shell:font-bold shell:text-stone-950 shell:no-underline"
                 to={module.routePath}
               >
-                View {module.label}
+                {t('shell.routes.viewModule', { module: module.label })}
               </Link>
             )}
           </div>
@@ -202,16 +108,19 @@ export const VerticalShowcase = () => {
 };
 
 export const PropertiesRouteSurface = () => {
-  const { context } = useShellAuth();
-  const state =
-    context?.moduleStates.find((moduleState) => moduleState.moduleKey === 'properties')?.state ??
-    'inactive';
+  const { i18nInstance } = useModernI18n();
+  const t = i18nInstance['t'].bind(i18nInstance);
+  const routeModule = shellInstalledModules.find((module) => module.moduleKey === 'properties');
+  const state = useModuleActivationState('properties');
 
-  if (!isModuleStateAccessAllowed({ accessKind: 'load', state })) {
+  if (
+    routeModule?.routeRemote === undefined ||
+    !isModuleStateAccessAllowed({ accessKind: 'load', state })
+  ) {
     return (
       <section className="shell:mx-auto shell:mt-12 shell:max-w-7xl shell:bg-white/90 shell:p-6 shell:shadow-xl shell:shadow-stone-900/10">
         <p className="shell:text-lg shell:font-bold shell:text-stone-700">
-          Properties is not available.
+          {t('shell.remotes.propertiesUnavailable')}
         </p>
       </section>
     );
@@ -223,7 +132,7 @@ export const PropertiesRouteSurface = () => {
       data-modern-boundary-id="shellSuperApp"
       data-ontos-module-id="properties"
     >
-      <RemoteSlot specifier="properties/Route" />
+      <RemoteSlot specifier={routeModule.routeRemote} />
     </section>
   );
 };

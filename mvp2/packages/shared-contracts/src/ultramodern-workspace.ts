@@ -52,22 +52,3 @@ export interface UltramodernPerformanceReadinessDiagnosticsConfig {
     >
   >;
 }
-
-export const ultramodernWorkspaceContract = {
-  ownership: 'topology/ownership.json',
-  performanceReadiness: {
-    defaultOn: true,
-    optOut: 'scripts/ultramodern-performance-readiness.config.mjs#enabled=false',
-    report: '.codex/reports/performance-readiness/ultramodern-performance-readiness.json',
-    signals: [
-      'bfcache',
-      'core-web-vitals-rum',
-      'duplicate-prefetch-warmup',
-      'cache-policy-sanity',
-      'save-data-behavior',
-      'cloudflare-ssr-cache-hints',
-    ],
-  },
-  preset: 'presetUltramodern',
-  topology: 'topology/reference-topology.json',
-} as const;

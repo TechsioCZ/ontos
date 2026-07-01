@@ -609,22 +609,6 @@
               "twitter:description"
             ]
           },
-          "structuredData": {
-            "publicIndexableOnly": true,
-            "optional": true,
-            "source": "route.jsonLd",
-            "inference": false,
-            "helperModule": "./src/routes/ultramodern-jsonld",
-            "helperTypes": [
-              "WebPage",
-              "WebApplication",
-              "SoftwareApplication",
-              "BreadcrumbList",
-              "FAQPage",
-              "Organization"
-            ],
-            "sanitizesHtmlOpenBracket": true
-          },
           "privateRouteRobots": "noindex, nofollow"
         },
         "publicSurface": {
@@ -1162,6 +1146,7 @@
               "twitter:description"
             ]
           },
+          "privateRouteRobots": "noindex, nofollow",
           "structuredData": {
             "publicIndexableOnly": true,
             "optional": true,
@@ -1177,8 +1162,7 @@
               "Organization"
             ],
             "sanitizesHtmlOpenBracket": true
-          },
-          "privateRouteRobots": "noindex, nofollow"
+          }
         },
         "publicSurface": {
           "authoring": "colocated-route-meta",
@@ -1780,22 +1764,6 @@
               "twitter:title",
               "twitter:description"
             ]
-          },
-          "structuredData": {
-            "publicIndexableOnly": true,
-            "optional": true,
-            "source": "route.jsonLd",
-            "inference": false,
-            "helperModule": "./src/routes/ultramodern-jsonld",
-            "helperTypes": [
-              "WebPage",
-              "WebApplication",
-              "SoftwareApplication",
-              "BreadcrumbList",
-              "FAQPage",
-              "Organization"
-            ],
-            "sanitizesHtmlOpenBracket": true
           },
           "privateRouteRobots": "noindex, nofollow"
         },

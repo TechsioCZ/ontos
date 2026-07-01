@@ -480,20 +480,6 @@
               "path": "/effect/accounting",
               "resource": "workspace-items",
               "owner": "accounting"
-            },
-            "workspaceDetail": {
-              "client": "getAccounting",
-              "method": "GET",
-              "path": "/effect/accounting/:id",
-              "resource": "workspace-item",
-              "owner": "accounting"
-            },
-            "workspaceCreate": {
-              "client": "createAccounting",
-              "method": "POST",
-              "path": "/effect/accounting",
-              "resource": "accounting",
-              "owner": "accounting"
             }
           }
         }

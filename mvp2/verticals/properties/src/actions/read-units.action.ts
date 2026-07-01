@@ -1,4 +1,4 @@
-import type { ActionDescriptor } from '@mvp2/core-runtime';
+import type { ActionDescriptor } from '@mvp2/core-runtime/sdk';
 import { unitReadPayloadSchema, unitReadResultSchema } from '../../shared/effect/api.ts';
 
 export type ReadUnitsAction = typeof unitReadPayloadSchema.Type;

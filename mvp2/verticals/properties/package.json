@@ -31,7 +31,6 @@
     "i18next": "26.3.1",
     "node-fetch": "^3.3.2",
     "@mvp2/core-runtime": "workspace:*",
-    "@mvp2/shared-contracts": "workspace:*",
     "@mvp2/shared-design-tokens": "workspace:*",
     "drizzle-orm": "0.45.2",
     "react": "^19.2.7",
@@ -57,6 +56,7 @@
     "./Route": "./src/federation-entry.tsx",
     "./Widget": "./src/components/properties-widget.tsx",
     "./effect/client": "./src/effect/properties-client.ts",
+    "./shared/events/properties-unit-created": "./shared/events/properties-unit-created.ts",
     "./shared/effect/api": "./shared/effect/api.ts"
   }
 }

@@ -4,7 +4,8 @@ import { ReadUnitsButton } from '../../../../components/read-units-button';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 
 export default function PropertiesUnitsPage() {
-  const { language } = useModernI18n();
+  const { i18nInstance, language } = useModernI18n();
+  const t = i18nInstance['t'].bind(i18nInstance);
 
   return (
     <main className="properties:min-h-screen properties:bg-um-canvas properties:px-4 properties:py-6 properties:text-um-foreground properties:sm:px-8">
@@ -14,11 +15,13 @@ export default function PropertiesUnitsPage() {
         params={{ lang: language }}
         to="/$lang"
       >
-        Back to Properties
+        {t('properties.units.back')}
       </Link>
-      <h1 className="properties:mt-10 properties:text-4xl properties:font-black">Property Units</h1>
+      <h1 className="properties:mt-10 properties:text-4xl properties:font-black">
+        {t('properties.units.title')}
+      </h1>
       <p className="properties:mt-3 properties:max-w-2xl properties:text-lg properties:text-stone-600">
-        Read all units through the properties CoreSDK action flow.
+        {t('properties.units.description')}
       </p>
       <div className="properties:mt-6">
         <ReadUnitsButton />

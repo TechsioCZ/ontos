@@ -6,7 +6,7 @@ import {
 import { shellAuthEffectApi } from './auth-api';
 import type { DemoUserKey, SetModuleStatePayload } from './auth-api';
 
-export { Effect, runEffectRequest };
+export { runEffectRequest };
 
 export const shellAuthApiContract = {
   apiPrefix: '/shell-super-app-api',

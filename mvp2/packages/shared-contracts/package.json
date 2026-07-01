@@ -2,12 +2,11 @@
   "private": true,
   "name": "@mvp2/shared-contracts",
   "version": "0.1.0",
-  "description": "Route, ownership, and topology contract placeholders.",
+  "description": "Shared runtime and workspace contracts for MVP2.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./module-state": "./src/module-state.ts",
-    "./properties-events": "./src/properties-events.ts",
     "./ultramodern-workspace": "./src/ultramodern-workspace.ts"
   },
   "scripts": {

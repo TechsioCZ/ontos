@@ -126,12 +126,12 @@ const ensureBetterAuthUser = async (demoUserKey: DemoUserKey, headers: Headers) 
 
   try {
     const signIn = await auth.api.signInEmail({
+      asResponse: true,
       body: {
         email: demoUser.email,
         password: demoUser.password,
       },
       headers,
-      asResponse: true,
     });
 
     if (signIn.ok) {
@@ -151,12 +151,12 @@ const ensureBetterAuthUser = async (demoUserKey: DemoUserKey, headers: Headers) 
   });
 
   return auth.api.signInEmail({
+    asResponse: true,
     body: {
       email: demoUser.email,
       password: demoUser.password,
     },
     headers,
-    asResponse: true,
   });
 };
 
@@ -273,8 +273,8 @@ export const signInDemoUser = async ({
 
 export const signOutDemoUser = async ({ headers }: { headers: Headers }) => {
   const response = await auth.api.signOut({
-    headers,
     asResponse: true,
+    headers,
   });
 
   return {

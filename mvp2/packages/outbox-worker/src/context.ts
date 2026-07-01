@@ -1,11 +1,12 @@
-// @effect-diagnostics asyncFunction:off
 import {
-  rowsFromResult,
-  type CoreTransaction,
   type OutboxWorkerHandlerContext,
   type OutboxWorkerRegistration,
-} from '@mvp2/core-runtime';
+} from '@mvp2/core-runtime/outbox';
+import type { CoreTransaction } from '@mvp2/core-runtime/db/types';
+import { rowsFromResult } from '@mvp2/core-runtime/sql-result';
 import { sql } from 'drizzle-orm';
+import { Effect } from 'effect';
+import { type OutboxWorkerError, outboxWorkerError } from './errors.ts';
 
 export type WorkerExecutionEnvelope = {
   readonly context: OutboxWorkerHandlerContext;
@@ -18,7 +19,7 @@ type ContextRow = {
   readonly actionIdempotencyKey: string | null;
   readonly authBindingId: string | null;
   readonly domainEventId: string;
-  readonly executingModuleKey: string;
+  readonly consumerModuleKey: string;
   readonly legalEntityId: string | null;
   readonly outboxDeliveryId: string;
   readonly outboxMessageId: string;
@@ -30,16 +31,19 @@ type ContextRow = {
   readonly workerKey: string;
 };
 
-export const reconstructWorkerExecutionEnvelope = async (
+export const reconstructWorkerExecutionEnvelope = (
   tx: CoreTransaction,
   outboxDeliveryId: string,
   registration: OutboxWorkerRegistration<unknown>,
-): Promise<WorkerExecutionEnvelope> => {
-  const result = await tx.execute(sql`
+): Effect.Effect<WorkerExecutionEnvelope, OutboxWorkerError> =>
+  Effect.gen(function* () {
+    const result = yield* Effect.tryPromise({
+      try: () =>
+        tx.execute(sql`
     select
       delivery.outbox_delivery_id as "outboxDeliveryId",
       delivery.worker_key as "workerKey",
-      delivery.executing_module_key as "executingModuleKey",
+      delivery.consumer_module_key as "consumerModuleKey",
       message.outbox_message_id as "outboxMessageId",
       message.topic,
       message.payload_json as "payload",
@@ -61,35 +65,39 @@ export const reconstructWorkerExecutionEnvelope = async (
         on action.action_invocation_id = event.action_invocation_id
     where delivery.outbox_delivery_id = ${outboxDeliveryId}
       and delivery.worker_key = ${registration.descriptor.workerKey}
-  `);
-  const row = rowsFromResult<ContextRow>(result).at(0);
+  `),
+      catch: (error) => outboxWorkerError('Failed to reconstruct outbox worker context.', error),
+    });
+    const row = rowsFromResult<ContextRow>(result).at(0);
 
-  if (row === undefined) {
-    throw new Error(`Outbox delivery ${outboxDeliveryId} could not be reconstructed.`);
-  }
+    if (row === undefined) {
+      return yield* outboxWorkerError(
+        `Outbox delivery ${outboxDeliveryId} could not be reconstructed.`,
+      );
+    }
 
-  return {
-    context: {
-      tenantId: row.tenantId,
-      producerModuleKey: row.producerModuleKey,
-      executingModuleKey: row.executingModuleKey,
-      workerKey: row.workerKey,
-      topic: row.topic,
-      outboxMessageId: row.outboxMessageId,
-      outboxDeliveryId: row.outboxDeliveryId,
-      domainEventId: row.domainEventId,
-      idempotencyKey: row.outboxDeliveryId,
-      ...(row.legalEntityId === null ? {} : { legalEntityId: row.legalEntityId }),
-      ...(row.principalId === null ? {} : { originalPrincipalId: row.principalId }),
-      ...(row.authBindingId === null ? {} : { originalAuthBindingId: row.authBindingId }),
-      ...(row.actionInvocationId === null
-        ? {}
-        : { originalActionInvocationId: row.actionInvocationId }),
-      ...(row.actionKey === null ? {} : { originalActionKey: row.actionKey }),
-      ...(row.actionIdempotencyKey === null
-        ? {}
-        : { originalActionIdempotencyKey: row.actionIdempotencyKey }),
-    },
-    payload: row.payload,
-  };
-};
+    return {
+      context: {
+        tenantId: row.tenantId,
+        producerModuleKey: row.producerModuleKey,
+        consumerModuleKey: row.consumerModuleKey,
+        workerKey: row.workerKey,
+        topic: row.topic,
+        outboxMessageId: row.outboxMessageId,
+        outboxDeliveryId: row.outboxDeliveryId,
+        domainEventId: row.domainEventId,
+        idempotencyKey: row.outboxDeliveryId,
+        ...(row.legalEntityId === null ? {} : { legalEntityId: row.legalEntityId }),
+        ...(row.principalId === null ? {} : { originalPrincipalId: row.principalId }),
+        ...(row.authBindingId === null ? {} : { originalAuthBindingId: row.authBindingId }),
+        ...(row.actionInvocationId === null
+          ? {}
+          : { originalActionInvocationId: row.actionInvocationId }),
+        ...(row.actionKey === null ? {} : { originalActionKey: row.actionKey }),
+        ...(row.actionIdempotencyKey === null
+          ? {}
+          : { originalActionIdempotencyKey: row.actionIdempotencyKey }),
+      },
+      payload: row.payload,
+    };
+  });

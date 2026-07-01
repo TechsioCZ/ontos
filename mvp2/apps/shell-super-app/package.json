@@ -54,8 +54,5 @@
     "typescript": "6.0.3",
     "zephyr-rspack-plugin": "1.1.1",
     "wrangler": "4.99.0"
-  },
-  "exports": {
-    "./effect/clients": "./src/effect/vertical-clients.ts"
   }
 }

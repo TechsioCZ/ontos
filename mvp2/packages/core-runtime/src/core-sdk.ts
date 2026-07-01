@@ -11,6 +11,7 @@ import type {
 } from './operation-context.ts';
 import { db } from './db/client.ts';
 import { actionInvocations, auditEvents, domainEvents, outboxMessages } from './db/schema.ts';
+import type { CoreDbExecutor, CoreTransaction } from './db/types.ts';
 import type { OutboxMessage } from './outbox-message.ts';
 import type { PolicyCheck, PolicyDenied } from './policy.ts';
 import { checkModuleStateAccess } from './module-state.ts';
@@ -25,12 +26,6 @@ import {
   type VerticalGatewayTokenMissing,
   resolveVerticalGatewayToken,
 } from './vertical-gateway-token.ts';
-
-type CoreTransactionCallback = Parameters<typeof db.transaction>[0];
-
-export type CoreTransaction = Parameters<CoreTransactionCallback>[0];
-
-type CoreDbExecutor = typeof db | CoreTransaction;
 
 export type OperationAuthRequired = {
   readonly _tag: 'OperationAuthRequired';
@@ -241,6 +236,9 @@ const executionFailed = (error: unknown): OperationExecutionFailed => ({
   _tag: 'OperationExecutionFailed',
   message: error instanceof Error ? error.message : 'Action execution failed.',
 });
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 const authorizationDenied = ({
   code,
@@ -716,19 +714,41 @@ const authorizeWithSpiceDb = async <TAction>({
     resourceObjectId: check.resourceObjectId,
     resourceObjectType: check.resourceObjectType,
   });
-  const rejectedContext = await markActionInvocationStatus(checkedContext, 'rejected');
-  const auditedContext = await writeAuditEvent({
-    auditProfile,
-    context: rejectedContext,
-    eventType: 'action.authorization.denied',
-    outcome: 'denied',
-    outcomeCode:
-      authorization._tag === 'Unavailable' ? 'spicedb_authorization_unavailable' : 'spicedb_denied',
-    outcomeStage: 'authz',
-  });
+  try {
+    const rejectedContext = await markActionInvocationStatus(checkedContext, 'rejected');
+    const auditedContext = await writeAuditEvent({
+      auditProfile,
+      context: rejectedContext,
+      eventType: 'action.authorization.denied',
+      outcome: 'denied',
+      outcomeCode:
+        authorization._tag === 'Unavailable'
+          ? 'spicedb_authorization_unavailable'
+          : 'spicedb_denied',
+      outcomeStage: 'authz',
+    });
 
-  if ('_tag' in auditedContext) {
-    return auditedContext;
+    if ('_tag' in auditedContext) {
+      console.warn(
+        JSON.stringify({
+          actionKey: context.actionKey,
+          message: auditedContext.message,
+          principalId: context.principalId,
+          tenantId: context.tenantId,
+          type: 'authorization_denied_evidence_persistence_failed',
+        }),
+      );
+    }
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        actionKey: context.actionKey,
+        message: errorMessage(error),
+        principalId: context.principalId,
+        tenantId: context.tenantId,
+        type: 'authorization_denied_evidence_persistence_failed',
+      }),
+    );
   }
 
   return authorizationDenied({

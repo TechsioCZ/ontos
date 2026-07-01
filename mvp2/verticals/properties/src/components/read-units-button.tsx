@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off globalConsole:off
 import { useState } from 'react';
 import { readUnits, runEffectRequest } from '../effect/properties-client';
-import { requestErrorMessage } from './request-error-message';
+import { effectRequestFailureMessage } from '../helpers/effect-request-failure-message';
 
 interface ReadUnit {
   readonly createdAt: string;
@@ -27,7 +27,7 @@ const readUnitsFromClick = async ({
     setUnits(units);
     setStatus(units.length === 0 ? 'No units found.' : `${units.length} units found.`);
   } catch (error) {
-    setStatus(requestErrorMessage(error, 'Read Units failed.'));
+    setStatus(effectRequestFailureMessage(error, 'Read Units failed.'));
   } finally {
     setIsLoading(false);
   }

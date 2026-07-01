@@ -1,7 +1,6 @@
 import { useLocalizedLocation, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Helmet } from '@modern-js/runtime/head';
 import { ultramodernRouteMetadata } from './ultramodern-route-metadata';
-import type { RouteJsonLd } from './ultramodern-jsonld';
 
 const appName = 'Shell Super App';
 const fallbackLanguage = 'en';
@@ -10,7 +9,6 @@ type SupportedLanguage = (typeof supportedLanguages)[number];
 type GeneratedRouteMetadata = (typeof ultramodernRouteMetadata)[number];
 type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'public'> & {
   readonly indexable?: boolean;
-  readonly jsonLd?: RouteJsonLd;
   readonly public?: boolean;
 };
 
@@ -34,46 +32,30 @@ const stripLanguagePrefix = (pathname: string) => {
 
 const escapeRegExp = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 
-const paramName = (segment: string) => segment.slice(1).replace(/\?$/u, '');
-
 const matchPattern = (pathname: string, pattern: string) => {
-  const names: string[] = [];
   const source = normalisePath(pattern)
     .split('/')
     .filter(Boolean)
     .map((segment) => {
       if (segment.startsWith(':')) {
-        names.push(paramName(segment));
         return segment.endsWith('?') ? '(?:/([^/]+))?' : '/([^/]+)';
       }
       return `/${escapeRegExp(segment)}`;
     })
     .join('');
-  const match = new RegExp(`^${source || '/'}$`, 'u').exec(normalisePath(pathname));
-
-  if (match === null) {
-    return;
-  }
-
-  const params: Record<string, string> = {};
-  for (const [index, name] of names.entries()) {
-    params[name] = decodeURIComponent(match[index + 1] ?? '');
-  }
-  return params;
+  return new RegExp(`^${source || '/'}$`, 'u').test(normalisePath(pathname));
 };
 
 const resolveRouteMetadata = (pathname: string) => {
   const pathWithoutLanguage = stripLanguagePrefix(pathname);
 
   for (const route of routeMetadata) {
-    const canonicalParams = matchPattern(pathWithoutLanguage, route.canonicalPath);
-    if (canonicalParams !== undefined) {
+    if (matchPattern(pathWithoutLanguage, route.canonicalPath)) {
       return route;
     }
 
     for (const language of supportedLanguages) {
-      const params = matchPattern(pathWithoutLanguage, route.localisedPaths[language]);
-      if (params !== undefined) {
+      if (matchPattern(pathWithoutLanguage, route.localisedPaths[language])) {
         return route;
       }
     }
@@ -87,8 +69,6 @@ const absoluteUrl = (pathname: string) => {
   return `${origin}${pathname}`;
 };
 
-const sanitiseJsonLd = (value: RouteJsonLd) => JSON.stringify(value).replaceAll('<', '\\u003c');
-
 export const UltramodernRouteHead = () => {
   const { i18nInstance } = useModernI18n();
   const t = i18nInstance['t'].bind(i18nInstance);
@@ -98,7 +78,6 @@ export const UltramodernRouteHead = () => {
   const description = route === undefined ? appName : t(route.descriptionKey);
   const canonicalUrl = absoluteUrl(alternates[fallbackLanguage] ?? `/${fallbackLanguage}`);
   const indexable = route === undefined ? false : route.public === true && route.indexable === true;
-  const jsonLd = indexable ? route?.jsonLd : undefined;
 
   return (
     <Helmet htmlAttributes={{ lang: i18nInstance.language ?? fallbackLanguage }}>
@@ -129,7 +108,6 @@ export const UltramodernRouteHead = () => {
           <meta content="summary_large_image" name="twitter:card" />
           <meta content={title} name="twitter:title" />
           <meta content={description} name="twitter:description" />
-          {jsonLd && <script type="application/ld+json">{sanitiseJsonLd(jsonLd)}</script>}
         </>
       )}
     </Helmet>

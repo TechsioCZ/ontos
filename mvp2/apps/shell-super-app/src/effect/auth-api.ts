@@ -2,10 +2,18 @@ import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import { installedModuleKeys, moduleActivationStates } from '@mvp2/shared-contracts';
+
+const httpStatusAnnotation = Symbol.for('@effect/platform/HttpApiSchema/AnnotationStatus');
+
+const httpStatus =
+  (status: number) =>
+  <TSchema extends { annotate: (annotations: Record<symbol, unknown>) => TSchema }>(
+    schema: TSchema,
+  ): TSchema =>
+    schema.annotate({ [httpStatusAnnotation]: status }) as TSchema;
 
 export const moduleActivationStateSchema = Schema.Literals(moduleActivationStates);
 
@@ -52,6 +60,8 @@ export const signInPayloadSchema = Schema.Struct({
   demoUserKey: Schema.Union([Schema.Literal('admin'), Schema.Literal('user')]),
 });
 
+type SignInPayload = typeof signInPayloadSchema.Type;
+
 export const setModuleStatePayloadSchema = Schema.Struct({
   moduleKey: installedModuleKeySchema,
   reason: Schema.optional(Schema.String),
@@ -63,16 +73,16 @@ export const operationContextAuthRequiredSchema = Schema.TaggedStruct(
   {
     message: Schema.String,
   },
-).pipe(HttpApiSchema.status(401));
+).pipe(httpStatus(401));
 
 export type AuthContextResponse = typeof authContextResponseSchema.Type;
-export type DemoUserKey = 'admin' | 'user';
+export type DemoUserKey = SignInPayload['demoUserKey'];
 export type OperationContextAuthRequired = typeof operationContextAuthRequiredSchema.Type;
 export type SetModuleStatePayload = typeof setModuleStatePayloadSchema.Type;
 
 export const moduleStateAdminForbiddenSchema = Schema.TaggedStruct('ModuleStateAdminForbidden', {
   message: Schema.String,
-}).pipe(HttpApiSchema.status(403));
+}).pipe(httpStatus(403));
 
 export type ModuleStateAdminForbidden = typeof moduleStateAdminForbiddenSchema.Type;
 
@@ -91,27 +101,27 @@ export const createModuleStateAdminForbidden = (message: string): ModuleStateAdm
 export const moduleStateAdminErrorSchema = Schema.Union([
   operationContextAuthRequiredSchema,
   moduleStateAdminForbiddenSchema,
-]).pipe(HttpApiSchema.status(403));
+]);
 
 const authGroup = HttpApiGroup.make('auth')
   .add(
-    HttpApiEndpoint.get('context', '/effect/auth/context', {
+    HttpApiEndpoint.get('context', '/auth/context', {
       success: authContextResponseSchema,
     }),
   )
   .add(
-    HttpApiEndpoint.post('signIn', '/effect/auth/sign-in', {
+    HttpApiEndpoint.post('signIn', '/auth/sign-in', {
       payload: signInPayloadSchema,
       success: authContextResponseSchema,
     }),
   )
   .add(
-    HttpApiEndpoint.post('signOut', '/effect/auth/sign-out', {
+    HttpApiEndpoint.post('signOut', '/auth/sign-out', {
       success: authContextResponseSchema,
     }),
   )
   .add(
-    HttpApiEndpoint.post('setModuleState', '/effect/core/modules/state', {
+    HttpApiEndpoint.post('setModuleState', '/core/modules/state', {
       error: moduleStateAdminErrorSchema,
       payload: setModuleStatePayloadSchema,
       success: authContextResponseSchema,

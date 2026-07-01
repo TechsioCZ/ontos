@@ -1,5 +1,5 @@
-import type { OutboxWorkerHandler } from '@mvp2/core-runtime';
-import type { PropertiesUnitCreatedPayload } from '@mvp2/shared-contracts/properties-events';
+import type { OutboxWorkerHandler } from '@mvp2/core-runtime/outbox';
+import type { PropertiesUnitCreatedPayload } from '@mvp2/properties/shared/events/properties-unit-created';
 
 export const propertiesUnitCreatedWorkerHandler: OutboxWorkerHandler<
   PropertiesUnitCreatedPayload

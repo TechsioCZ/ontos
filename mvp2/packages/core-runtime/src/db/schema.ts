@@ -37,13 +37,16 @@ export const tenants = coreSchema.table(
   ],
 );
 
+const tenantId = () =>
+  uuid('tenant_id')
+    .notNull()
+    .references(() => tenants.tenantId, { onDelete: 'restrict' });
+
 export const legalEntities = coreSchema.table(
   'legal_entities',
   {
     legalEntityId: uuid('legal_entity_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
     legalName: text('legal_name').notNull(),
     registrationCountry: text('registration_country').notNull(),
     registrationNumber: text('registration_number').notNull(),
@@ -70,9 +73,7 @@ export const principals = coreSchema.table(
   'principals',
   {
     principalId: uuid('principal_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
     kind: text('kind').notNull(),
     displayName: text('display_name').notNull(),
     status: text('status').notNull(),
@@ -89,16 +90,20 @@ export const principals = coreSchema.table(
   ],
 );
 
+const principalId = (columnName = 'principal_id') =>
+  uuid(columnName)
+    .notNull()
+    .references(() => principals.principalId, { onDelete: 'restrict' });
+
+const optionalPrincipalId = (columnName = 'principal_id') =>
+  uuid(columnName).references(() => principals.principalId, { onDelete: 'restrict' });
+
 export const principalAuthBindings = coreSchema.table(
   'principal_auth_bindings',
   {
     principalAuthBindingId: uuid('principal_auth_binding_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    principalId: uuid('principal_id')
-      .notNull()
-      .references(() => principals.principalId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    principalId: principalId(),
     provider: text('provider').notNull(),
     subjectType: text('subject_type').notNull(),
     providerSubjectId: text('provider_subject_id').notNull(),
@@ -124,13 +129,27 @@ export const principalAuthBindings = coreSchema.table(
   ],
 );
 
+const legalEntityId = () =>
+  uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
+    onDelete: 'restrict',
+  });
+
+const authBindingId = () =>
+  uuid('auth_binding_id').references(() => principalAuthBindings.principalAuthBindingId, {
+    onDelete: 'restrict',
+  });
+
+const authContextRefColumns = () => ({
+  authBindingId: authBindingId(),
+  authContextRef: text('auth_context_ref'),
+  impersonatedByPrincipalId: optionalPrincipalId('impersonated_by_principal_id'),
+});
+
 export const tenantModuleStates = coreSchema.table(
   'tenant_module_states',
   {
     tenantModuleStateId: uuid('tenant_module_state_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
     moduleKey: text('module_key').notNull(),
     state: text('state').notNull(),
     lastChangeId: uuid('last_change_id'),
@@ -150,29 +169,11 @@ export const actionInvocations = coreSchema.table(
   'action_invocations',
   {
     actionInvocationId: uuid('action_invocation_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
-    principalId: uuid('principal_id')
-      .notNull()
-      .references(() => principals.principalId, { onDelete: 'restrict' }),
-    authBindingId: uuid('auth_binding_id').references(
-      () => principalAuthBindings.principalAuthBindingId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    impersonatedByPrincipalId: uuid('impersonated_by_principal_id').references(
-      () => principals.principalId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
+    principalId: principalId(),
+    ...authContextRefColumns(),
     authMethod: text('auth_method').notNull(),
-    authContextRef: text('auth_context_ref'),
     traceId: text('trace_id'),
     correlationId: text('correlation_id'),
     actionKey: text('action_key').notNull(),
@@ -207,25 +208,21 @@ export const actionInvocations = coreSchema.table(
   ],
 );
 
+const actionInvocationId = () =>
+  uuid('action_invocation_id').references(() => actionInvocations.actionInvocationId, {
+    onDelete: 'restrict',
+  });
+
 export const tenantModuleStateChanges = coreSchema.table(
   'tenant_module_state_changes',
   {
     moduleStateChangeId: uuid('module_state_change_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
     moduleKey: text('module_key').notNull(),
     previousState: text('previous_state'),
     newState: text('new_state').notNull(),
-    changedByPrincipalId: uuid('changed_by_principal_id').references(() => principals.principalId, {
-      onDelete: 'restrict',
-    }),
-    actionInvocationId: uuid('action_invocation_id').references(
-      () => actionInvocations.actionInvocationId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    changedByPrincipalId: optionalPrincipalId('changed_by_principal_id'),
+    actionInvocationId: actionInvocationId(),
     changeSource: text('change_source').notNull(),
     reason: text('reason'),
     occurredAt: occurredAt(),
@@ -251,35 +248,12 @@ export const auditEvents = coreSchema.table(
   'audit_events',
   {
     auditEventId: uuid('audit_event_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
-    actionInvocationId: uuid('action_invocation_id').references(
-      () => actionInvocations.actionInvocationId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    principalId: uuid('principal_id').references(() => principals.principalId, {
-      onDelete: 'restrict',
-    }),
-    authBindingId: uuid('auth_binding_id').references(
-      () => principalAuthBindings.principalAuthBindingId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    impersonatedByPrincipalId: uuid('impersonated_by_principal_id').references(
-      () => principals.principalId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
+    actionInvocationId: actionInvocationId(),
+    principalId: optionalPrincipalId(),
+    ...authContextRefColumns(),
     authMethod: text('auth_method').notNull(),
-    authContextRef: text('auth_context_ref'),
     eventType: text('event_type').notNull(),
     outcome: text('outcome').notNull(),
     outcomeStage: text('outcome_stage').notNull(),
@@ -311,39 +285,21 @@ export const auditEvents = coreSchema.table(
   ],
 );
 
+const auditEventId = () =>
+  uuid('audit_event_id').references(() => auditEvents.auditEventId, {
+    onDelete: 'restrict',
+  });
+
 export const dataAccessEvents = coreSchema.table(
   'data_access_events',
   {
     dataAccessEventId: uuid('data_access_event_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
-    actionInvocationId: uuid('action_invocation_id').references(
-      () => actionInvocations.actionInvocationId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    principalId: uuid('principal_id')
-      .notNull()
-      .references(() => principals.principalId, { onDelete: 'restrict' }),
-    authBindingId: uuid('auth_binding_id').references(
-      () => principalAuthBindings.principalAuthBindingId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    impersonatedByPrincipalId: uuid('impersonated_by_principal_id').references(
-      () => principals.principalId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
+    actionInvocationId: actionInvocationId(),
+    principalId: principalId(),
+    ...authContextRefColumns(),
     authMethod: text('auth_method').notNull(),
-    authContextRef: text('auth_context_ref'),
     accessKind: text('access_kind').notNull(),
     servingModuleKey: text('serving_module_key').notNull(),
     targetModuleKey: text('target_module_key'),
@@ -376,22 +332,18 @@ export const dataAccessEvents = coreSchema.table(
   ],
 );
 
+const dataAccessEventId = () =>
+  uuid('data_access_event_id').references(() => dataAccessEvents.dataAccessEventId, {
+    onDelete: 'restrict',
+  });
+
 export const domainEvents = coreSchema.table(
   'domain_events',
   {
     domainEventId: uuid('domain_event_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
-    actionInvocationId: uuid('action_invocation_id').references(
-      () => actionInvocations.actionInvocationId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
+    actionInvocationId: actionInvocationId(),
     producerModuleKey: text('producer_module_key').notNull(),
     eventType: text('event_type').notNull(),
     subjectModuleKey: text('subject_module_key').notNull(),
@@ -414,16 +366,17 @@ export const domainEvents = coreSchema.table(
   ],
 );
 
+const domainEventId = () =>
+  uuid('domain_event_id').references(() => domainEvents.domainEventId, {
+    onDelete: 'restrict',
+  });
+
 export const outboxMessages = coreSchema.table(
   'outbox_messages',
   {
     outboxMessageId: uuid('outbox_message_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    domainEventId: uuid('domain_event_id')
-      .notNull()
-      .references(() => domainEvents.domainEventId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    domainEventId: domainEventId().notNull(),
     producerModuleKey: text('producer_module_key').notNull(),
     topic: text('topic').notNull(),
     payloadJson: jsonb('payload_json')
@@ -447,7 +400,7 @@ export const outboxDeliveries = coreSchema.table(
       .notNull()
       .references(() => outboxMessages.outboxMessageId, { onDelete: 'cascade' }),
     workerKey: text('worker_key').notNull(),
-    executingModuleKey: text('executing_module_key').notNull(),
+    consumerModuleKey: text('consumer_module_key').notNull(),
     status: text('status').default('pending').notNull(),
     attemptsCount: integer('attempts_count').default(0).notNull(),
     availableAt: timestamp('available_at', { withTimezone: true }).defaultNow().notNull(),
@@ -495,18 +448,9 @@ export const mediaAssets = coreSchema.table(
   'media_assets',
   {
     mediaAssetId: uuid('media_asset_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
-    ingestedByPrincipalId: uuid('ingested_by_principal_id').references(
-      () => principals.principalId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
+    ingestedByPrincipalId: optionalPrincipalId('ingested_by_principal_id'),
     ingestionSource: text('ingestion_source').notNull(),
     externalSourceRef: text('external_source_ref'),
     storageProvider: text('storage_provider').notNull(),
@@ -540,25 +484,19 @@ export const mediaAssets = coreSchema.table(
   ],
 );
 
+const mediaAssetId = () =>
+  uuid('media_asset_id')
+    .notNull()
+    .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' });
+
 export const mediaLinks = coreSchema.table(
   'media_links',
   {
     mediaLinkId: uuid('media_link_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    mediaAssetId: uuid('media_asset_id')
-      .notNull()
-      .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' }),
-    linkedByPrincipalId: uuid('linked_by_principal_id').references(() => principals.principalId, {
-      onDelete: 'restrict',
-    }),
-    actionInvocationId: uuid('action_invocation_id').references(
-      () => actionInvocations.actionInvocationId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
+    tenantId: tenantId(),
+    mediaAssetId: mediaAssetId(),
+    linkedByPrincipalId: optionalPrincipalId('linked_by_principal_id'),
+    actionInvocationId: actionInvocationId(),
     linkSource: text('link_source').notNull(),
     targetModuleKey: text('target_module_key').notNull(),
     targetResourceType: text('target_resource_type').notNull(),
@@ -585,34 +523,14 @@ export const evidenceReferences = coreSchema.table(
   'evidence_references',
   {
     evidenceReferenceId: uuid('evidence_reference_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
-    mediaAssetId: uuid('media_asset_id')
-      .notNull()
-      .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
+    mediaAssetId: mediaAssetId(),
     sourceKind: text('source_kind').notNull(),
-    actionInvocationId: uuid('action_invocation_id').references(
-      () => actionInvocations.actionInvocationId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    auditEventId: uuid('audit_event_id').references(() => auditEvents.auditEventId, {
-      onDelete: 'restrict',
-    }),
-    dataAccessEventId: uuid('data_access_event_id').references(
-      () => dataAccessEvents.dataAccessEventId,
-      {
-        onDelete: 'restrict',
-      },
-    ),
-    domainEventId: uuid('domain_event_id').references(() => domainEvents.domainEventId, {
-      onDelete: 'restrict',
-    }),
+    actionInvocationId: actionInvocationId(),
+    auditEventId: auditEventId(),
+    dataAccessEventId: dataAccessEventId(),
+    domainEventId: domainEventId(),
     evidenceKind: text('evidence_kind').notNull(),
     subjectModuleKey: text('subject_module_key'),
     subjectResourceType: text('subject_resource_type'),
@@ -672,12 +590,8 @@ export const searchIndexEntries = coreSchema.table(
   'search_index_entries',
   {
     searchIndexEntryId: uuid('search_index_entry_id').defaultRandom().primaryKey(),
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
-    legalEntityId: uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-      onDelete: 'restrict',
-    }),
+    tenantId: tenantId(),
+    legalEntityId: legalEntityId(),
     sourceModuleKey: text('source_module_key').notNull(),
     sourceResourceType: text('source_resource_type').notNull(),
     sourceResourceId: text('source_resource_id').notNull(),
@@ -702,9 +616,7 @@ export const searchIndexEntries = coreSchema.table(
 export const workerCheckpoints = coreSchema.table(
   'worker_checkpoints',
   {
-    tenantId: uuid('tenant_id')
-      .notNull()
-      .references(() => tenants.tenantId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
     consumerName: text('consumer_name').notNull(),
     streamKey: text('stream_key').notNull(),
     lastTenantSequenceNo: bigint('last_tenant_sequence_no', { mode: 'bigint' }),

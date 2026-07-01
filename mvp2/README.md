@@ -32,15 +32,13 @@ manifest for config, i18n, public head, and public surface contracts. Private
 app, auth, tenant, dashboard, and internal routes publish no discovery output
 unless route metadata explicitly marks them `public && indexable`. The default
 scaffold therefore emits only a disallowing `robots.txt`; sitemap, web
-manifest, `llms.txt`, API catalog, security.txt, and JSON-LD output stay
-omitted until a safe public route or public docs/help/product surface exists.
-Structured data is never inferred automatically. Add `jsonLd` explicitly in
-route metadata for `public && indexable` routes and use
-`src/routes/ultramodern-jsonld.ts` when the route fits the generated `WebPage`,
-`WebApplication`, `SoftwareApplication`, `BreadcrumbList`, `FAQPage`, or
-`Organization` helpers. Private or non-indexable routes emit no JSON-LD even
-when they have localized paths, titles, descriptions, BFF APIs, or Module
-Federation boundaries.
+manifest, `llms.txt`, API catalog, security.txt, and structured-data output
+stay omitted until a safe public route or public docs/help/product surface
+exists. Structured data is never inferred automatically. Apps that opt into
+structured data add route-owned helpers and explicit route metadata for
+`public && indexable` routes. Private or non-indexable routes emit no
+structured data even when they have localized paths, titles, descriptions, BFF
+APIs, or Module Federation boundaries.
 
 Public web artifacts are build/deploy outputs generated into `dist/public` and
 `.output/public`, not hand-authored source files under `config/public`. Dynamic

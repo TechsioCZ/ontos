@@ -1,5 +1,15 @@
 {
   "shell": {
+    "auth": {
+      "currentUser": "Aktuální uživatel",
+      "legalEntity": "Právní entita",
+      "profiles": {
+        "admin": "Admin",
+        "user": "Uživatel"
+      },
+      "signOut": "Odhlásit",
+      "tenant": "Tenant"
+    },
     "boundaries": {
       "toggle": "zobrazit hranice týmů"
     },
@@ -20,32 +30,18 @@
       "switcher": "Jazyk"
     },
     "remoteUnavailable": "Remote vertical je nedostupný",
-    "remotes": {},
+    "remotes": {
+      "propertiesUnavailable": "Properties není dostupné."
+    },
     "routes": {
-      "home": "Domů"
+      "home": "Domů",
+      "propertiesUnits": "Jednotky properties",
+      "viewModule": "Zobrazit {{module}}"
     },
     "seo": {
-      "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
+      "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata.",
+      "propertiesUnitsDescription": "Shell-hostovaná route pro jednotky Properties vykreslená přes Properties MicroVertical."
     },
     "title": "UltraModern Workspace"
-  },
-  "properties": {
-    "language": {
-      "cs": "Čeština",
-      "en": "Angličtina",
-      "switcher": "Jazyk"
-    },
-    "routes": {
-      "home": "Domů"
-    },
-    "seo": {
-      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
-    },
-    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
-    "remoteUnavailable": "Remote vertical je nedostupný",
-    "role": "properties",
-    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
-    "title": "Properties Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu."
   }
 }

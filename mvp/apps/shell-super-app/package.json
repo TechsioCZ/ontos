@@ -36,6 +36,7 @@
     "@mvp/shared-contracts": "workspace:*",
     "@mvp/shared-design-tokens": "workspace:*",
     "@mvp/shared-effect-api": "workspace:*",
+    "@mvp/ultramodern-config": "workspace:*",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "7.17.0",

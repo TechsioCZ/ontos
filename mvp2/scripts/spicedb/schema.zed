@@ -2,8 +2,10 @@ definition principal {}
 
 definition resource_type {
   relation reader: principal
+  relation creator: principal
 
   permission read = reader
+  permission create = creator
 }
 
 definition core_modules {

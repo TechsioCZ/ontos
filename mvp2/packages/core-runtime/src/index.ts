@@ -1,8 +1,29 @@
-export * from './auth/demo-auth.ts';
-export * from './core-sdk.ts';
-export * from './module-state.ts';
+export type {
+  ActionAuthorizationRequirement,
+  ActionDescriptor,
+  ActionDomainEventDescriptor,
+  ActionDomainRejection,
+  ActionExecutionServices,
+  ActionHandler,
+  ActionRegistration,
+  CoreSDKError,
+  OperationAuthorizationDenied,
+  OperationAuthRequired,
+  OperationContextInvalid,
+  OperationDomainRejected,
+  OperationExecutionFailed,
+  OperationIdempotencyConflict,
+  OperationIdempotencyKeyRequired,
+  OperationIdempotencyReplayUnavailable,
+  OperationModuleStateDenied,
+  OperationPersistenceFailed,
+  OperationPolicyDenied,
+  OperationResult,
+  OperationSucceeded,
+  OperationTransport,
+  RunActionOptions,
+} from './core-sdk.ts';
 export * from './operation-context.ts';
-export * from './operation-context-from-session.ts';
 export * from './outbox-message.ts';
 export * from './outbox-worker.ts';
 export * from './policy.ts';

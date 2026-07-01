@@ -52,7 +52,7 @@ export default function PropertiesHome() {
           params={{ lang: language }}
           to="/$lang/properties/units"
         >
-          View Units
+          {t('properties.units.view')}
         </Link>
       </div>
     </main>

@@ -1,9 +1,12 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-import { db } from '@mvp2/core-runtime/db/client';
-import type { CoreTransaction, OutboxWorkerRegistration } from '@mvp2/core-runtime';
+// @effect-diagnostics globalDate:off
+import type { CoreTransaction } from '@mvp2/core-runtime/db/types';
+import type { OutboxWorkerRegistration } from '@mvp2/core-runtime/outbox';
 import { sql } from 'drizzle-orm';
+import { Effect } from 'effect';
 import type { ClaimedDelivery } from './claim.ts';
 import type { OutboxWorkerRuntimeConfig } from './config.ts';
+import { runCoreTransaction } from './db-effect.ts';
+import { OutboxWorkerError, outboxWorkerError } from './errors.ts';
 
 export type PersistFailureOptions = {
   readonly claimedDelivery: ClaimedDelivery;
@@ -13,7 +16,11 @@ export type PersistFailureOptions = {
 };
 
 const errorMessageForPersistence = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
+  error instanceof OutboxWorkerError && error.cause !== undefined
+    ? `${error.message}: ${errorMessageForPersistence(error.cause)}`
+    : error instanceof Error
+      ? error.message
+      : String(error);
 
 const retryDelayMs = (
   registration: OutboxWorkerRegistration<unknown> | undefined,
@@ -39,53 +46,68 @@ const maxAttemptsForDelivery = (
   runtimeConfig: OutboxWorkerRuntimeConfig,
 ): number => registration?.descriptor.defaults?.maxAttempts ?? runtimeConfig.maxAttempts;
 
-export const persistDeliverySuccess = async (
+export const persistDeliverySuccess = (
   tx: CoreTransaction,
   claimedDelivery: ClaimedDelivery,
-): Promise<void> => {
-  await tx.execute(sql`
+): Effect.Effect<void, OutboxWorkerError> =>
+  Effect.gen(function* () {
+    yield* Effect.tryPromise({
+      try: () =>
+        tx.execute(sql`
     update core.outbox_deliveries
     set
       status = 'done',
       claimed_by = null,
       claimed_at = null,
-      claim_expires_at = null,
       updated_at = now()
     where outbox_delivery_id = ${claimedDelivery.outboxDeliveryId}
       and status = 'processing'
-  `);
+  `),
+      catch: (error) => outboxWorkerError('Failed to mark outbox delivery as done.', error),
+    });
 
-  await tx.execute(sql`
+    yield* Effect.tryPromise({
+      try: () =>
+        tx.execute(sql`
     update core.outbox_attempts
     set
       finished_at = now(),
       error_message = null
     where outbox_attempt_id = ${claimedDelivery.outboxAttemptId}
-  `);
-};
+  `),
+      catch: (error) => outboxWorkerError('Failed to finish successful outbox attempt.', error),
+    });
+  });
 
-export const persistDeliveryFailure = async ({
+export const persistDeliveryFailure = ({
   claimedDelivery,
   error,
   registration,
   runtimeConfig,
-}: PersistFailureOptions): Promise<void> =>
-  db.transaction(async (tx) => {
-    const maxAttempts = maxAttemptsForDelivery(registration, runtimeConfig);
-    const isDead = claimedDelivery.attemptsCount >= maxAttempts;
-    const delayMs = retryDelayMs(registration, runtimeConfig, claimedDelivery.attemptsCount);
-    const status = isDead ? 'dead' : 'pending';
-    const errorMessage = errorMessageForPersistence(error).slice(0, 8_000);
+}: PersistFailureOptions): Effect.Effect<void, OutboxWorkerError> =>
+  runCoreTransaction((tx) =>
+    Effect.gen(function* () {
+      const maxAttempts = maxAttemptsForDelivery(registration, runtimeConfig);
+      const isDead = claimedDelivery.attemptsCount >= maxAttempts;
+      const delayMs = retryDelayMs(registration, runtimeConfig, claimedDelivery.attemptsCount);
+      const status = isDead ? 'dead' : 'pending';
+      const errorMessage = errorMessageForPersistence(error).slice(0, 8_000);
 
-    await tx.execute(sql`
+      yield* Effect.tryPromise({
+        try: () =>
+          tx.execute(sql`
       update core.outbox_attempts
       set
         finished_at = now(),
         error_message = ${errorMessage}
       where outbox_attempt_id = ${claimedDelivery.outboxAttemptId}
-    `);
+    `),
+        catch: (txError) => outboxWorkerError('Failed to finish failed outbox attempt.', txError),
+      });
 
-    await tx.execute(sql`
+      yield* Effect.tryPromise({
+        try: () =>
+          tx.execute(sql`
       update core.outbox_deliveries
       set
         status = ${status},
@@ -95,9 +117,11 @@ export const persistDeliveryFailure = async ({
         end,
         claimed_by = null,
         claimed_at = null,
-        claim_expires_at = null,
         updated_at = now()
       where outbox_delivery_id = ${claimedDelivery.outboxDeliveryId}
         and status = 'processing'
-    `);
-  });
+    `),
+        catch: (txError) => outboxWorkerError('Failed to update failed outbox delivery.', txError),
+      });
+    }),
+  );

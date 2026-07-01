@@ -14,16 +14,13 @@ import type {
 } from '@mvp2/shared-contracts';
 import { db } from './db/client.ts';
 import { auditEvents, tenantModuleStateChanges, tenantModuleStates } from './db/schema.ts';
+import type { CoreDbExecutor } from './db/types.ts';
 import {
   createTenantScopedSpiceDbPermissionCheck,
   type SpiceDbAuthorizationChecker,
   type SpiceDbPermissionCheckInput,
   spiceDbAuthorizationChecker,
 } from './spicedb-authorization.ts';
-
-type CoreTransactionCallback = Parameters<typeof db.transaction>[0];
-type CoreTransaction = Parameters<CoreTransactionCallback>[0];
-type CoreDbExecutor = typeof db | CoreTransaction;
 
 export const coreModulesResourceObjectType = 'core_modules';
 export const coreModulesResourceObjectId = 'core.modules';

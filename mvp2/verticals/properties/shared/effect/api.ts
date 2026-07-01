@@ -2,9 +2,17 @@ import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
-  HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+
+const httpStatusAnnotation = Symbol.for('@effect/platform/HttpApiSchema/AnnotationStatus');
+
+const httpStatus =
+  (status: number) =>
+  <TSchema extends { annotate: (annotations: Record<symbol, unknown>) => TSchema }>(
+    schema: TSchema,
+  ): TSchema =>
+    schema.annotate({ [httpStatusAnnotation]: status }) as TSchema;
 
 export const unitCreatePayloadSchema = Schema.String;
 
@@ -30,7 +38,7 @@ export const unitCreateHeadersSchema = Schema.Struct({
 const taggedMessageSchema = <const TTag extends string>(tag: TTag, status: number) =>
   Schema.TaggedStruct(tag, {
     message: Schema.String,
-  }).pipe(HttpApiSchema.status(status));
+  }).pipe(httpStatus(status));
 
 const taggedMessage = <const TTag extends string>(tag: TTag, message: string) => ({
   _tag: tag,
@@ -94,7 +102,7 @@ export const createOperationPersistenceFailed = (message: string): OperationPers
 export const operationDomainRejectedSchema = Schema.TaggedStruct('OperationDomainRejected', {
   code: Schema.String,
   message: Schema.String,
-}).pipe(HttpApiSchema.status(409));
+}).pipe(httpStatus(409));
 
 export type OperationDomainRejected = typeof operationDomainRejectedSchema.Type;
 
@@ -114,7 +122,7 @@ export const operationPolicyDeniedSchema = Schema.TaggedStruct('OperationPolicyD
   code: Schema.String,
   message: Schema.String,
   policyKey: Schema.String,
-}).pipe(HttpApiSchema.status(409));
+}).pipe(httpStatus(409));
 
 export type OperationPolicyDenied = typeof operationPolicyDeniedSchema.Type;
 
@@ -143,7 +151,7 @@ export const operationAuthorizationDeniedSchema = Schema.TaggedStruct(
     resourceObjectId: Schema.String,
     resourceObjectType: Schema.String,
   },
-).pipe(HttpApiSchema.status(403));
+).pipe(httpStatus(403));
 
 export type OperationAuthorizationDenied = typeof operationAuthorizationDeniedSchema.Type;
 
@@ -181,7 +189,7 @@ export const operationModuleStateDeniedSchema = Schema.TaggedStruct('OperationMo
   message: Schema.String,
   moduleKey: Schema.String,
   state: Schema.String,
-}).pipe(HttpApiSchema.status(403));
+}).pipe(httpStatus(403));
 
 export type OperationModuleStateDenied = typeof operationModuleStateDeniedSchema.Type;
 
@@ -213,7 +221,7 @@ export type OperationExecutionFailed = typeof operationExecutionFailedSchema.Typ
 export const createOperationExecutionFailed = (message: string): OperationExecutionFailed =>
   taggedMessage('OperationExecutionFailed', message);
 
-export const operationErrorSchema = Schema.Union([
+const operationErrorSchemas = [
   operationContextAuthRequiredSchema,
   operationIdempotencyKeyRequiredSchema,
   operationIdempotencyConflictSchema,
@@ -224,7 +232,9 @@ export const operationErrorSchema = Schema.Union([
   operationModuleStateDeniedSchema,
   operationPolicyDeniedSchema,
   operationExecutionFailedSchema,
-]).pipe(HttpApiSchema.status(409));
+] as const;
+
+export const operationErrorSchema = Schema.Union(operationErrorSchemas);
 
 export const propertiesEffectApi = HttpApi.make('PropertiesEffectApi').add(
   HttpApiGroup.make('properties')
@@ -248,5 +258,4 @@ export const propertiesApiContract = {
   apiPrefix: '/properties-api',
   basePath: '/properties-api/effect/properties',
   ownerId: 'properties',
-  readinessPath: '/properties-api/effect/properties/readiness',
 } as const;

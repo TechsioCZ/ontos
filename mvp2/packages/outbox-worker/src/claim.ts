@@ -1,17 +1,19 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-import { db } from '@mvp2/core-runtime/db/client';
-import { rowsFromResult, type CoreTransaction } from '@mvp2/core-runtime';
+// @effect-diagnostics globalDate:off
+import type { CoreTransaction } from '@mvp2/core-runtime/db/types';
+import { rowsFromResult } from '@mvp2/core-runtime/sql-result';
 import { sql } from 'drizzle-orm';
+import { Effect } from 'effect';
+import { runCoreTransaction } from './db-effect.ts';
+import { type OutboxWorkerError, outboxWorkerError } from './errors.ts';
 
 export type ClaimDeliveriesOptions = {
   readonly batchSize: number;
-  readonly claimTimeoutMs: number;
   readonly runtimeId: string;
 };
 
 export type ClaimedDelivery = {
   readonly attemptsCount: number;
-  readonly executingModuleKey: string;
+  readonly consumerModuleKey: string;
   readonly outboxAttemptId: string;
   readonly outboxDeliveryId: string;
   readonly outboxMessageId: string;
@@ -19,7 +21,7 @@ export type ClaimedDelivery = {
 };
 
 type ClaimCandidateRow = {
-  readonly executingModuleKey: string;
+  readonly consumerModuleKey: string;
   readonly outboxDeliveryId: string;
   readonly outboxMessageId: string;
   readonly workerKey: string;
@@ -33,75 +35,85 @@ type AttemptRow = {
   readonly outboxAttemptId: string;
 };
 
-const selectClaimCandidates = async (
+const selectClaimCandidates = (
   tx: CoreTransaction,
   batchSize: number,
-): Promise<readonly ClaimCandidateRow[]> => {
-  const result = await tx.execute(sql`
+): Effect.Effect<readonly ClaimCandidateRow[], OutboxWorkerError> =>
+  Effect.tryPromise({
+    try: () =>
+      tx.execute(sql`
     select
       outbox_delivery_id as "outboxDeliveryId",
       outbox_message_id as "outboxMessageId",
       worker_key as "workerKey",
-      executing_module_key as "executingModuleKey"
+      consumer_module_key as "consumerModuleKey"
     from core.outbox_deliveries
     where status = 'pending'
       and available_at <= now()
     order by available_at, created_at, outbox_delivery_id
     limit ${batchSize}
     for update skip locked
-  `);
+  `),
+    catch: (error) => outboxWorkerError('Failed to select claim candidates.', error),
+  }).pipe(Effect.map(rowsFromResult<ClaimCandidateRow>));
 
-  return rowsFromResult<ClaimCandidateRow>(result);
-};
-
-export const claimDueDeliveries = async ({
+export const claimDueDeliveries = ({
   batchSize,
-  claimTimeoutMs,
   runtimeId,
-}: ClaimDeliveriesOptions): Promise<readonly ClaimedDelivery[]> =>
-  db.transaction(async (tx) => {
-    const candidates = await selectClaimCandidates(tx, batchSize);
-    const claimed: ClaimedDelivery[] = [];
+}: ClaimDeliveriesOptions): Effect.Effect<readonly ClaimedDelivery[], OutboxWorkerError> =>
+  runCoreTransaction((tx) =>
+    Effect.gen(function* () {
+      const candidates = yield* selectClaimCandidates(tx, batchSize);
+      const claimed: ClaimedDelivery[] = [];
 
-    for (const candidate of candidates) {
-      const updatedResult = await tx.execute(sql`
+      for (const candidate of candidates) {
+        const updatedResult = yield* Effect.tryPromise({
+          try: () =>
+            tx.execute(sql`
         update core.outbox_deliveries
         set
           status = 'processing',
           claimed_by = ${runtimeId},
           claimed_at = now(),
-          claim_expires_at = now() + (${claimTimeoutMs}::integer * interval '1 millisecond'),
           attempts_count = attempts_count + 1,
           updated_at = now()
         where outbox_delivery_id = ${candidate.outboxDeliveryId}
         returning attempts_count as "attemptsCount"
-      `);
-      const updatedDelivery = rowsFromResult<UpdatedDeliveryRow>(updatedResult).at(0);
+      `),
+          catch: (error) =>
+            outboxWorkerError('Failed to mark outbox delivery as processing.', error),
+        });
+        const updatedDelivery = rowsFromResult<UpdatedDeliveryRow>(updatedResult).at(0);
 
-      if (updatedDelivery === undefined) {
-        continue;
-      }
+        if (updatedDelivery === undefined) {
+          continue;
+        }
 
-      const attemptResult = await tx.execute(sql`
+        const attemptResult = yield* Effect.tryPromise({
+          try: () =>
+            tx.execute(sql`
         insert into core.outbox_attempts (outbox_delivery_id)
         values (${candidate.outboxDeliveryId})
         returning outbox_attempt_id as "outboxAttemptId"
-      `);
-      const attempt = rowsFromResult<AttemptRow>(attemptResult).at(0);
+      `),
+          catch: (error) => outboxWorkerError('Failed to create outbox delivery attempt.', error),
+        });
+        const attempt = rowsFromResult<AttemptRow>(attemptResult).at(0);
 
-      if (attempt === undefined) {
-        continue;
+        if (attempt === undefined) {
+          continue;
+        }
+
+        claimed.push({
+          attemptsCount: updatedDelivery.attemptsCount,
+          consumerModuleKey: candidate.consumerModuleKey,
+          outboxAttemptId: attempt.outboxAttemptId,
+          outboxDeliveryId: candidate.outboxDeliveryId,
+          outboxMessageId: candidate.outboxMessageId,
+          workerKey: candidate.workerKey,
+        });
       }
 
-      claimed.push({
-        attemptsCount: updatedDelivery.attemptsCount,
-        executingModuleKey: candidate.executingModuleKey,
-        outboxAttemptId: attempt.outboxAttemptId,
-        outboxDeliveryId: candidate.outboxDeliveryId,
-        outboxMessageId: candidate.outboxMessageId,
-        workerKey: candidate.workerKey,
-      });
-    }
-
-    return claimed;
-  });
+      return claimed;
+    }),
+  );

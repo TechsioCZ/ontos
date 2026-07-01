@@ -1,11 +1,15 @@
-import type { CoreTransaction } from './core-sdk.ts';
+import type { CoreTransaction } from './db/types.ts';
+
+export type OutboxPayloadSchema<TPayload> = {
+  readonly parse: (payload: unknown) => TPayload;
+};
 
 export type OutboxWorkerDescriptor<TPayload = unknown> = {
   readonly workerKey: string;
   readonly owningModuleKey: string;
-  readonly executingModuleKey: string;
+  readonly consumerModuleKey: string;
   readonly topics: readonly string[];
-  readonly payloadSchema?: unknown;
+  readonly payloadSchema?: OutboxPayloadSchema<TPayload>;
   readonly defaults?: OutboxWorkerOperationalDefaults;
 };
 
@@ -39,7 +43,7 @@ export type OutboxWorkerHandlerContext = {
   readonly originalActionKey?: string;
   readonly originalActionIdempotencyKey?: string;
   readonly producerModuleKey: string;
-  readonly executingModuleKey: string;
+  readonly consumerModuleKey: string;
   readonly workerKey: string;
   readonly topic: string;
   readonly outboxMessageId: string;
@@ -52,10 +56,12 @@ export type OutboxWorkerHandlerServices = {
   readonly tx: CoreTransaction;
 };
 
-export type OutboxWorkerHandler<TPayload> = (
-  input: OutboxWorkerHandlerInput<TPayload>,
-  services: OutboxWorkerHandlerServices,
-) => Promise<void> | void;
+export type OutboxWorkerHandler<TPayload> = {
+  bivarianceHack(
+    input: OutboxWorkerHandlerInput<TPayload>,
+    services: OutboxWorkerHandlerServices,
+  ): Promise<void> | void;
+}['bivarianceHack'];
 
 export type OutboxWorkerRegistration<TPayload = unknown> = {
   readonly descriptor: OutboxWorkerDescriptor<TPayload>;

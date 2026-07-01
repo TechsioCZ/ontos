@@ -1,12 +1,11 @@
-// @effect-diagnostics asyncFunction:off globalDate:off
-import { db } from '@mvp2/core-runtime/db/client';
-import {
-  rowsFromResult,
-  type CoreTransaction,
-  type OutboxWorkerRegistration,
-} from '@mvp2/core-runtime';
+// @effect-diagnostics globalDate:off
+import type { CoreTransaction } from '@mvp2/core-runtime/db/types';
+import type { OutboxWorkerRegistration } from '@mvp2/core-runtime/outbox';
+import { rowsFromResult } from '@mvp2/core-runtime/sql-result';
 import { sql } from 'drizzle-orm';
-import { matchingRegistrationsForTopic } from './topic-matching.ts';
+import { Effect } from 'effect';
+import { runCoreTransaction } from './db-effect.ts';
+import { type OutboxWorkerError, outboxWorkerError } from './errors.ts';
 
 export type MaterializeDeliveriesOptions = {
   readonly batchSize: number;
@@ -23,11 +22,13 @@ type UnmatchedMessageRow = {
   readonly topic: string;
 };
 
-const selectUnmatchedMessages = async (
+const selectUnmatchedMessages = (
   tx: CoreTransaction,
   batchSize: number,
-): Promise<readonly UnmatchedMessageRow[]> => {
-  const result = await tx.execute(sql`
+): Effect.Effect<readonly UnmatchedMessageRow[], OutboxWorkerError> =>
+  Effect.tryPromise({
+    try: () =>
+      tx.execute(sql`
     select
       outbox_message_id as "outboxMessageId",
       topic
@@ -36,58 +37,75 @@ const selectUnmatchedMessages = async (
     order by created_at, outbox_message_id
     limit ${batchSize}
     for update skip locked
-  `);
+  `),
+    catch: (error) => outboxWorkerError('Failed to select unmatched outbox messages.', error),
+  }).pipe(Effect.map(rowsFromResult<UnmatchedMessageRow>));
 
-  return rowsFromResult<UnmatchedMessageRow>(result);
-};
-
-const insertDelivery = async (
+const insertDelivery = (
   tx: CoreTransaction,
   message: UnmatchedMessageRow,
   registration: OutboxWorkerRegistration<unknown>,
-): Promise<number> => {
-  const result = await tx.execute(sql`
+): Effect.Effect<number, OutboxWorkerError> =>
+  Effect.tryPromise({
+    try: () =>
+      tx.execute(sql`
     insert into core.outbox_deliveries (
       outbox_message_id,
       worker_key,
-      executing_module_key
+      consumer_module_key
     )
     values (
       ${message.outboxMessageId},
       ${registration.descriptor.workerKey},
-      ${registration.descriptor.executingModuleKey}
+      ${registration.descriptor.consumerModuleKey}
     )
     on conflict (outbox_message_id, worker_key) do nothing
     returning outbox_delivery_id as "outboxDeliveryId"
-  `);
+  `),
+    catch: (error) => outboxWorkerError('Failed to insert outbox delivery.', error),
+  }).pipe(
+    Effect.map((result) => rowsFromResult<{ readonly outboxDeliveryId: string }>(result).length),
+  );
 
-  return rowsFromResult<{ readonly outboxDeliveryId: string }>(result).length;
-};
-
-export const materializeDeliveries = async ({
+export const materializeDeliveries = ({
   batchSize,
   registrations,
-}: MaterializeDeliveriesOptions): Promise<MaterializeDeliveriesResult> =>
-  db.transaction(async (tx) => {
-    const messages = await selectUnmatchedMessages(tx, batchSize);
-    let deliveriesInserted = 0;
+}: MaterializeDeliveriesOptions): Effect.Effect<MaterializeDeliveriesResult, OutboxWorkerError> =>
+  runCoreTransaction((tx) =>
+    Effect.gen(function* () {
+      const messages = yield* selectUnmatchedMessages(tx, batchSize);
+      let deliveriesInserted = 0;
+      let messagesMatched = 0;
 
-    for (const message of messages) {
-      const matches = matchingRegistrationsForTopic(registrations, message.topic);
+      for (const message of messages) {
+        const matches = registrations.filter((registration) =>
+          registration.descriptor.topics.includes(message.topic),
+        );
 
-      for (const registration of matches) {
-        deliveriesInserted += await insertDelivery(tx, message, registration);
-      }
+        if (matches.length === 0) {
+          continue;
+        }
 
-      await tx.execute(sql`
+        messagesMatched += 1;
+
+        for (const registration of matches) {
+          deliveriesInserted += yield* insertDelivery(tx, message, registration);
+        }
+
+        yield* Effect.tryPromise({
+          try: () =>
+            tx.execute(sql`
         update core.outbox_messages
         set matched_at = now()
         where outbox_message_id = ${message.outboxMessageId}
-      `);
-    }
+      `),
+          catch: (error) => outboxWorkerError('Failed to mark outbox message as matched.', error),
+        });
+      }
 
-    return {
-      deliveriesInserted,
-      messagesMatched: messages.length,
-    };
-  });
+      return {
+        deliveriesInserted,
+        messagesMatched,
+      };
+    }),
+  );

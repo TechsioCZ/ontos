@@ -1,5 +1,5 @@
-import { allowPolicy, denyPolicy } from '@mvp2/core-runtime';
-import type { PolicyCheck } from '@mvp2/core-runtime';
+import { allowPolicy, denyPolicy } from '@mvp2/core-runtime/policy';
+import type { PolicyCheck } from '@mvp2/core-runtime/policy';
 import type { CreateUnitAction } from './create-unit.action.ts';
 
 export const rejectCreateUnitNameStartingWithNewPolicy: PolicyCheck<CreateUnitAction> = (value) =>

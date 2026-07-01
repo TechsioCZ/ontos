@@ -3,6 +3,7 @@ import {
   Effect,
   HttpApiBuilder,
   HttpServerRequest,
+  HttpServerResponse,
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
 import {
@@ -18,8 +19,9 @@ import {
   createOperationPersistenceFailed,
   propertiesEffectApi,
 } from '../../shared/effect/api.ts';
-import { runAction } from '@mvp2/core-runtime';
-import type { CoreSDKError, OperationContext } from '@mvp2/core-runtime';
+import { runAction } from '@mvp2/core-runtime/sdk';
+import type { CoreSDKError } from '@mvp2/core-runtime/sdk';
+import type { OperationContext } from '@mvp2/core-runtime/operation-context';
 import { createUnitActionRegistration } from '../../src/actions/create-unit.registration.ts';
 import type { CreateUnitAction } from '../../src/actions/create-unit.action.ts';
 import { readUnitsActionRegistration } from '../../src/actions/read-units.registration.ts';
@@ -94,6 +96,38 @@ const coreSDKErrorToHttpError = (error: CoreSDKError) => {
   }
 };
 
+type PropertiesHttpError = ReturnType<typeof coreSDKErrorToHttpError>;
+
+const httpErrorStatus = (error: PropertiesHttpError): number => {
+  switch (error._tag) {
+    case 'OperationContextAuthRequired': {
+      return 401;
+    }
+    case 'OperationAuthorizationDenied':
+    case 'OperationModuleStateDenied': {
+      return 403;
+    }
+    case 'OperationIdempotencyKeyRequired': {
+      return 428;
+    }
+    case 'OperationDomainRejected':
+    case 'OperationIdempotencyConflict':
+    case 'OperationIdempotencyReplayUnavailable':
+    case 'OperationPolicyDenied': {
+      return 409;
+    }
+    case 'OperationExecutionFailed':
+    case 'OperationPersistenceFailed': {
+      return 500;
+    }
+  }
+};
+
+const httpErrorResponse = (error: PropertiesHttpError) =>
+  HttpServerResponse.jsonUnsafe(error, {
+    status: httpErrorStatus(error),
+  });
+
 const runCreateUnitAction = ({
   headers,
   payload,
@@ -146,6 +180,7 @@ const propertiesLayer = HttpApiBuilder.group(propertiesEffectApi, 'properties', 
             }),
           ),
         ),
+        Effect.catch((error) => Effect.succeed(httpErrorResponse(error))),
       ),
     )
     .handle('readUnits', () =>
@@ -160,6 +195,7 @@ const propertiesLayer = HttpApiBuilder.group(propertiesEffectApi, 'properties', 
             }),
           ),
         ),
+        Effect.catch((error) => Effect.succeed(httpErrorResponse(error))),
       ),
     ),
 );

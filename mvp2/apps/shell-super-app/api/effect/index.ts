@@ -1,71 +1,24 @@
-// @effect-diagnostics preferSchemaOverJson:off processEnv:off globalFetchInEffect:off asyncFunction:off globalConsoleInEffect:off
+// @effect-diagnostics preferSchemaOverJson:off asyncFunction:off
 import {
   defineEffectBff,
   Effect,
   HttpApiBuilder,
-  HttpRouter,
-  HttpServerRequest,
   HttpServerResponse,
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
 import {
-  createVerticalGatewayToken,
-  checkModuleStateAccess,
-  checkModuleStateAdminCapability,
   getCurrentAuthContext,
-  resolveOperationContextFromSession,
-  setTenantModuleState,
   signInDemoUser,
   signOutDemoUser,
-} from '@mvp2/core-runtime';
-import type { DemoUserKey } from '@mvp2/core-runtime';
-import { isInstalledModuleKey } from '@mvp2/shared-contracts';
+} from '@mvp2/core-runtime/auth/demo';
+import type { DemoUserKey } from '@mvp2/core-runtime/auth/demo';
 import {
-  createModuleStateAdminForbidden,
-  createOperationContextAuthRequired,
-  shellAuthEffectApi,
-} from '../../src/effect/auth-api.ts';
-
-const verticalRegistry = {
-  accounting: {
-    audience: 'accounting',
-    targetBaseUrl: (
-      process.env['VERTICAL_ACCOUNTING_BFF_URL'] ?? 'http://localhost:4102/accounting-api'
-    ).replace(/\/+$/u, ''),
-  },
-  properties: {
-    audience: 'properties',
-    targetBaseUrl: (
-      process.env['VERTICAL_PROPERTIES_BFF_URL'] ?? 'http://localhost:4101/properties-api'
-    ).replace(/\/+$/u, ''),
-  },
-} as const;
-
-type VerticalId = keyof typeof verticalRegistry;
-
-interface MicroVerticalGatewayFailed {
-  readonly _tag: 'MicroVerticalGatewayFailed';
-  readonly message: string;
-}
-
-interface MicroVerticalUnavailable {
-  readonly _tag: 'MicroVerticalUnavailable';
-  readonly message: string;
-}
-
-const microVerticalGatewayFailed = (message: string): MicroVerticalGatewayFailed => ({
-  _tag: 'MicroVerticalGatewayFailed',
-  message,
-});
-
-const microVerticalUnavailable = (message: string): MicroVerticalUnavailable => ({
-  _tag: 'MicroVerticalUnavailable',
-  message,
-});
-
-const requestHeaders = HttpServerRequest.HttpServerRequest.pipe(
-  Effect.map((request) => new globalThis.Headers(Object.entries(request.headers))),
-);
+  checkModuleStateAdminCapability,
+  setTenantModuleState,
+} from '@mvp2/core-runtime/module-state';
+import { createModuleStateAdminForbidden, shellAuthEffectApi } from '../../src/effect/auth-api.ts';
+import { microVerticalGatewayLayer } from './microvertical-gateway.ts';
+import { requestHeaders, requireOperationContext } from './request-context.ts';
 
 const sessionCookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.find((header) => header.toLowerCase().includes('better-auth.session')) ??
@@ -125,12 +78,7 @@ const shellAuthLayer = HttpApiBuilder.group(shellAuthEffectApi, 'auth', (handler
     .handle('setModuleState', ({ payload }) =>
       requestHeaders.pipe(
         Effect.flatMap((headers) =>
-          Effect.promise(() => resolveOperationContextFromSession({ headers })).pipe(
-            Effect.flatMap((resolved) =>
-              resolved._tag === 'Success'
-                ? Effect.succeed(resolved.operationContext)
-                : Effect.fail(createOperationContextAuthRequired(resolved.error.message)),
-            ),
+          requireOperationContext(headers).pipe(
             Effect.flatMap((operationContext) =>
               Effect.promise(() =>
                 checkModuleStateAdminCapability({
@@ -164,181 +112,6 @@ const shellAuthLayer = HttpApiBuilder.group(shellAuthEffectApi, 'auth', (handler
         ),
       ),
     ),
-);
-
-const makeOperationContext = requestHeaders.pipe(
-  Effect.flatMap((headers) =>
-    Effect.promise(() => resolveOperationContextFromSession({ headers })).pipe(
-      Effect.flatMap((result) =>
-        result._tag === 'Success'
-          ? Effect.succeed(result.operationContext)
-          : Effect.fail(createOperationContextAuthRequired(result.error.message)),
-      ),
-    ),
-  ),
-);
-
-const authRequiredResponse = (message: string) =>
-  HttpServerResponse.jsonUnsafe(createOperationContextAuthRequired(message), {
-    status: 401,
-  });
-
-const gatewayFailedResponse = (message: string) =>
-  HttpServerResponse.jsonUnsafe(microVerticalGatewayFailed(message), {
-    status: 502,
-  });
-
-const gatewayUnavailableResponse = (message: string) =>
-  HttpServerResponse.jsonUnsafe(microVerticalUnavailable(message), {
-    status: 403,
-  });
-
-const browserIdentityHeaders = new Set([
-  'authorization',
-  'content-length',
-  'cookie',
-  'host',
-  'x-legal-entity',
-  'x-ontos-operation-context',
-  'x-tenant',
-  'x-user',
-]);
-
-const forwardedHeaders = (
-  headers: Readonly<Record<string, string>>,
-  operationContextToken: string,
-) => {
-  const nextHeaders = new globalThis.Headers();
-
-  for (const [key, value] of Object.entries(headers)) {
-    if (!browserIdentityHeaders.has(key.toLowerCase())) {
-      nextHeaders.set(key, value);
-    }
-  }
-
-  nextHeaders.set('x-ontos-operation-context', operationContextToken);
-
-  return nextHeaders;
-};
-
-const canHaveBody = (method: string) => !['GET', 'HEAD'].includes(method.toUpperCase());
-
-const targetUrl = ({
-  targetBaseUrl,
-  wildcardPath,
-}: {
-  targetBaseUrl: string;
-  wildcardPath: string | undefined;
-}) => `${targetBaseUrl}/${(wildcardPath ?? '').replace(/^\/+/u, '')}`;
-
-const forwardMicroVerticalRequest = ({
-  operationContextToken,
-  request,
-  targetBaseUrl,
-  wildcardPath,
-}: {
-  operationContextToken: string;
-  request: HttpServerRequest.HttpServerRequest;
-  targetBaseUrl: string;
-  wildcardPath: string | undefined;
-}): Effect.Effect<HttpServerResponse.HttpServerResponse, MicroVerticalGatewayFailed> =>
-  Effect.gen(function* forwardMicroVerticalRequestEffect() {
-    const body = canHaveBody(request.method)
-      ? yield* request.arrayBuffer.pipe(
-          Effect.mapError((error) =>
-            microVerticalGatewayFailed(`Microvertical request body read failed: ${String(error)}`),
-          ),
-        )
-      : undefined;
-    const response = yield* Effect.tryPromise({
-      catch: (error) =>
-        microVerticalGatewayFailed(`Microvertical request failed: ${String(error)}`),
-      try: () =>
-        globalThis.fetch(targetUrl({ targetBaseUrl, wildcardPath }), {
-          headers: forwardedHeaders(request.headers, operationContextToken),
-          method: request.method,
-          ...(body === undefined ? {} : { body }),
-        }),
-    });
-
-    return HttpServerResponse.fromWeb(response);
-  });
-
-const microVerticalGatewayLayer = HttpRouter.add('*', '/mv/:vertical/*', (request) =>
-  HttpRouter.params.pipe(
-    Effect.flatMap((params) => {
-      const { vertical } = params;
-      const route = verticalRegistry[vertical as VerticalId];
-
-      if (vertical === undefined || route === undefined) {
-        return Effect.succeed(gatewayFailedResponse('Unknown microvertical.'));
-      }
-
-      return makeOperationContext.pipe(
-        Effect.flatMap((operationContext) =>
-          Effect.promise(async () => {
-            if (!isInstalledModuleKey(route.audience)) {
-              return {
-                _tag: 'Denied' as const,
-                accessKind: 'load' as const,
-                moduleKey: route.audience,
-                outcomeCode: 'module_state_load_blocked' as const,
-                state: 'inactive',
-              };
-            }
-
-            const decision = await checkModuleStateAccess({
-              accessKind: 'load',
-              moduleKey: route.audience,
-              tenantId: operationContext.tenantId,
-            });
-
-            if (decision._tag === 'Denied') {
-              console.warn(
-                JSON.stringify({
-                  accessKind: decision.accessKind,
-                  moduleKey: decision.moduleKey,
-                  outcomeCode: decision.outcomeCode,
-                  principalId: operationContext.principalId,
-                  state: decision.state,
-                  tenantId: operationContext.tenantId,
-                  type: 'module_state.gateway_denied',
-                }),
-              );
-            }
-
-            return decision;
-          }).pipe(
-            Effect.flatMap((decision) =>
-              decision._tag === 'Denied'
-                ? Effect.succeed(
-                    gatewayUnavailableResponse(
-                      `Module "${decision.moduleKey}" is not available in state "${decision.state}".`,
-                    ),
-                  )
-                : forwardMicroVerticalRequest({
-                    operationContextToken: createVerticalGatewayToken({
-                      audience: route.audience,
-                      operationContext,
-                    }),
-                    request,
-                    targetBaseUrl: route.targetBaseUrl,
-                    wildcardPath: params['*'],
-                  }),
-            ),
-          ),
-        ),
-        // oxlint-disable-next-line promise/prefer-await-to-callbacks -- This is Effect.catchTags, not Promise.catch.
-        Effect.catchTags({
-          MicroVerticalGatewayFailed: (error) =>
-            Effect.succeed(gatewayFailedResponse(error.message)),
-          OperationContextAuthRequired: (error) =>
-            Effect.succeed(authRequiredResponse(error.message)),
-        }),
-        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
-      );
-    }),
-  ),
 );
 
 const layer = Layer.mergeAll(

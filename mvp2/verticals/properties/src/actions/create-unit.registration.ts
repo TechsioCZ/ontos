@@ -1,4 +1,4 @@
-import type { ActionRegistration } from '@mvp2/core-runtime';
+import type { ActionRegistration } from '@mvp2/core-runtime/sdk';
 import { createUnitActionDescriptor } from './create-unit.action.ts';
 import type { CreateUnitAction, CreateUnitResult } from './create-unit.action.ts';
 import { createUnitHandler } from './create-unit.handler.ts';

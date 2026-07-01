@@ -247,7 +247,7 @@ const assertPublicSurfaceContract = (appId, publicSurface) => {
     );
   }
 };
-const assertPublicHeadContract = (appId, publicHead, headModule) => {
+const assertPublicHeadContract = (appId, publicHead, headModule, hasPublicRoutes) => {
   assert(
     publicHead?.generator === './src/routes/ultramodern-route-head',
     `${appId} public head generator is incorrect`,
@@ -266,47 +266,59 @@ const assertPublicHeadContract = (appId, publicHead, headModule) => {
     `${appId} public head description must come from route metadata`,
   );
   assert(
-    publicHead?.canonical?.publicIndexableOnly === true,
-    `${appId} canonical links must be public/indexable only`,
-  );
-  assert(
-    publicHead?.structuredData?.optional === true,
-    `${appId} structured data must be optional`,
-  );
-  assert(
-    publicHead?.structuredData?.source === 'route.jsonLd',
-    `${appId} structured data must come from explicit route metadata`,
-  );
-  assert(
-    publicHead?.structuredData?.inference === false,
-    `${appId} structured data inference must stay disabled`,
-  );
-  assert(
-    publicHead?.structuredData?.helperModule === './src/routes/ultramodern-jsonld',
-    `${appId} structured data helper module is incorrect`,
-  );
-  assert(
-    publicHead?.structuredData?.sanitizesHtmlOpenBracket === true,
-    `${appId} structured data must sanitize HTML open brackets`,
-  );
-  assert(
     publicHead?.privateRouteRobots === 'noindex, nofollow',
     `${appId} private route robots policy is incorrect`,
   );
-  for (const snippet of [
+  const requiredHeadSnippets = [
     "from '@modern-js/runtime/head'",
     '<title>{title}</title>',
     'name="description"',
     'name="robots"',
-    'rel="canonical"',
-    'rel="alternate"',
-    'property="og:title"',
-    'property="og:description"',
-    'name="twitter:card"',
-    'application/ld+json',
-    'route?.jsonLd',
-    "replaceAll('<', '\\\\u003c')",
-  ]) {
+  ];
+
+  if (hasPublicRoutes) {
+    assert(
+      publicHead?.canonical?.publicIndexableOnly === true,
+      `${appId} canonical links must be public/indexable only`,
+    );
+    requiredHeadSnippets.push(
+      'rel="canonical"',
+      'rel="alternate"',
+      'property="og:title"',
+      'property="og:description"',
+      'name="twitter:card"',
+    );
+  }
+
+  if (hasPublicRoutes && publicHead?.structuredData !== undefined) {
+    assert(
+      publicHead.structuredData.optional === true,
+      `${appId} structured data must be optional`,
+    );
+    assert(
+      publicHead.structuredData.source === 'route.jsonLd',
+      `${appId} structured data must come from explicit route metadata`,
+    );
+    assert(
+      publicHead.structuredData.inference === false,
+      `${appId} structured data inference must stay disabled`,
+    );
+    assert(
+      publicHead.structuredData.helperModule === './src/routes/ultramodern-jsonld',
+      `${appId} structured data helper module is incorrect`,
+    );
+    assert(
+      publicHead.structuredData.sanitizesHtmlOpenBracket === true,
+      `${appId} structured data must sanitize HTML open brackets`,
+    );
+    requiredHeadSnippets.push(
+      'application/ld+json',
+      'route?.jsonLd',
+      "replaceAll('<', '\\\\u003c')",
+    );
+  }
+
+  for (const snippet of requiredHeadSnippets) {
     assert(headModule.includes(snippet), `${appId} route head module is missing ${snippet}`);
   }
 };
@@ -430,10 +442,7 @@ const requiredPaths = [
   'apps/shell-super-app/module-federation.config.ts',
   'apps/shell-super-app/src/modern-app-env.d.ts',
   'apps/shell-super-app/src/modern.runtime.ts',
-  'apps/shell-super-app/src/effect/vertical-clients.ts',
-  'apps/shell-super-app/locales/en/translation.json',
   `apps/shell-super-app/locales/en/${shellNamespace}.json`,
-  'apps/shell-super-app/locales/cs/translation.json',
   `apps/shell-super-app/locales/cs/${shellNamespace}.json`,
   'apps/shell-super-app/src/routes/index.css',
   'apps/shell-super-app/src/routes/layout.tsx',
@@ -458,9 +467,7 @@ for (const vertical of fullStackVerticals) {
     `${vertical.path}/src/modern.runtime.ts`,
     `${vertical.path}/src/federation-entry.tsx`,
     ...vertical.componentPaths,
-    `${vertical.path}/locales/en/translation.json`,
     `${vertical.path}/locales/en/${vertical.namespace}.json`,
-    `${vertical.path}/locales/cs/translation.json`,
     `${vertical.path}/locales/cs/${vertical.namespace}.json`,
     `${vertical.path}/src/routes/index.css`,
     `${vertical.path}/src/routes/layout.tsx`,
@@ -1043,7 +1050,12 @@ assert(
   JSON.stringify(shellContract?.routes?.publicRoutes ?? []) === '[]',
   'Shell must not expose generated public routes by default',
 );
-assertPublicHeadContract('shell-super-app', shellContract?.routes?.publicHead, shellRouteHead);
+assertPublicHeadContract(
+  'shell-super-app',
+  shellContract?.routes?.publicHead,
+  shellRouteHead,
+  (shellContract?.routes?.publicRoutes ?? []).length > 0,
+);
 assertPublicSurfaceContract('shell-super-app', shellContract?.routes?.publicSurface);
 assert(
   (shellContract?.routes?.owned ?? []).every(
@@ -1362,7 +1374,12 @@ for (const vertical of fullStackVerticals) {
     JSON.stringify(contractEntry?.routes?.publicRoutes ?? []) === '[]',
     `${vertical.id} must not expose generated public routes by default`,
   );
-  assertPublicHeadContract(vertical.id, contractEntry?.routes?.publicHead, routeHead);
+  assertPublicHeadContract(
+    vertical.id,
+    contractEntry?.routes?.publicHead,
+    routeHead,
+    (contractEntry?.routes?.publicRoutes ?? []).length > 0,
+  );
   assertPublicSurfaceContract(vertical.id, contractEntry?.routes?.publicSurface);
   assert(
     (contractEntry?.routes?.owned ?? []).every(

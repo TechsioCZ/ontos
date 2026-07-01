@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
 const dbTestsEnabled = process.env.OUTBOX_WORKER_DB_TESTS === '1';
-const root = new URL('..', import.meta.url).pathname;
 const coreRuntimeRequire = createRequire(
   new URL('../packages/core-runtime/package.json', import.meta.url),
 );
+const outboxWorkerRequire = createRequire(
+  new URL('../packages/outbox-worker/package.json', import.meta.url),
+);
 const drizzleOrmModule = coreRuntimeRequire.resolve('drizzle-orm');
+const effectModule = outboxWorkerRequire.resolve('effect');
 const proofTenantSlugPrefix = 'outbox-worker-proof-';
 
 test(
@@ -22,7 +24,10 @@ test(
   async (t) => {
     const [
       { db, sqlClient },
-      { createVerticalGatewayToken, rowsFromResult, runAction },
+      { createVerticalGatewayToken },
+      { rowsFromResult },
+      { runAction },
+      { Effect },
       { sql },
       { materializeDeliveries },
       { claimDueDeliveries },
@@ -31,7 +36,10 @@ test(
       { createUnitActionRegistration },
     ] = await Promise.all([
       import('../packages/core-runtime/src/db/client.ts'),
-      import('../packages/core-runtime/src/index.ts'),
+      import('../packages/core-runtime/src/vertical-gateway-token.ts'),
+      import('../packages/core-runtime/src/sql-result.ts'),
+      import('../packages/core-runtime/src/core-sdk.ts'),
+      import(effectModule),
       import(drizzleOrmModule),
       import('../packages/outbox-worker/src/materialize.ts'),
       import('../packages/outbox-worker/src/claim.ts'),
@@ -45,7 +53,7 @@ test(
       descriptor: {
         workerKey: 'proof.outbox.noop',
         owningModuleKey: 'outbox-worker-proof',
-        executingModuleKey: 'outbox-worker-proof',
+        consumerModuleKey: 'outbox-worker-proof',
         topics: [testOutboxWorkerTopic],
         defaults: {
           maxAttempts: 2,
@@ -116,6 +124,18 @@ test(
           and tenant.slug like ${proofTenantPattern}
       `);
       await db.execute(sql`
+        delete from core.tenant_module_state_changes module_state_change
+        using core.tenants tenant
+        where module_state_change.tenant_id = tenant.tenant_id
+          and tenant.slug like ${proofTenantPattern}
+      `);
+      await db.execute(sql`
+        delete from core.tenant_module_states module_state
+        using core.tenants tenant
+        where module_state.tenant_id = tenant.tenant_id
+          and tenant.slug like ${proofTenantPattern}
+      `);
+      await db.execute(sql`
         delete from core.principal_auth_bindings binding
         using core.tenants tenant
         where binding.tenant_id = tenant.tenant_id
@@ -156,6 +176,10 @@ test(
         insert into core.tenants (slug, name, status, default_locale)
         values (${`${proofTenantSlugPrefix}${suffix}`}, 'Outbox Worker Proof', 'active', 'en')
         returning tenant_id as "tenantId"
+      `);
+      await db.execute(sql`
+        insert into core.tenant_module_states (tenant_id, module_key, state)
+        values (${tenant.tenantId}, 'properties', 'active')
       `);
       const legalEntity = await one(sql`
         insert into core.legal_entities (
@@ -286,7 +310,7 @@ test(
 
     const createDelivery = async ({
       attemptsCount = 0,
-      executingModuleKey = testOutboxWorkerRegistration.descriptor.executingModuleKey,
+      consumerModuleKey = testOutboxWorkerRegistration.descriptor.consumerModuleKey,
       outboxMessageId,
       status = 'pending',
       workerKey = testOutboxWorkerRegistration.descriptor.workerKey,
@@ -295,7 +319,7 @@ test(
         insert into core.outbox_deliveries (
           outbox_message_id,
           worker_key,
-          executing_module_key,
+          consumer_module_key,
           status,
           attempts_count,
           available_at
@@ -303,14 +327,14 @@ test(
         values (
           ${outboxMessageId},
           ${workerKey},
-          ${executingModuleKey},
+          ${consumerModuleKey},
           ${status},
           ${attemptsCount},
           now() - interval '1 second'
         )
         returning
           attempts_count as "attemptsCount",
-          executing_module_key as "executingModuleKey",
+          consumer_module_key as "consumerModuleKey",
           outbox_delivery_id as "outboxDeliveryId",
           outbox_message_id as "outboxMessageId",
           worker_key as "workerKey"
@@ -321,8 +345,7 @@ test(
           update core.outbox_deliveries
           set
             claimed_by = 'proof-runtime',
-            claimed_at = now(),
-            claim_expires_at = now() + interval '1 minute'
+            claimed_at = now()
           where outbox_delivery_id = ${delivery.outboxDeliveryId}
         `);
       }
@@ -351,8 +374,7 @@ test(
           available_at as "availableAt",
           claimed_at as "claimedAt",
           claimed_by as "claimedBy",
-          claim_expires_at as "claimExpiresAt",
-          executing_module_key as "executingModuleKey",
+          consumer_module_key as "consumerModuleKey",
           status,
           worker_key as "workerKey"
         from core.outbox_deliveries
@@ -377,7 +399,6 @@ test(
 
     const runtimeConfig = {
       claimBatchSize: 10,
-      claimTimeoutMs: 60_000,
       materializeBatchSize: 10,
       maxAttempts: 3,
       pollIntervalMs: 1_000,
@@ -387,54 +408,12 @@ test(
 
     const claimedDeliveryFrom = ({ attempt, delivery }) => ({
       attemptsCount: delivery.attemptsCount,
-      executingModuleKey: delivery.executingModuleKey,
+      consumerModuleKey: delivery.consumerModuleKey,
       outboxAttemptId: attempt.outboxAttemptId,
       outboxDeliveryId: delivery.outboxDeliveryId,
       outboxMessageId: delivery.outboxMessageId,
       workerKey: delivery.workerKey,
     });
-
-    const claimInChildProcess = (runtimeId) =>
-      new Promise((resolve, reject) => {
-        const code = `
-          import { claimDueDeliveries } from './packages/outbox-worker/src/claim.ts';
-          import { sqlClient } from './packages/core-runtime/src/db/client.ts';
-
-          try {
-            const claimed = await claimDueDeliveries({
-              batchSize: 1,
-              claimTimeoutMs: 60000,
-              runtimeId: ${JSON.stringify(runtimeId)}
-            });
-            process.stdout.write(JSON.stringify(claimed.map((delivery) => delivery.outboxDeliveryId)));
-          } finally {
-            await sqlClient.end({ timeout: 1 });
-          }
-        `;
-        const child = spawn(process.execPath, ['--input-type=module', '-e', code], {
-          cwd: root,
-          env: process.env,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        let stdout = '';
-        let stderr = '';
-
-        child.stdout.on('data', (chunk) => {
-          stdout += chunk;
-        });
-        child.stderr.on('data', (chunk) => {
-          stderr += chunk;
-        });
-        child.on('error', reject);
-        child.on('close', (code) => {
-          if (code !== 0) {
-            reject(new Error(stderr || `claim process exited with ${code}`));
-            return;
-          }
-
-          resolve(JSON.parse(stdout || '[]'));
-        });
-      });
 
     t.after(async () => {
       await deleteProofRows();
@@ -461,7 +440,7 @@ test(
       );
 
       assert.ok(accountingRegistration);
-      assert.equal(accountingRegistration.descriptor.executingModuleKey, 'accounting');
+      assert.equal(accountingRegistration.descriptor.consumerModuleKey, 'accounting');
       assert.deepEqual(accountingRegistration.descriptor.topics, ['properties.unit.created']);
     });
 
@@ -474,6 +453,10 @@ test(
         insert into core.tenants (slug, name, status, default_locale)
         values (${`${proofTenantSlugPrefix}${suffix}`}, 'Outbox Worker Proof', 'active', 'en')
         returning tenant_id as "tenantId"
+      `);
+        await db.execute(sql`
+        insert into core.tenant_module_states (tenant_id, module_key, state)
+        values (${tenant.tenantId}, 'properties', 'active')
       `);
         const legalEntity = await one(sql`
         insert into core.legal_entities (
@@ -507,6 +490,9 @@ test(
         });
         const unitName = `Outbox Worker Proof Unit ${suffix}`;
         const result = await runAction({
+          options: {
+            authorizationChecker: async () => ({ _tag: 'Allowed' }),
+          },
           payload: unitName,
           registration: createUnitActionRegistration,
           transport: {
@@ -557,10 +543,12 @@ test(
         assert.equal(message.payloadJson.name, unitName);
         assert.equal(message.payloadJson.unitId, result.response.unitId);
 
-        const materialized = await materializeDeliveries({
-          batchSize: 10,
-          registrations: installedOutboxWorkerRegistrations,
-        });
+        const materialized = await Effect.runPromise(
+          materializeDeliveries({
+            batchSize: 10,
+            registrations: installedOutboxWorkerRegistrations,
+          }),
+        );
         assert.deepEqual(materialized, {
           deliveriesInserted: 1,
           messagesMatched: 1,
@@ -568,32 +556,34 @@ test(
 
         const delivery = await one(sql`
         select
-          executing_module_key as "executingModuleKey",
+          consumer_module_key as "consumerModuleKey",
           status,
           worker_key as "workerKey"
         from core.outbox_deliveries
         where outbox_message_id = ${message.outboxMessageId}
       `);
-        assert.equal(delivery.executingModuleKey, 'accounting');
+        assert.equal(delivery.consumerModuleKey, 'accounting');
         assert.equal(delivery.status, 'pending');
         assert.equal(delivery.workerKey, 'accounting.propertiesUnitCreated');
       },
     );
 
-    await t.test('zero-match messages still receive matchedAt', async () => {
+    await t.test('zero-match messages remain unmatched', async () => {
       await deleteProofRows();
       const fixture = await createCoreFixture({ topic: 'proof.unmatched.message' });
 
-      const result = await materializeDeliveries({
-        batchSize: 10,
-        registrations: [testOutboxWorkerRegistration],
-      });
+      const result = await Effect.runPromise(
+        materializeDeliveries({
+          batchSize: 10,
+          registrations: [testOutboxWorkerRegistration],
+        }),
+      );
 
       assert.deepEqual(result, {
         deliveriesInserted: 0,
-        messagesMatched: 1,
+        messagesMatched: 0,
       });
-      assert.ok((await selectMessage(fixture.message.outboxMessageId)).matchedAt);
+      assert.equal((await selectMessage(fixture.message.outboxMessageId)).matchedAt, null);
       assert.equal(await deliveryCountForMessage(fixture.message.outboxMessageId), 0);
     });
 
@@ -601,10 +591,12 @@ test(
       await deleteProofRows();
       const fixture = await createCoreFixture({ topic: testOutboxWorkerTopic });
 
-      const result = await materializeDeliveries({
-        batchSize: 10,
-        registrations: [testOutboxWorkerRegistration],
-      });
+      const result = await Effect.runPromise(
+        materializeDeliveries({
+          batchSize: 10,
+          registrations: [testOutboxWorkerRegistration],
+        }),
+      );
 
       assert.deepEqual(result, {
         deliveriesInserted: 1,
@@ -621,15 +613,17 @@ test(
         descriptor: {
           ...testOutboxWorkerRegistration.descriptor,
           workerKey: 'proof.outbox.second-noop',
-          executingModuleKey: 'outbox-worker-proof-second',
+          consumerModuleKey: 'outbox-worker-proof-second',
         },
         handler: () => undefined,
       };
 
-      const result = await materializeDeliveries({
-        batchSize: 10,
-        registrations: [testOutboxWorkerRegistration, secondRegistration],
-      });
+      const result = await Effect.runPromise(
+        materializeDeliveries({
+          batchSize: 10,
+          registrations: [testOutboxWorkerRegistration, secondRegistration],
+        }),
+      );
 
       assert.deepEqual(result, {
         deliveriesInserted: 2,
@@ -643,14 +637,18 @@ test(
       const fixture = await createCoreFixture({ topic: testOutboxWorkerTopic });
       await createDelivery({ outboxMessageId: fixture.message.outboxMessageId });
 
-      const firstResult = await materializeDeliveries({
-        batchSize: 10,
-        registrations: [testOutboxWorkerRegistration],
-      });
-      const secondResult = await materializeDeliveries({
-        batchSize: 10,
-        registrations: [testOutboxWorkerRegistration],
-      });
+      const firstResult = await Effect.runPromise(
+        materializeDeliveries({
+          batchSize: 10,
+          registrations: [testOutboxWorkerRegistration],
+        }),
+      );
+      const secondResult = await Effect.runPromise(
+        materializeDeliveries({
+          batchSize: 10,
+          registrations: [testOutboxWorkerRegistration],
+        }),
+      );
 
       assert.deepEqual(firstResult, {
         deliveriesInserted: 0,
@@ -668,11 +666,12 @@ test(
       const fixture = await createCoreFixture({ topic: testOutboxWorkerTopic });
       const delivery = await createDelivery({ outboxMessageId: fixture.message.outboxMessageId });
 
-      const claimed = await claimDueDeliveries({
-        batchSize: 10,
-        claimTimeoutMs: 60_000,
-        runtimeId: 'proof-claim-once',
-      });
+      const claimed = await Effect.runPromise(
+        claimDueDeliveries({
+          batchSize: 10,
+          runtimeId: 'proof-claim-once',
+        }),
+      );
 
       assert.equal(claimed.length, 1);
       assert.equal(claimed[0].outboxDeliveryId, delivery.outboxDeliveryId);
@@ -682,7 +681,6 @@ test(
       assert.equal(storedDelivery.attemptsCount, 1);
       assert.equal(storedDelivery.claimedBy, 'proof-claim-once');
       assert.ok(storedDelivery.claimedAt);
-      assert.ok(storedDelivery.claimExpiresAt);
       assert.equal(
         await countRows(sql`
           select count(*)::int as "count"
@@ -699,10 +697,22 @@ test(
       const delivery = await createDelivery({ outboxMessageId: fixture.message.outboxMessageId });
 
       const [firstClaim, secondClaim] = await Promise.all([
-        claimInChildProcess('proof-concurrent-a'),
-        claimInChildProcess('proof-concurrent-b'),
+        Effect.runPromise(
+          claimDueDeliveries({
+            batchSize: 1,
+            runtimeId: 'proof-concurrent-a',
+          }),
+        ),
+        Effect.runPromise(
+          claimDueDeliveries({
+            batchSize: 1,
+            runtimeId: 'proof-concurrent-b',
+          }),
+        ),
       ]);
-      const claimedIds = [...firstClaim, ...secondClaim];
+      const claimedIds = [...firstClaim, ...secondClaim].map(
+        (claimedDelivery) => claimedDelivery.outboxDeliveryId,
+      );
 
       assert.deepEqual(claimedIds, [delivery.outboxDeliveryId]);
       assert.equal(
@@ -733,11 +743,13 @@ test(
         },
       };
 
-      await executeClaimedDelivery({
-        claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
-        registrations: [registration],
-        runtimeConfig,
-      });
+      await Effect.runPromise(
+        executeClaimedDelivery({
+          claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
+          registrations: [registration],
+          runtimeConfig,
+        }),
+      );
 
       assert.equal(observedInputs.length, 1);
       assert.equal(observedInputs[0].hasTransaction, true);
@@ -751,7 +763,7 @@ test(
         originalActionKey: fixture.action.actionKey,
         originalActionIdempotencyKey: fixture.action.idempotencyKey,
         producerModuleKey: 'properties',
-        executingModuleKey: testOutboxWorkerRegistration.descriptor.executingModuleKey,
+        consumerModuleKey: testOutboxWorkerRegistration.descriptor.consumerModuleKey,
         workerKey: testOutboxWorkerRegistration.descriptor.workerKey,
         topic: testOutboxWorkerTopic,
         outboxMessageId: fixture.message.outboxMessageId,
@@ -761,6 +773,60 @@ test(
       });
       assert.equal((await selectDelivery(delivery.outboxDeliveryId)).status, 'done');
       assert.ok((await selectAttempt(attempt.outboxAttemptId)).finishedAt);
+    });
+
+    await t.test('payload schemas validate before handler execution', async () => {
+      await deleteProofRows();
+      const fixture = await createCoreFixture({
+        payload: { invalid: true },
+        topic: testOutboxWorkerTopic,
+      });
+      const delivery = await createDelivery({
+        attemptsCount: 1,
+        outboxMessageId: fixture.message.outboxMessageId,
+        status: 'processing',
+      });
+      const attempt = await createAttempt(delivery.outboxDeliveryId);
+      let handlerCalled = false;
+      const registration = {
+        ...testOutboxWorkerRegistration,
+        descriptor: {
+          ...testOutboxWorkerRegistration.descriptor,
+          payloadSchema: {
+            parse: (payload) => {
+              if (
+                typeof payload === 'object' &&
+                payload !== null &&
+                'proofId' in payload &&
+                typeof payload.proofId === 'string'
+              ) {
+                return payload;
+              }
+
+              throw new TypeError('invalid proof payload');
+            },
+          },
+        },
+        handler: () => {
+          handlerCalled = true;
+        },
+      };
+
+      await Effect.runPromise(
+        executeClaimedDelivery({
+          claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
+          registrations: [registration],
+          runtimeConfig,
+        }),
+      );
+
+      const storedDelivery = await selectDelivery(delivery.outboxDeliveryId);
+      const storedAttempt = await selectAttempt(attempt.outboxAttemptId);
+      assert.equal(handlerCalled, false);
+      assert.equal(storedDelivery.status, 'pending');
+      assert.ok(storedAttempt.finishedAt);
+      assert.match(storedAttempt.errorMessage, /Outbox worker payload validation failed/u);
+      assert.match(storedAttempt.errorMessage, /invalid proof payload/u);
     });
 
     await t.test('failed handlers return deliveries to pending with backoff', async () => {
@@ -790,18 +856,19 @@ test(
       };
       const startedAt = new Date();
 
-      await executeClaimedDelivery({
-        claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
-        registrations: [registration],
-        runtimeConfig,
-      });
+      await Effect.runPromise(
+        executeClaimedDelivery({
+          claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
+          registrations: [registration],
+          runtimeConfig,
+        }),
+      );
 
       const storedDelivery = await selectDelivery(delivery.outboxDeliveryId);
       const storedAttempt = await selectAttempt(attempt.outboxAttemptId);
       assert.equal(storedDelivery.status, 'pending');
       assert.equal(storedDelivery.claimedBy, null);
       assert.equal(storedDelivery.claimedAt, null);
-      assert.equal(storedDelivery.claimExpiresAt, null);
       assert.ok(new Date(storedDelivery.availableAt).getTime() > startedAt.getTime());
       assert.ok(storedAttempt.finishedAt);
       assert.match(storedAttempt.errorMessage, /proof retry failure/u);
@@ -833,11 +900,13 @@ test(
         },
       };
 
-      await executeClaimedDelivery({
-        claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
-        registrations: [registration],
-        runtimeConfig,
-      });
+      await Effect.runPromise(
+        executeClaimedDelivery({
+          claimedDelivery: claimedDeliveryFrom({ attempt, delivery }),
+          registrations: [registration],
+          runtimeConfig,
+        }),
+      );
 
       const storedDelivery = await selectDelivery(delivery.outboxDeliveryId);
       const storedAttempt = await selectAttempt(attempt.outboxAttemptId);

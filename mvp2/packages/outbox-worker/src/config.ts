@@ -3,7 +3,6 @@ import { hostname } from 'node:os';
 
 export type OutboxWorkerRuntimeConfig = {
   readonly claimBatchSize: number;
-  readonly claimTimeoutMs: number;
   readonly materializeBatchSize: number;
   readonly maxAttempts: number;
   readonly pollIntervalMs: number;
@@ -22,7 +21,6 @@ const parsePositiveInteger = (value: string | undefined, fallback: number): numb
 
 export const readOutboxWorkerRuntimeConfig = (): OutboxWorkerRuntimeConfig => ({
   claimBatchSize: parsePositiveInteger(process.env['OUTBOX_WORKER_CLAIM_BATCH_SIZE'], 10),
-  claimTimeoutMs: parsePositiveInteger(process.env['OUTBOX_WORKER_CLAIM_TIMEOUT_MS'], 60_000),
   materializeBatchSize: parsePositiveInteger(
     process.env['OUTBOX_WORKER_MATERIALIZE_BATCH_SIZE'],
     100,

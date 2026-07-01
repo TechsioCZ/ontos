@@ -72,7 +72,7 @@ test('CoreSDK Module State Gate runs after action.received and before SpiceDB, p
 
 test('Shell gates module-federated remotes and gateway forwarding by backend-resolved module state', () => {
   const authApi = read('apps/shell-super-app/src/effect/auth-api.ts');
-  const gateway = read('apps/shell-super-app/api/effect/index.ts');
+  const gateway = read('apps/shell-super-app/api/effect/microvertical-gateway.ts');
   const registry = read('apps/shell-super-app/src/modules/installed-modules.ts');
   const verticalComponents = read('apps/shell-super-app/src/routes/vertical-components.tsx');
   const shellFrame = read('apps/shell-super-app/src/routes/shell-frame.tsx');
@@ -81,6 +81,7 @@ test('Shell gates module-federated remotes and gateway forwarding by backend-res
 
   assert.match(authApi, /moduleStates:\s*Schema\.Array\(tenantModuleStateSchema\)/u);
   assert.match(authApi, /moduleStateAdmin:\s*moduleStateAdminCapabilitySchema/u);
+  assert.doesNotMatch(authApi, /actionCapabilities/u);
   assert.match(gateway, /checkModuleStateAccess/u);
   assert.match(gateway, /accessKind:\s*'load'/u);
   assert.match(gateway, /forwardMicroVerticalRequest/u);
@@ -92,8 +93,9 @@ test('Shell gates module-federated remotes and gateway forwarding by backend-res
   assert.doesNotMatch(verticalComponents, /const PropertiesWidget = createHydratedRemote/u);
   assert.doesNotMatch(verticalComponents, /const AccountingWidget = createHydratedRemote/u);
   assert.match(verticalComponents, /isModuleStateAccessAllowed\(\{\s*accessKind:\s*'load'/u);
-  assert.match(verticalComponents, /<RemoteSlot specifier=\{module\.widgetRemote\}/u);
-  assert.match(verticalComponents, /<RemoteSlot specifier="properties\/Route" \/>/u);
+  assert.match(verticalComponents, /specifier=\{module\.widgetRemote\}/u);
+  assert.doesNotMatch(verticalComponents, /canCreateUnit=/u);
+  assert.match(verticalComponents, /specifier=\{routeModule\.routeRemote\}/u);
   assert.match(shellFrame, /<ShellAuthProvider>/u);
   assert.match(adminPanel, /context\.moduleStateAdmin\.canChange/u);
   assert.doesNotMatch(adminPanel, /!context\.moduleStateAdmin\.canView/u);
@@ -111,9 +113,12 @@ test('SpiceDB schema and seed include governed core.modules state administration
   assert.doesNotMatch(moduleState, /principalId === demoAdminPrincipalId/u);
   assert.doesNotMatch(demoAuth, /demoModuleStateAuthorizationChecker/u);
   assert.match(schema, /definition core_modules/u);
+  assert.match(schema, /relation creator: principal/u);
+  assert.match(schema, /permission create = creator/u);
   assert.match(schema, /permission view = viewer \+ changer/u);
   assert.match(schema, /permission change = changer/u);
   assert.match(seed, /core_modules:\$\{demoTenantId\}_core-modules/u);
+  assert.match(seed, /'creator'/u);
   assert.match(seed, /'changer'/u);
 });
 
@@ -123,7 +128,8 @@ test('Properties HTTP contract serializes CoreSDK module-state denials', () => {
 
   assert.match(api, /OperationModuleStateDenied/u);
   assert.match(api, /operationModuleStateDeniedSchema/u);
-  assert.match(api, /HttpApiSchema\.status\(403\)/u);
+  assert.match(api, /httpStatus\(403\)/u);
   assert.match(bff, /case 'OperationModuleStateDenied'/u);
+  assert.match(bff, /return 403;/u);
   assert.match(bff, /createOperationModuleStateDenied/u);
 });

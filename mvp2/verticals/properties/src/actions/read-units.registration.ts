@@ -1,4 +1,4 @@
-import type { ActionRegistration } from '@mvp2/core-runtime';
+import type { ActionRegistration } from '@mvp2/core-runtime/sdk';
 import { readUnitsActionDescriptor } from './read-units.action.ts';
 import type { ReadUnitsAction } from './read-units.action.ts';
 import { readUnitsHandler } from './read-units.handler.ts';

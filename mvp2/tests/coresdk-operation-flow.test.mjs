@@ -16,6 +16,17 @@ test('properties Effect BFF routes createUnit through CoreSDK registration', () 
   assert.doesNotMatch(bff, /createUnitHandler/u);
 });
 
+test('accounting Effect BFF routes demo list endpoint through CoreSDK registration', () => {
+  const bff = read('verticals/accounting/api/effect/index.ts');
+  const api = read('verticals/accounting/shared/effect/api.ts');
+
+  assert.match(bff, /runAction/u);
+  assert.match(bff, /listAccountingActionRegistration/u);
+  assert.match(bff, /transport:\s*\{\s*headers\s*\}/u);
+  assert.doesNotMatch(bff, /accountingOperationContexts/u);
+  assert.doesNotMatch(api, /accountingOperationContexts/u);
+});
+
 test('CoreSDK owns trusted context, idempotency, audit, policy gates, and transaction execution', () => {
   const coreSDK = read('packages/core-runtime/src/core-sdk.ts');
   const policy = read('packages/core-runtime/src/policy.ts');
@@ -69,7 +80,7 @@ test('properties HTTP contract maps CoreSDK typed errors to safe statuses', () =
   assert.match(api, /401/u);
   assert.match(api, /403/u);
   assert.match(api, /428/u);
-  assert.match(api, /HttpApiSchema\.status\(409\)/u);
+  assert.match(api, /httpStatus\(409\)/u);
   assert.match(api, /OperationExecutionFailed/u);
   assert.match(api, /500/u);
   assert.match(api, /Schema\.Union/u);
@@ -77,13 +88,35 @@ test('properties HTTP contract maps CoreSDK typed errors to safe statuses', () =
   assert.match(api, /'idempotency-key'/u);
   assert.match(bff, /OperationAuthorizationDenied/u);
   assert.match(bff, /coreSDKErrorToHttpError/u);
+  assert.match(bff, /httpErrorStatus/u);
+  assert.match(bff, /HttpServerResponse\.jsonUnsafe/u);
+  assert.match(bff, /case 'OperationContextAuthRequired':\s*\{\s*return 401;/u);
+  assert.match(
+    bff,
+    /case 'OperationAuthorizationDenied':\s*\n\s*case 'OperationModuleStateDenied':\s*\{\s*return 403;/u,
+  );
+});
+
+test('CoreSDK preserves SpiceDB denied as an authorization result', () => {
+  const coreSDK = read('packages/core-runtime/src/core-sdk.ts');
+
+  assert.match(coreSDK, /authorization_denied_evidence_persistence_failed/u);
+  assert.match(coreSDK, /return authorizationDenied\(\{/u);
+  assert.match(
+    coreSDK,
+    /authorization\._tag === 'Unavailable' \? 'authorization_unavailable' : 'authorization_denied'/u,
+  );
+  assert.doesNotMatch(
+    coreSDK,
+    /return '_tag' in auditedContext\s*\?\s*auditedContext\s*:\s*authorizationDenied/u,
+  );
 });
 
 test('createUnit descriptor and client provide required operation metadata', () => {
   const action = read('verticals/properties/src/actions/create-unit.action.ts');
   const handler = read('verticals/properties/src/actions/create-unit.handler.ts');
   const message = read('verticals/properties/src/outbox/properties-unit-created.message.ts');
-  const eventContract = read('packages/shared-contracts/src/properties-events.ts');
+  const eventContract = read('verticals/properties/shared/events/properties-unit-created.ts');
   const policy = read('verticals/properties/src/actions/create-unit.policy.ts');
   const registration = read('verticals/properties/src/actions/create-unit.registration.ts');
   const client = read('verticals/properties/src/effect/properties-client.ts');
@@ -91,6 +124,10 @@ test('createUnit descriptor and client provide required operation metadata', () 
 
   assert.match(action, /actionKey:\s*'property\.registry\.createUnit'/u);
   assert.match(action, /auditProfile:\s*'standard'/u);
+  assert.match(action, /authorization:\s*\{/u);
+  assert.match(action, /permission:\s*'create'/u);
+  assert.match(action, /resourceObjectType:\s*'resource_type'/u);
+  assert.match(action, /resourceObjectId:\s*'property\.unit'/u);
   assert.match(action, /eventType:\s*propertiesUnitCreatedTopic/u);
   assert.match(action, /subjectResourceId:\s*\(_input,\s*response\)\s*=>\s*response\.unitId/u);
   assert.match(action, /subjectResourceType:\s*'property\.unit'/u);
@@ -103,7 +140,7 @@ test('createUnit descriptor and client provide required operation metadata', () 
   assert.match(handler, /unitId:\s*inserted\.unitId/u);
   assert.match(eventContract, /propertiesUnitCreatedTopic = 'properties\.unit\.created'/u);
   assert.match(eventContract, /PropertiesUnitCreatedPayload/u);
-  assert.match(message, /@mvp2\/shared-contracts\/properties-events/u);
+  assert.match(message, /shared\/events\/properties-unit-created/u);
   assert.match(message, /defineOutboxMessage\(\s*propertiesUnitCreatedTopic,?\s*\)/u);
   assert.match(policy, /rejectCreateUnitNameStartingWithNewPolicy/u);
   assert.match(policy, /startsWith\('New'\)/u);
@@ -117,6 +154,7 @@ test('createUnit descriptor and client provide required operation metadata', () 
   assert.match(client, /payload:\s*options\.unitName/u);
   assert.match(button, /crypto\.randomUUID/u);
   assert.match(button, /unitName\s*=\s*'xNew unitx'/u);
+  assert.match(button, /disabled=\{!canCreateUnit\}/u);
   assert.match(button, /catch\s*\(error\)/u);
 });
 

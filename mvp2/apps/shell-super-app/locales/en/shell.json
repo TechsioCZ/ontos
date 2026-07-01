@@ -1,5 +1,15 @@
 {
   "shell": {
+    "auth": {
+      "currentUser": "Current user",
+      "legalEntity": "Legal entity",
+      "profiles": {
+        "admin": "Admin",
+        "user": "User"
+      },
+      "signOut": "Sign out",
+      "tenant": "Tenant"
+    },
     "boundaries": {
       "toggle": "show team boundaries"
     },
@@ -20,32 +30,18 @@
       "switcher": "Language"
     },
     "remoteUnavailable": "Remote vertical unavailable",
-    "remotes": {},
+    "remotes": {
+      "propertiesUnavailable": "Properties is not available."
+    },
     "routes": {
-      "home": "Home"
+      "home": "Home",
+      "propertiesUnits": "Properties units",
+      "viewModule": "View {{module}}"
     },
     "seo": {
-      "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
+      "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata.",
+      "propertiesUnitsDescription": "Shell-hosted Properties units route rendered through the Properties MicroVertical."
     },
     "title": "UltraModern Workspace"
-  },
-  "properties": {
-    "language": {
-      "cs": "Czech",
-      "en": "English",
-      "switcher": "Language"
-    },
-    "routes": {
-      "home": "Home"
-    },
-    "seo": {
-      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
-    },
-    "federatedSurface": "Federated surface owned by this vertical.",
-    "remoteUnavailable": "Remote vertical unavailable",
-    "role": "properties",
-    "routeSurface": "Route surface owned by this vertical.",
-    "title": "Properties Vertical",
-    "widgetBody": "Owns a vertical route surface."
   }
 }

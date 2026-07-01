@@ -7,8 +7,18 @@
   "exports": {
     ".": "./src/index.ts",
     "./auth": "./src/auth/config.ts",
+    "./auth/demo": "./src/auth/demo-auth.ts",
     "./db/client": "./src/db/client.ts",
-    "./db/schema": "./src/db/schema.ts"
+    "./db/schema": "./src/db/schema.ts",
+    "./db/types": "./src/db/types.ts",
+    "./gateway-token": "./src/vertical-gateway-token.ts",
+    "./module-state": "./src/module-state.ts",
+    "./operation-context": "./src/operation-context.ts",
+    "./operation-context/session": "./src/operation-context-from-session.ts",
+    "./outbox": "./src/outbox.ts",
+    "./policy": "./src/policy.ts",
+    "./sdk": "./src/core-sdk.ts",
+    "./sql-result": "./src/sql-result.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
