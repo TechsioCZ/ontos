@@ -1,0 +1,64 @@
+{
+  "name": "app",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "verticals/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @app/shell-super-app dev",
+    "dev:shell": "pnpm --filter @app/shell-super-app dev",
+    "build": "ULTRAMODERN_ZEPHYR=false pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
+    "format": "oxfmt . '!repos/**'",
+    "format:check": "oxfmt --check . '!repos/**'",
+    "lint": "oxlint apps verticals packages",
+    "lint:fix": "oxlint apps verticals packages --fix",
+    "typecheck": "node ./scripts/ultramodern-typecheck.mts --build tsconfig.json",
+    "cloudflare:build": "pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types",
+    "cloudflare:deploy": "pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",
+    "cloudflare:proof": "node ./scripts/proof-cloudflare-version.mts --out .codex/reports/cloudflare-version-proof/public-url-proof.json",
+    "skills:install": "node ./scripts/bootstrap-agent-skills.mts",
+    "skills:check": "node ./scripts/bootstrap-agent-skills.mts --check",
+    "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mts",
+    "agents:refs:check": "node ./scripts/setup-agent-reference-repos.mts --check",
+    "mf:types": "node ./scripts/assert-mf-types.mts",
+    "performance:readiness": "node ./scripts/ultramodern-performance-readiness.mts",
+    "migrate:strict-effect": "node ./scripts/migrate-strict-effect.mts",
+    "contract:check": "node ./scripts/validate-ultramodern-workspace.mts",
+    "api:check": "node ./scripts/check-ultramodern-api-boundaries.mts",
+    "spicedb:write-schema": "node ./scripts/write-spicedb-schema.mjs",
+    "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
+    "postinstall": "oxfmt . '!repos/**' && node ./scripts/bootstrap-agent-skills.mts --postinstall",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.14.6",
+    "@modern-js/code-tools": "npm:@bleedingdev/modern-js-code-tools@3.5.0-ultramodern.10",
+    "@modern-js/create": "npm:@bleedingdev/modern-js-create@3.5.0-ultramodern.10",
+    "@typescript/native-preview": "7.0.0-dev.20260628.1",
+    "lefthook": "^2.1.9",
+    "oxfmt": "0.56.0",
+    "oxlint": "1.71.0",
+    "ultracite": "7.8.3",
+    "wrangler": "4.102.0",
+    "zephyr-agent": "1.1.1"
+  },
+  "engines": {
+    "node": ">=26",
+    "pnpm": ">=11"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "modernjs": {
+    "preset": "presetUltramodern",
+    "workspace": "ultramodern-superapp",
+    "topology": "./topology/reference-topology.json",
+    "ownership": "./topology/ownership.json",
+    "packageSource": {
+      "strategy": "install",
+      "config": "./.modernjs/ultramodern.json"
+    }
+  }
+}

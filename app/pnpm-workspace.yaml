@@ -1,0 +1,67 @@
+packages:
+  - apps/*
+  - verticals/*
+  - packages/*
+
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeExclude:
+  - '@bleedingdev/modern-js-*'
+  - 'effect@4.0.0-beta.91'
+  - '@effect/opentelemetry@4.0.0-beta.91'
+  - '@tanstack/react-router'
+  - '@tanstack/router-core'
+  - 'typescript'
+  - '@typescript/native-preview'
+  - '@typescript/native-preview-*'
+  - '@types/react'
+  - '@techsio/ui-kit'
+  - '@rsbuild/core'
+  - '@rsbuild/plugin-react'
+  - '@rsbuild/plugin-type-check'
+  - '@rspack/binding'
+  - '@rspack/binding-*'
+  - '@rspack/core'
+  - '@rspack/plugin-react-refresh'
+  - 'ts-checker-rspack-plugin'
+trustPolicy: no-downgrade
+trustPolicyIgnoreAfter: 1440
+trustPolicyExclude:
+  - 'effect@4.0.0-beta.91'
+  - '@effect/opentelemetry@4.0.0-beta.91'
+blockExoticSubdeps: true
+engineStrict: true
+pmOnFail: error
+verifyDepsBeforeRun: error
+strictDepBuilds: true
+
+peerDependencyRules:
+  allowedVersions:
+    react: '>=19.0.0'
+    '@module-federation/dts-plugin>typescript': '6.0.3'
+    '@module-federation/enhanced>typescript': '6.0.3'
+    '@module-federation/modern-js-v3>typescript': '6.0.3'
+    '@module-federation/rspack>typescript': '6.0.3'
+    '@effect/vitest>effect': '4.0.0-beta.91'
+    'i18next>typescript': '6.0.3'
+
+overrides:
+  '@tanstack/react-router': 1.170.16
+  '@tanstack/router-core': 1.171.13
+  '@effect/vitest': 4.0.0-beta.91
+  effect: 4.0.0-beta.91
+  node-fetch: '^3.3.2'
+
+allowBuilds:
+  '@swc/core': true
+  core-js: true
+  esbuild: true
+  lefthook: true
+  msgpackr-extract: true
+  protobufjs: true
+  sharp: true
+  workerd: true
+
+patchedDependencies:
+  '@tanstack/router-core@1.171.13': patches/@tanstack__router-core@1.171.13.patch

@@ -1,0 +1,18 @@
+{
+  "name": "@app/shared-design-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generated design tokens consumed by shell and verticals.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css"
+  },
+  "scripts": {
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.14.6",
+    "@typescript/native-preview": "7.0.0-dev.20260628.1"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "private": true,
+  "name": "@app/core-runtime",
+  "version": "0.1.0",
+  "description": "Core runtime database, authentication, and authorization infrastructure for OntOS.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./auth": "./src/auth/config.ts",
+    "./db/client": "./src/db/client.ts",
+    "./db/schema": "./src/db/schema.ts",
+    "./db/types": "./src/db/types.ts",
+    "./gateway-token": "./src/vertical-gateway-token.ts",
+    "./module-state": "./src/module-state.ts",
+    "./operation-context": "./src/operation-context.ts",
+    "./operation-context/session": "./src/operation-context-from-session.ts",
+    "./outbox": "./src/outbox.ts",
+    "./policy": "./src/policy.ts",
+    "./sdk": "./src/core-sdk.ts",
+    "./sql-result": "./src/sql-result.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "@authzed/authzed-node": "1.6.1",
+    "@better-fetch/fetch": "1.3.0",
+    "better-auth": "1.6.18",
+    "better-call": "1.3.6",
+    "drizzle-orm": "0.45.2",
+    "pg": "8.21.0",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.14.6",
+    "@types/node": "^20",
+    "@types/pg": "8.20.0",
+    "@typescript/native-preview": "7.0.0-dev.20260628.1",
+    "drizzle-kit": "0.31.10",
+    "typescript": "6.0.3"
+  }
+}
