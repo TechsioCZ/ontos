@@ -80,6 +80,10 @@ _Avoid_: Credential store, API key table, session table, runtime credential refe
 A BetterAuth user account belongs to exactly one OntOS Tenant in the current product model. If the same real person needs access to multiple tenants, they use separate tenant-scoped BetterAuth user accounts rather than one global BetterAuth user with multiple tenant bindings.
 _Avoid_: Global multi-tenant user account, shared cross-tenant login
 
+**Authenticated Principal Session**:
+The OntOS-level login state where a BetterAuth session exists and resolves through an active Principal Auth Binding to an active Principal in an active Tenant. A BetterAuth session without an active Principal Auth Binding, active Principal, or active Tenant is only an authentication artifact, not a logged-in OntOS user.
+_Avoid_: BetterAuth session alone, unbound login, raw authenticated user
+
 **Evidence Artifact**:
 A durable file, export, generated document, import source, signed document, or compliance bundle retained as proof for audit, compliance, or later investigation. An Evidence Artifact is the content being retained, not the index entry that makes it discoverable. Its stable content identity is the hash of the exact stored bytes, not the display filename or surrounding metadata.
 _Avoid_: Raw payload, trace, log line, media attachment by default

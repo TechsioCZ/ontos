@@ -16,6 +16,7 @@
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
+    "@app/core-runtime": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.10",
     "@modern-js/plugin-i18n": "npm:@bleedingdev/modern-js-plugin-i18n@3.5.0-ultramodern.10",
@@ -26,6 +27,7 @@
     "@module-federation/runtime": "2.6.0",
     "@tanstack/react-router": "1.170.16",
     "@techsio/ui-kit": "0.19.3",
+    "better-auth": "1.6.18",
     "i18next": "26.3.1",
     "node-fetch": "^3.3.2",
     "react": "^19.2.7",

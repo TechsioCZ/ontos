@@ -1,4 +1,5 @@
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
+import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { AppThemeProvider, BrandThemeScript } from '@techsio/ui-kit/theme/theme-provider';
 import './index.css';
 
@@ -8,6 +9,7 @@ export default function Layout() {
       <BrandThemeScript defaultBrand="base" />
       <AppThemeProvider defaultBrand="base" defaultMode="system">
         <Outlet />
+        <Toaster />
       </AppThemeProvider>
     </div>
   );

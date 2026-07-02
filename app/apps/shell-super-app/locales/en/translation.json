@@ -4,5 +4,22 @@
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
     "title": "UltraModern Workspace"
+  },
+  "auth": {
+    "backHome": "Back to home",
+    "emailLabel": "Email",
+    "loading": "Checking session...",
+    "loginFailedDescription": "Use the email and password for an account with access.",
+    "loginFailedTitle": "Email or password is incorrect",
+    "loginLink": "Log in",
+    "loginSubmit": "Log in",
+    "loginSubmitting": "Logging in",
+    "loginTitle": "Log in",
+    "logout": "Log out",
+    "passwordLabel": "Password"
+  },
+  "home": {
+    "eyebrow": "OntOS shell",
+    "title": "Home"
   }
 }

@@ -13,10 +13,11 @@ import {
 } from '@modern-js/plugin-tanstack/runtime';
 
 import component_0 from "../../routes/[lang]/page";
-import component_1 from "../../routes/layout";
+import component_1 from "../../routes/[lang]/login/page";
+import component_2 from "../../routes/layout";
 
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
-  component: component_1,
+  component: component_2,
   staticData: createRouteStaticData({
     modernRouteId: "layout",
   }),
@@ -31,7 +32,16 @@ const route__lang__page = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page]);
+const route__lang__login_page = createRoute({
+  getParentRoute: () => rootRoute,
+  component: component_1,
+  path: "$lang/login",
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/login/page",
+  }),
+});
+
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__login_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

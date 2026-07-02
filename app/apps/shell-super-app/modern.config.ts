@@ -26,6 +26,21 @@ const zephyrRspackPlugin = () => ({
   },
 });
 
+const authServerPlugin = () => ({
+  name: 'shell-super-app-auth-server-plugin',
+  setup(api: {
+    _internalServerPlugins: (
+      handler: (input: { plugins: Array<{ name: string; options?: Record<string, unknown> }> }) => {
+        plugins: Array<{ name: string; options?: Record<string, unknown> }>;
+      },
+    ) => void;
+  }) {
+    api._internalServerPlugins(({ plugins }) => ({
+      plugins: [...plugins, { name: './src/server/modern-js-auth-server-plugin.ts' }],
+    }));
+  },
+});
+
 const appId = 'shell-super-app';
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = Number(process.env['SHELL_SUPER_APP_PORT'] ?? 3020);
@@ -155,6 +170,7 @@ export default defineConfig(
       },
       plugins: [
         appTools(),
+        authServerPlugin(),
         tanstackRouterPlugin(),
         i18nPlugin({
           backend: {

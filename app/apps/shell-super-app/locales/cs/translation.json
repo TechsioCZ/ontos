@@ -4,5 +4,22 @@
       "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
     },
     "title": "UltraModern Workspace"
+  },
+  "auth": {
+    "backHome": "Zpět domů",
+    "emailLabel": "E-mail",
+    "loading": "Ověřuji relaci...",
+    "loginFailedDescription": "Použijte e-mail a heslo k účtu s přístupem.",
+    "loginFailedTitle": "E-mail nebo heslo není správně",
+    "loginLink": "Přihlásit se",
+    "loginSubmit": "Přihlásit se",
+    "loginSubmitting": "Přihlašuji",
+    "loginTitle": "Přihlášení",
+    "logout": "Odhlásit se",
+    "passwordLabel": "Heslo"
+  },
+  "home": {
+    "eyebrow": "OntOS shell",
+    "title": "Domů"
   }
 }
