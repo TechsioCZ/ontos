@@ -41,6 +41,8 @@
   "devDependencies": {
     "@effect/tsgo": "0.14.6",
     "@modern-js/code-tools": "npm:@bleedingdev/modern-js-code-tools@3.5.0-ultramodern.10",
+    "@modern-js/codesmith": "^2.6.9",
+    "@modern-js/codesmith-cli": "^2.6.9",
     "@modern-js/create": "npm:@bleedingdev/modern-js-create@3.5.0-ultramodern.10",
     "@typescript/native-preview": "7.0.0-dev.20260628.1",
     "lefthook": "^2.1.9",
