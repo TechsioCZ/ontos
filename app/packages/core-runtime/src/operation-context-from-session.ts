@@ -3,6 +3,8 @@ import { and, eq } from 'drizzle-orm';
 import { auth } from './auth/config.ts';
 import { db } from './db/client.ts';
 import { legalEntities, principalAuthBindings, principals, tenants } from './db/schema.ts';
+import { listTenantModuleStates } from './module-state.ts';
+import type { TenantModuleState } from './module-state.ts';
 
 interface ResolvedOperationIdentity {
   readonly legalEntityId: string;
@@ -19,6 +21,7 @@ export type OperationContextAuthRequired = {
 export type ResolveOperationContextFromSessionResult =
   | {
       readonly _tag: 'Success';
+      readonly moduleStates: readonly TenantModuleState[];
       readonly operationContext: ResolvedOperationIdentity;
     }
   | {
@@ -81,8 +84,11 @@ export const resolveOperationContextFromSession = async ({
     };
   }
 
+  const moduleStates = await listTenantModuleStates(binding.tenantId);
+
   return {
     _tag: 'Success',
+    moduleStates,
     operationContext: {
       legalEntityId: binding.legalEntityId,
       principalId: binding.principalId,

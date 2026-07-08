@@ -33,7 +33,9 @@ export type {
   OperationEvidenceCaptureMode,
 } from './operation-context.ts';
 export type { OutboxMessage } from './outbox-message.ts';
+export { checkOutboxWorkerModuleStateAccess } from './outbox-worker.ts';
 export type {
+  OutboxWorkerModuleStateAccessDecision,
   OutboxPayloadSchema,
   OutboxWorkerDescriptor,
   OutboxWorkerHandler,

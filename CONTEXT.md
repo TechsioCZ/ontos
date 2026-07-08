@@ -28,6 +28,14 @@ _Avoid_: Direct handler path, BFF business layer, MicroVertical-owned runtime bo
 The Core-owned runtime gate that evaluates a tenant's OntOS Business Module state before SpiceDB authorization and the OntOS Policy Layer. It is not relationship authorization and not business policy; it decides whether a module is currently loadable, readable, or writable for that tenant.
 _Avoid_: Module permission, SpiceDB module permission, feature flag, package check by itself
 
+**Module Entrypoint**:
+A governed crossing from Shell/Core into an OntOS Business Module, such as page loading, public component loading, Action execution, or worker dispatch. All module entrypoints must be invoked through Shell/Core gateways. Direct entrypoint loading is forbidden.
+_Avoid_: Direct module load, private handler import, bypassed route/component/action/worker
+
+**Structured Entrypoint**:
+A Shell/Core-owned description of a Module Entrypoint using module identity and entrypoint role rather than an ad hoc import path, raw remote specifier, or private handler reference.
+_Avoid_: Raw remote specifier, stringly typed entrypoint, direct import path
+
 **Core Modules Capability**:
 The Core-owned capability for listing and changing tenant module states. It is always available to the Module State Gate so administrators cannot lock themselves out of module-state recovery, but SpiceDB authorization and policy still decide who can view or change module states.
 _Avoid_: Ordinary business module, customer vertical, unguarded admin bypass
@@ -57,7 +65,7 @@ An Effect Schema-backed public runtime value that describes an Action's stable k
 _Avoid_: Type-only interface, command handler, HTTP endpoint by itself, inline manifest blob
 
 **Outbox Worker**:
-A module-owned asynchronous consumer of Outbox Messages for declared event topics. It reacts to committed facts after the originating Action succeeds; its descriptor is public module contract while its handler and registration remain private implementation.
+A module-owned asynchronous consumer of Outbox Messages for declared event topics. It reacts to committed facts after the originating Action succeeds; as a Module Entrypoint, it is governed by the consuming module's tenant module state, not the producer module's state.
 _Avoid_: Picker, deployment unit, Worker Runtime, synchronous subscriber
 
 **Vertical Runtime Registration**:

@@ -148,6 +148,9 @@ importers:
 
   packages/core-runtime:
     dependencies:
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
       '@authzed/authzed-node':
         specifier: 1.6.1
         version: 1.6.1

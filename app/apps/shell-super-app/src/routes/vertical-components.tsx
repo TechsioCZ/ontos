@@ -5,11 +5,12 @@ import {
   toModuleFederationFallbackAttributes,
 } from '@modern-js/runtime/module-federation';
 import { createLazyComponent } from '@module-federation/bridge-react';
-import { getInstance, loadRemote } from '@module-federation/modern-js-v3/runtime';
+import { getInstance } from '@module-federation/modern-js-v3/runtime';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
-import TicketingWidgetServer from '@app/ticketing/Widget';
 import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { loadShellModuleFederationEntrypoint } from '../module-federation-gateway';
+import { shellModuleEntrypoints } from '../module-entrypoints';
 
 const widgetCount = Number('1');
 
@@ -17,8 +18,7 @@ interface RemoteComponentModule {
   default: ComponentType;
 }
 
-const loadRemoteComponent = (specifier: string) =>
-  loadRemote<RemoteComponentModule>(specifier) as Promise<RemoteComponentModule>;
+const RemoteLoadingPlaceholder = () => null;
 
 const createRemoteFallback =
   (specifier: string) =>
@@ -64,7 +64,10 @@ const createRemoteFallback =
     );
   };
 
-const createHydratedRemote = (ServerComponent: ComponentType, specifier: string) =>
+const createHydratedRemote = (
+  ServerComponent: ComponentType,
+  entrypoint: typeof shellModuleEntrypoints.ticketingWidget,
+) =>
   function HydratedRemote() {
     const [hydrated, setHydrated] = useState(false);
 
@@ -82,9 +85,9 @@ const createHydratedRemote = (ServerComponent: ComponentType, specifier: string)
       }
       return createLazyComponent({
         export: 'default',
-        fallback: createRemoteFallback(specifier),
+        fallback: createRemoteFallback(entrypoint.remoteSpecifier),
         instance,
-        loader: () => loadRemoteComponent(specifier),
+        loader: () => loadShellModuleFederationEntrypoint<RemoteComponentModule>(entrypoint),
         loading: <ServerComponent />,
       });
     }, [hydrated]);
@@ -100,7 +103,10 @@ const createHydratedRemote = (ServerComponent: ComponentType, specifier: string)
     );
   };
 
-const TicketingWidget = createHydratedRemote(TicketingWidgetServer, 'ticketing/Widget');
+const TicketingWidget = createHydratedRemote(
+  RemoteLoadingPlaceholder,
+  shellModuleEntrypoints.ticketingWidget,
+);
 
 export const Header = () => {
   const { t } = useModernI18n();

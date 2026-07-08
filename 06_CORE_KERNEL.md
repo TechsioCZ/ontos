@@ -44,6 +44,8 @@ Core should expose narrow extension points to business modules. The important ex
 
 These extension points need to be explicit because they are the future foundation for Forge and later vibemodule capabilities. If modules can mutate runtime behavior through ad hoc imports or global side effects, generation and review become impossible.
 
+Shell/Core gateways must be the only way to invoke module entrypoints. Page loads, public component loads, Actions, and worker dispatch all pass through the Module State Gate before Shell/Core loads or dispatches the target module entrypoint.
+
 ## Core should be boring
 
 The Core should not be a showcase for every future ambition. It should be small, strict, and testable. It should enforce invariants: all writes through actions, all actions authorized, cross-module references use ResourceRefs, all important changes are audited, all asynchronous side effects go through outbox, and all tenant-level module states are respected.

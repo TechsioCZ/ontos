@@ -1,3 +1,19 @@
+export {
+  installedModuleKeys,
+  isInstalledModuleKey,
+  isModuleActivationState,
+  isModuleStateAccessAllowed,
+  moduleActivationStates,
+  moduleStateAccessKinds,
+  moduleStateAccessMatrix,
+} from './module-state.ts';
+export type {
+  InstalledModuleKey,
+  ModuleActivationState,
+  ModuleStateAccessKind,
+  TenantModuleState,
+} from './module-state.ts';
+
 export type UltramodernPublicSitemapChangeFrequency =
   | 'always'
   | 'hourly'
