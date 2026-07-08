@@ -4,6 +4,18 @@ import { db } from './db/client.ts';
 import { auditEvents, tenantModuleStateChanges, tenantModuleStates } from './db/schema.ts';
 import type { CoreDbExecutor } from './db/types.ts';
 import {
+  installedModuleKeys,
+  isInstalledModuleKey,
+  isModuleActivationState,
+  isModuleStateAccessAllowed,
+} from '@app/shared-contracts';
+import type {
+  InstalledModuleKey,
+  ModuleActivationState,
+  ModuleStateAccessKind,
+  TenantModuleState,
+} from '@app/shared-contracts';
+import {
   createTenantScopedSpiceDbPermissionCheck,
   spiceDbAuthorizationChecker,
 } from './spicedb-authorization.ts';
@@ -15,82 +27,18 @@ import type {
 export const coreModulesResourceObjectType = 'core_modules';
 export const coreModulesResourceObjectId = 'core.modules';
 
-export const moduleActivationStates = [
-  'inactive',
-  'active',
-  'read_only',
-  'suspended',
-  'quarantined',
-  'deprecated',
-  'archived',
-] as const;
-
-export type ModuleActivationState = (typeof moduleActivationStates)[number];
-
-export type InstalledModuleKey = string;
-
-export const installedModuleKeys = [] as readonly InstalledModuleKey[];
-
-export const moduleStateAccessKinds = ['load', 'read', 'mutate'] as const;
-
-export type ModuleStateAccessKind = (typeof moduleStateAccessKinds)[number];
-
-export interface TenantModuleState {
-  readonly moduleKey: InstalledModuleKey;
-  readonly state: ModuleActivationState;
-}
-
-export const moduleStateAccessMatrix = {
-  active: {
-    load: true,
-    mutate: true,
-    read: true,
-  },
-  archived: {
-    load: false,
-    mutate: false,
-    read: false,
-  },
-  deprecated: {
-    load: true,
-    mutate: true,
-    read: true,
-  },
-  inactive: {
-    load: false,
-    mutate: false,
-    read: false,
-  },
-  quarantined: {
-    load: false,
-    mutate: false,
-    read: false,
-  },
-  read_only: {
-    load: true,
-    mutate: false,
-    read: true,
-  },
-  suspended: {
-    load: false,
-    mutate: false,
-    read: false,
-  },
-} as const satisfies Record<ModuleActivationState, Record<ModuleStateAccessKind, boolean>>;
-
-export const isInstalledModuleKey = (value: string): value is InstalledModuleKey =>
-  installedModuleKeys.includes(value);
-
-export const isModuleActivationState = (value: string): value is ModuleActivationState =>
-  moduleActivationStates.includes(value as ModuleActivationState);
-
-export const isModuleStateAccessAllowed = ({
-  accessKind,
-  state,
-}: {
-  readonly accessKind: ModuleStateAccessKind;
-  readonly state: ModuleActivationState;
-}): boolean => moduleStateAccessMatrix[state][accessKind];
+export {
+  installedModuleKeys,
+  isInstalledModuleKey,
+  isModuleActivationState,
+  isModuleStateAccessAllowed,
+} from '@app/shared-contracts';
+export type {
+  InstalledModuleKey,
+  ModuleActivationState,
+  ModuleStateAccessKind,
+  TenantModuleState,
+} from '@app/shared-contracts';
 
 export type ModuleStateAdminPermission = 'view' | 'change';
 

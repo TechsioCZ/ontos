@@ -50,6 +50,8 @@ In V0, MicroVertical code is part of the application deployment. A module can be
 
 Adding a brand-new MicroVertical with new code requires deployment in V0. Later versions may support generated/schema-defined modules or sandboxed modules, but that is explicitly not a V0 requirement.
 
+All module entrypoints must be invoked through Shell/Core gateways. Direct entrypoint loading is forbidden: modules should not bypass Shell/Core by directly loading Module Federation remotes, private routes, public components, Action handlers, or worker handlers. This keeps tenant module state enforcement at the boundary before module code is loaded or dispatched.
+
 ## Activation states
 
 | State | Meaning |
@@ -83,6 +85,8 @@ The first draft Effect Schema-defined manifest shape is described in `14_ONTOS_M
 OntOS Business Modules may depend on Core and on explicit public contracts of other business modules. They may import public manifest values, Action descriptors, public API clients, public component values, and public resource/event/search/report descriptors. They should not import another module's runtime registration, internal tables, command handlers, private routes, UI internals, migrations, fixtures, tests, or private utilities. Cross-module writes should go through Actions or explicit Core-mediated mechanisms. Cross-module reads should use declared read models, ResourceRefs, or public query surfaces.
 
 This matters because the long-term product depends on being able to add, replace, suspend, or generate modules without making the entire codebase a single implicit dependency graph.
+
+Public component reuse across modules still goes through the Shell/Core component gateway. A module may depend on another module's public component contract, but it must not directly call Module Federation or hard-code remote specifier strings. Shell/Core should represent module component loads as structured entrypoints, not ad hoc import paths.
 
 ## MicroVertical Forge
 
