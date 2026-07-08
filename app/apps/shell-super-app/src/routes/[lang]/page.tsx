@@ -2,6 +2,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { authClient } from '../../auth/auth-client';
+import { ultramodernUiMarker } from '../../ultramodern-build';
 
 const supportedLanguages = new Set(['en', 'cs']);
 type Language = 'en' | 'cs';
@@ -51,6 +52,16 @@ export default function ShellHome() {
           </div>
         </div>
       </section>
+      <p className="sr-only" data-testid="ultramodern-preset">
+        presetUltramodern workspace
+      </p>
+      <p
+        className="sr-only"
+        data-build-marker={ultramodernUiMarker.build}
+        data-testid="ultramodern-ui-marker"
+      >
+        {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
+      </p>
     </main>
   );
 }

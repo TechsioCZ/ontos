@@ -60,10 +60,12 @@ export const auth = betterAuth({
                   return;
                 }
 
-                return ctx.context.internalAdapter.deleteUserSessions(newSession.user.id).then(() => {
-                  deleteSessionCookie(ctx);
-                  throw APIError.from('UNAUTHORIZED', BASE_ERROR_CODES.INVALID_EMAIL_OR_PASSWORD);
-                });
+                return ctx.context.internalAdapter
+                  .deleteUserSessions(newSession.user.id)
+                  .then(() => {
+                    deleteSessionCookie(ctx);
+                    throw APIError.from('UNAUTHORIZED', BASE_ERROR_CODES.INVALID_EMAIL_OR_PASSWORD);
+                  });
               });
             }),
             matcher: (ctx) => ctx.path === '/sign-in/email',

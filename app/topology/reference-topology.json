@@ -7,11 +7,17 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
-    "verticalRefs": [],
+    "verticalRefs": ["ticketing"],
     "moduleFederation": {
       "role": "host",
       "name": "shellSuperApp",
-      "remotes": [],
+      "remotes": [
+        {
+          "id": "ticketing",
+          "name": "verticalTicketing",
+          "manifestUrl": "http://localhost:4101/mf-manifest.json"
+        }
+      ],
       "ssr": true,
       "sharedContractVersion": "mf-ssr-contract-v1"
     },
@@ -117,7 +123,296 @@
       }
     }
   },
-  "verticals": [],
+  "verticals": [
+    {
+      "id": "ticketing",
+      "kind": "vertical",
+      "domain": "ticketing",
+      "package": "@app/ticketing",
+      "path": "verticals/ticketing",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalTicketing",
+        "manifestUrl": "http://localhost:4101/mf-manifest.json",
+        "exposes": ["./Route", "./Widget"],
+        "ssr": true,
+        "fallbackTelemetryEvent": "modernjs:mv-runtime-parity",
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalTicketingBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/ticketing",
+          "packageName": "@app/ticketing",
+          "version": "0.1.0",
+          "buildMarker": "07a52f1d8403302d",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/ticketing/shared/api.ts",
+            "runtime": "verticals/ticketing/api/index.ts",
+            "client": "verticals/ticketing/src/api/ticketing-client.ts",
+            "openapi": "/ticketing-api/openapi.json",
+            "readiness": "/ticketing-api/ticketing/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/ticketing",
+          "ui": {
+            "manifestEnv": "VERTICAL_TICKETING_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4101/mf-manifest.json",
+            "buildMarker": "verticals/ticketing/src/routes/ultramodern-route-metadata.ts"
+          },
+          "api": {
+            "readiness": "/ticketing-api/ticketing/readiness",
+            "buildMarker": "verticals/ticketing/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TICKETING"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-ticketing",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TICKETING",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_TICKETING_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_TICKETING_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_TICKETING_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_TICKETING_WORKER",
+              "serviceBindingEnv": "VERTICAL_TICKETING_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_TICKETING_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_TICKETING_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v1",
+            "remoteName": "verticalTicketingBackend",
+            "manifestEnv": "VERTICAL_TICKETING_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4101/backendRemoteEntry.mjs",
+            "remoteType": "module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "expected": {
+              "unitId": "app/ticketing",
+              "buildMarker": "07a52f1d8403302d"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/ticketing",
+          "effectVersion": "4.0.0-beta.92",
+          "moduleFederationVersion": "2.6.0"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/ticketing",
+        "packageName": "@app/ticketing",
+        "version": "0.1.0",
+        "buildMarker": "07a52f1d8403302d",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/ticketing-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/ticketing/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/ticketing/src/api/ticketing-client.ts"
+        },
+        "serverEntry": "verticals/ticketing/api/index.ts",
+        "basePath": "/ticketing-api/ticketing",
+        "consumedBy": ["shell-super-app", "ticketing"],
+        "readiness": {
+          "endpoint": "/ticketing/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": ["moduleFederation", "ssr", "translations", "api"]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {
+          "workspaceFeed": {
+            "client": "listTicketing",
+            "method": "GET",
+            "path": "/ticketing",
+            "resource": "workspace-items",
+            "owner": "ticketing"
+          },
+          "workspaceDetail": {
+            "client": "getTicketing",
+            "method": "GET",
+            "path": "/ticketing/:id",
+            "resource": "workspace-item",
+            "owner": "ticketing"
+          },
+          "workspaceCreate": {
+            "client": "createTicketing",
+            "method": "POST",
+            "path": "/ticketing",
+            "resource": "ticketing",
+            "owner": "ticketing"
+          }
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-ticketing",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TICKETING",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "ssr": "/en",
+          "mfManifest": "/mf-manifest.json",
+          "locale": "/locales/en/ticketing.json",
+          "apiReadiness": "/ticketing-api/ticketing/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": ["'self'"],
+              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+              "default-src": ["'self'"],
+              "font-src": ["'self'", "data:", "https:", "http:"],
+              "form-action": ["'self'"],
+              "frame-ancestors": ["'self'"],
+              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+              "manifest-src": ["'self'", "https:", "http:"],
+              "object-src": ["'none'"],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+              "worker-src": ["'self'", "blob:"]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "evidence": {
+          "proofScript": "scripts/proof-cloudflare-version.mts",
+          "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+        }
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/ticketing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#ticketing",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#ticketing"]
+        }
+      }
+    }
+  ],
   "sharedPackages": [
     {
       "id": "shared-contracts",

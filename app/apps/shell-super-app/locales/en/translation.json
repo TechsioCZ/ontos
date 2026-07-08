@@ -1,25 +1,51 @@
 {
   "shell": {
+    "boundaries": {
+      "toggle": "show team boundaries"
+    },
+    "hero": {
+      "cardOne": "Add the first business vertical with create <domain> --vertical when the product needs one.",
+      "cardOneKicker": "Verticals",
+      "cardTwo": "Full page markup, styles, and localized content render before hydration.",
+      "cardTwoKicker": "Rendering",
+      "empty": "No MicroVerticals are connected yet.",
+      "eyebrow": "Shell SuperApp starter",
+      "lede": "Start with a production-ready shell. Add MicroVerticals later for real business domains.",
+      "primary": "Shell ready",
+      "secondary": "Add a vertical when needed"
+    },
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "remoteUnavailable": "Remote vertical unavailable",
+    "remotes": {},
+    "routes": {
+      "home": "Home"
+    },
     "seo": {
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
     "title": "UltraModern Workspace"
   },
-  "auth": {
-    "backHome": "Back to home",
-    "emailLabel": "Email",
-    "loading": "Checking session...",
-    "loginFailedDescription": "Use the email and password for an account with access.",
-    "loginFailedTitle": "Email or password is incorrect",
-    "loginLink": "Log in",
-    "loginSubmit": "Log in",
-    "loginSubmitting": "Logging in",
-    "loginTitle": "Log in",
-    "logout": "Log out",
-    "passwordLabel": "Password"
-  },
-  "home": {
-    "eyebrow": "OntOS shell",
-    "title": "Home"
+  "ticketing": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "ticketing",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Ticketing Vertical",
+    "widgetBody": "Owns a vertical route surface."
   }
 }

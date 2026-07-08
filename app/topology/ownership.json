@@ -52,6 +52,22 @@
           "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
         }
       }
+    },
+    {
+      "id": "ticketing",
+      "package": "@app/ticketing",
+      "path": "verticals/ticketing",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/ticketing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#ticketing",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#ticketing"]
+        }
+      }
     }
   ]
 }

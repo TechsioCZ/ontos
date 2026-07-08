@@ -1,4 +1,5 @@
 // @effect-diagnostics processEnv:off
+import { setTimeout as delay } from 'node:timers/promises';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
@@ -11,6 +12,22 @@ type ZephyrRspackConfig = Parameters<ReturnType<typeof withZephyrRspack>>[0];
 const zephyrEnabled = process.env['ULTRAMODERN_ZEPHYR'] !== 'false';
 const cloudflareDeployEnabled = process.env['MODERNJS_DEPLOY'] === 'cloudflare';
 
+const parsedZephyrTimeoutMs = Number.parseInt(
+  process.env['ULTRAMODERN_ZEPHYR_TIMEOUT_MS'] ?? '',
+  10,
+);
+const zephyrTimeoutMs =
+  Number.isFinite(parsedZephyrTimeoutMs) && parsedZephyrTimeoutMs > 0
+    ? parsedZephyrTimeoutMs
+    : 45_000;
+
+const zephyrWarn = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(
+    `[ultramodern] zephyr-rspack-plugin failed; continuing without Zephyr (set ULTRAMODERN_ZEPHYR=false to disable it): ${message}`,
+  );
+};
+
 const zephyrRspackPlugin = () => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
@@ -22,7 +39,32 @@ const zephyrRspackPlugin = () => ({
     if (!zephyrEnabled) {
       return;
     }
-    api.modifyRspackConfig((config) => withZephyrRspack()(config));
+    api.modifyRspackConfig(async (config) => {
+      try {
+        // Zephyr can not only throw/reject but also hang on a stalled network
+        // call, wedging the whole build. Race it against a watchdog so a hang
+        // degrades to an unmodified config instead of blocking indefinitely.
+        const zephyrConfig = (async () => {
+          try {
+            return await withZephyrRspack()(config);
+          } catch (error) {
+            zephyrWarn(error);
+            return config;
+          }
+        })();
+        const watchdog = async () => {
+          await delay(zephyrTimeoutMs, undefined, { ref: false });
+          zephyrWarn(
+            `timed out after ${zephyrTimeoutMs}ms (override with ULTRAMODERN_ZEPHYR_TIMEOUT_MS)`,
+          );
+          return config;
+        };
+        return await Promise.race([zephyrConfig, watchdog()]);
+      } catch (error) {
+        zephyrWarn(error);
+        return config;
+      }
+    });
   },
 });
 
@@ -72,8 +114,10 @@ const defaultAssetPrefix = '/';
 // load remoteEntry.js and exposed chunks from the remote origin, not the host.
 const assetPrefix =
   configuredModernAssetPrefix || configuredUltramodernAssetPrefix || defaultAssetPrefix;
-const buildCacheTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
-const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildCacheTarget}`;
+const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
+const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
+const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
+const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`;
 
 if (
   cloudflareDeployEnabled &&
@@ -136,14 +180,22 @@ export default defineConfig(
                     workersDev: true,
                   },
                 },
+                services: [
+                  {
+                    binding:
+                      envValue('VERTICAL_TICKETING_WORKER_BINDING') ?? 'VERTICAL_TICKETING_WORKER',
+                    prefix: '/ticketing-api',
+                    service: envValue('VERTICAL_TICKETING_WORKER_NAME') ?? 'app-ticketing',
+                  },
+                ],
                 ssr: true,
               },
             },
           }
         : {}),
       dev: {
-        // Keep dev assets origin-relative too; the default absolute
-        // http://localhost:<port> prefix breaks pages served through tunnels.
+        // Keep shell dev assets origin-relative so the shell works through
+        // tunnels and local previews without rewriting its own chunks.
         assetPrefix: '/',
       },
       html: {
@@ -154,13 +206,15 @@ export default defineConfig(
         disableTsChecker: false,
         distPath: {
           html: './',
+          root: buildOutputRoot,
         },
         polyfill: 'off',
         splitRouteChunks: true,
+        tempDir: buildTempDirectory,
       },
       performance: {
         buildCache: {
-          cacheDigest: [appId, buildCacheTarget],
+          cacheDigest: [appId, buildTarget],
           cacheDirectory: buildCacheDirectory,
         },
         rsdoctor: {

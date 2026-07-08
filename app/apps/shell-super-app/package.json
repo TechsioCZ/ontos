@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "modern dev",
     "build": "ULTRAMODERN_ZEPHYR=false modern build && node ../../scripts/generate-public-surface-assets.mts --app shell-super-app --target dist",
-    "cloudflare:build": "ULTRAMODERN_ZEPHYR=false MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-public-surface-assets.mts --app shell-super-app --target dist && ULTRAMODERN_ZEPHYR=false MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && node ../../scripts/generate-public-surface-assets.mts --app shell-super-app --target cloudflare",
+    "cloudflare:build": "ULTRAMODERN_ZEPHYR=false MODERNJS_DEPLOY=cloudflare modern build && ULTRAMODERN_ZEPHYR=false MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && node ../../scripts/generate-public-surface-assets.mts --app shell-super-app --target cloudflare && node ../../scripts/verify-cloudflare-output.mts --app shell-super-app",
     "cloudflare:deploy": "ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "node ../../scripts/proof-cloudflare-version.mts --app shell-super-app",
@@ -18,6 +18,8 @@
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/shared-contracts": "workspace:*",
+    "@app/shared-design-tokens": "workspace:*",
+    "@app/ticketing": "workspace:*",
     "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.10",
     "@modern-js/plugin-i18n": "npm:@bleedingdev/modern-js-plugin-i18n@3.5.0-ultramodern.10",
     "@modern-js/plugin-tanstack": "npm:@bleedingdev/modern-js-plugin-tanstack@3.5.0-ultramodern.10",
@@ -32,8 +34,7 @@
     "node-fetch": "^3.3.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router": "7.18.0",
-    "react-router-dom": "7.18.0"
+    "react-router": "7.18.1"
   },
   "devDependencies": {
     "@effect/tsgo": "0.14.6",
@@ -55,5 +56,7 @@
     "appId": "shell-super-app",
     "topology": "../../topology/reference-topology.json"
   },
-  "zephyr:dependencies": {}
+  "zephyr:dependencies": {
+    "ticketing": "@app/ticketing@workspace:*"
+  }
 }

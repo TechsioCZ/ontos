@@ -1,4 +1,5 @@
 import { defineRuntimeConfig } from '@modern-js/runtime';
+import { ultramodernBoundaryDebuggerPlugin } from '@modern-js/runtime/boundary-debugger';
 import { createInstance } from 'i18next';
 import csResource from '../locales/cs/shell.json';
 import enResource from '../locales/en/shell.json';
@@ -41,6 +42,33 @@ export default defineRuntimeConfig({
       supportedLngs: ['en', 'cs'],
     },
   },
+  plugins: [
+    ultramodernBoundaryDebuggerPlugin({
+      metadata: {
+        appId: 'shell-super-app',
+        boundaries: [
+          {
+            appId: 'shell-super-app',
+            label: 'Shell Super App',
+            mfName: 'shellSuperApp',
+            ownerTeam: 'super-app-platform',
+            packageName: '@app/shell-super-app',
+            role: 'host',
+          },
+          {
+            appId: 'ticketing',
+            label: 'Ticketing Vertical',
+            mfName: 'verticalTicketing',
+            ownerTeam: 'super-app-platform',
+            packageName: '@app/ticketing',
+            role: 'vertical',
+          },
+        ],
+        schemaVersion: 1,
+      },
+    }),
+  ],
+
   router: {
     framework: 'tanstack',
   },
