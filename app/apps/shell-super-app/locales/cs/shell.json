@@ -46,6 +46,10 @@
     "eyebrow": "OntOS shell",
     "title": "Domů"
   },
+  "mainMenu": {
+    "label": "Hlavní menu",
+    "modules": "Moduly"
+  },
   "ticketing": {
     "language": {
       "cs": "Čeština",
