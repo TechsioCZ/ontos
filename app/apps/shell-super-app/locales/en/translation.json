@@ -46,6 +46,16 @@
     "role": "ticketing",
     "routeSurface": "Route surface owned by this vertical.",
     "title": "Ticketing Vertical",
-    "widgetBody": "Owns a vertical route surface."
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "ticketing": {
+        "body": "Ticketing Ticketing page owned by the ticketing microvertical.",
+        "eyebrow": "Ticketing",
+        "seo": {
+          "description": "Ticketing Ticketing page owned by the ticketing microvertical."
+        },
+        "title": "Ticketing Ticketing"
+      }
+    }
   }
 }

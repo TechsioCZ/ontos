@@ -12,5 +12,6 @@ declare module '@modern-js/plugin-i18n/runtime' {
   interface UltramodernCanonicalRoutes {
     '/': Record<string, never>;
     '/login': Record<string, never>;
+    '/ticketing': Record<string, never>;
   }
 }

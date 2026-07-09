@@ -14,10 +14,11 @@ import {
 
 import component_0 from "../../routes/[lang]/page";
 import component_1 from "../../routes/[lang]/login/page";
-import component_2 from "../../routes/layout";
+import component_2 from "../../routes/[lang]/ticketing/page";
+import component_3 from "../../routes/layout";
 
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
-  component: component_2,
+  component: component_3,
   staticData: createRouteStaticData({
     modernRouteId: "layout",
   }),
@@ -41,7 +42,16 @@ const route__lang__login_page = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__login_page]);
+const route__lang__ticketing_page = createRoute({
+  getParentRoute: () => rootRoute,
+  component: component_2,
+  path: "$lang/ticketing",
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/ticketing/page",
+  }),
+});
+
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__login_page, route__lang__ticketing_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

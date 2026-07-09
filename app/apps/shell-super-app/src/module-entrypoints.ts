@@ -18,6 +18,13 @@ export const shellModuleEntrypoints = {
     moduleKey: 'ticketing',
     remoteSpecifier: 'ticketing/Route',
   },
+  ticketingTicketingPage: {
+    accessKind: 'load',
+    id: 'ticketing.pages.ticketing',
+    kind: 'page',
+    moduleKey: 'ticketing',
+    remoteSpecifier: 'ticketing/pages/TicketingPage',
+  },
   ticketingWidget: {
     accessKind: 'load',
     id: 'ticketing.widget',

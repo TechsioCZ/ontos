@@ -6,7 +6,8 @@
     "./Route": "./src/federation-entry.tsx",
     "./Widget": "./src/components/ticketing-widget.tsx",
     "./api": "./shared/api.ts",
-    "./api/client": "./src/api/ticketing-client.ts"
+    "./api/client": "./src/api/ticketing-client.ts",
+    "./pages/ticketing": "./src/pages/ticketing-page.tsx"
   },
   "scripts": {
     "dev": "modern dev",

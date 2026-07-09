@@ -16,6 +16,16 @@
     "role": "ticketing",
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
     "title": "Ticketing Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu."
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "ticketing": {
+        "body": "Ticketing Ticketing page owned by the ticketing microvertical.",
+        "eyebrow": "Ticketing",
+        "seo": {
+          "description": "Ticketing Ticketing page owned by the ticketing microvertical."
+        },
+        "title": "Ticketing Ticketing"
+      }
+    }
   }
 }
