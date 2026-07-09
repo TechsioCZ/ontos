@@ -9,8 +9,8 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "pnpm --parallel --filter @app/shell-super-app --filter @app/ticketing dev",
-    "dev:shell": "pnpm --filter @app/shell-super-app dev",
+    "dev": "ULTRAMODERN_SHELL_REMOTES=true pnpm --parallel --filter @app/shell-super-app --filter @app/ticketing dev",
+    "dev:shell": "ULTRAMODERN_SHELL_REMOTES=true pnpm --filter @app/shell-super-app dev",
     "dev:ticketing": "pnpm --filter @app/ticketing dev",
     "build": "ULTRAMODERN_ZEPHYR=false pnpm -r --filter \"./verticals/*\" run build && ULTRAMODERN_ZEPHYR=false pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "cloudflare:build": "pnpm -r --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types && pnpm cloudflare-output:verify",
@@ -36,6 +36,7 @@
     "agents:refs:check": "node ./scripts/setup-agent-reference-repos.mts --check",
     "api:check": "node ./scripts/check-ultramodern-api-boundaries.mts",
     "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
+    "scaffold:microvertical-page": "node ./scripts/scaffold-microvertical-page.mts",
     "postinstall": "oxfmt . '!repos/**' && node ./scripts/bootstrap-agent-skills.mts --postinstall"
   },
   "devDependencies": {

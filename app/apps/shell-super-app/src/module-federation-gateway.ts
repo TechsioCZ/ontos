@@ -8,13 +8,36 @@ interface ShellOperationContextResponse {
   readonly moduleStates?: readonly TenantModuleState[];
 }
 
-const loadShellModuleStates = async () => {
+export class ShellOperationContextAuthRequiredError extends Error {
+  constructor() {
+    super('Authentication is required to load shell module entrypoints.');
+    this.name = 'ShellOperationContextAuthRequiredError';
+  }
+}
+
+export const isShellOperationContextAuthRequiredError = (
+  error: unknown,
+): error is ShellOperationContextAuthRequiredError =>
+  error instanceof ShellOperationContextAuthRequiredError ||
+  (error instanceof Error && error.name === 'ShellOperationContextAuthRequiredError');
+
+const shellOperationContextUnavailableError = (status: number) =>
+  Object.assign(new Error(`Shell operation context request failed with status ${status}.`), {
+    name: 'ShellOperationContextUnavailableError',
+    status,
+  });
+
+export const loadShellModuleStates = async () => {
   const response = await fetch('/shell-super-app-api/operation-context', {
     credentials: 'same-origin',
   });
 
+  if (response.status === 401) {
+    throw new ShellOperationContextAuthRequiredError();
+  }
+
   if (!response.ok) {
-    return [];
+    throw shellOperationContextUnavailableError(response.status);
   }
 
   const body = (await response.json()) as ShellOperationContextResponse;

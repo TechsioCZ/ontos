@@ -13,6 +13,28 @@ type Language = 'en' | 'cs';
 const normalizeLanguage = (language: string): Language =>
   supportedLanguages.has(language) ? (language as Language) : 'en';
 
+const safeReturnTo = () => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const returnTo = new URLSearchParams(window.location.search).get('returnTo');
+  if (returnTo === null || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+    return null;
+  }
+
+  try {
+    const url = new URL(returnTo, window.location.origin);
+    if (url.origin !== window.location.origin) {
+      return null;
+    }
+
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+};
+
 export default function LoginPage() {
   const { language, t } = useModernI18n();
   const [email, setEmail] = useState('');
@@ -22,44 +44,43 @@ export default function LoginPage() {
   const user = session.data?.user;
   const lang = normalizeLanguage(language);
   const homePath = `/${lang}`;
+  const postLoginPath = safeReturnTo() ?? homePath;
 
   useEffect(() => {
     if (user !== undefined && user !== null) {
-      window.location.replace(homePath);
+      window.location.replace(postLoginPath);
     }
-  }, [homePath, user]);
+  }, [postLoginPath, user]);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setIsSubmitting(true);
 
-    void authClient.signIn
-      .email({
+    try {
+      const result = await authClient.signIn.email({
         email,
         password,
-      })
-      .then((result) => {
-        if (result.error !== null) {
-          toaster.create({
-            description: t('auth.loginFailedDescription'),
-            title: t('auth.loginFailedTitle'),
-            type: 'error',
-          });
-          return;
-        }
+      });
 
-        window.location.assign(homePath);
-      })
-      .catch(() => {
+      if (result.error !== null) {
         toaster.create({
           description: t('auth.loginFailedDescription'),
           title: t('auth.loginFailedTitle'),
           type: 'error',
         });
-      })
-      .finally(() => {
-        setIsSubmitting(false);
+        return;
+      }
+
+      window.location.assign(postLoginPath);
+    } catch {
+      toaster.create({
+        description: t('auth.loginFailedDescription'),
+        title: t('auth.loginFailedTitle'),
+        type: 'error',
       });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -73,7 +94,7 @@ export default function LoginPage() {
             </h1>
           </div>
 
-          <form className="space-y-5" onSubmit={handleSubmit}>
+          <form className="space-y-5" onSubmit={(event) => void handleSubmit(event)}>
             <FormInput
               autoComplete="email"
               id="login-email"
