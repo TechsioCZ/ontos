@@ -37,16 +37,7 @@ const shellOperationContextUnavailableError = (status: number) =>
     status,
   });
 
-const isShellOperationContextIdentity = (
-  value: ShellOperationContextResponse['operationContext'],
-): value is ShellOperationContextIdentity =>
-  value !== undefined &&
-  typeof value.legalEntityId === 'string' &&
-  typeof value.principalDisplayName === 'string' &&
-  typeof value.principalId === 'string' &&
-  typeof value.tenantId === 'string';
-
-export const loadShellOperationContext = async (): Promise<ShellOperationContext> => {
+const loadShellOperationContextResponse = async (): Promise<ShellOperationContextResponse> => {
   const response = await fetch('/shell-super-app-api/operation-context', {
     credentials: 'same-origin',
   });
@@ -59,11 +50,24 @@ export const loadShellOperationContext = async (): Promise<ShellOperationContext
     throw shellOperationContextUnavailableError(response.status);
   }
 
-  const body = (await response.json()) as ShellOperationContextResponse;
+  return (await response.json()) as ShellOperationContextResponse;
+};
+
+const isShellOperationContextIdentity = (
+  value: ShellOperationContextResponse['operationContext'],
+): value is ShellOperationContextIdentity =>
+  value !== undefined &&
+  typeof value.legalEntityId === 'string' &&
+  typeof value.principalDisplayName === 'string' &&
+  typeof value.principalId === 'string' &&
+  typeof value.tenantId === 'string';
+
+export const loadShellOperationContext = async (): Promise<ShellOperationContext> => {
+  const body = await loadShellOperationContextResponse();
   if (!isShellOperationContextIdentity(body.operationContext)) {
     throw Object.assign(new Error('Shell operation context response is missing identity.'), {
       name: 'ShellOperationContextUnavailableError',
-      status: response.status,
+      status: 200,
     });
   }
 
@@ -74,6 +78,6 @@ export const loadShellOperationContext = async (): Promise<ShellOperationContext
 };
 
 export const loadShellModuleStates = async () => {
-  const context = await loadShellOperationContext();
-  return context.moduleStates;
+  const body = await loadShellOperationContextResponse();
+  return body.moduleStates ?? [];
 };

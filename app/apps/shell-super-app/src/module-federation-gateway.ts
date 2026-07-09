@@ -4,12 +4,6 @@ import { loadModuleEntrypoint, ModuleEntrypointDeniedError } from './module-entr
 import { loadShellModuleStates } from './shell-operation-context-client';
 import type { ShellModuleEntrypoint } from './module-entrypoints';
 
-export {
-  isShellOperationContextAuthRequiredError,
-  loadShellModuleStates,
-  ShellOperationContextAuthRequiredError,
-} from './shell-operation-context-client';
-
 export const loadShellModuleFederationEntrypoint = async <TModule>(
   entrypoint: ShellModuleEntrypoint,
 ): Promise<TModule> => {

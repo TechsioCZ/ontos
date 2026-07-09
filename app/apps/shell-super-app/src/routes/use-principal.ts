@@ -6,6 +6,7 @@ import {
   isShellOperationContextAuthRequiredError,
   loadShellOperationContext,
 } from '../shell-operation-context-client';
+import type { ShellOperationContextIdentity } from '../shell-operation-context-client';
 
 export type ActiveTenantModuleState = TenantModuleState & { readonly state: 'active' };
 
@@ -20,11 +21,8 @@ export type PrincipalState =
   | { readonly error: Error; readonly status: 'error' }
   | {
       readonly activeModules: readonly ActiveTenantModuleState[];
-      readonly legalEntityId: string;
-      readonly principalDisplayName: string;
-      readonly principalId: string;
+      readonly operationContext: ShellOperationContextIdentity;
       readonly status: 'ready';
-      readonly tenantId: string;
       readonly user: PrincipalDisplayUser;
     };
 
@@ -116,11 +114,8 @@ export const usePrincipal = (): PrincipalState => {
         if (!cancelled) {
           setPrincipalState({
             activeModules: context.moduleStates.filter(isActiveTenantModuleState),
-            legalEntityId: context.operationContext.legalEntityId,
-            principalDisplayName: context.operationContext.principalDisplayName,
-            principalId: context.operationContext.principalId,
+            operationContext: context.operationContext,
             status: 'ready',
-            tenantId: context.operationContext.tenantId,
             user: displayUser,
           });
         }

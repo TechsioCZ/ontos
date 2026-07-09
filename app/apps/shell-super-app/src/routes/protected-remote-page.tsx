@@ -5,9 +5,9 @@ import { Suspense, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   isShellOperationContextAuthRequiredError,
-  loadShellModuleFederationEntrypoint,
   loadShellModuleStates,
-} from '../module-federation-gateway';
+} from '../shell-operation-context-client';
+import { loadShellModuleFederationEntrypoint } from '../module-federation-gateway';
 import type { ShellModuleEntrypoint } from '../module-entrypoints';
 
 interface RemotePageModule {
