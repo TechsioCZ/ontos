@@ -21,6 +21,7 @@ export type PrincipalState =
   | {
       readonly activeModules: readonly ActiveTenantModuleState[];
       readonly legalEntityId: string;
+      readonly principalDisplayName: string;
       readonly principalId: string;
       readonly status: 'ready';
       readonly tenantId: string;
@@ -36,16 +37,46 @@ const isActiveTenantModuleState = (
   moduleState: TenantModuleState,
 ): moduleState is ActiveTenantModuleState => moduleState.state === 'active';
 
-const toDisplayUser = (user: BetterAuthDisplayUser): PrincipalDisplayUser | null => {
+const resolveDisplayName = ({
+  email,
+  principalDisplayName,
+  userName,
+}: {
+  readonly email: string;
+  readonly principalDisplayName?: string | undefined;
+  readonly userName?: string | null | undefined;
+}) => {
+  const trimmedPrincipalDisplayName = principalDisplayName?.trim();
+  if (trimmedPrincipalDisplayName !== undefined && trimmedPrincipalDisplayName.length > 0) {
+    return trimmedPrincipalDisplayName;
+  }
+
+  const trimmedName = userName?.trim();
+  if (trimmedName !== undefined && trimmedName.length > 0) {
+    return trimmedName;
+  }
+
+  return email;
+};
+
+const toDisplayUser = ({
+  principalDisplayName,
+  user,
+}: {
+  readonly principalDisplayName?: string;
+  readonly user: BetterAuthDisplayUser;
+}): PrincipalDisplayUser | null => {
   if (user.email === undefined || user.email === null || user.email.trim().length === 0) {
     return null;
   }
 
-  const trimmedName = user.name?.trim();
-
   return {
     email: user.email,
-    name: trimmedName === undefined || trimmedName.length === 0 ? user.email : trimmedName,
+    name: resolveDisplayName({
+      email: user.email,
+      principalDisplayName,
+      userName: user.name,
+    }),
   };
 };
 
@@ -55,10 +86,7 @@ export const usePrincipal = (): PrincipalState => {
   const [principalState, setPrincipalState] = useState<PrincipalState>({ status: 'loading' });
 
   useEffect(() => {
-    const displayUser =
-      user === undefined || user === null ? null : toDisplayUser(user as BetterAuthDisplayUser);
-
-    if (displayUser === null) {
+    if (user === undefined || user === null) {
       setPrincipalState({ status: 'unauthenticated' });
       return;
     }
@@ -71,10 +99,25 @@ export const usePrincipal = (): PrincipalState => {
       try {
         const context = await loadShellOperationContext();
 
+        if (cancelled) {
+          return;
+        }
+
+        const displayUser = toDisplayUser({
+          principalDisplayName: context.operationContext.principalDisplayName,
+          user: user as BetterAuthDisplayUser,
+        });
+
+        if (displayUser === null) {
+          setPrincipalState({ status: 'unauthenticated' });
+          return;
+        }
+
         if (!cancelled) {
           setPrincipalState({
             activeModules: context.moduleStates.filter(isActiveTenantModuleState),
             legalEntityId: context.operationContext.legalEntityId,
+            principalDisplayName: context.operationContext.principalDisplayName,
             principalId: context.operationContext.principalId,
             status: 'ready',
             tenantId: context.operationContext.tenantId,

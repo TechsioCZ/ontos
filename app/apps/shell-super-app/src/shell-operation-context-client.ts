@@ -3,6 +3,7 @@ import type { TenantModuleState } from '@app/shared-contracts';
 
 export interface ShellOperationContextIdentity {
   readonly legalEntityId: string;
+  readonly principalDisplayName: string;
   readonly principalId: string;
   readonly tenantId: string;
 }
@@ -41,6 +42,7 @@ const isShellOperationContextIdentity = (
 ): value is ShellOperationContextIdentity =>
   value !== undefined &&
   typeof value.legalEntityId === 'string' &&
+  typeof value.principalDisplayName === 'string' &&
   typeof value.principalId === 'string' &&
   typeof value.tenantId === 'string';
 

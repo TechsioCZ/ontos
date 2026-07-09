@@ -8,6 +8,7 @@ import type { TenantModuleState } from './module-state.ts';
 
 interface ResolvedOperationIdentity {
   readonly legalEntityId: string;
+  readonly principalDisplayName: string;
   readonly principalId: string;
   readonly tenantId: string;
 }
@@ -57,6 +58,7 @@ export const resolveOperationContextFromSession = async ({
   const [binding] = await db
     .select({
       legalEntityId: legalEntities.legalEntityId,
+      principalDisplayName: principals.displayName,
       principalId: principals.principalId,
       tenantId: tenants.tenantId,
     })
@@ -91,6 +93,7 @@ export const resolveOperationContextFromSession = async ({
     moduleStates,
     operationContext: {
       legalEntityId: binding.legalEntityId,
+      principalDisplayName: binding.principalDisplayName,
       principalId: binding.principalId,
       tenantId: binding.tenantId,
     },

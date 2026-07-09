@@ -110,12 +110,13 @@ const createOperationIdentity = async () => {
   const [principal] = await sqlClient`
     insert into core.principals (tenant_id, display_name, kind, status)
     values (${tenant.tenant_id}, ${'Module Gate Principal'}, ${'human'}, ${'active'})
-    returning principal_id
+    returning principal_id, display_name
   `;
   createdPrincipalIds.push(principal.principal_id);
 
   return {
     legalEntityId: legalEntity.legal_entity_id,
+    principalDisplayName: principal.display_name,
     principalId: principal.principal_id,
     tenantId: tenant.tenant_id,
   };
