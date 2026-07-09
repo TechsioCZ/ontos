@@ -32,9 +32,7 @@ export const MainMenu = ({ activeModules, onLogout, user }: MainMenuProps) => {
       data-testid="main-menu"
     >
       <div className="border-b border-[var(--ui-color-border)] pb-4">
-        <p className="truncate text-base font-medium text-[var(--ui-color-text-strong)]">
-          {user.name}
-        </p>
+        <p className="truncate text-base font-medium text-black">{user.name}</p>
         <p className="truncate text-sm text-[var(--ui-color-text-muted)]">{user.email}</p>
       </div>
 
