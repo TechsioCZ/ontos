@@ -72,8 +72,8 @@ const authServerPlugin = () => ({
   name: 'shell-super-app-auth-server-plugin',
   setup(api: {
     _internalServerPlugins: (
-      handler: (input: { plugins: Array<{ name: string; options?: Record<string, unknown> }> }) => {
-        plugins: Array<{ name: string; options?: Record<string, unknown> }>;
+      handler: (input: { plugins: { name: string; options?: Record<string, unknown> }[] }) => {
+        plugins: { name: string; options?: Record<string, unknown> }[];
       },
     ) => void;
   }) {
@@ -238,6 +238,7 @@ export default defineConfig(
               '/assets',
               '/bundles',
               '/shell-super-app-api',
+              '/ticketing-api',
               '/locales',
               '/mf-manifest.json',
               '/mf-stats.json',

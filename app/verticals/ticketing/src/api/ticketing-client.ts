@@ -18,6 +18,8 @@ import type {
   TicketingNotFound,
   OperationContext,
   TicketingReadiness,
+  CreateTicketActionOutcome,
+  CreateTicketActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -39,6 +41,7 @@ export type TicketingClientError =
 export type TicketingClientEffect<Success> = Effect.Effect<Success, TicketingClientError, never>;
 
 export interface TicketingClientOptions {
+  headers?: Record<string, string>;
   baseUrl?: string | URL;
   locale?: string;
   operationContext?: OperationContext;
@@ -92,3 +95,29 @@ export const createTicketing = (
     ...options,
     operationContext: options.operationContext ?? ticketingOperationContexts.create,
   }).pipe(Effect.flatMap((client) => client.ticketing.create({ payload: { title } })));
+
+export const runCreateTicketAction = (
+  payload: CreateTicketActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateTicketActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext: options.operationContext ?? ticketingOperationContexts.createTicketAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createTicketAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};

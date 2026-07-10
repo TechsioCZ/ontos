@@ -6,6 +6,8 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { runCoreSdkAction } from './action-runtime.ts';
+import { createTicketActionRegistration } from '../src/actions/create-ticket.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -86,6 +88,20 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
       }).pipe(
         Effect.withSpan('ultramodern.api.ticketing.create', {
           attributes: operationAttributes(ticketingOperationContexts.create),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createTicketAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createTicketActionRegistration,
+        }),
+      ).pipe(
+        Effect.withSpan('ultramodern.api.ticketing.createTicketAction', {
+          attributes: operationAttributes(ticketingOperationContexts.createTicketAction),
           kind: 'server',
         }),
       ),

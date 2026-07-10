@@ -24,6 +24,6 @@ export const backendFederationContract = {
 export const api: unknown = ticketingApi;
 export const contract = ticketingApiContract;
 export const operationContexts = ticketingOperationContexts;
-export const runtime = apiRuntime;
+export const runtime = apiRuntime as unknown;
 
 export default apiRuntime;

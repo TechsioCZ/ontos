@@ -37,6 +37,7 @@
     "api:check": "node ./scripts/check-ultramodern-api-boundaries.mts",
     "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
     "scaffold:microvertical-page": "node ./scripts/scaffold-microvertical-page.mts",
+    "scaffold:action": "node ./scripts/scaffold-action.mts",
     "postinstall": "oxfmt . '!repos/**' && node ./scripts/bootstrap-agent-skills.mts --postinstall"
   },
   "devDependencies": {

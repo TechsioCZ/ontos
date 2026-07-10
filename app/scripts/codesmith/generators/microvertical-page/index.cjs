@@ -93,11 +93,9 @@ const relativeImport = (fromFile, targetWithoutExtension) => {
   return relative.startsWith('.') ? relative : `./${relative}`;
 };
 
-const createVerticalPageModule = ({
+const createVerticalPageExperienceModule = ({
   componentName,
-  exposeKey,
   localeKey,
-  mfBoundaryId,
   verticalSlug,
 }) => `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 
@@ -107,8 +105,6 @@ export default function ${componentName}() {
   return (
     <section
       className="${verticalSlug}:rounded-2xl ${verticalSlug}:bg-white/90 ${verticalSlug}:p-5 ${verticalSlug}:shadow-xl ${verticalSlug}:shadow-stone-900/10"
-      data-modern-boundary-id="${mfBoundaryId}"
-      data-modern-mf-expose="${exposeKey}"
     >
       <p className="${verticalSlug}:text-sm ${verticalSlug}:font-bold ${verticalSlug}:uppercase ${verticalSlug}:tracking-normal ${verticalSlug}:text-stone-500">
         {t('${verticalSlug}.pages.${localeKey}.eyebrow')}
@@ -120,6 +116,24 @@ export default function ${componentName}() {
         {t('${verticalSlug}.pages.${localeKey}.body')}
       </p>
     </section>
+  );
+}
+`;
+
+const createVerticalPageModule = ({
+  componentName,
+  experienceComponentName,
+  experiencePath,
+  exposeKey,
+  fromFile,
+  mfBoundaryId,
+}) => `import ${experienceComponentName} from '${relativeImport(fromFile, experiencePath)}';
+
+export default function ${componentName}() {
+  return (
+    <div data-modern-boundary-id="${mfBoundaryId}" data-modern-mf-expose="${exposeKey}">
+      <${experienceComponentName} />
+    </div>
   );
 }
 `;
@@ -415,6 +429,7 @@ module.exports = async function microverticalPageGenerator(context, generator) {
   const verticalPascal = toPascalCase(verticalSlug);
   const localeKey = toCamelCase(pageSlug);
   const componentName = `${verticalPascal}${pagePascal}Page`;
+  const experienceComponentName = `${verticalPascal}${pagePascal}Experience`;
   const entrypointKey = `${toCamelCase(verticalSlug)}${pagePascal}Page`;
   const entrypointId = `${verticalSlug}.pages.${pageSlug}`;
   const exposeKey = `./pages/${pagePascal}Page`;
@@ -433,6 +448,7 @@ module.exports = async function microverticalPageGenerator(context, generator) {
   const mfBoundaryId = await readVerticalMfBoundaryId({ verticalSlug, workspaceRoot });
 
   const verticalPagePath = `verticals/${verticalSlug}/src/pages/${pageSlug}-page.tsx`;
+  const verticalPageExperiencePath = `verticals/${verticalSlug}/src/pages/${pageSlug}-experience.tsx`;
   const shellRouteSegments = routePath.split('/').filter(Boolean);
   const shellRoutePagePath = path.join(
     'apps/shell-super-app/src/routes/[lang]',
@@ -447,13 +463,23 @@ module.exports = async function microverticalPageGenerator(context, generator) {
 
   await writeText(
     workspaceRoot,
+    verticalPageExperiencePath,
+    createVerticalPageExperienceModule({
+      componentName: experienceComponentName,
+      localeKey,
+      verticalSlug,
+    }),
+  );
+  await writeText(
+    workspaceRoot,
     verticalPagePath,
     createVerticalPageModule({
       componentName,
+      experienceComponentName,
+      experiencePath: verticalPageExperiencePath.replace(/\.tsx$/u, ''),
       exposeKey,
-      localeKey,
+      fromFile: verticalPagePath,
       mfBoundaryId,
-      verticalSlug,
     }),
   );
 

@@ -237,6 +237,9 @@ importers:
 
   verticals/ticketing:
     dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../../packages/core-runtime
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -267,6 +270,9 @@ importers:
       '@tanstack/react-router':
         specifier: 1.170.16
         version: 1.170.16(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@techsio/ui-kit':
+        specifier: 0.19.3
+        version: 0.19.3(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tailwindcss@4.3.2)
       i18next:
         specifier: 26.3.1
         version: 26.3.1(typescript@6.0.3)

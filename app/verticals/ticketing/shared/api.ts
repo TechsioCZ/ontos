@@ -5,6 +5,17 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import {
+  createTicketActionHeadersSchema,
+  createTicketActionOutcomeSchema,
+  createTicketActionPayloadSchema,
+} from './actions/create-ticket';
+
+export type {
+  CreateTicketActionOutcome,
+  CreateTicketActionPayload,
+  CreateTicketActionResponse,
+} from './actions/create-ticket';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -129,6 +140,13 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           item: ticketingItemSchema,
         }),
       }),
+    )
+    .add(
+      HttpApiEndpoint.post('createTicketAction', '/ticketing/actions/create-ticket', {
+        headers: createTicketActionHeadersSchema,
+        payload: createTicketActionPayloadSchema,
+        success: createTicketActionOutcomeSchema,
+      }),
     ),
 );
 
@@ -137,6 +155,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:create',
     routePath: '/ticketing',
+    source: 'generated-client',
+  },
+  createTicketAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createTicketAction',
+    routePath: '/ticketing/actions/create-ticket',
     source: 'generated-client',
   },
   get: {

@@ -10,8 +10,18 @@
     "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__ticketing",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__ticketing.tsbuildinfo"
   },
-  "include": ["src", "locales/**/*.json", "package.json", "shared", "api"],
+  "include": [
+    "src",
+    "locales/**/*.json",
+    "package.json",
+    "shared",
+    "shared/**/*.json",
+    "api"
+  ],
   "references": [
+    {
+      "path": "../../packages/core-runtime"
+    },
     {
       "path": "../../packages/shared-contracts"
     },

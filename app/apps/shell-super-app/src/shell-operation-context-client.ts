@@ -11,11 +11,13 @@ export interface ShellOperationContextIdentity {
 export interface ShellOperationContext {
   readonly moduleStates: readonly TenantModuleState[];
   readonly operationContext: ShellOperationContextIdentity;
+  readonly verticalGatewayTokens: Readonly<Record<string, string>>;
 }
 
 interface ShellOperationContextResponse {
   readonly moduleStates?: readonly TenantModuleState[];
   readonly operationContext?: ShellOperationContextIdentity;
+  readonly verticalGatewayTokens?: Readonly<Record<string, string>>;
 }
 
 export class ShellOperationContextAuthRequiredError extends Error {
@@ -74,6 +76,7 @@ export const loadShellOperationContext = async (): Promise<ShellOperationContext
   return {
     moduleStates: body.moduleStates ?? [],
     operationContext: body.operationContext,
+    verticalGatewayTokens: body.verticalGatewayTokens ?? {},
   };
 };
 
