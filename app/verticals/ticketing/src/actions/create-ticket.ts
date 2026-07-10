@@ -50,7 +50,7 @@ const createTicketActionHandler: ActionHandler<
       actionKey: createTicketActionKey,
       targetResourceId,
     },
-    topic: 'ticketing.createTicket.accepted',
+    topic: 'ticketing.createTicket.created',
   });
 
   return {
