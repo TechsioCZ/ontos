@@ -3,13 +3,21 @@ import { createHash } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type {
   OperationActionInvocationStatus,
+  OperationAccessKind,
   OperationAuditOutcome,
   OperationAuditProfile,
   OperationAuditStage,
   OperationContext,
+  OperationEvidenceCaptureMode,
 } from './operation-context.ts';
 import { db } from './db/client.ts';
-import { actionInvocations, auditEvents, domainEvents, outboxMessages } from './db/schema.ts';
+import {
+  actionInvocations,
+  auditEvents,
+  dataAccessEvents,
+  domainEvents,
+  outboxMessages,
+} from './db/schema.ts';
 import type { CoreDbExecutor, CoreTransaction } from './db/types.ts';
 import { checkModuleStateAccess, isInstalledModuleKey } from './module-state.ts';
 import type { ModuleStateAccessKind } from './module-state.ts';
@@ -23,6 +31,7 @@ import {
 import type { SpiceDbAuthorizationChecker } from './spicedb-authorization.ts';
 import { resolveVerticalGatewayToken } from './vertical-gateway-token.ts';
 import type {
+  ResolveVerticalGatewayTokenResult,
   VerticalGatewayTokenInvalid,
   VerticalGatewayTokenMissing,
 } from './vertical-gateway-token.ts';
@@ -120,6 +129,35 @@ export type OperationResult<TAction, TResponse> =
   | OperationSucceeded<TAction, TResponse>
   | CoreSDKError;
 
+export const coreSDKErrorHttpStatus = (error: CoreSDKError): number => {
+  switch (error._tag) {
+    case 'OperationAuthRequired':
+    case 'OperationContextInvalid': {
+      return 401;
+    }
+    case 'OperationAuthorizationDenied':
+    case 'OperationModuleStateDenied': {
+      return 403;
+    }
+    case 'OperationIdempotencyKeyRequired': {
+      return 428;
+    }
+    case 'OperationDomainRejected':
+    case 'OperationIdempotencyConflict':
+    case 'OperationIdempotencyReplayUnavailable':
+    case 'OperationPolicyDenied': {
+      return 409;
+    }
+    case 'OperationExecutionFailed':
+    case 'OperationPersistenceFailed': {
+      return 500;
+    }
+    default: {
+      return error satisfies never;
+    }
+  }
+};
+
 export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
   readonly actionKey: string;
   readonly auditProfile: OperationAuditProfile;
@@ -168,12 +206,58 @@ export interface ActionRegistration<TAction, TResponse> {
   readonly policyChecks?: readonly PolicyCheck<TAction>[];
 }
 
+export interface DataAccessDescriptor {
+  readonly accessKind: OperationAccessKind;
+  readonly auditProfile: OperationAuditProfile;
+  readonly authorization?: ActionAuthorizationRequirement;
+  readonly dataAccessKey: string;
+  readonly evidenceCaptureMode: OperationEvidenceCaptureMode;
+  readonly evidencePolicyKey: string;
+  readonly gatewayAudience: string;
+  readonly moduleStateAccess?: ModuleStateAccessKind;
+  readonly servingModuleKey: string;
+  readonly targetModuleKey?: string;
+  readonly targetResourceId?: string;
+  readonly targetResourceType?: string;
+  readonly transportRequestSchema: unknown;
+  readonly transportResponseSchema: unknown;
+}
+
+export interface DataAccessExecutionServices<TPayload> {
+  readonly context: OperationContext<TPayload>;
+  readonly db: CoreDbExecutor;
+}
+
+export type DataAccessHandler<TPayload, TResponse> = (
+  input: TPayload,
+  services: DataAccessExecutionServices<TPayload>,
+) => Promise<TResponse> | TResponse;
+
+export interface DataAccessRegistration<TPayload, TResponse> {
+  readonly descriptor: DataAccessDescriptor;
+  readonly handler: DataAccessHandler<TPayload, TResponse>;
+  readonly policyChecks?: readonly PolicyCheck<TPayload>[];
+}
+
 export interface OperationTransport {
   readonly headers: Headers;
 }
 
+export type OperationLogEntry = Readonly<Record<string, unknown>>;
+
+export interface OperationLogger {
+  readonly warn: (entry: OperationLogEntry) => void;
+}
+
+export type OperationContextResolver = (input: {
+  readonly audience: string;
+  readonly token: string | null | undefined;
+}) => ResolveVerticalGatewayTokenResult;
+
 export interface RunActionOptions {
   readonly authorizationChecker?: SpiceDbAuthorizationChecker;
+  readonly logger?: OperationLogger;
+  readonly operationContextResolver?: OperationContextResolver;
 }
 
 export interface ActionDomainRejection {
@@ -239,6 +323,12 @@ const executionFailed = (error: unknown): OperationExecutionFailed => ({
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+const consoleOperationLogger: OperationLogger = {
+  warn: (entry) => {
+    console.warn(JSON.stringify(entry));
+  },
+};
 
 const authorizationDenied = ({
   code,
@@ -316,14 +406,16 @@ const resolveContext = <TAction>({
   action,
   actionKey,
   audience,
+  operationContextResolver,
   transport,
 }: {
   readonly action: TAction;
   readonly actionKey: string;
   readonly audience: string;
+  readonly operationContextResolver: OperationContextResolver;
   readonly transport: OperationTransport;
 }): OperationContext<TAction> | CoreSDKError => {
-  const result = resolveVerticalGatewayToken({
+  const result = operationContextResolver({
     audience,
     token: transport.headers.get('x-ontos-operation-context'),
   });
@@ -664,18 +756,22 @@ const authorizeWithSpiceDb = async <TAction>({
   auditProfile,
   authorizationChecker,
   context,
+  eventPrefix,
+  logger,
   requirement,
 }: {
   readonly auditProfile: OperationAuditProfile;
   readonly authorizationChecker: SpiceDbAuthorizationChecker;
   readonly context: OperationContext<TAction>;
+  readonly eventPrefix: 'action' | 'data_access';
+  readonly logger: OperationLogger;
   readonly requirement: ActionAuthorizationRequirement | undefined;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
   if (requirement === undefined) {
     return writeAuditEvent({
       auditProfile,
       context,
-      eventType: 'action.authorization.skipped',
+      eventType: `${eventPrefix}.authorization.skipped`,
       outcome: 'allowed',
       outcomeCode: 'spicedb_authorization_not_required',
       outcomeStage: 'authz',
@@ -699,7 +795,7 @@ const authorizeWithSpiceDb = async <TAction>({
     return writeAuditEvent({
       auditProfile,
       context: checkedContext,
-      eventType: 'action.authorization.allowed',
+      eventType: `${eventPrefix}.authorization.allowed`,
       outcome: 'allowed',
       outcomeCode: 'spicedb_check_permission_allowed',
       outcomeStage: 'authz',
@@ -721,7 +817,7 @@ const authorizeWithSpiceDb = async <TAction>({
     const auditedContext = await writeAuditEvent({
       auditProfile,
       context: rejectedContext,
-      eventType: 'action.authorization.denied',
+      eventType: `${eventPrefix}.authorization.denied`,
       outcome: 'denied',
       outcomeCode:
         authorization._tag === 'Unavailable'
@@ -731,26 +827,22 @@ const authorizeWithSpiceDb = async <TAction>({
     });
 
     if ('_tag' in auditedContext) {
-      console.warn(
-        JSON.stringify({
-          actionKey: context.actionKey,
-          message: auditedContext.message,
-          principalId: context.principalId,
-          tenantId: context.tenantId,
-          type: 'authorization_denied_evidence_persistence_failed',
-        }),
-      );
-    }
-  } catch (error) {
-    console.warn(
-      JSON.stringify({
+      logger.warn({
         actionKey: context.actionKey,
-        message: errorMessage(error),
+        message: auditedContext.message,
         principalId: context.principalId,
         tenantId: context.tenantId,
         type: 'authorization_denied_evidence_persistence_failed',
-      }),
-    );
+      });
+    }
+  } catch (error) {
+    logger.warn({
+      actionKey: context.actionKey,
+      message: errorMessage(error),
+      principalId: context.principalId,
+      tenantId: context.tenantId,
+      type: 'authorization_denied_evidence_persistence_failed',
+    });
   }
 
   return authorizationDenied({
@@ -768,12 +860,14 @@ const enforceModuleStateGate = async <TAction>({
   auditProfile,
   context,
   eventPrefix,
+  logger,
   rejectInvocation,
 }: {
   readonly accessKind: ModuleStateAccessKind | undefined;
   readonly auditProfile: OperationAuditProfile;
   readonly context: OperationContext<TAction>;
   readonly eventPrefix: 'action' | 'data_access';
+  readonly logger: OperationLogger;
   readonly rejectInvocation: boolean;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
   if (accessKind === undefined) {
@@ -812,18 +906,16 @@ const enforceModuleStateGate = async <TAction>({
     targetModuleKey: checked.moduleKey,
   });
 
-  console.warn(
-    JSON.stringify({
-      accessKind: checked.accessKind,
-      actionKey: context.actionKey,
-      moduleKey: checked.moduleKey,
-      outcomeCode: checked.outcomeCode,
-      principalId: context.principalId,
-      state: checked.state,
-      tenantId: context.tenantId,
-      type: 'module_state.denied',
-    }),
-  );
+  logger.warn({
+    accessKind: checked.accessKind,
+    actionKey: context.actionKey,
+    moduleKey: checked.moduleKey,
+    outcomeCode: checked.outcomeCode,
+    principalId: context.principalId,
+    state: checked.state,
+    tenantId: context.tenantId,
+    type: 'module_state.denied',
+  });
 
   return '_tag' in auditedContext
     ? auditedContext
@@ -838,10 +930,12 @@ const enforceModuleStateGate = async <TAction>({
 const evaluateActionPolicies = async <TAction>({
   auditProfile,
   context,
+  eventPrefix,
   policyChecks,
 }: {
   readonly auditProfile: OperationAuditProfile;
   readonly context: OperationContext<TAction>;
+  readonly eventPrefix: 'action' | 'data_access';
   readonly policyChecks: readonly PolicyCheck<TAction>[];
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
   let checkedContext = context;
@@ -868,7 +962,7 @@ const evaluateActionPolicies = async <TAction>({
     const auditedContext = await writeAuditEvent({
       auditProfile,
       context: rejectedContext,
-      eventType: 'action.policy.denied',
+      eventType: `${eventPrefix}.policy.denied`,
       outcome: 'denied',
       outcomeCode: deniedDecision.code,
       outcomeStage: 'policy',
@@ -880,11 +974,67 @@ const evaluateActionPolicies = async <TAction>({
   return writeAuditEvent({
     auditProfile,
     context: checkedContext,
-    eventType: 'action.policy.allowed',
+    eventType: `${eventPrefix}.policy.allowed`,
     outcome: 'allowed',
-    outcomeCode: 'action_policies_allowed',
+    outcomeCode: `${eventPrefix}_policies_allowed`,
     outcomeStage: 'policy',
   });
+};
+
+const persistDataAccessEvent = async <TPayload, TResponse>({
+  context,
+  descriptor,
+  payload,
+  response,
+  resultCount,
+}: {
+  readonly context: OperationContext<TPayload>;
+  readonly descriptor: DataAccessDescriptor;
+  readonly payload: TPayload;
+  readonly response: TResponse;
+  readonly resultCount: (response: TResponse) => number;
+}): Promise<OperationContext<TPayload> | CoreSDKError> => {
+  const count = resultCount(response);
+  const [inserted] = await db
+    .insert(dataAccessEvents)
+    .values({
+      accessKind: descriptor.accessKind,
+      authMethod: 'session',
+      evidenceCaptureMode: descriptor.evidenceCaptureMode,
+      evidencePolicyKey: descriptor.evidencePolicyKey,
+      legalEntityId: context.legalEntityId,
+      principalId: context.principalId,
+      queryHash: requestHash(payload),
+      resultCount: count,
+      servingModuleKey: descriptor.servingModuleKey,
+      targetModuleKey: descriptor.targetModuleKey,
+      targetResourceId: descriptor.targetResourceId,
+      targetResourceType: descriptor.targetResourceType,
+      tenantId: context.tenantId,
+    })
+    .returning({
+      dataAccessEventId: dataAccessEvents.dataAccessEventId,
+    });
+
+  if (inserted === undefined) {
+    return persistenceFailed();
+  }
+
+  return {
+    ...context,
+    dataAccessEvents: [
+      ...(context.dataAccessEvents ?? []),
+      {
+        accessKind: descriptor.accessKind,
+        dataAccessEventId: inserted.dataAccessEventId,
+        evidenceCaptureMode: descriptor.evidenceCaptureMode,
+        evidencePolicyKey: descriptor.evidencePolicyKey,
+        queryHash: requestHash(payload),
+        resultCount: count,
+        servingModuleKey: descriptor.servingModuleKey,
+      },
+    ],
+  };
 };
 
 const persistDomainRejection = async <TAction>({
@@ -943,10 +1093,13 @@ export const runAction = async <TAction, TResponse>({
   readonly transport: OperationTransport;
 }): Promise<OperationResult<TAction, TResponse>> => {
   const { descriptor, handler } = registration;
+  const logger = options.logger ?? consoleOperationLogger;
+  const operationContextResolver = options.operationContextResolver ?? resolveVerticalGatewayToken;
   const context = resolveContext({
     action: payload,
     actionKey: descriptor.actionKey,
     audience: descriptor.gatewayAudience,
+    operationContextResolver,
     transport,
   });
 
@@ -985,6 +1138,7 @@ export const runAction = async <TAction, TResponse>({
     auditProfile: descriptor.auditProfile,
     context: receivedContext,
     eventPrefix: 'action',
+    logger,
     rejectInvocation: true,
   });
 
@@ -996,6 +1150,8 @@ export const runAction = async <TAction, TResponse>({
     auditProfile: descriptor.auditProfile,
     authorizationChecker: options.authorizationChecker ?? spiceDbAuthorizationChecker,
     context: moduleStateCheckedContext,
+    eventPrefix: 'action',
+    logger,
     requirement: descriptor.authorization,
   });
 
@@ -1006,6 +1162,7 @@ export const runAction = async <TAction, TResponse>({
   const policyCheckedContext = await evaluateActionPolicies({
     auditProfile: descriptor.auditProfile,
     context: authorizedContext,
+    eventPrefix: 'action',
     policyChecks: registration.policyChecks ?? [],
   });
 
@@ -1076,5 +1233,97 @@ export const runAction = async <TAction, TResponse>({
           context: policyCheckedContext,
           error,
         });
+  }
+};
+
+export const runDataAccess = async <TPayload, TResponse>({
+  options = {},
+  payload,
+  registration,
+  resultCount,
+  transport,
+}: {
+  readonly options?: RunActionOptions;
+  readonly payload: TPayload;
+  readonly registration: DataAccessRegistration<TPayload, TResponse>;
+  readonly resultCount: (response: TResponse) => number;
+  readonly transport: OperationTransport;
+}): Promise<OperationResult<TPayload, TResponse>> => {
+  const { descriptor, handler } = registration;
+  const logger = options.logger ?? consoleOperationLogger;
+  const operationContextResolver = options.operationContextResolver ?? resolveVerticalGatewayToken;
+  const context = resolveContext({
+    action: payload,
+    actionKey: descriptor.dataAccessKey,
+    audience: descriptor.gatewayAudience,
+    operationContextResolver,
+    transport,
+  });
+
+  if ('_tag' in context) {
+    return context;
+  }
+
+  const moduleStateCheckedContext = await enforceModuleStateGate({
+    accessKind: descriptor.moduleStateAccess,
+    auditProfile: descriptor.auditProfile,
+    context,
+    eventPrefix: 'data_access',
+    logger,
+    rejectInvocation: false,
+  });
+
+  if ('_tag' in moduleStateCheckedContext) {
+    return moduleStateCheckedContext;
+  }
+
+  const authorizedContext = await authorizeWithSpiceDb({
+    auditProfile: descriptor.auditProfile,
+    authorizationChecker: options.authorizationChecker ?? spiceDbAuthorizationChecker,
+    context: moduleStateCheckedContext,
+    eventPrefix: 'data_access',
+    logger,
+    requirement: descriptor.authorization,
+  });
+
+  if ('_tag' in authorizedContext) {
+    return authorizedContext;
+  }
+
+  const policyCheckedContext = await evaluateActionPolicies({
+    auditProfile: descriptor.auditProfile,
+    context: authorizedContext,
+    eventPrefix: 'data_access',
+    policyChecks: registration.policyChecks ?? [],
+  });
+
+  if ('_tag' in policyCheckedContext) {
+    return policyCheckedContext;
+  }
+
+  try {
+    const response = await handler(payload, {
+      context: policyCheckedContext,
+      db,
+    });
+    const evidencedContext = await persistDataAccessEvent({
+      context: policyCheckedContext,
+      descriptor,
+      payload,
+      response,
+      resultCount,
+    });
+
+    if ('_tag' in evidencedContext) {
+      return evidencedContext;
+    }
+
+    return {
+      _tag: 'OperationSucceeded',
+      context: evidencedContext,
+      response,
+    };
+  } catch (error) {
+    return executionFailed(error);
   }
 };

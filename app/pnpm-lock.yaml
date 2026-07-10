@@ -198,6 +198,25 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/outbox-worker:
+    dependencies:
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../core-runtime
+    devDependencies:
+      '@effect/tsgo':
+        specifier: 0.14.6
+        version: 0.14.6
+      '@types/node':
+        specifier: ^20
+        version: 20.19.43
+      '@typescript/native-preview':
+        specifier: 7.0.0-dev.20260628.1
+        version: 7.0.0-dev.20260628.1
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/shared-contracts:
     devDependencies:
       '@effect/tsgo':

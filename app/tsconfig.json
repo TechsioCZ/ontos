@@ -8,6 +8,9 @@
       "path": "packages/shared-design-tokens"
     },
     {
+      "path": "packages/outbox-worker"
+    },
+    {
       "path": "apps/shell-super-app"
     },
     {

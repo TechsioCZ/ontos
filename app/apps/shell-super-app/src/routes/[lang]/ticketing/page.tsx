@@ -8,7 +8,7 @@ export default function TicketingTicketingPageShellPage() {
   return (
     <ShellFrame>
       <section className="shell:mx-auto shell:mt-8 shell:max-w-7xl">
-        <ProtectedShellRemotePage entrypoint={entrypoint} loadingLabel={"Ticketing Ticketing"} />
+        <ProtectedShellRemotePage entrypoint={entrypoint} loadingLabel={'Ticketing Ticketing'} />
       </section>
     </ShellFrame>
   );

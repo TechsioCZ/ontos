@@ -7,6 +7,10 @@ export type {
   ActionHandler,
   ActionRegistration,
   CoreSDKError,
+  DataAccessDescriptor,
+  DataAccessExecutionServices,
+  DataAccessHandler,
+  DataAccessRegistration,
   OperationAuthorizationDenied,
   OperationAuthRequired,
   OperationContextInvalid,
@@ -21,8 +25,12 @@ export type {
   OperationResult,
   OperationSucceeded,
   OperationTransport,
+  OperationContextResolver,
+  OperationLogger,
+  OperationLogEntry,
   RunActionOptions,
 } from './core-sdk.ts';
+export { coreSDKErrorHttpStatus, rejectAction, runAction, runDataAccess } from './core-sdk.ts';
 export type {
   OperationAccessKind,
   OperationActionInvocationStatus,

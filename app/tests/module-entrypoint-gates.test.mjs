@@ -6,7 +6,11 @@ import { after, test } from 'node:test';
 import { auth } from '../packages/core-runtime/src/auth/config.ts';
 import { createVerticalGatewayToken } from '../packages/core-runtime/src/vertical-gateway-token.ts';
 import { sqlClient } from '../packages/core-runtime/src/db/client.ts';
-import { runAction } from '../packages/core-runtime/src/core-sdk.ts';
+import {
+  coreSDKErrorHttpStatus,
+  runAction,
+  runDataAccess,
+} from '../packages/core-runtime/src/core-sdk.ts';
 import { allowPolicy } from '../packages/core-runtime/src/policy.ts';
 import { checkOutboxWorkerModuleStateAccess } from '../packages/core-runtime/src/outbox-worker.ts';
 import {
@@ -42,6 +46,7 @@ const collectSourceFiles = async (directory) => {
 };
 
 after(async () => {
+  await sqlClient`delete from core.data_access_events where tenant_id = any(${createdTenantIds})`;
   await sqlClient`delete from core.audit_events where tenant_id = any(${createdTenantIds})`;
   await sqlClient`delete from core.action_invocations where tenant_id = any(${createdTenantIds})`;
   await sqlClient`delete from core.tenant_module_states where tenant_id = any(${createdTenantIds})`;
@@ -251,6 +256,112 @@ test('CoreSDK denies ticketing actions when tenant module state is missing', asy
   });
 });
 
+test('CoreSDK emits module state denials through the operation logger boundary', async () => {
+  const operationContext = await createOperationIdentity();
+  const logs = [];
+  const calls = {
+    authorization: 0,
+    handler: 0,
+    policy: 0,
+  };
+
+  const result = await runAction({
+    options: {
+      authorizationChecker: () => {
+        calls.authorization += 1;
+        return { _tag: 'Allowed' };
+      },
+      logger: {
+        warn: (entry) => {
+          logs.push(entry);
+        },
+      },
+    },
+    payload: { title: 'Blocked ticket' },
+    registration: createTicketingMutationRegistration({ calls }),
+    transport: {
+      headers: new Headers({
+        'x-ontos-operation-context': createVerticalGatewayToken({
+          audience: 'ticketing',
+          operationContext,
+        }),
+      }),
+    },
+  });
+
+  assert.equal(result._tag, 'OperationModuleStateDenied');
+  assert.deepEqual(calls, {
+    authorization: 0,
+    handler: 0,
+    policy: 0,
+  });
+  assert.deepEqual(logs, [
+    {
+      accessKind: 'mutate',
+      actionKey: 'ticketing.create',
+      moduleKey: 'ticketing',
+      outcomeCode: 'module_state_mutate_blocked',
+      principalId: operationContext.principalId,
+      state: 'inactive',
+      tenantId: operationContext.tenantId,
+      type: 'module_state.denied',
+    },
+  ]);
+});
+
+test('CoreSDK can resolve trusted operation context through an injected boundary', async () => {
+  const operationContext = await createOperationIdentity();
+  await setTenantModuleState({
+    moduleKey: 'ticketing',
+    state: 'active',
+    tenantId: operationContext.tenantId,
+  });
+  const calls = {
+    authorization: 0,
+    handler: 0,
+    policy: 0,
+  };
+  const contextCalls = [];
+
+  const result = await runAction({
+    options: {
+      authorizationChecker: () => {
+        calls.authorization += 1;
+        return { _tag: 'Allowed' };
+      },
+      operationContextResolver: ({ audience, token }) => {
+        contextCalls.push({ audience, token });
+
+        return {
+          _tag: 'Success',
+          operationContext,
+        };
+      },
+    },
+    payload: { title: 'Allowed ticket' },
+    registration: createTicketingMutationRegistration({ calls }),
+    transport: {
+      headers: new Headers({
+        'x-ontos-operation-context': 'resolver-owned-token',
+      }),
+    },
+  });
+
+  assert.equal(result._tag, 'OperationSucceeded');
+  assert.deepEqual(contextCalls, [
+    {
+      audience: 'ticketing',
+      token: 'resolver-owned-token',
+    },
+  ]);
+  assert.equal(result.context.tenantId, operationContext.tenantId);
+  assert.deepEqual(calls, {
+    authorization: 1,
+    handler: 1,
+    policy: 1,
+  });
+});
+
 test('CoreSDK allows ticketing actions when tenant module state is active', async () => {
   const operationContext = await createOperationIdentity();
   await setTenantModuleState({
@@ -409,6 +520,169 @@ test('Core worker gate checks consumer module mutate access and ignores producer
     moduleKey: 'ticketing',
     state: 'active',
   });
+});
+
+test('CoreSDK records metadata-only evidence for allowed governed data access', async () => {
+  const operationContext = await createOperationIdentity();
+  await setTenantModuleState({
+    moduleKey: 'ticketing',
+    state: 'active',
+    tenantId: operationContext.tenantId,
+  });
+
+  const result = await runDataAccess({
+    options: {
+      authorizationChecker: () => ({ _tag: 'Allowed' }),
+    },
+    payload: { limit: 2 },
+    registration: {
+      descriptor: {
+        accessKind: 'list',
+        auditProfile: 'standard',
+        authorization: {
+          permission: 'read',
+          provider: 'spicedb',
+          resourceObjectId: 'ticketing',
+          resourceObjectType: 'module',
+        },
+        dataAccessKey: 'ticketing.list',
+        evidenceCaptureMode: 'metadata_only',
+        evidencePolicyKey: 'ticketing.list.metadataOnly',
+        gatewayAudience: 'ticketing',
+        moduleStateAccess: 'read',
+        servingModuleKey: 'ticketing',
+        targetModuleKey: 'ticketing',
+        targetResourceType: 'ticket',
+        transportRequestSchema: {},
+        transportResponseSchema: {},
+      },
+      handler: () => ({
+        items: [{ id: 'ticket-1' }, { id: 'ticket-2' }],
+      }),
+    },
+    resultCount: (response) => response.items.length,
+    transport: {
+      headers: new Headers({
+        'x-ontos-operation-context': createVerticalGatewayToken({
+          audience: 'ticketing',
+          operationContext,
+        }),
+      }),
+    },
+  });
+
+  assert.equal(result._tag, 'OperationSucceeded');
+  assert.deepEqual(result.response, {
+    items: [{ id: 'ticket-1' }, { id: 'ticket-2' }],
+  });
+
+  const rows = await sqlClient`
+    select
+      access_kind,
+      evidence_capture_mode,
+      evidence_policy_key,
+      principal_id,
+      query_hash,
+      result_count,
+      serving_module_key,
+      target_module_key,
+      target_resource_type,
+      tenant_id
+    from core.data_access_events
+    where tenant_id = ${operationContext.tenantId}
+      and evidence_policy_key = ${'ticketing.list.metadataOnly'}
+  `;
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].access_kind, 'list');
+  assert.equal(rows[0].evidence_capture_mode, 'metadata_only');
+  assert.equal(rows[0].principal_id, operationContext.principalId);
+  assert.equal(rows[0].query_hash.length, 64);
+  assert.equal(rows[0].result_count, 2);
+  assert.equal(rows[0].serving_module_key, 'ticketing');
+  assert.equal(rows[0].target_module_key, 'ticketing');
+  assert.equal(rows[0].target_resource_type, 'ticket');
+  assert.equal(rows[0].tenant_id, operationContext.tenantId);
+
+  const auditRows = await sqlClient`
+    select event_type, outcome_code
+    from core.audit_events
+    where tenant_id = ${operationContext.tenantId}
+    order by occurred_at, audit_event_id
+  `;
+
+  assert.deepEqual(
+    auditRows.map((row) => ({
+      eventType: row.event_type,
+      outcomeCode: row.outcome_code,
+    })),
+    [
+      {
+        eventType: 'data_access.authorization.allowed',
+        outcomeCode: 'spicedb_check_permission_allowed',
+      },
+      {
+        eventType: 'data_access.policy.allowed',
+        outcomeCode: 'data_access_policies_allowed',
+      },
+    ],
+  );
+});
+
+test('CoreSDK adapter status mapping is stable for expected operation outcomes', () => {
+  assert.equal(
+    coreSDKErrorHttpStatus({
+      _tag: 'OperationAuthRequired',
+      message: 'Authentication is required.',
+    }),
+    401,
+  );
+  assert.equal(
+    coreSDKErrorHttpStatus({
+      _tag: 'OperationAuthorizationDenied',
+      code: 'authorization_denied',
+      message: 'Denied.',
+      permission: 'read',
+      provider: 'spicedb',
+      resourceObjectId: 'ticketing',
+      resourceObjectType: 'module',
+    }),
+    403,
+  );
+  assert.equal(
+    coreSDKErrorHttpStatus({
+      _tag: 'OperationModuleStateDenied',
+      accessKind: 'mutate',
+      code: 'module_state_mutate_blocked',
+      message: 'Blocked.',
+      moduleKey: 'ticketing',
+      state: 'read_only',
+    }),
+    403,
+  );
+  assert.equal(
+    coreSDKErrorHttpStatus({
+      _tag: 'OperationIdempotencyKeyRequired',
+      message: 'Idempotency-Key is required.',
+    }),
+    428,
+  );
+  assert.equal(
+    coreSDKErrorHttpStatus({
+      _tag: 'OperationPolicyDenied',
+      code: 'policy_denied',
+      message: 'Policy denied.',
+      policyKey: 'ticketing.policy',
+    }),
+    409,
+  );
+  assert.equal(
+    coreSDKErrorHttpStatus({
+      _tag: 'OperationExecutionFailed',
+      message: 'Failed.',
+    }),
+    500,
+  );
 });
 
 test('Shell source forbids raw Module Federation loadRemote outside the gateway', async () => {

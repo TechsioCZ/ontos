@@ -30,8 +30,8 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     exposes: {
       './Route': './src/federation-entry.tsx',
-      './Widget': './src/components/ticketing-widget.tsx',      './pages/TicketingPage': './src/pages/ticketing-page.tsx',
-
+      './Widget': './src/components/ticketing-widget.tsx',
+      './pages/TicketingPage': './src/pages/ticketing-page.tsx',
     },
     filename: 'remoteEntry.js',
     name: 'verticalTicketing',
