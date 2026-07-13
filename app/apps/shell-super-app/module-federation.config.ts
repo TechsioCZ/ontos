@@ -13,6 +13,7 @@ const pluginTanstackVersion = (
 const runtimeVersion = (require('@modern-js/runtime/package.json') as { version: string }).version;
 const reactVersion = (require('react/package.json') as { version: string }).version;
 const reactDomVersion = (require('react-dom/package.json') as { version: string }).version;
+const uiKitVersion = dependencies['@techsio/ui-kit'];
 
 const cloudflareDeployEnabled = process.env['MODERNJS_DEPLOY'] === 'cloudflare';
 const cloudflareWorkersDevSubdomain =
@@ -100,6 +101,16 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       },
       '@tanstack/react-router': {
         requiredVersion: dependencies['@tanstack/react-router'],
+        singleton: true,
+        treeShaking: false,
+      },
+      '@techsio/ui-kit': {
+        requiredVersion: uiKitVersion,
+        singleton: true,
+        treeShaking: false,
+      },
+      '@techsio/ui-kit/molecules/toast': {
+        requiredVersion: uiKitVersion,
         singleton: true,
         treeShaking: false,
       },

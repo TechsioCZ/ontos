@@ -7,11 +7,13 @@ import {
 } from '@modern-js/plugin-bff/effect-client';
 import {
   createTicketActionHeadersSchema,
+  createTicketActionFailureSchema,
   createTicketActionOutcomeSchema,
   createTicketActionPayloadSchema,
 } from './actions/create-ticket';
 
 export type {
+  CreateTicketActionFailure,
   CreateTicketActionOutcome,
   CreateTicketActionPayload,
   CreateTicketActionResponse,
@@ -143,6 +145,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.post('createTicketAction', '/ticketing/actions/create-ticket', {
+        error: createTicketActionFailureSchema,
         headers: createTicketActionHeadersSchema,
         payload: createTicketActionPayloadSchema,
         success: createTicketActionOutcomeSchema,

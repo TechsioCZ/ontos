@@ -6,6 +6,7 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import { Effect, runCreateTicketAction, runEffectRequest } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
+import type { CreateTicketActionFailure } from '../../shared/actions/create-ticket';
 
 interface ShellOperationContextResponse {
   readonly verticalGatewayTokens?: Readonly<Record<string, string>>;
@@ -27,6 +28,14 @@ const loadTicketingOperationContextToken = async (): Promise<string> => {
 
   return token;
 };
+
+const isCreateTicketActionFailure = (error: unknown): error is CreateTicketActionFailure =>
+  typeof error === 'object' &&
+  error !== null &&
+  'ok' in error &&
+  error.ok === false &&
+  'message' in error &&
+  typeof error.message === 'string';
 
 export const TicketingExperience = () => {
   const { language, supportedLanguages, t } = useModernI18n();
@@ -53,27 +62,27 @@ export const TicketingExperience = () => {
         ).pipe(
           Effect.match({
             onFailure: (error) => {
-              toaster.create({
-                description:
-                  error instanceof Error ? error.message : 'Create Ticket request failed.',
-                title: 'Create Ticket failed',
-                type: 'error',
-              });
-            },
-            onSuccess: (outcome) => {
               toaster.create(
-                outcome.ok
+                isCreateTicketActionFailure(error)
                   ? {
-                      description: outcome.response.message,
-                      title: 'Create Ticket action passed',
-                      type: 'success',
+                      description: error.message,
+                      title: 'Create Ticket rejected',
+                      type: 'error',
                     }
                   : {
-                      description: outcome.message,
-                      title: 'Create Ticket rejected',
+                      description:
+                        error instanceof Error ? error.message : 'Create Ticket request failed.',
+                      title: 'Create Ticket failed',
                       type: 'error',
                     },
               );
+            },
+            onSuccess: (outcome) => {
+              toaster.create({
+                description: outcome.response.message,
+                title: 'Create Ticket action passed',
+                type: 'success',
+              });
             },
           }),
         ),

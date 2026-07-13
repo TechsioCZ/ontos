@@ -1,5 +1,5 @@
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
-export type { CreateTicketActionOutcome, CreateTicketActionPayload, CreateTicketActionResponse, } from './actions/create-ticket';
+export type { CreateTicketActionFailure, CreateTicketActionOutcome, CreateTicketActionPayload, CreateTicketActionResponse, } from './actions/create-ticket';
 export interface TicketingMarker {
     readonly appId: string;
     readonly build: string;
@@ -57,7 +57,7 @@ export declare const ticketingApi: HttpApi.HttpApi<"TicketingApi", HttpApiGroup.
 }>>, HttpApiEndpoint.StringTree<Schema.Struct<{
     readonly 'Idempotency-Key': Schema.optional<Schema.String>;
     readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
-}>>, HttpApiEndpoint.Json<Schema.Union<readonly [Schema.Struct<{
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
     readonly actionInvocationId: Schema.optional<Schema.String>;
     readonly ok: Schema.Literal<true>;
     readonly response: Schema.Struct<{
@@ -66,13 +66,14 @@ export declare const ticketingApi: HttpApi.HttpApi<"TicketingApi", HttpApiGroup.
         readonly message: Schema.String;
         readonly targetResourceId: Schema.String;
     }>;
-}>, Schema.Struct<{
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly errorTag: Schema.String;
     readonly httpStatus: Schema.Finite;
     readonly message: Schema.String;
     readonly ok: Schema.Literal<false>;
-}>]>>, HttpApiEndpoint.Json<never>, never, never> | HttpApiEndpoint.HttpApiEndpoint<"get", "GET", "/ticketing/:id", HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+}>>, never, never> | HttpApiEndpoint.HttpApiEndpoint<"get", "GET", "/ticketing/:id", HttpApiEndpoint.StringTree<Schema.Struct<{
     id: Schema.String;
 }>>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Codec<TicketingItem, TicketingItem, never, never>>, HttpApiEndpoint.Json<Schema.Codec<TicketingNotFound, TicketingNotFound, never, never>>, never, never> | HttpApiEndpoint.HttpApiEndpoint<"list", "GET", "/ticketing", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<Schema.Struct<{
     limit: Schema.optional<Schema.FiniteFromString>;

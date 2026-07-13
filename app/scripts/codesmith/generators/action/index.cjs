@@ -121,7 +121,7 @@ const createSharedActionContract = ({
   actionPascal,
   actionKey,
   title,
-}) => `import { Schema } from '@modern-js/plugin-bff/effect-client';
+}) => `import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
 
 export const ${actionCamel}ActionKey = '${actionKey}' as const;
 
@@ -142,25 +142,25 @@ export const ${actionCamel}ActionResponseSchema = Schema.Struct({
   targetResourceId: Schema.String,
 });
 
-export const ${actionCamel}ActionOutcomeSchema = Schema.Union([
-  Schema.Struct({
-    actionInvocationId: Schema.optional(Schema.String),
-    ok: Schema.Literal(true),
-    response: ${actionCamel}ActionResponseSchema,
-  }),
-  Schema.Struct({
+export const ${actionCamel}ActionOutcomeSchema = Schema.Struct({
+  actionInvocationId: Schema.optional(Schema.String),
+  ok: Schema.Literal(true),
+  response: ${actionCamel}ActionResponseSchema,
+});
+
+export const ${actionCamel}ActionFailureSchema = Schema.Struct({
     code: Schema.optional(Schema.String),
     errorTag: Schema.String,
     httpStatus: Schema.Finite,
     message: Schema.String,
     ok: Schema.Literal(false),
     state: Schema.optional(Schema.Json),
-  }),
-]);
+}).pipe(HttpApiSchema.status(409));
 
 export type ${actionPascal}ActionPayload = typeof ${actionCamel}ActionPayloadSchema.Type;
 export type ${actionPascal}ActionResponse = typeof ${actionCamel}ActionResponseSchema.Type;
 export type ${actionPascal}ActionOutcome = typeof ${actionCamel}ActionOutcomeSchema.Type;
+export type ${actionPascal}ActionFailure = typeof ${actionCamel}ActionFailureSchema.Type;
 
 export const ${actionCamel}ActionTitle = ${JSON.stringify(title)} as const;
 `;
@@ -371,11 +371,13 @@ const updateSharedApi = async ({
 
   const importBlock = `import {
   ${actionCamel}ActionHeadersSchema,
+  ${actionCamel}ActionFailureSchema,
   ${actionCamel}ActionOutcomeSchema,
   ${actionCamel}ActionPayloadSchema,
 } from './actions/${actionFile}';
 
 export type {
+  ${toPascalCase(actionCamel)}ActionFailure,
   ${toPascalCase(actionCamel)}ActionOutcome,
   ${toPascalCase(actionCamel)}ActionPayload,
   ${toPascalCase(actionCamel)}ActionResponse,
@@ -391,6 +393,7 @@ export type {
   const endpointBlock = `    )
     .add(
       HttpApiEndpoint.post('${endpointName}', '${routePath}', {
+        error: ${actionCamel}ActionFailureSchema,
         headers: ${actionCamel}ActionHeadersSchema,
         payload: ${actionCamel}ActionPayloadSchema,
         success: ${actionCamel}ActionOutcomeSchema,
@@ -448,6 +451,10 @@ import { ${actionCamel}ActionRegistration } from '../src/actions/${actionFile}.t
           registration: ${actionCamel}ActionRegistration,
         }),
       ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+        ),
+      ).pipe(
         Effect.withSpan('ultramodern.api.${verticalCamel}.${endpointName}', {
           attributes: operationAttributes(${verticalCamel}OperationContexts.${endpointName}),
           kind: 'server',
@@ -497,7 +504,7 @@ const updateClient = async ({
 
   const withActionTypes = source.replace(
     /(import type \{[^}]*)(\} from '..\/..\/shared\/api';)/,
-    `$1  ${actionPascal}ActionOutcome,\n  ${actionPascal}ActionPayload,\n$2`,
+    `$1  ${actionPascal}ActionFailure,\n  ${actionPascal}ActionOutcome,\n  ${actionPascal}ActionPayload,\n$2`,
   );
   if (withActionTypes === source) {
     throw new Error(`Could not add action client types in ${relativePath}.`);
@@ -514,6 +521,15 @@ const updateClient = async ({
     !withActionTypes.includes('headers?: Record<string, string>;')
   ) {
     throw new Error(`Could not add raw header client option in ${relativePath}.`);
+  }
+  const withClientError = withHeadersOption.includes(`| ${actionPascal}ActionFailure`)
+    ? withHeadersOption
+    : withHeadersOption.replace(
+        new RegExp(`(export type ${verticalPascal}ClientError =\\n)`, 'u'),
+        `$1  | ${actionPascal}ActionFailure\n`,
+      );
+  if (withClientError === withHeadersOption) {
+    throw new Error(`Could not add action failure to client error union in ${relativePath}.`);
   }
   const helper = `
 
@@ -544,10 +560,10 @@ export const ${functionName} = (
 };
 `;
 
-  await writeText(workspaceRoot, relativePath, `${withHeadersOption}${helper}`);
+  await writeText(workspaceRoot, relativePath, `${withClientError}${helper}`);
 };
 
-const updateShellVerticalClients = async ({ actionPascal, verticalCamel, workspaceRoot }) => {
+const updateShellVerticalClients = async ({ actionPascal, workspaceRoot }) => {
   const relativePath = 'apps/shell-super-app/src/api/vertical-clients.ts';
   const source = await readText(workspaceRoot, relativePath);
   const exportName = `run${actionPascal}Action`;
@@ -714,7 +730,6 @@ module.exports = async function actionGenerator(context, generator) {
   });
   await updateShellVerticalClients({
     actionPascal,
-    verticalCamel,
     workspaceRoot,
   });
   await updatePackageJson({ verticalSlug, workspaceRoot });

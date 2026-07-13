@@ -1,4 +1,4 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
 
 export const createTicketActionKey = 'ticketing.createTicket' as const;
 
@@ -19,24 +19,24 @@ export const createTicketActionResponseSchema = Schema.Struct({
   targetResourceId: Schema.String,
 });
 
-export const createTicketActionOutcomeSchema = Schema.Union([
-  Schema.Struct({
-    actionInvocationId: Schema.optional(Schema.String),
-    ok: Schema.Literal(true),
-    response: createTicketActionResponseSchema,
-  }),
-  Schema.Struct({
-    code: Schema.optional(Schema.String),
-    errorTag: Schema.String,
-    httpStatus: Schema.Finite,
-    message: Schema.String,
-    ok: Schema.Literal(false),
-    state: Schema.optional(Schema.Json),
-  }),
-]);
+export const createTicketActionOutcomeSchema = Schema.Struct({
+  actionInvocationId: Schema.optional(Schema.String),
+  ok: Schema.Literal(true),
+  response: createTicketActionResponseSchema,
+});
+
+export const createTicketActionFailureSchema = Schema.Struct({
+  code: Schema.optional(Schema.String),
+  errorTag: Schema.String,
+  httpStatus: Schema.Finite,
+  message: Schema.String,
+  ok: Schema.Literal(false),
+  state: Schema.optional(Schema.Json),
+}).pipe(HttpApiSchema.status(409));
 
 export type CreateTicketActionPayload = typeof createTicketActionPayloadSchema.Type;
 export type CreateTicketActionResponse = typeof createTicketActionResponseSchema.Type;
 export type CreateTicketActionOutcome = typeof createTicketActionOutcomeSchema.Type;
+export type CreateTicketActionFailure = typeof createTicketActionFailureSchema.Type;
 
 export const createTicketActionTitle = 'Create Ticket' as const;

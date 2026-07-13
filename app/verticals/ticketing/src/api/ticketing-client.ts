@@ -18,6 +18,7 @@ import type {
   TicketingNotFound,
   OperationContext,
   TicketingReadiness,
+  CreateTicketActionFailure,
   CreateTicketActionOutcome,
   CreateTicketActionPayload,
 } from '../../shared/api';
@@ -35,6 +36,7 @@ export type TicketingClient = HttpApiClient.Client<
 
 export type TicketingClientError =
   | TicketingNotFound
+  | CreateTicketActionFailure
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 

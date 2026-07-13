@@ -99,12 +99,18 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: createTicketActionRegistration,
         }),
-      ).pipe(
-        Effect.withSpan('ultramodern.api.ticketing.createTicketAction', {
-          attributes: operationAttributes(ticketingOperationContexts.createTicketAction),
-          kind: 'server',
-        }),
-      ),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createTicketAction', {
+            attributes: operationAttributes(ticketingOperationContexts.createTicketAction),
+            kind: 'server',
+          }),
+        ),
     ),
 );
 
