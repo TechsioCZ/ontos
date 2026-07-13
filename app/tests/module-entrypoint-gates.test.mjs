@@ -11,7 +11,7 @@ import {
   runAction,
   runDataAccess,
 } from '../packages/core-runtime/src/core-sdk.ts';
-import { allowPolicy } from '../packages/core-runtime/src/policy.ts';
+import { allowPolicy, denyPolicy } from '../packages/core-runtime/src/policy.ts';
 import { checkOutboxWorkerModuleStateAccess } from '../packages/core-runtime/src/outbox-worker.ts';
 import {
   handleShellAuthRequest,
@@ -403,6 +403,121 @@ test('CoreSDK allows ticketing actions when tenant module state is active', asyn
   });
 });
 
+test('CoreSDK returns and audits async policy denial state before handler execution', async () => {
+  const operationContext = await createOperationIdentity();
+  await setTenantModuleState({
+    moduleKey: 'ticketing',
+    state: 'active',
+    tenantId: operationContext.tenantId,
+  });
+  const calls = {
+    authorization: 0,
+    handler: 0,
+    policy: 0,
+  };
+
+  const result = await runAction({
+    options: {
+      authorizationChecker: () => {
+        calls.authorization += 1;
+        return { _tag: 'Allowed' };
+      },
+    },
+    payload: { title: 'Denied ticket' },
+    registration: {
+      descriptor: {
+        actionKey: 'ticketing.policy-denied',
+        auditProfile: 'standard',
+        authorization: {
+          permission: 'create',
+          provider: 'spicedb',
+          resourceObjectId: 'ticketing',
+          resourceObjectType: 'module',
+        },
+        gatewayAudience: 'ticketing',
+        idempotency: 'optional',
+        moduleStateAccess: 'mutate',
+        transportRequestSchema: {},
+        transportResponseSchema: {},
+      },
+      handler: () => {
+        calls.handler += 1;
+        return { ok: true };
+      },
+      policyChecks: [
+        async ({ data, db, operation }) => {
+          await Promise.resolve();
+          calls.policy += 1;
+          assert.equal(data.title, 'Denied ticket');
+          assert.equal(operation.principalId, operationContext.principalId);
+          assert.equal(typeof db.select, 'function');
+
+          return denyPolicy({
+            code: 'ticketing.policy_denied',
+            message: 'Ticketing policy denied this action.',
+            policyKey: 'ticketing.test-policy.denied',
+            reason: 'The test policy denied this action.',
+            state: {
+              principalId: operation.principalId,
+              title: data.title,
+            },
+          });
+        },
+        () => {
+          calls.policy += 1;
+          return allowPolicy({
+            policyKey: 'ticketing.test-policy.not-reached',
+            reason: 'This policy should not run.',
+          });
+        },
+      ],
+    },
+    transport: {
+      headers: new Headers({
+        'x-ontos-operation-context': createVerticalGatewayToken({
+          audience: 'ticketing',
+          operationContext,
+        }),
+      }),
+    },
+  });
+
+  assert.deepEqual(result, {
+    _tag: 'OperationPolicyDenied',
+    code: 'ticketing.policy_denied',
+    message: 'Ticketing policy denied this action.',
+    policyKey: 'ticketing.test-policy.denied',
+    state: {
+      principalId: operationContext.principalId,
+      title: 'Denied ticket',
+    },
+  });
+  assert.deepEqual(calls, {
+    authorization: 1,
+    handler: 0,
+    policy: 1,
+  });
+
+  const auditRows = await sqlClient`
+    select event_type, evidence_json, outcome_code
+    from core.audit_events
+    where tenant_id = ${operationContext.tenantId}
+      and event_type = ${'action.policy.denied'}
+  `;
+
+  assert.equal(auditRows.length, 1);
+  assert.deepEqual(auditRows[0].evidence_json, {
+    message: 'Ticketing policy denied this action.',
+    policyKey: 'ticketing.test-policy.denied',
+    reason: 'The test policy denied this action.',
+    state: {
+      principalId: operationContext.principalId,
+      title: 'Denied ticket',
+    },
+  });
+  assert.equal(auditRows[0].outcome_code, 'ticketing.policy_denied');
+});
+
 test('Shell operation context exposes module states only for authenticated OntOS sessions', async () => {
   const operationContext = await createOperationIdentity();
   await setTenantModuleState({
@@ -673,6 +788,7 @@ test('CoreSDK adapter status mapping is stable for expected operation outcomes',
       code: 'policy_denied',
       message: 'Policy denied.',
       policyKey: 'ticketing.policy',
+      state: {},
     }),
     409,
   );

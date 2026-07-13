@@ -154,6 +154,7 @@ export const ${actionCamel}ActionOutcomeSchema = Schema.Union([
     httpStatus: Schema.Finite,
     message: Schema.String,
     ok: Schema.Literal(false),
+    state: Schema.optional(Schema.Json),
   }),
 ]);
 
@@ -232,16 +233,20 @@ const ${actionCamel}ActionHandler: ActionHandler<
 };
 
 const ${actionCamel}PolicyChecks: readonly PolicyCheck<${actionPascal}ActionPayload>[] = [
-  (input) =>
-    input.targetResourceId.trim().length > 0
+  ({ data }) =>
+    data.targetResourceId.trim().length > 0
       ? allowPolicy({
           policyKey: nonEmptyTargetResourcePolicyKey,
           reason: 'The action targets a concrete resource.',
         })
       : denyPolicy({
           code: '${actionKey}.target_resource_required',
+          message: '${title} requires a targetResourceId.',
           policyKey: nonEmptyTargetResourcePolicyKey,
           reason: '${title} requires a non-empty targetResourceId.',
+          state: {
+            targetResourceId: data.targetResourceId,
+          },
         }),
 ];
 
@@ -276,6 +281,15 @@ import {
   runAction,
 } from '@app/core-runtime';
 import type { ActionRegistration, CoreSDKError } from '@app/core-runtime';
+
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | { readonly [key: string]: JsonValue }
+  | readonly JsonValue[];
+
 export type CoreSdkActionTransportOutcome<TResponse> =
   | {
       readonly actionInvocationId?: string;
@@ -288,10 +302,16 @@ export type CoreSdkActionTransportOutcome<TResponse> =
       readonly httpStatus: number;
       readonly message: string;
       readonly ok: false;
+      readonly state?: JsonValue;
     };
 
 const errorCode = (error: CoreSDKError): string | undefined =>
   'code' in error ? error.code : undefined;
+
+const toJsonValue = (value: unknown): JsonValue => structuredClone(value) as JsonValue;
+
+const errorState = (error: CoreSDKError): JsonValue | undefined =>
+  error._tag === 'OperationPolicyDenied' ? toJsonValue(error.state) : undefined;
 
 export const runCoreSdkAction = async <TAction, TResponse>({
   headers,
@@ -321,6 +341,7 @@ export const runCoreSdkAction = async <TAction, TResponse>({
   }
 
   const code = errorCode(result);
+  const state = errorState(result);
 
   return {
     ...(code === undefined ? {} : { code }),
@@ -328,6 +349,7 @@ export const runCoreSdkAction = async <TAction, TResponse>({
     httpStatus: coreSDKErrorHttpStatus(result),
     message: result.message,
     ok: false,
+    ...(state === undefined ? {} : { state }),
   };
 };
 `;

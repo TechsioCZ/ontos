@@ -2,6 +2,14 @@
 import { coreSDKErrorHttpStatus, runAction } from '@app/core-runtime';
 import type { ActionRegistration, CoreSDKError } from '@app/core-runtime';
 
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | { readonly [key: string]: JsonValue }
+  | readonly JsonValue[];
+
 export type CoreSdkActionTransportOutcome<TResponse> =
   | {
       readonly actionInvocationId?: string;
@@ -14,10 +22,16 @@ export type CoreSdkActionTransportOutcome<TResponse> =
       readonly httpStatus: number;
       readonly message: string;
       readonly ok: false;
+      readonly state?: JsonValue;
     };
 
 const errorCode = (error: CoreSDKError): string | undefined =>
   'code' in error ? error.code : undefined;
+
+const toJsonValue = (value: unknown): JsonValue => structuredClone(value) as JsonValue;
+
+const errorState = (error: CoreSDKError): JsonValue | undefined =>
+  error._tag === 'OperationPolicyDenied' ? toJsonValue(error.state) : undefined;
 
 export const runCoreSdkAction = async <TAction, TResponse>({
   headers,
@@ -47,6 +61,7 @@ export const runCoreSdkAction = async <TAction, TResponse>({
   }
 
   const code = errorCode(result);
+  const state = errorState(result);
 
   return {
     ...(code === undefined ? {} : { code }),
@@ -54,5 +69,6 @@ export const runCoreSdkAction = async <TAction, TResponse>({
     httpStatus: coreSDKErrorHttpStatus(result),
     message: result.message,
     ok: false,
+    ...(state === undefined ? {} : { state }),
   };
 };

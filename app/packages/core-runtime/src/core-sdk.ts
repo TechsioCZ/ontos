@@ -18,7 +18,7 @@ import {
   domainEvents,
   outboxMessages,
 } from './db/schema.ts';
-import type { CoreDbExecutor, CoreTransaction } from './db/types.ts';
+import type { CoreDbExecutor, CoreReadonlyDbExecutor, CoreTransaction } from './db/types.ts';
 import { checkModuleStateAccess, isInstalledModuleKey } from './module-state.ts';
 import type { ModuleStateAccessKind } from './module-state.ts';
 import type { OutboxMessage } from './outbox-message.ts';
@@ -77,6 +77,7 @@ export interface OperationPolicyDenied {
   readonly code: string;
   readonly message: string;
   readonly policyKey: string;
+  readonly state: unknown;
 }
 
 export interface OperationAuthorizationDenied {
@@ -312,8 +313,9 @@ const domainRejected = (error: ActionDomainRejection): OperationDomainRejected =
 const policyDenied = (decision: PolicyDenied): OperationPolicyDenied => ({
   _tag: 'OperationPolicyDenied',
   code: decision.code,
-  message: decision.reason,
+  message: decision.message,
   policyKey: decision.policyKey,
+  state: decision.state,
 });
 
 const executionFailed = (error: unknown): OperationExecutionFailed => ({
@@ -930,11 +932,13 @@ const enforceModuleStateGate = async <TAction>({
 const evaluateActionPolicies = async <TAction>({
   auditProfile,
   context,
+  db: policyDb,
   eventPrefix,
   policyChecks,
 }: {
   readonly auditProfile: OperationAuditProfile;
   readonly context: OperationContext<TAction>;
+  readonly db: CoreReadonlyDbExecutor;
   readonly eventPrefix: 'action' | 'data_access';
   readonly policyChecks: readonly PolicyCheck<TAction>[];
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
@@ -942,7 +946,13 @@ const evaluateActionPolicies = async <TAction>({
   let deniedDecision: PolicyDenied | undefined;
 
   for (const policyCheck of policyChecks) {
-    const decision = policyCheck(context.action);
+    // Policy checks are ordered gates and must short-circuit on the first denial.
+    // oxlint-disable-next-line no-await-in-loop
+    const decision = await policyCheck({
+      data: context.action,
+      db: policyDb,
+      operation: context,
+    });
 
     checkedContext = attachPolicyCheck(checkedContext, {
       decision: decision.ok ? 'allowed' : 'denied',
@@ -963,6 +973,12 @@ const evaluateActionPolicies = async <TAction>({
       auditProfile,
       context: rejectedContext,
       eventType: `${eventPrefix}.policy.denied`,
+      evidenceJson: {
+        message: deniedDecision.message,
+        policyKey: deniedDecision.policyKey,
+        reason: deniedDecision.reason,
+        state: deniedDecision.state,
+      },
       outcome: 'denied',
       outcomeCode: deniedDecision.code,
       outcomeStage: 'policy',
@@ -1162,6 +1178,7 @@ export const runAction = async <TAction, TResponse>({
   const policyCheckedContext = await evaluateActionPolicies({
     auditProfile: descriptor.auditProfile,
     context: authorizedContext,
+    db,
     eventPrefix: 'action',
     policyChecks: registration.policyChecks ?? [],
   });
@@ -1293,6 +1310,7 @@ export const runDataAccess = async <TPayload, TResponse>({
   const policyCheckedContext = await evaluateActionPolicies({
     auditProfile: descriptor.auditProfile,
     context: authorizedContext,
+    db,
     eventPrefix: 'data_access',
     policyChecks: registration.policyChecks ?? [],
   });

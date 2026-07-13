@@ -31,6 +31,7 @@ export const createTicketActionOutcomeSchema = Schema.Union([
     httpStatus: Schema.Finite,
     message: Schema.String,
     ok: Schema.Literal(false),
+    state: Schema.optional(Schema.Json),
   }),
 ]);
 

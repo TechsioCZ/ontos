@@ -62,16 +62,20 @@ const createTicketActionHandler: ActionHandler<
 };
 
 const createTicketPolicyChecks: readonly PolicyCheck<CreateTicketActionPayload>[] = [
-  (input) =>
-    input.targetResourceId.trim().length > 0
+  ({ data }) =>
+    data.targetResourceId.trim().length > 0
       ? allowPolicy({
           policyKey: nonEmptyTargetResourcePolicyKey,
           reason: 'The action targets a concrete resource.',
         })
       : denyPolicy({
           code: 'ticketing.createTicket.target_resource_required',
+          message: 'Create Ticket requires a targetResourceId.',
           policyKey: nonEmptyTargetResourcePolicyKey,
           reason: 'Create Ticket requires a non-empty targetResourceId.',
+          state: {
+            targetResourceId: data.targetResourceId,
+          },
         }),
 ];
 

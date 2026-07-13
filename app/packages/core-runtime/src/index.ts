@@ -41,6 +41,7 @@ export type {
   OperationEvidenceCaptureMode,
 } from './operation-context.ts';
 export type { OutboxMessage } from './outbox-message.ts';
+export type { CoreReadonlyDbExecutor } from './db/types.ts';
 export { checkOutboxWorkerModuleStateAccess } from './outbox-worker.ts';
 export type {
   OutboxWorkerModuleStateAccessDecision,
@@ -55,7 +56,14 @@ export type {
   OutboxWorkerRetryBackoff,
 } from './outbox-worker.ts';
 export { allowPolicy, denyPolicy } from './policy.ts';
-export type { PolicyAllowed, PolicyCheck, PolicyDecision, PolicyDenied } from './policy.ts';
+export type {
+  PolicyAllowed,
+  PolicyCheck,
+  PolicyDecision,
+  PolicyDenied,
+  PolicyExecutionInput,
+} from './policy.ts';
+export { corePolicies } from './policies/index.ts';
 export { rowsFromResult } from './sql-result.ts';
 export {
   createVerticalGatewayToken,
