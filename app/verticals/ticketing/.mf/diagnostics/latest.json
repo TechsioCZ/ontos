@@ -1,10 +1,10 @@
 {
   "latestErrorEvent": {
     "code": "TYPE-001",
-    "message": "Failed to generate type declaration. Execute the below cmd to reproduce and fix the error. #TYPE-001\nargs: {\"cmd\":\"npx tsgo --project /Users/jiprochazka/Projects/Programming/TechsioCZ/ontos/app/verticals/ticketing/node_modules/.federation/tsconfig.693807cd7feb96d8543db70969667539.json\"}\nView the docs to see how to solve: https://module-federation.io/guide/troubleshooting/type#type-001",
+    "message": "Failed to generate type declaration. Execute the below cmd to reproduce and fix the error. #TYPE-001\nargs: {\"cmd\":\"npx tsgo --project /Users/jiprochazka/Projects/Programming/TechsioCZ/ontos/app/verticals/ticketing/node_modules/.federation/tsconfig.2db8bcbf049b226de188d2070601d6fd.json\"}\nView the docs to see how to solve: https://module-federation.io/guide/troubleshooting/type#type-001",
     "args": {
-      "cmd": "npx tsgo --project /Users/jiprochazka/Projects/Programming/TechsioCZ/ontos/app/verticals/ticketing/node_modules/.federation/tsconfig.693807cd7feb96d8543db70969667539.json"
+      "cmd": "npx tsgo --project /Users/jiprochazka/Projects/Programming/TechsioCZ/ontos/app/verticals/ticketing/node_modules/.federation/tsconfig.2db8bcbf049b226de188d2070601d6fd.json"
     },
-    "timestamp": 1783946877217
+    "timestamp": 1784101471529
   }
 }

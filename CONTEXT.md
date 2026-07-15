@@ -164,6 +164,138 @@ _Avoid_: Permanent owner field, access grant
 A candidate term for the relation stating which Party or External Operator manages a property, property complex, building, or unit/space for a period.
 _Avoid_: Ownership, tenant membership, access grant by itself
 
+**Task**:
+A work item in the ticketing app. A Task belongs to exactly one Task Collection and is created empty with only the Title Task Property present; additional Task Properties come from its Task Collection schema.
+_Avoid_: Ticket, issue, card
+
+**Task Collection**:
+A visible project-like set of Tasks that owns one shared Task Property schema. Views present Tasks from a Task Collection; they do not own the schema.
+_Avoid_: Hidden schema, board view, database table
+
+**Task View**:
+A presentation of Tasks from one Task Collection. A new Task Collection starts with one default Task View showing all Task Properties in Task Property Order; later view configuration may hide or reorder user-created Task Properties.
+_Avoid_: Task Collection, schema owner
+
+**Task Property**:
+A field on Tasks within a Task Collection. Its definition is shared by the collection, while each Task has its own Task Property Value; multiple Task Properties of the same type may exist in one Task Collection.
+_Avoid_: Column, field, Property Registry property
+
+**Task Property Name**:
+The user-facing name of a Task Property within one Task Collection. Task Property Names are trimmed and unique across all Task Properties in their Task Collection without regard to case, including locked Task Properties.
+_Avoid_: Column header, field label
+
+**Mandatory Task Property**:
+A Task Property that must have a non-empty value when a new or edited Task form is saved. User-created Task Properties may be made mandatory or optional later; existing empty values are not automatically changed until that Task is edited and saved.
+_Avoid_: Required field
+
+**Locked Task Property**:
+A system-created Task Property whose core configuration cannot be removed, changed, or duplicated by users.
+_Avoid_: Normal mandatory property, user-required property
+
+**User-created Task Property**:
+A Task Property created by a user in a Task Collection. User-created Task Properties support the normal create, read, update, and delete lifecycle even when marked mandatory, but their Task Property Type does not change after creation.
+_Avoid_: Locked property, system property
+
+**Task Property Deletion**:
+The removal of a user-created Task Property from a Task Collection. It always requires user confirmation, shows the count of Tasks where the property is Is not empty, and removes the property definition, its configuration, and its Task Property Values from all Tasks in the collection.
+_Avoid_: Removing a value, hiding a property
+
+**Hidden Task Property**:
+A Task Property that exists in a Task Collection schema but is not shown in a specific view. Hiding a property does not remove its definition, configuration, or values.
+_Avoid_: Deleted property, archived property
+
+**Task Property Order**:
+The default display order of Task Properties in a Task Collection schema and Task detail form. The Title Task Property is fixed first; user-created Task Properties can be manually ordered after it, while individual views may keep their own property order.
+_Avoid_: View-only order, database column order
+
+**Duplicated Task Property**:
+A new user-created Task Property copied from an existing Task Property, including its configuration and mandatory state. Duplication always asks whether values should be copied, receives a unique copy name, is placed immediately after the source property in the Task Collection's property order, and becomes independent after duplication.
+_Avoid_: Alias, synced copy, clone linked to original
+
+**Title Task Property**:
+The automatically created locked and mandatory Text Task Property in every Task Collection. It is edited as a single-line input, uniquely identifies a Task for users, and users cannot rename it, remove it, hide it from views, duplicate it, make it optional, or change it to another type.
+_Avoid_: Core title attribute, removable title field
+
+**Task Property Value**:
+The value held by one Task for one Task Property. Empty is a valid value state unless a property is explicitly mandatory.
+_Avoid_: Cell, column value, field value
+
+**Task Property Search**:
+Finding Tasks by matching Task Property Values. All Task Property Types are searchable, with matching semantics defined by each type.
+_Avoid_: Text-only search
+
+**Task Property Sort**:
+Ordering rows in a Task table view by a Task Property Value. Task Property Types are sortable unless a type explicitly opts out; Multi-select, Person, and Files & Media are not sortable for now, and Empty values sort after non-empty values in both directions.
+_Avoid_: Text-only sorting
+
+**Task Property Type**:
+The kind of value a Task Property accepts, such as Text, Number, Select, or Multi-select.
+_Avoid_: Column type, field type
+
+**Select Option**:
+A configured choice in a Select Task Property. A Task may choose at most one Select Option for that property; table sorting by Select follows the property's option order.
+_Avoid_: Tag, label, status
+
+**Multi-select Option**:
+A configured choice in a Multi-select Task Property. A Task may choose zero or more Multi-select Options for that property.
+_Avoid_: Tag, label, status
+
+**Status Task Property**:
+A Task Property Type for a Task's workflow state. Status is its own type, not a Select property alias; its options belong to fixed groups such as Not started, In progress, and Done, and a new Status Task Property starts with default statuses for those groups.
+_Avoid_: Select property with a different label
+
+**Derived Task Property**:
+An optional Task Property whose value is automatically produced by the system rather than manually edited or marked mandatory by users, such as Created time, Created by, Last edited time, Last edited by, or ID. Derived Task Properties may be renamed, duplicated, or removed from the Task Collection schema, but a duplicate keeps the same system value source and removal does not delete the underlying system fact.
+_Avoid_: Editable user property, locked Title property
+
+**Task ID**:
+A system-produced globally unique identifier for a Task that can be exposed through the ID Derived Task Property.
+_Avoid_: Collection-local task number
+
+**Task Audit Principal**:
+The Principal recorded by system-derived Task Properties such as Created by and Last edited by.
+_Avoid_: Person property value, assignee
+
+**Person Task Property**:
+A Task Property Type whose editable value can reference zero, one, or more Principals. Search matches visible Principal display names and visible email or login identifiers.
+_Avoid_: External contact, Party, free-text person
+
+**Files & Media Task Property**:
+A Task Property Type whose value can reference zero, one, or more Core-managed media or artifact records rather than storing file bytes inside ticketing. Search matches file names only, not metadata or file contents.
+_Avoid_: Ticketing-owned file storage, inline binary value
+
+**Date Task Property**:
+A Task Property Type whose value is a single date. Search uses exact date selection, such as through a date picker, rather than formatted text matching.
+_Avoid_: Free-text date
+
+**Date Range Task Property**:
+A Task Property Type whose non-empty value contains both a start date and an end date. The end date cannot be before the start date; same-day ranges are valid, search uses exact date selection rather than formatted text matching, and table sorting uses the start date before the end date.
+_Avoid_: Half-open date value, single date
+
+**Checkbox Task Property**:
+A Task Property Type with checked and unchecked values. A new Checkbox Task Property starts as Empty for Tasks; once set, unchecked is a real value, not Empty, and Checkbox cannot be marked mandatory.
+_Avoid_: Tri-state checkbox, empty unchecked value
+
+**Task Access Level**:
+The level of access a Principal has to Tasks and Task Properties. Full access can edit, suggest, comment, and share; editor can edit, suggest, and comment; user can edit Task Property Values, suggest, and comment but cannot change Task Property schema or configuration; viewer is read-only.
+_Avoid_: Unscoped role, property ownership
+
+**Task Change Version**:
+A timestamped version record for a Task Property schema change, Task Property configuration change, or Task Property Value change.
+_Avoid_: Unversioned edit, audit-free mutation
+
+**URL Task Property**:
+A Task Property Type for web addresses. Non-empty URL values must be valid enough to save as URLs.
+_Avoid_: Free-text link label
+
+**Email Task Property**:
+A Task Property Type for email addresses. Non-empty Email values must be valid enough to save as email addresses.
+_Avoid_: Free-text contact text
+
+**Phone Task Property**:
+A Task Property Type for phone numbers. Non-empty Phone values use light normalization and validation because phone formats vary internationally.
+_Avoid_: Country-specific phone-only field
+
 ## Flagged Ambiguities
 
 **Example provenance**:
