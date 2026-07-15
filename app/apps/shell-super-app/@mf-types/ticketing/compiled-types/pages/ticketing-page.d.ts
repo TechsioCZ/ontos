@@ -1,1 +1,1 @@
-export default function TicketingTicketingPage(): import("react").JSX.Element;
+export default function TicketingTicketingPage(): import('react').JSX.Element;

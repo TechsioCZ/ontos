@@ -4,6 +4,41 @@ This pack is a working architecture dossier for OntOS. It is intentionally writt
 
 The most important correction in this version is the MicroVertical model. An UltraModern.js MicroVertical is not a frontend module plus a separate BFF/backend service. It is a unified vertical slice inside one jointly deployable UltraModern.js application. OntOS uses that implementation concept for ERP business modules, then adds an OntOS-specific Effect Schema-defined Module Manifest for public module contracts: activation, dependencies, public APIs, public components, public resource types, public events, search, and reports. The OntOS Core sits alongside the MicroVerticals as system infrastructure: BetterAuth binding, authorization adapter, tenant-level module state, action invocation recording, audit, events, outbox, media assets/links, search, ResourceRef conventions, and projection interfaces.
 
+## Techsio UI Kit agent plugin
+
+Ontos consumes `@techsio/ui-kit` from npm. Its agent guidance is distributed separately as the `techsio-ui-kit-ai` Codex plugin and is pinned in the repository marketplace at `.agents/plugins/marketplace.json`; it is not an npm dependency.
+
+Each developer must install the plugin into their local Codex configuration after cloning the repository or after the pinned plugin revision changes:
+
+```sh
+# Required only for developers who do not already have GitHub HTTPS authentication configured.
+gh auth status
+gh auth setup-git
+
+# Run from the Ontos repository root.
+codex plugin marketplace add .
+codex plugin list --available --marketplace ontos
+codex plugin add techsio-ui-kit-ai@ontos
+```
+
+Restart the Codex app, or start a new CLI/IDE task, after installation. Verify the plugin with `codex plugin list` and `/skills`; consumer work should expose and use `$ui-component-usage` plus the matching component usage skill.
+
+The bundled Context7, Figma, and Chrome DevTools MCP integrations are optional for consumer work. Figma-dependent workflows may ask each developer to complete user-local authorization on first use; `$ui-component-usage` does not require Figma or Chrome DevTools.
+
+The upstream plugin also bundles two hooks for developing the UI kit in its source repository. They are not applicable to this npm consumer and its `SessionStart` hook would install a Git `pre-push` hook. Codex leaves plugin hooks untrusted by default: when `/hooks` reports them, leave both `techsio-ui-kit-ai` hooks untrusted or explicitly disable them. Do not use `--dangerously-bypass-hook-trust` with this plugin in Ontos.
+
+The bundled Codex subagent TOML files are also aimed at UI-kit maintainers and are not installed automatically. Ontos consumers do not need to copy them into `.codex/agents`.
+
+To reinstall after this repository updates the pinned plugin revision, or to remove it:
+
+```sh
+codex plugin remove techsio-ui-kit-ai@ontos
+codex plugin add techsio-ui-kit-ai@ontos
+
+# Remove only:
+codex plugin remove techsio-ui-kit-ai@ontos
+```
+
 ## Recommended reading order
 
 1. `18_BUSINESS_SALES_VALUE_BRIEF.md` — business/sales value brief explaining customer pain, benefits, positioning, and proof points.

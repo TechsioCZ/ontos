@@ -1,1 +1,1 @@
-export default function TicketingRoute(): import("react").JSX.Element;
+export default function TicketingRoute(): import('react').JSX.Element;

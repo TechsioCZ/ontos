@@ -61,7 +61,7 @@
     "node": ">=26",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.13.0",
   "modernjs": {
     "preset": "presetUltramodern",
     "workspace": "ultramodern-superapp",
