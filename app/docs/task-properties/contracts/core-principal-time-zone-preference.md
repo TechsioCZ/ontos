@@ -48,4 +48,3 @@ Core exposes a Principal Preferences read operation equivalent to:
 - `../sources/handoffs/ontos-created-time-property-handoff.md`.
 - `../sources/handoffs/ontos-last-edited-time-handoff.md`.
 - Existing Core boundaries: `packages/core-runtime/src/db/schema.ts`, `packages/core-runtime/src/operation-context.ts`, `packages/core-runtime/src/operation-context-from-session.ts`, and `packages/core-runtime/src/db/auth-schema.ts`.
-
