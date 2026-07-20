@@ -6,4 +6,4 @@ export type CoreTransaction = Parameters<CoreTransactionCallback>[0];
 
 export type CoreDbExecutor = typeof db | CoreTransaction;
 
-export type CoreReadonlyDbExecutor = Pick<CoreDbExecutor, 'select'>;
+export type CoreReadonlyDbExecutor = Pick<CoreDbExecutor, 'execute' | 'select'>;

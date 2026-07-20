@@ -1,0 +1,132 @@
+// @effect-diagnostics asyncFunction:off
+import { rowsFromResult } from '@app/core-runtime';
+import type { DataAccessRegistration } from '@app/core-runtime';
+import { sql } from '@app/core-runtime/db/sql';
+import {
+  getTaskCollectionPayloadSchema,
+  taskCollectionAggregateSchema,
+} from '../../shared/task-collection.ts';
+import type {
+  GetTaskCollectionPayload,
+  TaskCollectionAggregate,
+} from '../../shared/task-collection.ts';
+
+interface TaskCollectionAggregateRow {
+  readonly collectionCreatedAt: string;
+  readonly collectionId: string;
+  readonly createdAt: string;
+  readonly createdByPrincipalId: string;
+  readonly datatype: 'title';
+  readonly lastEditedAt: string;
+  readonly lastEditedByPrincipalId: string;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly schemaId: string;
+  readonly taskId: string;
+  readonly title: string;
+}
+
+export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
+  GetTaskCollectionPayload,
+  TaskCollectionAggregate
+> = {
+  descriptor: {
+    accessKind: 'read',
+    auditProfile: 'standard',
+    authorization: {
+      permission: 'read',
+      provider: 'spicedb',
+      resourceObjectId: (input) => input.collectionId,
+      resourceObjectType: 'task_collection',
+    },
+    dataAccessKey: 'ticketing.taskCollection.get',
+    evidenceCaptureMode: 'metadata_only',
+    evidencePolicyKey: 'ticketing.taskCollection.get.metadataOnly',
+    gatewayAudience: 'ticketing',
+    moduleStateAccess: 'read',
+    servingModuleKey: 'ticketing',
+    targetModuleKey: 'ticketing',
+    targetResourceType: 'task_collection',
+    transportRequestSchema: getTaskCollectionPayloadSchema,
+    transportResponseSchema: taskCollectionAggregateSchema,
+  },
+  handler: async (input, { context, db }) => {
+    const result = await db.execute(sql`
+      select
+        collection.collection_id as "collectionId",
+        to_char(
+          collection.created_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        ) as "collectionCreatedAt",
+        schema.schema_id as "schemaId",
+        definition.datatype as "datatype",
+        definition.mandatory as "mandatory",
+        definition.name as "name",
+        definition.property_definition_id as "propertyDefinitionId",
+        to_char(
+          task.created_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        ) as "createdAt",
+        task.created_by_principal_id as "createdByPrincipalId",
+        to_char(
+          task.last_edited_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        ) as "lastEditedAt",
+        task.last_edited_by_principal_id as "lastEditedByPrincipalId",
+        task.revision as "revision",
+        task.task_id as "taskId",
+        task.title as "title"
+      from ticketing.task_collections as collection
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = collection.collection_id
+        and schema.tenant_id = collection.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = collection.tenant_id
+      inner join ticketing.tasks as task
+        on task.collection_id = collection.collection_id
+        and task.tenant_id = collection.tenant_id
+      where collection.collection_id = ${input.collectionId}
+        and collection.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id
+      limit 1
+    `);
+    const aggregate = rowsFromResult<TaskCollectionAggregateRow>(result).at(0);
+
+    if (aggregate === undefined || aggregate.datatype !== 'title') {
+      throw new Error('Task Collection was not found or is incomplete.');
+    }
+
+    return {
+      collection: {
+        collectionId: aggregate.collectionId,
+        createdAt: aggregate.collectionCreatedAt,
+        schemaId: aggregate.schemaId,
+      },
+      schema: {
+        collectionId: aggregate.collectionId,
+        propertyDefinitions: [
+          {
+            datatype: aggregate.datatype,
+            mandatory: aggregate.mandatory,
+            name: aggregate.name,
+            propertyDefinitionId: aggregate.propertyDefinitionId,
+          },
+        ],
+        schemaId: aggregate.schemaId,
+      },
+      task: {
+        collectionId: aggregate.collectionId,
+        createdAt: aggregate.createdAt,
+        createdByPrincipalId: aggregate.createdByPrincipalId,
+        lastEditedAt: aggregate.lastEditedAt,
+        lastEditedByPrincipalId: aggregate.lastEditedByPrincipalId,
+        revision: aggregate.revision,
+        taskId: aggregate.taskId,
+        title: aggregate.title,
+      },
+    };
+  },
+};

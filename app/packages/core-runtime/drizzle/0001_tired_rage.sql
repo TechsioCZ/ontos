@@ -1,0 +1,1 @@
+ALTER TABLE "core"."action_invocations" ADD COLUMN "response_json" jsonb;

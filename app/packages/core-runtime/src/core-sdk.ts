@@ -162,7 +162,7 @@ export const coreSDKErrorHttpStatus = (error: CoreSDKError): number => {
 export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
   readonly actionKey: string;
   readonly auditProfile: OperationAuditProfile;
-  readonly authorization?: ActionAuthorizationRequirement;
+  readonly authorization?: ActionAuthorizationRequirement<TAction>;
   readonly domainEvent?: ActionDomainEventDescriptor<TAction, TResponse>;
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
@@ -184,10 +184,10 @@ export interface ActionDomainEventDescriptor<TAction, TResponse> {
   readonly subjectResourceType: string;
 }
 
-export interface ActionAuthorizationRequirement {
+export interface ActionAuthorizationRequirement<TPayload = unknown> {
   readonly permission: string;
   readonly provider: 'spicedb';
-  readonly resourceObjectId: string;
+  readonly resourceObjectId: string | ((input: TPayload) => string);
   readonly resourceObjectType: string;
 }
 
@@ -207,10 +207,10 @@ export interface ActionRegistration<TAction, TResponse> {
   readonly policyChecks?: readonly PolicyCheck<TAction>[];
 }
 
-export interface DataAccessDescriptor {
+export interface DataAccessDescriptor<TPayload = unknown> {
   readonly accessKind: OperationAccessKind;
   readonly auditProfile: OperationAuditProfile;
-  readonly authorization?: ActionAuthorizationRequirement;
+  readonly authorization?: ActionAuthorizationRequirement<TPayload>;
   readonly dataAccessKey: string;
   readonly evidenceCaptureMode: OperationEvidenceCaptureMode;
   readonly evidencePolicyKey: string;
@@ -235,7 +235,7 @@ export type DataAccessHandler<TPayload, TResponse> = (
 ) => Promise<TResponse> | TResponse;
 
 export interface DataAccessRegistration<TPayload, TResponse> {
-  readonly descriptor: DataAccessDescriptor;
+  readonly descriptor: DataAccessDescriptor<TPayload>;
   readonly handler: DataAccessHandler<TPayload, TResponse>;
   readonly policyChecks?: readonly PolicyCheck<TPayload>[];
 }
@@ -586,6 +586,7 @@ const findActionInvocation = async ({
     .select({
       actionInvocationId: actionInvocations.actionInvocationId,
       requestHash: actionInvocations.requestHash,
+      responseJson: actionInvocations.responseJson,
       status: actionInvocations.status,
     })
     .from(actionInvocations)
@@ -602,7 +603,7 @@ const findActionInvocation = async ({
   return existing;
 };
 
-const registerActionInvocation = async <TAction>({
+const registerActionInvocation = async <TAction, TResponse>({
   context,
   idempotencyKey,
   idempotency,
@@ -612,7 +613,7 @@ const registerActionInvocation = async <TAction>({
   readonly idempotencyKey: string | undefined;
   readonly idempotency: 'optional' | 'required';
   readonly requestHash: string;
-}): Promise<OperationContext<TAction> | CoreSDKError> => {
+}): Promise<OperationContext<TAction> | CoreSDKError | OperationSucceeded<TAction, TResponse>> => {
   if (idempotency === 'required' && idempotencyKey === undefined) {
     return idempotencyKeyRequired(context.actionKey);
   }
@@ -626,7 +627,24 @@ const registerActionInvocation = async <TAction>({
     });
 
     if (existing !== undefined) {
-      return existing.requestHash === hash ? replayUnavailable() : idempotencyConflict();
+      if (existing.requestHash !== hash) {
+        return idempotencyConflict();
+      }
+
+      if (existing.status !== 'succeeded' || existing.responseJson === null) {
+        return replayUnavailable();
+      }
+
+      return {
+        _tag: 'OperationSucceeded',
+        context: attachInvocation(context, {
+          actionInvocationId: existing.actionInvocationId,
+          idempotencyKey,
+          requestHash: hash,
+          status: 'replayed',
+        }),
+        response: existing.responseJson as TResponse,
+      };
     }
   }
 
@@ -662,6 +680,7 @@ const markActionInvocationStatus = async <TAction>(
   context: OperationContext<TAction>,
   status: Extract<OperationActionInvocationStatus, 'succeeded' | 'failed' | 'rejected'>,
   executor: CoreDbExecutor = db,
+  responseJson?: unknown,
 ) => {
   if (context.actionInvocation === undefined) {
     return context;
@@ -671,6 +690,7 @@ const markActionInvocationStatus = async <TAction>(
     .update(actionInvocations)
     .set({
       completedAt: new Date(),
+      ...(responseJson === undefined ? {} : { responseJson }),
       status,
     })
     .where(eq(actionInvocations.actionInvocationId, context.actionInvocation.actionInvocationId));
@@ -744,12 +764,15 @@ const writeAuditEvent = async <TAction>({
 
 const toSpiceDbPermissionCheck = <TAction>(
   context: OperationContext<TAction>,
-  requirement: ActionAuthorizationRequirement,
+  requirement: ActionAuthorizationRequirement<TAction>,
 ) =>
   createTenantScopedSpiceDbPermissionCheck({
     permission: requirement.permission,
     principalId: context.principalId,
-    resourceObjectId: requirement.resourceObjectId,
+    resourceObjectId:
+      typeof requirement.resourceObjectId === 'function'
+        ? requirement.resourceObjectId(context.action)
+        : requirement.resourceObjectId,
     resourceObjectType: requirement.resourceObjectType,
     tenantId: context.tenantId,
   });
@@ -767,7 +790,7 @@ const authorizeWithSpiceDb = async <TAction>({
   readonly context: OperationContext<TAction>;
   readonly eventPrefix: 'action' | 'data_access';
   readonly logger: OperationLogger;
-  readonly requirement: ActionAuthorizationRequirement | undefined;
+  readonly requirement: ActionAuthorizationRequirement<TAction> | undefined;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
   if (requirement === undefined) {
     return writeAuditEvent({
@@ -1005,7 +1028,7 @@ const persistDataAccessEvent = async <TPayload, TResponse>({
   resultCount,
 }: {
   readonly context: OperationContext<TPayload>;
-  readonly descriptor: DataAccessDescriptor;
+  readonly descriptor: DataAccessDescriptor<TPayload>;
   readonly payload: TPayload;
   readonly response: TResponse;
   readonly resultCount: (response: TResponse) => number;
@@ -1125,7 +1148,7 @@ export const runAction = async <TAction, TResponse>({
 
   const hash = requestHash(payload);
   const idempotencyKey = transport.headers.get('idempotency-key')?.trim() || undefined;
-  const registeredContext = await registerActionInvocation({
+  const registeredContext = await registerActionInvocation<TAction, TResponse>({
     context,
     idempotency: descriptor.idempotency,
     idempotencyKey,
@@ -1217,6 +1240,7 @@ export const runAction = async <TAction, TResponse>({
         policyCheckedContext,
         'succeeded',
         tx,
+        response,
       );
       const auditedContext = await writeAuditEvent({
         auditProfile: descriptor.auditProfile,

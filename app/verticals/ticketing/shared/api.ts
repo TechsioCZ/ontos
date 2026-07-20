@@ -11,6 +11,7 @@ import {
   createTicketActionOutcomeSchema,
   createTicketActionPayloadSchema,
 } from './actions/create-ticket';
+import { taskCollectionAggregateSchema } from './task-collection';
 
 export type {
   CreateTicketActionFailure,
@@ -18,6 +19,7 @@ export type {
   CreateTicketActionPayload,
   CreateTicketActionResponse,
 } from './actions/create-ticket';
+export type { TaskCollectionAggregate } from './task-collection';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -46,16 +48,8 @@ export interface TicketingReadiness {
   readonly versionSkew: 'none';
 }
 
-export interface TicketingCreatePayload {
-  readonly title: string;
-}
-
 export interface TicketingListResponse {
   readonly items: readonly TicketingItem[];
-}
-
-export interface TicketingCreateResponse {
-  readonly item: TicketingItem;
 }
 
 export interface TicketingNotFound {
@@ -88,10 +82,6 @@ export const ticketingReadinessSchema: Schema.Codec<TicketingReadiness> = Schema
   marker: ticketingMarkerSchema,
   status: Schema.Literal('ready'),
   versionSkew: Schema.Literal('none'),
-});
-
-export const ticketingCreatePayloadSchema: Schema.Codec<TicketingCreatePayload> = Schema.Struct({
-  title: Schema.String,
 });
 
 export const ticketingNotFoundSchema: Schema.Codec<TicketingNotFound> = Schema.TaggedStruct(
@@ -136,11 +126,13 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       }),
     )
     .add(
-      HttpApiEndpoint.post('create', '/ticketing', {
-        payload: ticketingCreatePayloadSchema,
-        success: Schema.Struct({
-          item: ticketingItemSchema,
-        }),
+      HttpApiEndpoint.get('getTaskCollection', '/ticketing/task-collections/:collectionId', {
+        error: createTicketActionFailureSchema,
+        headers: createTicketActionHeadersSchema,
+        params: {
+          collectionId: Schema.String,
+        },
+        success: taskCollectionAggregateSchema,
       }),
     )
     .add(
@@ -154,12 +146,6 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
 );
 
 export const ticketingOperationContexts = {
-  create: {
-    method: 'POST',
-    operationId: 'TicketingApi:ticketing:create',
-    routePath: '/ticketing',
-    source: 'generated-client',
-  },
   createTicketAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTicketAction',
@@ -170,6 +156,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:get',
     routePath: '/ticketing/:id',
+    source: 'generated-client',
+  },
+  getTaskCollection: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskCollection',
+    routePath: '/ticketing/task-collections/:collectionId',
     source: 'generated-client',
   },
   list: {

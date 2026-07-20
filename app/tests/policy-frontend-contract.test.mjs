@@ -31,11 +31,15 @@ test('ticketing action denials are Effect endpoint failures with HTTP 409', asyn
 
 test('ticketing page presents rejected action messages through the existing Toast', async () => {
   const source = await readAppFile('verticals/ticketing/src/pages/ticketing-experience.tsx');
+  const englishLocale = JSON.parse(
+    await readAppFile('verticals/ticketing/locales/en/ticketing.json'),
+  );
 
   assert.match(source, /import \{ toaster \} from ['"]@techsio\/ui-kit\/molecules\/toast['"]/u);
   assert.match(source, /isCreateTicketActionFailure\(error\)/u);
   assert.match(source, /description: error\.message/u);
-  assert.match(source, /title: ['"]Create Ticket rejected['"]/u);
+  assert.match(source, /title: t\(['"]ticketing\.taskCollection\.createRejected['"]\)/u);
+  assert.equal(englishLocale.ticketing.taskCollection.createRejected, 'Create Ticket rejected');
   assert.match(source, /type: ['"]error['"]/u);
 });
 

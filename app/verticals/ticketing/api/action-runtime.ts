@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
-import { coreSDKErrorHttpStatus, runAction } from '@app/core-runtime';
-import type { ActionRegistration, CoreSDKError } from '@app/core-runtime';
+import { coreSDKErrorHttpStatus, runAction, runDataAccess } from '@app/core-runtime';
+import type { ActionRegistration, CoreSDKError, DataAccessRegistration } from '@app/core-runtime';
 
 type JsonValue =
   | null
@@ -55,6 +55,44 @@ export const runCoreSdkAction = async <TAction, TResponse>({
       ...(result.context.actionInvocation?.actionInvocationId === undefined
         ? {}
         : { actionInvocationId: result.context.actionInvocation.actionInvocationId }),
+      ok: true,
+      response: result.response,
+    };
+  }
+
+  const code = errorCode(result);
+  const state = errorState(result);
+
+  return {
+    ...(code === undefined ? {} : { code }),
+    errorTag: result._tag,
+    httpStatus: coreSDKErrorHttpStatus(result),
+    message: result.message,
+    ok: false,
+    ...(state === undefined ? {} : { state }),
+  };
+};
+
+export const runCoreSdkDataAccess = async <TPayload, TResponse>({
+  headers,
+  payload,
+  registration,
+  resultCount,
+}: {
+  readonly headers: Headers;
+  readonly payload: TPayload;
+  readonly registration: DataAccessRegistration<TPayload, TResponse>;
+  readonly resultCount: (response: TResponse) => number;
+}): Promise<CoreSdkActionTransportOutcome<TResponse>> => {
+  const result = await runDataAccess({
+    payload,
+    registration,
+    resultCount,
+    transport: { headers },
+  });
+
+  if (result._tag === 'OperationSucceeded') {
+    return {
       ok: true,
       response: result.response,
     };

@@ -1,10 +1,11 @@
 import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
+import { taskCollectionAggregateSchema } from '../task-collection.ts';
+import type { TaskCollectionAggregate } from '../task-collection.ts';
 
 export const createTicketActionKey = 'ticketing.createTicket' as const;
 
 export const createTicketActionPayloadSchema = Schema.Struct({
-  summary: Schema.String,
-  targetResourceId: Schema.String,
+  collectionId: Schema.String,
 });
 
 export const createTicketActionHeadersSchema = Schema.Struct({
@@ -12,12 +13,7 @@ export const createTicketActionHeadersSchema = Schema.Struct({
   'x-ontos-operation-context': Schema.optional(Schema.String),
 });
 
-export const createTicketActionResponseSchema = Schema.Struct({
-  accepted: Schema.Literal(true),
-  actionKey: Schema.Literal(createTicketActionKey),
-  message: Schema.String,
-  targetResourceId: Schema.String,
-});
+export const createTicketActionResponseSchema = taskCollectionAggregateSchema;
 
 export const createTicketActionOutcomeSchema = Schema.Struct({
   actionInvocationId: Schema.optional(Schema.String),
@@ -35,8 +31,8 @@ export const createTicketActionFailureSchema = Schema.Struct({
 }).pipe(HttpApiSchema.status(409));
 
 export type CreateTicketActionPayload = typeof createTicketActionPayloadSchema.Type;
-export type CreateTicketActionResponse = typeof createTicketActionResponseSchema.Type;
+export type CreateTicketActionResponse = TaskCollectionAggregate;
 export type CreateTicketActionOutcome = typeof createTicketActionOutcomeSchema.Type;
 export type CreateTicketActionFailure = typeof createTicketActionFailureSchema.Type;
 
-export const createTicketActionTitle = 'Create Ticket' as const;
+export const createTicketActionTitle = 'Create Task Collection' as const;

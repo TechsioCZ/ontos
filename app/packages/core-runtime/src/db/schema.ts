@@ -174,6 +174,7 @@ export const actionInvocations = coreSchema.table(
     legalEntityId: legalEntityId(),
     principalId: principalId(),
     requestHash: text('request_hash').notNull(),
+    responseJson: jsonb('response_json'),
     startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
     status: text('status').notNull(),
     targetModuleKey: text('target_module_key'),

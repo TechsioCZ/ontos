@@ -12,7 +12,6 @@ import type {
 } from '@modern-js/plugin-bff/effect-client';
 import { ticketingApiContract, ticketingApi, ticketingOperationContexts } from '../../shared/api';
 import type {
-  TicketingCreateResponse,
   TicketingItem,
   TicketingListResponse,
   TicketingNotFound,
@@ -21,6 +20,7 @@ import type {
   CreateTicketActionFailure,
   CreateTicketActionOutcome,
   CreateTicketActionPayload,
+  TaskCollectionAggregate,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -89,14 +89,21 @@ export const getTicketing = (
     operationContext: options.operationContext ?? ticketingOperationContexts.get,
   }).pipe(Effect.flatMap((client) => client.ticketing.get({ params: { id } })));
 
-export const createTicketing = (
-  title: string,
+export const getTaskCollection = (
+  collectionId: string,
   options: TicketingClientOptions = {},
-): TicketingClientEffect<TicketingCreateResponse> =>
+): TicketingClientEffect<TaskCollectionAggregate> =>
   createTicketingClient({
     ...options,
-    operationContext: options.operationContext ?? ticketingOperationContexts.create,
-  }).pipe(Effect.flatMap((client) => client.ticketing.create({ payload: { title } })));
+    operationContext: options.operationContext ?? ticketingOperationContexts.getTaskCollection,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getTaskCollection({
+        headers: options.headers ?? {},
+        params: { collectionId },
+      }),
+    ),
+  );
 
 export const runCreateTicketAction = (
   payload: CreateTicketActionPayload,

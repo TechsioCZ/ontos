@@ -16,6 +16,17 @@
     "role": "ticketing",
     "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
     "title": "Ticketing Vertical",
+    "taskCollection": {
+      "create": "Vytvořit kolekci úkolů",
+      "createFailed": "Vytvoření úkolu selhalo",
+      "createRejected": "Vytvoření úkolu bylo zamítnuto",
+      "createRequestFailed": "Požadavek na vytvoření úkolu selhal.",
+      "createdDescription": "Trvalý prázdný úkol je připraven.",
+      "createdTitle": "Kolekce úkolů byla vytvořena",
+      "creating": "Vytváření úkolu",
+      "openedTask": "Otevřený úkol",
+      "title": "Název"
+    },
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
       "ticketing": {

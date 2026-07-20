@@ -9,6 +9,7 @@
     "./auth": "./src/auth/config.ts",
     "./db/client": "./src/db/client.ts",
     "./db/schema": "./src/db/schema.ts",
+    "./db/sql": "./src/db/sql.ts",
     "./db/types": "./src/db/types.ts",
     "./gateway-token": "./src/vertical-gateway-token.ts",
     "./module-state": "./src/module-state.ts",

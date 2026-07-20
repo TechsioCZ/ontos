@@ -8,6 +8,14 @@ definition resource_type {
   permission create = creator
 }
 
+definition task_collection {
+  relation reader: principal
+  relation creator: principal
+
+  permission read = reader + creator
+  permission create = creator
+}
+
 definition core_modules {
   relation viewer: principal
   relation changer: principal
