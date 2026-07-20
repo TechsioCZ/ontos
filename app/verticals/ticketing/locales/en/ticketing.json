@@ -38,6 +38,26 @@
       "openedTask": "Opened Task",
       "title": "Title"
     },
+    "text": {
+      "backgroundColor": "Background color",
+      "bold": "Bold",
+      "code": "Code",
+      "definitionCreate": "Add Text property",
+      "definitionCreateFailedDescription": "The Text property could not be created.",
+      "definitionCreateFailedTitle": "Text property creation failed",
+      "definitionCreating": "Adding Text property",
+      "definitionName": "Text property name",
+      "foregroundColor": "Text color",
+      "italic": "Italic",
+      "save": "Save Text",
+      "saveFailedDescription": "The Text value could not be saved.",
+      "saveFailedTitle": "Text save failed",
+      "saving": "Saving Text",
+      "staleDescription": "Your rich-text draft is still here. Reload the current value before trying again.",
+      "staleTitle": "Text changed elsewhere",
+      "strikethrough": "Strikethrough",
+      "underline": "Underline"
+    },
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
       "ticketing": {

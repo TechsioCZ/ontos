@@ -6,6 +6,20 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  updateTextPropertyValueActionHeadersSchema,
+  updateTextPropertyValueActionFailureSchemas,
+  updateTextPropertyValueActionOutcomeSchema,
+  updateTextPropertyValueActionPayloadSchema,
+} from './actions/update-text-property-value';
+
+import {
+  createTextPropertyDefinitionActionHeadersSchema,
+  createTextPropertyDefinitionActionFailureSchemas,
+  createTextPropertyDefinitionActionOutcomeSchema,
+  createTextPropertyDefinitionActionPayloadSchema,
+} from './actions/create-text-property-definition';
+
+import {
   transitionTaskRetentionActionHeadersSchema,
   transitionTaskRetentionActionFailureSchemas,
   transitionTaskRetentionActionOutcomeSchema,
@@ -66,7 +80,20 @@ import {
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
+import { queryTaskTextValuesPayloadSchema, queryTaskTextValuesResponseSchema } from './text-query';
 
+export type {
+  CreateTextPropertyDefinitionActionFailure,
+  CreateTextPropertyDefinitionActionOutcome,
+  CreateTextPropertyDefinitionActionPayload,
+  CreateTextPropertyDefinitionActionResponse,
+} from './actions/create-text-property-definition';
+export type {
+  UpdateTextPropertyValueActionFailure,
+  UpdateTextPropertyValueActionOutcome,
+  UpdateTextPropertyValueActionPayload,
+  UpdateTextPropertyValueActionResponse,
+} from './actions/update-text-property-value';
 export type {
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
@@ -120,12 +147,34 @@ export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact
 export {
   checkboxPropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
+  textPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
   TaskPropertyDefinition,
+  TextPropertyDefinition,
 } from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
+export {
+  coreReferenceSchema,
+  nullableTextDocumentSchema,
+  textDocumentSchema,
+  textInlineNodeSchema,
+  textMarkSchema,
+  textPropertyValueSchema,
+} from './text-property';
+export type {
+  CoreReference,
+  TextDocument,
+  TextInlineNode,
+  TextMark,
+  TextPropertyValue,
+} from './text-property';
+export type {
+  QueryTaskTextValuesPayload,
+  QueryTaskTextValuesResponse,
+  TextQueryOperation,
+} from './text-query';
 export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
@@ -258,6 +307,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.post('queryTaskTextValues', '/ticketing/task-properties/text-query', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        payload: queryTaskTextValuesPayloadSchema,
+        success: queryTaskTextValuesResponseSchema,
+      }),
+    )
+    .add(
       HttpApiEndpoint.get(
         'filterTaskCheckboxValues',
         '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
@@ -379,6 +436,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: transitionTaskRetentionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createTextPropertyDefinitionAction',
+        '/ticketing/actions/create-text-property-definition',
+        {
+          error: createTextPropertyDefinitionActionFailureSchemas,
+          headers: createTextPropertyDefinitionActionHeadersSchema,
+          payload: createTextPropertyDefinitionActionPayloadSchema,
+          success: createTextPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateTextPropertyValueAction',
+        '/ticketing/actions/update-text-property-value',
+        {
+          error: updateTextPropertyValueActionFailureSchemas,
+          headers: updateTextPropertyValueActionHeadersSchema,
+          payload: updateTextPropertyValueActionPayloadSchema,
+          success: updateTextPropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -405,6 +486,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
     routePath: '/ticketing/actions/create-task-collection',
+    source: 'generated-client',
+  },
+  createTextPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createTextPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-text-property-definition',
     source: 'generated-client',
   },
   deleteTaskPropertyDefinitionAction: {
@@ -457,6 +544,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing',
     source: 'generated-client',
   },
+  queryTaskTextValues: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:queryTaskTextValues',
+    routePath: '/ticketing/task-properties/text-query',
+    source: 'generated-client',
+  },
   readiness: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
@@ -473,6 +566,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
     routePath: '/ticketing/actions/update-checkbox-property-value',
+    source: 'generated-client',
+  },
+  updateTextPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateTextPropertyValueAction',
+    routePath: '/ticketing/actions/update-text-property-value',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

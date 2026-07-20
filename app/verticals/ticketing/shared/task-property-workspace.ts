@@ -1,5 +1,6 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
+import { textPropertyValueSchema } from './text-property.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
@@ -15,6 +16,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
+      textValues: Schema.optional(Schema.Array(textPropertyValueSchema)),
       title: Schema.String,
     }),
   ),

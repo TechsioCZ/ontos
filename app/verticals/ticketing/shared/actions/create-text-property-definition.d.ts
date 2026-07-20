@@ -1,67 +1,40 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export declare const configureTaskPropertyDefinitionActionKey: 'ticketing.configureTaskPropertyDefinition';
-export declare const configureTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+export declare const createTextPropertyDefinitionActionKey: 'ticketing.createTextPropertyDefinition';
+export declare const createTextPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly expectedRevision: Schema.Finite;
-  readonly hidden: Schema.Boolean;
   readonly mandatory: Schema.Boolean;
   readonly name: Schema.String;
-  readonly propertyDefinitionId: Schema.String;
 }>;
-export declare const configureTaskPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const createTextPropertyDefinitionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const configureTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Union<
-    readonly [
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'checkbox'>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'text'>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-    ]
-  >;
+export declare const createTextPropertyDefinitionActionResponseSchema: Schema.Struct<{
+  readonly definition: Schema.Struct<{
+    readonly datatype: Schema.Literal<'text'>;
+    readonly hidden: Schema.Boolean;
+    readonly mandatory: Schema.Boolean;
+    readonly name: Schema.String;
+    readonly propertyDefinitionId: Schema.String;
+    readonly revision: Schema.Finite;
+  }>;
 }>;
-export declare const configureTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const createTextPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly definition: Schema.Union<
-      readonly [
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'checkbox'>;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'text'>;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-      ]
-    >;
+    readonly definition: Schema.Struct<{
+      readonly datatype: Schema.Literal<'text'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>;
   }>;
 }>;
-export declare const configureTaskPropertyDefinitionActionFailureSchemas: readonly [
+export declare const createTextPropertyDefinitionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -116,7 +89,7 @@ export declare const configureTaskPropertyDefinitionActionFailureSchemas: readon
     >;
   }>,
 ];
-export declare const configureTaskPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const createTextPropertyDefinitionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -173,12 +146,12 @@ export declare const configureTaskPropertyDefinitionActionFailureSchema: Schema.
     }>,
   ]
 >;
-export type ConfigureTaskPropertyDefinitionActionPayload =
-  typeof configureTaskPropertyDefinitionActionPayloadSchema.Type;
-export type ConfigureTaskPropertyDefinitionActionResponse =
-  typeof configureTaskPropertyDefinitionActionResponseSchema.Type;
-export type ConfigureTaskPropertyDefinitionActionOutcome =
-  typeof configureTaskPropertyDefinitionActionOutcomeSchema.Type;
-export type ConfigureTaskPropertyDefinitionActionFailure =
-  typeof configureTaskPropertyDefinitionActionFailureSchema.Type;
-export declare const configureTaskPropertyDefinitionActionTitle: 'Configure Task Property Definition';
+export type CreateTextPropertyDefinitionActionPayload =
+  typeof createTextPropertyDefinitionActionPayloadSchema.Type;
+export type CreateTextPropertyDefinitionActionResponse =
+  typeof createTextPropertyDefinitionActionResponseSchema.Type;
+export type CreateTextPropertyDefinitionActionOutcome =
+  typeof createTextPropertyDefinitionActionOutcomeSchema.Type;
+export type CreateTextPropertyDefinitionActionFailure =
+  typeof createTextPropertyDefinitionActionFailureSchema.Type;
+export declare const createTextPropertyDefinitionActionTitle: 'Create Text Property Definition';

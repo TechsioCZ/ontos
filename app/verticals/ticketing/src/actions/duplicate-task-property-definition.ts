@@ -27,7 +27,7 @@ const duplicatedDefinitionEvidence = (
 ) => ({
   changedComponents: ['definition', 'propertyValues'],
   collectionId: input.collectionId,
-  copiedValues: input.copyValues,
+  copiedValues: response.definition.datatype === 'text' ? false : input.copyValues,
   datatype: response.definition.datatype,
   operation: 'duplicated',
   propertyDefinitionId: response.definition.propertyDefinitionId,
