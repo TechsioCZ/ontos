@@ -17,6 +17,7 @@ import {
   dataAccessEvents,
   domainEvents,
   outboxMessages,
+  principals,
 } from './db/schema.ts';
 import type { CoreDbExecutor, CoreReadonlyDbExecutor, CoreTransaction } from './db/types.ts';
 import { checkModuleStateAccess, isInstalledModuleKey } from './module-state.ts';
@@ -162,7 +163,7 @@ export const coreSDKErrorHttpStatus = (error: CoreSDKError): number => {
 export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
   readonly actionKey: string;
   readonly auditProfile: OperationAuditProfile;
-  readonly authorization?: ActionAuthorizationRequirement<TAction>;
+  readonly authorization?: ActionAuthorizationRequirement;
   readonly domainEvent?: ActionDomainEventDescriptor<TAction, TResponse>;
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
@@ -184,10 +185,10 @@ export interface ActionDomainEventDescriptor<TAction, TResponse> {
   readonly subjectResourceType: string;
 }
 
-export interface ActionAuthorizationRequirement<TPayload = unknown> {
+export interface ActionAuthorizationRequirement {
   readonly permission: string;
   readonly provider: 'spicedb';
-  readonly resourceObjectId: string | ((input: TPayload) => string);
+  readonly resourceObjectId: string;
   readonly resourceObjectType: string;
 }
 
@@ -207,10 +208,10 @@ export interface ActionRegistration<TAction, TResponse> {
   readonly policyChecks?: readonly PolicyCheck<TAction>[];
 }
 
-export interface DataAccessDescriptor<TPayload = unknown> {
+export interface DataAccessDescriptor {
   readonly accessKind: OperationAccessKind;
   readonly auditProfile: OperationAuditProfile;
-  readonly authorization?: ActionAuthorizationRequirement<TPayload>;
+  readonly authorization?: ActionAuthorizationRequirement;
   readonly dataAccessKey: string;
   readonly evidenceCaptureMode: OperationEvidenceCaptureMode;
   readonly evidencePolicyKey: string;
@@ -235,7 +236,7 @@ export type DataAccessHandler<TPayload, TResponse> = (
 ) => Promise<TResponse> | TResponse;
 
 export interface DataAccessRegistration<TPayload, TResponse> {
-  readonly descriptor: DataAccessDescriptor<TPayload>;
+  readonly descriptor: DataAccessDescriptor;
   readonly handler: DataAccessHandler<TPayload, TResponse>;
   readonly policyChecks?: readonly PolicyCheck<TPayload>[];
 }
@@ -434,6 +435,29 @@ const resolveContext = <TAction>({
   return result.error._tag === 'VerticalGatewayTokenMissing'
     ? authRequired(result.error)
     : contextInvalid(result.error);
+};
+
+const validateActionActor = async <TAction>(
+  context: OperationContext<TAction>,
+): Promise<OperationContext<TAction> | OperationContextInvalid> => {
+  const actor = await db
+    .select({ principalId: principals.principalId })
+    .from(principals)
+    .where(
+      and(
+        eq(principals.principalId, context.principalId),
+        eq(principals.tenantId, context.tenantId),
+        eq(principals.status, 'active'),
+      ),
+    )
+    .limit(1);
+
+  return actor.length === 1
+    ? context
+    : {
+        _tag: 'OperationContextInvalid',
+        message: 'The operation Actor must be an active Principal in its tenant.',
+      };
 };
 
 const attachInvocation = <TAction>(
@@ -764,15 +788,12 @@ const writeAuditEvent = async <TAction>({
 
 const toSpiceDbPermissionCheck = <TAction>(
   context: OperationContext<TAction>,
-  requirement: ActionAuthorizationRequirement<TAction>,
+  requirement: ActionAuthorizationRequirement,
 ) =>
   createTenantScopedSpiceDbPermissionCheck({
     permission: requirement.permission,
     principalId: context.principalId,
-    resourceObjectId:
-      typeof requirement.resourceObjectId === 'function'
-        ? requirement.resourceObjectId(context.action)
-        : requirement.resourceObjectId,
+    resourceObjectId: requirement.resourceObjectId,
     resourceObjectType: requirement.resourceObjectType,
     tenantId: context.tenantId,
   });
@@ -790,7 +811,7 @@ const authorizeWithSpiceDb = async <TAction>({
   readonly context: OperationContext<TAction>;
   readonly eventPrefix: 'action' | 'data_access';
   readonly logger: OperationLogger;
-  readonly requirement: ActionAuthorizationRequirement<TAction> | undefined;
+  readonly requirement: ActionAuthorizationRequirement | undefined;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
   if (requirement === undefined) {
     return writeAuditEvent({
@@ -1028,7 +1049,7 @@ const persistDataAccessEvent = async <TPayload, TResponse>({
   resultCount,
 }: {
   readonly context: OperationContext<TPayload>;
-  readonly descriptor: DataAccessDescriptor<TPayload>;
+  readonly descriptor: DataAccessDescriptor;
   readonly payload: TPayload;
   readonly response: TResponse;
   readonly resultCount: (response: TResponse) => number;
@@ -1146,10 +1167,16 @@ export const runAction = async <TAction, TResponse>({
     return context;
   }
 
+  const actorValidatedContext = await validateActionActor(context);
+
+  if ('_tag' in actorValidatedContext) {
+    return actorValidatedContext;
+  }
+
   const hash = requestHash(payload);
   const idempotencyKey = transport.headers.get('idempotency-key')?.trim() || undefined;
   const registeredContext = await registerActionInvocation<TAction, TResponse>({
-    context,
+    context: actorValidatedContext,
     idempotency: descriptor.idempotency,
     idempotencyKey,
     requestHash: hash,

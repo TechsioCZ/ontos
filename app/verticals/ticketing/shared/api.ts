@@ -6,19 +6,31 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
-  createTicketActionHeadersSchema,
-  createTicketActionFailureSchema,
-  createTicketActionOutcomeSchema,
-  createTicketActionPayloadSchema,
-} from './actions/create-ticket';
+  createTaskActionHeadersSchema,
+  createTaskActionFailureSchema,
+  createTaskActionOutcomeSchema,
+  createTaskActionPayloadSchema,
+} from './actions/create-task';
+import {
+  createTaskCollectionActionHeadersSchema,
+  createTaskCollectionActionFailureSchema,
+  createTaskCollectionActionOutcomeSchema,
+  createTaskCollectionActionPayloadSchema,
+} from './actions/create-task-collection';
 import { taskCollectionAggregateSchema } from './task-collection';
 
 export type {
-  CreateTicketActionFailure,
-  CreateTicketActionOutcome,
-  CreateTicketActionPayload,
-  CreateTicketActionResponse,
-} from './actions/create-ticket';
+  CreateTaskActionFailure,
+  CreateTaskActionOutcome,
+  CreateTaskActionPayload,
+  CreateTaskActionResponse,
+} from './actions/create-task';
+export type {
+  CreateTaskCollectionActionFailure,
+  CreateTaskCollectionActionOutcome,
+  CreateTaskCollectionActionPayload,
+  CreateTaskCollectionActionResponse,
+} from './actions/create-task-collection';
 export type { TaskCollectionAggregate } from './task-collection';
 
 export interface TicketingMarker {
@@ -127,8 +139,8 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.get('getTaskCollection', '/ticketing/task-collections/:collectionId', {
-        error: createTicketActionFailureSchema,
-        headers: createTicketActionHeadersSchema,
+        error: createTaskActionFailureSchema,
+        headers: createTaskActionHeadersSchema,
         params: {
           collectionId: Schema.String,
         },
@@ -136,20 +148,38 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       }),
     )
     .add(
-      HttpApiEndpoint.post('createTicketAction', '/ticketing/actions/create-ticket', {
-        error: createTicketActionFailureSchema,
-        headers: createTicketActionHeadersSchema,
-        payload: createTicketActionPayloadSchema,
-        success: createTicketActionOutcomeSchema,
+      HttpApiEndpoint.post(
+        'createTaskCollectionAction',
+        '/ticketing/actions/create-task-collection',
+        {
+          error: createTaskCollectionActionFailureSchema,
+          headers: createTaskCollectionActionHeadersSchema,
+          payload: createTaskCollectionActionPayloadSchema,
+          success: createTaskCollectionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createTaskAction', '/ticketing/actions/create-task', {
+        error: createTaskActionFailureSchema,
+        headers: createTaskActionHeadersSchema,
+        payload: createTaskActionPayloadSchema,
+        success: createTaskActionOutcomeSchema,
       }),
     ),
 );
 
 export const ticketingOperationContexts = {
-  createTicketAction: {
+  createTaskAction: {
     method: 'POST',
-    operationId: 'TicketingApi:ticketing:createTicketAction',
-    routePath: '/ticketing/actions/create-ticket',
+    operationId: 'TicketingApi:ticketing:createTaskAction',
+    routePath: '/ticketing/actions/create-task',
+    source: 'generated-client',
+  },
+  createTaskCollectionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
+    routePath: '/ticketing/actions/create-task-collection',
     source: 'generated-client',
   },
   get: {

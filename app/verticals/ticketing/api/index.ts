@@ -6,8 +6,9 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { createTaskActionRegistration } from '../src/actions/create-task.ts';
+import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { runCoreSdkAction, runCoreSdkDataAccess } from './action-runtime.ts';
-import { createTicketActionRegistration } from '../src/actions/create-ticket.ts';
 import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-task-collection.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
@@ -94,17 +95,32 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
-    .handle('createTicketAction', ({ payload, request }) =>
+    .handle('createTaskCollectionAction', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkAction({
           headers: new Headers(request.headers),
           payload,
-          registration: createTicketActionRegistration,
+          registration: createTaskCollectionActionRegistration,
         }),
       ).pipe(
         Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
-        Effect.withSpan('ultramodern.api.ticketing.createTicketAction', {
-          attributes: operationAttributes(ticketingOperationContexts.createTicketAction),
+        Effect.withSpan('ultramodern.api.ticketing.createTaskCollectionAction', {
+          attributes: operationAttributes(ticketingOperationContexts.createTaskCollectionAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createTaskAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createTaskActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createTaskAction', {
+          attributes: operationAttributes(ticketingOperationContexts.createTaskAction),
           kind: 'server',
         }),
       ),

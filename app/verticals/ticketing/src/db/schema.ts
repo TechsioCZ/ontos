@@ -25,7 +25,7 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultN
 export const taskCollections = ticketingSchema.table(
   'task_collections',
   {
-    collectionId: uuid('collection_id').primaryKey(),
+    collectionId: uuid('collection_id').defaultRandom().primaryKey(),
     createdAt: createdAt(),
     tenantId: tenantId(),
   },

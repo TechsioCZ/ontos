@@ -20,12 +20,6 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
   descriptor: {
     accessKind: 'read',
     auditProfile: 'standard',
-    authorization: {
-      permission: 'read',
-      provider: 'spicedb',
-      resourceObjectId: (input) => input.collectionId,
-      resourceObjectType: 'task_collection',
-    },
     dataAccessKey: 'ticketing.taskCollection.get',
     evidenceCaptureMode: 'metadata_only',
     evidencePolicyKey: 'ticketing.taskCollection.get.metadataOnly',

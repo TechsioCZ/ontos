@@ -1,25 +1,35 @@
-import type { TaskCollectionAggregate } from '../shared/task-collection.ts';
+import type {
+  TaskCollectionAggregate,
+  TaskCollectionCreation,
+  TaskCreation,
+} from '../shared/task-collection.ts';
 
-export interface TaskCollectionAggregateRow {
+export interface TaskCollectionCreationRow {
   readonly collectionCreatedAt: string;
   readonly collectionId: string;
-  readonly createdAt: string;
-  readonly createdByPrincipalId: string;
   readonly datatype: 'title';
-  readonly lastEditedAt: string;
-  readonly lastEditedByPrincipalId: string;
   readonly mandatory: boolean;
   readonly name: string;
   readonly propertyDefinitionId: string;
-  readonly revision: number;
   readonly schemaId: string;
+}
+
+export interface TaskCreationRow {
+  readonly collectionId: string;
+  readonly createdAt: string;
+  readonly createdByPrincipalId: string;
+  readonly lastEditedAt: string;
+  readonly lastEditedByPrincipalId: string;
+  readonly revision: number;
   readonly taskId: string;
   readonly title: string;
 }
 
-export const taskCollectionAggregateFromRow = (
-  row: TaskCollectionAggregateRow,
-): TaskCollectionAggregate => ({
+export interface TaskCollectionAggregateRow extends TaskCollectionCreationRow, TaskCreationRow {}
+
+export const taskCollectionCreationFromRow = (
+  row: TaskCollectionCreationRow,
+): TaskCollectionCreation => ({
   collection: {
     collectionId: row.collectionId,
     createdAt: row.collectionCreatedAt,
@@ -37,6 +47,9 @@ export const taskCollectionAggregateFromRow = (
     ],
     schemaId: row.schemaId,
   },
+});
+
+export const taskCreationFromRow = (row: TaskCreationRow): TaskCreation => ({
   task: {
     collectionId: row.collectionId,
     createdAt: row.createdAt,
@@ -47,4 +60,11 @@ export const taskCollectionAggregateFromRow = (
     taskId: row.taskId,
     title: row.title,
   },
+});
+
+export const taskCollectionAggregateFromRow = (
+  row: TaskCollectionAggregateRow,
+): TaskCollectionAggregate => ({
+  ...taskCollectionCreationFromRow(row),
+  ...taskCreationFromRow(row),
 });

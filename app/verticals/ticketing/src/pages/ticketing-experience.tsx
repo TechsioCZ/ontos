@@ -8,11 +8,13 @@ import { useState } from 'react';
 import {
   Effect,
   getTaskCollection,
-  runCreateTicketAction,
+  runCreateTaskAction,
+  runCreateTaskCollectionAction,
   runEffectRequest,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
-import type { CreateTicketActionFailure } from '../../shared/actions/create-ticket';
+import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
+import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate } from '../../shared/task-collection';
 
 interface ShellOperationContextResponse {
@@ -36,7 +38,9 @@ const loadTicketingOperationContextToken = async (): Promise<string> => {
   return token;
 };
 
-const isCreateTicketActionFailure = (error: unknown): error is CreateTicketActionFailure =>
+const isCreateActionFailure = (
+  error: unknown,
+): error is CreateTaskActionFailure | CreateTaskCollectionActionFailure =>
   typeof error === 'object' &&
   error !== null &&
   'ok' in error &&
@@ -49,11 +53,12 @@ export const TicketingExperience = () => {
   const [createTaskCollectionIntentId, setCreateTaskCollectionIntentId] = useState(() =>
     crypto.randomUUID(),
   );
+  const [createTaskIntentId, setCreateTaskIntentId] = useState(() => crypto.randomUUID());
   const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
-  const [isCreatingTicket, setIsCreatingTicket] = useState(false);
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
-  const handleCreateTicket = async () => {
-    setIsCreatingTicket(true);
+  const handleCreateTask = async () => {
+    setIsCreatingTask(true);
 
     try {
       const operationContextToken = await loadTicketingOperationContextToken();
@@ -61,22 +66,26 @@ export const TicketingExperience = () => {
         'x-ontos-operation-context': operationContextToken,
       };
       await runEffectRequest(
-        runCreateTicketAction(
-          {
-            collectionId: createTaskCollectionIntentId,
-          },
+        runCreateTaskCollectionAction(
+          {},
           {
             headers,
             idempotencyKey: createTaskCollectionIntentId,
           },
         ).pipe(
           Effect.flatMap((outcome) =>
-            getTaskCollection(outcome.response.collection.collectionId, { headers }),
+            runCreateTaskAction(
+              { collectionId: outcome.response.collection.collectionId },
+              { headers, idempotencyKey: createTaskIntentId },
+            ),
+          ),
+          Effect.flatMap((outcome) =>
+            getTaskCollection(outcome.response.task.collectionId, { headers }),
           ),
           Effect.match({
             onFailure: (error) => {
               toaster.create(
-                isCreateTicketActionFailure(error)
+                isCreateActionFailure(error)
                   ? {
                       description: error.message,
                       title: t('ticketing.taskCollection.createRejected'),
@@ -95,6 +104,7 @@ export const TicketingExperience = () => {
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
               setCreateTaskCollectionIntentId(crypto.randomUUID());
+              setCreateTaskIntentId(crypto.randomUUID());
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),
@@ -114,7 +124,7 @@ export const TicketingExperience = () => {
         type: 'error',
       });
     } finally {
-      setIsCreatingTicket(false);
+      setIsCreatingTask(false);
     }
   };
 
@@ -151,9 +161,9 @@ export const TicketingExperience = () => {
       </p>
       <div className="ticketing:mt-8">
         <Button
-          isLoading={isCreatingTicket}
+          isLoading={isCreatingTask}
           loadingText={t('ticketing.taskCollection.creating')}
-          onClick={() => void handleCreateTicket()}
+          onClick={() => void handleCreateTask()}
           type="button"
         >
           {t('ticketing.taskCollection.create')}

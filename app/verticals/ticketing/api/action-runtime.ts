@@ -76,9 +76,7 @@ export const runCoreSdkAction = async <TAction, TResponse>({
   const result = await runAction({
     payload,
     registration,
-    transport: {
-      headers,
-    },
+    transport: { headers },
   });
 
   return toCoreSdkTransportOutcome(result);

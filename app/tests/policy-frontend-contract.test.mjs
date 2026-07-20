@@ -19,13 +19,13 @@ test('ticketing action adapter preserves policy denial state for the frontend ou
 });
 
 test('ticketing action denials are Effect endpoint failures with HTTP 409', async () => {
-  const actionContract = await readAppFile('verticals/ticketing/shared/actions/create-ticket.ts');
+  const actionContract = await readAppFile('verticals/ticketing/shared/actions/create-task.ts');
   const apiContract = await readAppFile('verticals/ticketing/shared/api.ts');
   const apiRuntime = await readAppFile('verticals/ticketing/api/index.ts');
 
-  assert.match(actionContract, /createTicketActionFailureSchema/u);
+  assert.match(actionContract, /createTaskActionFailureSchema/u);
   assert.match(actionContract, /HttpApiSchema\.status\(409\)/u);
-  assert.match(apiContract, /error: createTicketActionFailureSchema/u);
+  assert.match(apiContract, /error: createTaskActionFailureSchema/u);
   assert.match(apiRuntime, /outcome\.ok \? Effect\.succeed\(outcome\) : Effect\.fail\(outcome\)/u);
 });
 
@@ -36,11 +36,12 @@ test('ticketing page presents rejected action messages through the existing Toas
   );
 
   assert.match(source, /import \{ toaster \} from ['"]@techsio\/ui-kit\/molecules\/toast['"]/u);
-  assert.match(source, /isCreateTicketActionFailure\(error\)/u);
+  assert.match(source, /isCreateActionFailure\(error\)/u);
   assert.match(source, /description: error\.message/u);
   assert.match(source, /title: t\(['"]ticketing\.taskCollection\.createRejected['"]\)/u);
   assert.match(source, /setCreateTaskCollectionIntentId\(crypto\.randomUUID\(\)\)/u);
-  assert.equal(englishLocale.ticketing.taskCollection.createRejected, 'Create Ticket rejected');
+  assert.match(source, /setCreateTaskIntentId\(crypto\.randomUUID\(\)\)/u);
+  assert.equal(englishLocale.ticketing.taskCollection.createRejected, 'Task creation rejected');
   assert.match(source, /type: ['"]error['"]/u);
 });
 

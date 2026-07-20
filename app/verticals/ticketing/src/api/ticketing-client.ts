@@ -17,10 +17,13 @@ import type {
   TicketingNotFound,
   OperationContext,
   TicketingReadiness,
-  CreateTicketActionFailure,
-  CreateTicketActionOutcome,
-  CreateTicketActionPayload,
   TaskCollectionAggregate,
+  CreateTaskCollectionActionFailure,
+  CreateTaskCollectionActionOutcome,
+  CreateTaskCollectionActionPayload,
+  CreateTaskActionFailure,
+  CreateTaskActionOutcome,
+  CreateTaskActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -35,8 +38,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | CreateTaskActionFailure
+  | CreateTaskCollectionActionFailure
   | TicketingNotFound
-  | CreateTicketActionFailure
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 
@@ -105,10 +109,10 @@ export const getTaskCollection = (
     ),
   );
 
-export const runCreateTicketAction = (
-  payload: CreateTicketActionPayload,
+export const runCreateTaskCollectionAction = (
+  payload: CreateTaskCollectionActionPayload,
   options: TicketingClientOptions & { idempotencyKey?: string } = {},
-): TicketingClientEffect<CreateTicketActionOutcome> => {
+): TicketingClientEffect<CreateTaskCollectionActionOutcome> => {
   const headers =
     options.idempotencyKey === undefined
       ? options.headers
@@ -120,10 +124,37 @@ export const runCreateTicketAction = (
   return createTicketingClient({
     ...options,
     ...(headers === undefined ? undefined : { headers }),
-    operationContext: options.operationContext ?? ticketingOperationContexts.createTicketAction,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createTaskCollectionAction,
   }).pipe(
     Effect.flatMap((client) =>
-      client.ticketing.createTicketAction({
+      client.ticketing.createTaskCollectionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateTaskAction = (
+  payload: CreateTaskActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateTaskActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext: options.operationContext ?? ticketingOperationContexts.createTaskAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createTaskAction({
         headers: headers ?? {},
         payload,
       }),

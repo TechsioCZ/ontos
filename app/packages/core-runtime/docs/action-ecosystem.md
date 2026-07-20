@@ -14,9 +14,12 @@ runtime flow belongs to Core.
   SpiceDB requirement, optional Domain Event descriptor, and transport schemas.
 - Action Registrations bind descriptors to private handlers and policy checks.
   Registrations are server-only.
-- Handlers receive typed input plus Core-owned execution services after
-  trusted context, idempotency, module-state, authorization, and policy gates
-  pass.
+- Handlers receive typed input plus Core-owned execution services after CoreSDK
+  verifies the trusted operation Actor is an active Principal in the operation
+  tenant and the idempotency, module-state, authorization, and policy gates pass.
+- A successful required-idempotency Action persists its response with the
+  invocation. The same Actor, Action, key, and input replay that exact response;
+  different input conflicts.
 - Data-access registrations use CoreSDK for governed reads, lists, searches,
   exports, and downloads. Metadata-only evidence is the default posture for
   high-volume reads.
@@ -75,7 +78,6 @@ Test through the highest public seam available:
 ## Still Out Of Scope
 
 - Concrete business Actions.
-- Exact response replay for idempotency.
 - Access-management Actions that mutate SpiceDB relationships.
 - External queue systems.
 - Full OntOS Module Manifest generation.

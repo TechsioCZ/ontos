@@ -1,5 +1,6 @@
 export {
-  runCreateTicketAction,
+  runCreateTaskAction,
+  runCreateTaskCollectionAction,
   createTicketing,
   createTicketingClient,
   getTicketing,

@@ -1,16 +1,22 @@
-import type {
+// oxlint-disable typescript/ban-types, typescript/consistent-type-imports, typescript/no-empty-object-type, import/newline-after-import -- TypeScript-generated API declaration
+import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-
 export type {
-  CreateTicketActionFailure,
-  CreateTicketActionOutcome,
-  CreateTicketActionPayload,
-  CreateTicketActionResponse,
-} from './actions/create-ticket';
+  CreateTaskActionFailure,
+  CreateTaskActionOutcome,
+  CreateTaskActionPayload,
+  CreateTaskActionResponse,
+} from './actions/create-task';
+export type {
+  CreateTaskCollectionActionFailure,
+  CreateTaskCollectionActionOutcome,
+  CreateTaskCollectionActionPayload,
+  CreateTaskCollectionActionResponse,
+} from './actions/create-task-collection';
 export type { TaskCollectionAggregate } from './task-collection';
 export interface TicketingMarker {
   readonly appId: string;
@@ -59,9 +65,9 @@ export declare const ticketingApi: HttpApi.HttpApi<
   HttpApiGroup.HttpApiGroup<
     'ticketing',
     | HttpApiEndpoint.HttpApiEndpoint<
-        'createTicketAction',
+        'createTaskAction',
         'POST',
-        '/ticketing/actions/create-ticket',
+        '/ticketing/actions/create-task',
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.Json<
@@ -69,6 +75,50 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly collectionId: Schema.String;
           }>
         >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly task: Schema.Struct<{
+                readonly collectionId: Schema.String;
+                readonly createdAt: Schema.String;
+                readonly createdByPrincipalId: Schema.String;
+                readonly lastEditedAt: Schema.String;
+                readonly lastEditedByPrincipalId: Schema.String;
+                readonly revision: Schema.Finite;
+                readonly taskId: Schema.String;
+                readonly title: Schema.String;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly code: Schema.optional<Schema.String>;
+            readonly errorTag: Schema.String;
+            readonly httpStatus: Schema.Finite;
+            readonly message: Schema.String;
+            readonly ok: Schema.Literal<false>;
+            readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+          }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'createTaskCollectionAction',
+        'POST',
+        '/ticketing/actions/create-task-collection',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<Schema.Struct<{}>>,
         HttpApiEndpoint.StringTree<
           Schema.Struct<{
             readonly 'Idempotency-Key': Schema.optional<Schema.String>;
@@ -96,16 +146,6 @@ export declare const ticketingApi: HttpApi.HttpApi<
                   }>
                 >;
                 readonly schemaId: Schema.String;
-              }>;
-              readonly task: Schema.Struct<{
-                readonly collectionId: Schema.String;
-                readonly createdAt: Schema.String;
-                readonly createdByPrincipalId: Schema.String;
-                readonly lastEditedAt: Schema.String;
-                readonly lastEditedByPrincipalId: Schema.String;
-                readonly revision: Schema.Finite;
-                readonly taskId: Schema.String;
-                readonly title: Schema.String;
               }>;
             }>;
           }>
@@ -239,7 +279,13 @@ export declare const ticketingApi: HttpApi.HttpApi<
   >
 >;
 export declare const ticketingOperationContexts: {
-  createTicketAction: {
+  createTaskAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  createTaskCollectionAction: {
     method: string;
     operationId: string;
     routePath: string;
