@@ -17,6 +17,7 @@ import {
   createTaskCollectionActionOutcomeSchema,
   createTaskCollectionActionPayloadSchema,
 } from './actions/create-task-collection';
+import { coreSdkOperationFailureSchema, operationContextHeadersSchema } from './core-sdk-operation';
 import { taskCollectionAggregateSchema } from './task-collection';
 
 export type {
@@ -139,8 +140,8 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.get('getTaskCollection', '/ticketing/task-collections/:collectionId', {
-        error: createTaskActionFailureSchema,
-        headers: createTaskActionHeadersSchema,
+        error: coreSdkOperationFailureSchema,
+        headers: operationContextHeadersSchema,
         params: {
           collectionId: Schema.String,
         },

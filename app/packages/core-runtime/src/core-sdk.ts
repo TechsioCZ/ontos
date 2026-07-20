@@ -627,6 +627,42 @@ const findActionInvocation = async ({
   return existing;
 };
 
+const claimFailedActionInvocationRetry = async <TAction>({
+  context,
+  actionInvocationId,
+  idempotencyKey,
+  requestHash: hash,
+}: {
+  readonly actionInvocationId: string;
+  readonly context: OperationContext<TAction>;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+}): Promise<OperationContext<TAction> | OperationIdempotencyReplayUnavailable> => {
+  const [claimed] = await db
+    .update(actionInvocations)
+    .set({
+      completedAt: null,
+      responseJson: null,
+      status: 'received',
+    })
+    .where(
+      and(
+        eq(actionInvocations.actionInvocationId, actionInvocationId),
+        eq(actionInvocations.status, 'failed'),
+      ),
+    )
+    .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+
+  return claimed === undefined
+    ? replayUnavailable()
+    : attachInvocation(context, {
+        actionInvocationId: claimed.actionInvocationId,
+        idempotencyKey,
+        requestHash: hash,
+        status: 'received',
+      });
+};
+
 const registerActionInvocation = async <TAction, TResponse>({
   context,
   idempotencyKey,
@@ -653,6 +689,15 @@ const registerActionInvocation = async <TAction, TResponse>({
     if (existing !== undefined) {
       if (existing.requestHash !== hash) {
         return idempotencyConflict();
+      }
+
+      if (existing.status === 'failed') {
+        return claimFailedActionInvocationRetry({
+          actionInvocationId: existing.actionInvocationId,
+          context,
+          idempotencyKey,
+          requestHash: hash,
+        });
       }
 
       if (existing.status !== 'succeeded' || existing.responseJson === null) {

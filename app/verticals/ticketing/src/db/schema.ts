@@ -20,7 +20,8 @@ const tenantId = () =>
     .notNull()
     .references(() => tenants.tenantId, { onDelete: 'restrict' });
 
-const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
+const createdAt = () =>
+  timestamp('created_at', { precision: 3, withTimezone: true }).defaultNow().notNull();
 
 export const taskCollections = ticketingSchema.table(
   'task_collections',
@@ -87,7 +88,9 @@ export const tasks = ticketingSchema.table(
     createdByPrincipalId: uuid('created_by_principal_id')
       .notNull()
       .references(() => principals.principalId, { onDelete: 'restrict' }),
-    lastEditedAt: timestamp('last_edited_at', { withTimezone: true }).defaultNow().notNull(),
+    lastEditedAt: timestamp('last_edited_at', { precision: 3, withTimezone: true })
+      .defaultNow()
+      .notNull(),
     lastEditedByPrincipalId: uuid('last_edited_by_principal_id')
       .notNull()
       .references(() => principals.principalId, { onDelete: 'restrict' }),
@@ -106,7 +109,7 @@ export const tasks = ticketingSchema.table(
 export const taskRevisions = ticketingSchema.table(
   'task_revisions',
   {
-    changedAt: timestamp('changed_at', { withTimezone: true }).notNull(),
+    changedAt: timestamp('changed_at', { precision: 3, withTimezone: true }).notNull(),
     changedByPrincipalId: uuid('changed_by_principal_id')
       .notNull()
       .references(() => principals.principalId, { onDelete: 'restrict' }),

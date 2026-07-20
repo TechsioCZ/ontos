@@ -65,7 +65,7 @@ const createTaskCollectionActionHandler: ActionHandler<
       created_collection.collection_id as "collectionId",
       to_char(
         created_collection.created_at at time zone 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ) as "collectionCreatedAt",
       created_schema.schema_id as "schemaId",
       created_title_definition.datatype as "datatype",

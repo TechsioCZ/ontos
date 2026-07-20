@@ -84,12 +84,12 @@ const createTaskActionHandler: ActionHandler<
       created_task.collection_id as "collectionId",
       to_char(
         created_task.created_at at time zone 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ) as "createdAt",
       created_task.created_by_principal_id as "createdByPrincipalId",
       to_char(
         created_task.last_edited_at at time zone 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ) as "lastEditedAt",
       created_task.last_edited_by_principal_id as "lastEditedByPrincipalId",
       created_task.revision as "revision",

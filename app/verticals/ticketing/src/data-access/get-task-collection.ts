@@ -37,7 +37,7 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
         collection.collection_id as "collectionId",
         to_char(
           collection.created_at at time zone 'UTC',
-          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
         ) as "collectionCreatedAt",
         schema.schema_id as "schemaId",
         definition.datatype as "datatype",
@@ -46,12 +46,12 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
         definition.property_definition_id as "propertyDefinitionId",
         to_char(
           task.created_at at time zone 'UTC',
-          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
         ) as "createdAt",
         task.created_by_principal_id as "createdByPrincipalId",
         to_char(
           task.last_edited_at at time zone 'UTC',
-          'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
         ) as "lastEditedAt",
         task.last_edited_by_principal_id as "lastEditedByPrincipalId",
         task.revision as "revision",

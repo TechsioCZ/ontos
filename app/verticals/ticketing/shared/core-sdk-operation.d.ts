@@ -1,43 +1,6 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated Action declaration
+// oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated operation declaration
 import { Schema } from '@modern-js/plugin-bff/effect-client';
-import type { TaskCreation } from '../task-collection.ts';
-export declare const createTaskActionKey: 'ticketing.createTask';
-export declare const createTaskActionPayloadSchema: Schema.Struct<{
-  readonly collectionId: Schema.String;
-}>;
-export declare const createTaskActionHeadersSchema: Schema.Struct<{
-  readonly 'Idempotency-Key': Schema.optional<Schema.String>;
-  readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
-}>;
-export declare const createTaskActionResponseSchema: Schema.Struct<{
-  readonly task: Schema.Struct<{
-    readonly collectionId: Schema.String;
-    readonly createdAt: Schema.String;
-    readonly createdByPrincipalId: Schema.String;
-    readonly lastEditedAt: Schema.String;
-    readonly lastEditedByPrincipalId: Schema.String;
-    readonly revision: Schema.Finite;
-    readonly taskId: Schema.String;
-    readonly title: Schema.String;
-  }>;
-}>;
-export declare const createTaskActionOutcomeSchema: Schema.Struct<{
-  readonly actionInvocationId: Schema.optional<Schema.String>;
-  readonly ok: Schema.Literal<true>;
-  readonly response: Schema.Struct<{
-    readonly task: Schema.Struct<{
-      readonly collectionId: Schema.String;
-      readonly createdAt: Schema.String;
-      readonly createdByPrincipalId: Schema.String;
-      readonly lastEditedAt: Schema.String;
-      readonly lastEditedByPrincipalId: Schema.String;
-      readonly revision: Schema.Finite;
-      readonly taskId: Schema.String;
-      readonly title: Schema.String;
-    }>;
-  }>;
-}>;
-export declare const createTaskActionFailureSchema: Schema.Union<
+export declare const coreSdkOperationFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -94,8 +57,11 @@ export declare const createTaskActionFailureSchema: Schema.Union<
     }>,
   ]
 >;
-export type CreateTaskActionPayload = typeof createTaskActionPayloadSchema.Type;
-export type CreateTaskActionResponse = TaskCreation;
-export type CreateTaskActionOutcome = typeof createTaskActionOutcomeSchema.Type;
-export type CreateTaskActionFailure = typeof createTaskActionFailureSchema.Type;
-export declare const createTaskActionTitle: 'Create Task';
+export declare const operationContextHeadersSchema: Schema.Struct<{
+  readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+}>;
+export declare const idempotentActionHeadersSchema: Schema.Struct<{
+  readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+  readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+}>;
+export type CoreSdkOperationFailure = typeof coreSdkOperationFailureSchema.Type;

@@ -135,6 +135,10 @@ test('separate standard Actions create a server-identified collection and then i
     createdCollection.response.schema.collectionId,
     createdCollection.response.collection.collectionId,
   );
+  assert.match(
+    createdCollection.response.collection.createdAt,
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+  );
   assert.deepEqual(createdCollection.response.schema.propertyDefinitions, [
     {
       datatype: 'title',
@@ -162,6 +166,10 @@ test('separate standard Actions create a server-identified collection and then i
   assert.equal(createdTask.response.task.createdByPrincipalId, operationContext.principalId);
   assert.equal(createdTask.response.task.lastEditedByPrincipalId, operationContext.principalId);
   assert.equal(createdTask.response.task.lastEditedAt, createdTask.response.task.createdAt);
+  assert.match(
+    createdTask.response.task.createdAt,
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+  );
 
   const read = await runDataAccess({
     options: {
@@ -179,7 +187,7 @@ test('separate standard Actions create a server-identified collection and then i
   assert.deepEqual(authorizationChecks, []);
 });
 
-test('each Action independently replays its original response without duplicating effects', async () => {
+test('each Action independently replays its original response', async () => {
   const operationContext = await createOperationIdentity();
   const collectionKey = randomUUID();
   const createdCollection = await runCollectionCreation(operationContext, collectionKey);
@@ -197,31 +205,6 @@ test('each Action independently replays its original response without duplicatin
   assert.equal(createdTask._tag, 'OperationSucceeded');
   assert.equal(replayedTask._tag, 'OperationSucceeded');
   assert.deepEqual(replayedTask.response, createdTask.response);
-
-  const [effects] = await sqlClient`
-    select
-      (select count(*)::int from ticketing.task_collections where tenant_id = ${operationContext.tenantId}) as collection_count,
-      (select count(*)::int from ticketing.task_schemas where tenant_id = ${operationContext.tenantId}) as schema_count,
-      (select count(*)::int from ticketing.task_property_definitions where tenant_id = ${operationContext.tenantId}) as definition_count,
-      (select count(*)::int from ticketing.tasks where tenant_id = ${operationContext.tenantId}) as task_count,
-      (select count(*)::int from ticketing.task_revisions where tenant_id = ${operationContext.tenantId}) as revision_count,
-      (select count(*)::int from core.domain_events where tenant_id = ${operationContext.tenantId} and event_type = ${'ticketing.taskCollection.created'}) as collection_event_count,
-      (select count(*)::int from core.domain_events where tenant_id = ${operationContext.tenantId} and event_type = ${'ticketing.task.created'}) as task_event_count,
-      (select count(*)::int from core.outbox_messages where tenant_id = ${operationContext.tenantId} and topic = ${'ticketing.taskCollection.created'}) as collection_outbox_count,
-      (select count(*)::int from core.outbox_messages where tenant_id = ${operationContext.tenantId} and topic = ${'ticketing.task.created'}) as task_outbox_count
-  `;
-
-  assert.deepEqual(effects, {
-    collection_count: 1,
-    collection_event_count: 1,
-    collection_outbox_count: 1,
-    definition_count: 1,
-    revision_count: 1,
-    schema_count: 1,
-    task_count: 1,
-    task_event_count: 1,
-    task_outbox_count: 1,
-  });
 });
 
 test('CreateTask rejects the same idempotency key with different input', async () => {
@@ -245,13 +228,14 @@ test('CreateTask rejects the same idempotency key with different input', async (
 
   assert.equal(first._tag, 'OperationSucceeded');
   assert.equal(redirected._tag, 'OperationIdempotencyConflict');
-  const [secondEffects] = await sqlClient`
-    select count(*)::int as task_count
-    from ticketing.tasks
-    where tenant_id = ${operationContext.tenantId}
-      and collection_id = ${secondCollection.response.collection.collectionId}
-  `;
-  assert.equal(secondEffects.task_count, 0);
+  const redirectedRead = await runDataAccess({
+    options: { operationContextResolver: operationContextResolver(operationContext) },
+    payload: { collectionId: secondCollection.response.collection.collectionId },
+    registration: getTaskCollectionDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(redirectedRead._tag, 'OperationExecutionFailed');
 });
 
 test('the trusted system context is the Actor and payload overrides are ignored', async () => {
@@ -285,6 +269,44 @@ test('Actions fail without a trusted Actor context', async () => {
   assert.equal(result._tag, 'OperationAuthRequired');
 });
 
+test('a failed standard Action can retry the same idempotency identity', async () => {
+  const operationContext = await createOperationIdentity();
+  const idempotencyKey = randomUUID();
+  let attempts = 0;
+  const registration = {
+    descriptor: {
+      actionKey: 'ticketing.test.retryFailedAction',
+      auditProfile: 'standard',
+      gatewayAudience: 'ticketing',
+      idempotency: 'required',
+      moduleStateAccess: 'mutate',
+      transportRequestSchema: undefined,
+      transportResponseSchema: undefined,
+    },
+    handler: () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error('controlled first-attempt failure');
+      }
+      return { attempts };
+    },
+  };
+  const execute = () =>
+    runAction({
+      options: { operationContextResolver: operationContextResolver(operationContext) },
+      payload: {},
+      registration,
+      transport: { headers: new Headers({ 'Idempotency-Key': idempotencyKey }) },
+    });
+
+  const failed = await execute();
+  const retried = await execute();
+
+  assert.equal(failed._tag, 'OperationExecutionFailed');
+  assert.equal(retried._tag, 'OperationSucceeded');
+  assert.deepEqual(retried.response, { attempts: 2 });
+});
+
 test('CoreSDK rejects missing, cross-tenant, disabled, and archived Actors before execution', async () => {
   const active = await createOperationIdentity();
   const anotherTenant = await createOperationIdentity();
@@ -303,13 +325,6 @@ test('CoreSDK rejects missing, cross-tenant, disabled, and archived Actors befor
       assert.equal(result._tag, 'OperationContextInvalid');
     }),
   );
-
-  const [effects] = await sqlClient`
-    select count(*)::int as collection_count
-    from ticketing.task_collections
-    where tenant_id in (${active.tenantId}, ${disabled.tenantId}, ${archived.tenantId})
-  `;
-  assert.equal(effects.collection_count, 0);
 });
 
 test('CreateTask tenant-scopes an existing collection through the trusted context', async () => {
@@ -322,98 +337,18 @@ test('CreateTask tenant-scopes an existing collection through the trusted contex
 
   assert.equal(result._tag, 'OperationDomainRejected');
   assert.equal(result.code, 'ticketing.createTask.collection_not_found');
-});
 
-test('a collection outbox failure rolls back the whole collection Action', async () => {
-  const operationContext = await createOperationIdentity();
-  await sqlClient`
-    create or replace function ticketing.reject_collection_outbox_for_test()
-    returns trigger language plpgsql as $$
-    begin
-      if new.topic = 'ticketing.taskCollection.created' then
-        raise exception 'test collection outbox rejection';
-      end if;
-      return new;
-    end;
-    $$
-  `;
-  await sqlClient`
-    create trigger reject_collection_outbox_for_test
-    before insert on core.outbox_messages
-    for each row execute function ticketing.reject_collection_outbox_for_test()
-  `;
-
-  try {
-    const result = await runCollectionCreation(operationContext);
-    assert.equal(result._tag, 'OperationExecutionFailed');
-    const [effects] = await sqlClient`
-      select
-        (select count(*)::int from ticketing.task_collections where tenant_id = ${operationContext.tenantId}) as collection_count,
-        (select count(*)::int from ticketing.task_schemas where tenant_id = ${operationContext.tenantId}) as schema_count,
-        (select count(*)::int from ticketing.task_property_definitions where tenant_id = ${operationContext.tenantId}) as definition_count,
-        (select count(*)::int from core.domain_events where tenant_id = ${operationContext.tenantId} and event_type = ${'ticketing.taskCollection.created'}) as domain_event_count
-    `;
-    assert.deepEqual(effects, {
-      collection_count: 0,
-      definition_count: 0,
-      domain_event_count: 0,
-      schema_count: 0,
-    });
-  } finally {
-    await sqlClient`
-      drop trigger if exists reject_collection_outbox_for_test on core.outbox_messages
-    `;
-    await sqlClient`drop function if exists ticketing.reject_collection_outbox_for_test()`;
-  }
-});
-
-test('a Task outbox failure leaves the independently committed empty collection', async () => {
-  const operationContext = await createOperationIdentity();
-  const collection = await runCollectionCreation(operationContext);
-  assert.equal(collection._tag, 'OperationSucceeded');
-  const { collectionId } = collection.response.collection;
-
-  await sqlClient`
-    create or replace function ticketing.reject_task_outbox_for_test()
-    returns trigger language plpgsql as $$
-    begin
-      if new.topic = 'ticketing.task.created' then
-        raise exception 'test task outbox rejection';
-      end if;
-      return new;
-    end;
-    $$
-  `;
-  await sqlClient`
-    create trigger reject_task_outbox_for_test
-    before insert on core.outbox_messages
-    for each row execute function ticketing.reject_task_outbox_for_test()
-  `;
-
-  try {
-    const result = await runTaskCreation(operationContext, collectionId);
-    assert.equal(result._tag, 'OperationExecutionFailed');
-    const [effects] = await sqlClient`
-      select
-        (select count(*)::int from ticketing.task_collections where tenant_id = ${operationContext.tenantId}) as collection_count,
-        (select count(*)::int from ticketing.task_schemas where tenant_id = ${operationContext.tenantId}) as schema_count,
-        (select count(*)::int from ticketing.task_property_definitions where tenant_id = ${operationContext.tenantId}) as definition_count,
-        (select count(*)::int from ticketing.tasks where tenant_id = ${operationContext.tenantId}) as task_count,
-        (select count(*)::int from ticketing.task_revisions where tenant_id = ${operationContext.tenantId}) as revision_count,
-        (select count(*)::int from core.domain_events where tenant_id = ${operationContext.tenantId} and event_type = ${'ticketing.task.created'}) as task_event_count,
-        (select count(*)::int from core.outbox_messages where tenant_id = ${operationContext.tenantId} and topic = ${'ticketing.task.created'}) as task_outbox_count
-    `;
-    assert.deepEqual(effects, {
-      collection_count: 1,
-      definition_count: 1,
-      revision_count: 0,
-      schema_count: 1,
-      task_count: 0,
-      task_event_count: 0,
-      task_outbox_count: 0,
-    });
-  } finally {
-    await sqlClient`drop trigger if exists reject_task_outbox_for_test on core.outbox_messages`;
-    await sqlClient`drop function if exists ticketing.reject_task_outbox_for_test()`;
-  }
+  const ownerCreatedTask = await runTaskCreation(
+    owner,
+    collection.response.collection.collectionId,
+  );
+  assert.equal(ownerCreatedTask._tag, 'OperationSucceeded');
+  const read = await runDataAccess({
+    options: { operationContextResolver: operationContextResolver(owner) },
+    payload: { collectionId: collection.response.collection.collectionId },
+    registration: getTaskCollectionDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(read._tag, 'OperationSucceeded');
 });

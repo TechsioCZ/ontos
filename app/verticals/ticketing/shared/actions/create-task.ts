@@ -1,4 +1,8 @@
-import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
+import { Schema } from '@modern-js/plugin-bff/effect-client';
+import {
+  coreSdkOperationFailureSchema,
+  idempotentActionHeadersSchema,
+} from '../core-sdk-operation.ts';
 import { taskCreationSchema } from '../task-collection.ts';
 import type { TaskCreation } from '../task-collection.ts';
 
@@ -8,10 +12,7 @@ export const createTaskActionPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
 });
 
-export const createTaskActionHeadersSchema = Schema.Struct({
-  'Idempotency-Key': Schema.optional(Schema.String),
-  'x-ontos-operation-context': Schema.optional(Schema.String),
-});
+export const createTaskActionHeadersSchema = idempotentActionHeadersSchema;
 
 export const createTaskActionResponseSchema = taskCreationSchema;
 
@@ -21,14 +22,7 @@ export const createTaskActionOutcomeSchema = Schema.Struct({
   response: createTaskActionResponseSchema,
 });
 
-export const createTaskActionFailureSchema = Schema.Struct({
-  code: Schema.optional(Schema.String),
-  errorTag: Schema.String,
-  httpStatus: Schema.Finite,
-  message: Schema.String,
-  ok: Schema.Literal(false),
-  state: Schema.optional(Schema.Json),
-}).pipe(HttpApiSchema.status(409));
+export const createTaskActionFailureSchema = coreSdkOperationFailureSchema;
 
 export type CreateTaskActionPayload = typeof createTaskActionPayloadSchema.Type;
 export type CreateTaskActionResponse = TaskCreation;

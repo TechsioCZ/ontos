@@ -15,7 +15,7 @@ type JsonValue =
   | { readonly [key: string]: JsonValue }
   | readonly JsonValue[];
 
-export type CoreSdkActionTransportOutcome<TResponse> =
+export type CoreSdkOperationTransportOutcome<TResponse> =
   | {
       readonly actionInvocationId?: string;
       readonly ok: true;
@@ -40,7 +40,7 @@ const errorState = (error: CoreSDKError): JsonValue | undefined =>
 
 const toCoreSdkTransportOutcome = <TPayload, TResponse>(
   result: OperationResult<TPayload, TResponse>,
-): CoreSdkActionTransportOutcome<TResponse> => {
+): CoreSdkOperationTransportOutcome<TResponse> => {
   if (result._tag === 'OperationSucceeded') {
     return {
       ...(result.context.actionInvocation?.actionInvocationId === undefined
@@ -72,7 +72,7 @@ export const runCoreSdkAction = async <TAction, TResponse>({
   readonly headers: Headers;
   readonly payload: TAction;
   readonly registration: ActionRegistration<TAction, TResponse>;
-}): Promise<CoreSdkActionTransportOutcome<TResponse>> => {
+}): Promise<CoreSdkOperationTransportOutcome<TResponse>> => {
   const result = await runAction({
     payload,
     registration,
@@ -92,7 +92,7 @@ export const runCoreSdkDataAccess = async <TPayload, TResponse>({
   readonly payload: TPayload;
   readonly registration: DataAccessRegistration<TPayload, TResponse>;
   readonly resultCount: (response: TResponse) => number;
-}): Promise<CoreSdkActionTransportOutcome<TResponse>> => {
+}): Promise<CoreSdkOperationTransportOutcome<TResponse>> => {
   const result = await runDataAccess({
     payload,
     registration,

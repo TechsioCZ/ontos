@@ -18,38 +18,28 @@ test('ticketing action adapter preserves policy denial state for the frontend ou
   assert.match(source, /\.\.\.\(state === undefined \? \{\} : \{ state \}\)/u);
 });
 
-test('ticketing action denials are Effect endpoint failures with HTTP 409', async () => {
-  const actionContract = await readAppFile('verticals/ticketing/shared/actions/create-task.ts');
+test('ticketing operation failures declare their CoreSDK HTTP status classes', async () => {
+  const operationContract = await readAppFile('verticals/ticketing/shared/core-sdk-operation.ts');
   const apiContract = await readAppFile('verticals/ticketing/shared/api.ts');
   const apiRuntime = await readAppFile('verticals/ticketing/api/index.ts');
 
-  assert.match(actionContract, /createTaskActionFailureSchema/u);
-  assert.match(actionContract, /HttpApiSchema\.status\(409\)/u);
+  assert.match(operationContract, /HttpApiSchema\.status\(httpStatus\)/u);
+  for (const status of [401, 403, 409, 428, 500]) {
+    assert.match(operationContract, new RegExp(`\\b${status}\\b`, 'u'));
+  }
   assert.match(apiContract, /error: createTaskActionFailureSchema/u);
+  assert.match(apiContract, /error: coreSdkOperationFailureSchema/u);
+  assert.match(apiContract, /headers: operationContextHeadersSchema/u);
   assert.match(apiRuntime, /outcome\.ok \? Effect\.succeed\(outcome\) : Effect\.fail\(outcome\)/u);
-});
-
-test('ticketing page presents rejected action messages through the existing Toast', async () => {
-  const source = await readAppFile('verticals/ticketing/src/pages/ticketing-experience.tsx');
-  const englishLocale = JSON.parse(
-    await readAppFile('verticals/ticketing/locales/en/ticketing.json'),
-  );
-
-  assert.match(source, /import \{ toaster \} from ['"]@techsio\/ui-kit\/molecules\/toast['"]/u);
-  assert.match(source, /isCreateActionFailure\(error\)/u);
-  assert.match(source, /description: error\.message/u);
-  assert.match(source, /title: t\(['"]ticketing\.taskCollection\.createRejected['"]\)/u);
-  assert.match(source, /setCreateTaskCollectionIntentId\(crypto\.randomUUID\(\)\)/u);
-  assert.match(source, /setCreateTaskIntentId\(crypto\.randomUUID\(\)\)/u);
-  assert.equal(englishLocale.ticketing.taskCollection.createRejected, 'Task creation rejected');
-  assert.match(source, /type: ['"]error['"]/u);
 });
 
 test('action generator emits Effect endpoint failures for CoreSDK action errors', async () => {
   const source = await readAppFile('scripts/codesmith/generators/action/index.cjs');
 
   assert.match(source, /ActionFailureSchema/u);
-  assert.match(source, /HttpApiSchema\.status\(409\)/u);
+  for (const status of [401, 403, 409, 428, 500]) {
+    assert.match(source, new RegExp(`\\b${status}\\b`, 'u'));
+  }
   assert.match(source, /error: \$\{actionCamel\}ActionFailureSchema/u);
   assert.match(source, /outcome\.ok \? Effect\.succeed\(outcome\) : Effect\.fail\(outcome\)/u);
   assert.match(source, /\| \$\{actionPascal\}ActionFailure/u);

@@ -148,14 +148,41 @@ export const ${actionCamel}ActionOutcomeSchema = Schema.Struct({
   response: ${actionCamel}ActionResponseSchema,
 });
 
-export const ${actionCamel}ActionFailureSchema = Schema.Struct({
-    code: Schema.optional(Schema.String),
-    errorTag: Schema.String,
-    httpStatus: Schema.Finite,
-    message: Schema.String,
-    ok: Schema.Literal(false),
-    state: Schema.optional(Schema.Json),
-}).pipe(HttpApiSchema.status(409));
+const ${actionCamel}ActionFailureFields = {
+  code: Schema.optional(Schema.String),
+  httpStatus: Schema.Finite,
+  message: Schema.String,
+  ok: Schema.Literal(false),
+  state: Schema.optional(Schema.Json),
+};
+
+const ${actionCamel}ActionFailure = <const TErrorTags extends readonly string[]>(
+  errorTags: TErrorTags,
+  httpStatus: number,
+) =>
+  Schema.Struct({
+    ...${actionCamel}ActionFailureFields,
+    errorTag: Schema.Literals(errorTags),
+  }).pipe(HttpApiSchema.status(httpStatus));
+
+export const ${actionCamel}ActionFailureSchema = Schema.Union([
+  ${actionCamel}ActionFailure(['OperationAuthRequired', 'OperationContextInvalid'], 401),
+  ${actionCamel}ActionFailure(
+    ['OperationAuthorizationDenied', 'OperationModuleStateDenied'],
+    403,
+  ),
+  ${actionCamel}ActionFailure(['OperationIdempotencyKeyRequired'], 428),
+  ${actionCamel}ActionFailure(
+    [
+      'OperationDomainRejected',
+      'OperationIdempotencyConflict',
+      'OperationIdempotencyReplayUnavailable',
+      'OperationPolicyDenied',
+    ],
+    409,
+  ),
+  ${actionCamel}ActionFailure(['OperationExecutionFailed', 'OperationPersistenceFailed'], 500),
+]);
 
 export type ${actionPascal}ActionPayload = typeof ${actionCamel}ActionPayloadSchema.Type;
 export type ${actionPascal}ActionResponse = typeof ${actionCamel}ActionResponseSchema.Type;

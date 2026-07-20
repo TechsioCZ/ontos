@@ -19,7 +19,8 @@ runtime flow belongs to Core.
   tenant and the idempotency, module-state, authorization, and policy gates pass.
 - A successful required-idempotency Action persists its response with the
   invocation. The same Actor, Action, key, and input replay that exact response;
-  different input conflicts.
+  different input conflicts. The same identity may atomically claim and retry a
+  prior execution failure; an in-flight or rejected invocation is not replayable.
 - Data-access registrations use CoreSDK for governed reads, lists, searches,
   exports, and downloads. Metadata-only evidence is the default posture for
   high-volume reads.
