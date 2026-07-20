@@ -12,4 +12,3 @@ Mapping:
 
 - `/private/tmp/product/<file>` → `docs/task-properties/sources/product-owner/<file>`
 - `/tmp/<file>` → `docs/task-properties/sources/handoffs/<file>`
-

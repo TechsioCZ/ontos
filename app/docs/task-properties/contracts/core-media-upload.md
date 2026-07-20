@@ -49,4 +49,3 @@
 - `../sources/handoffs/ontos-files-media-main-thread-handoff.md`.
 - [PR-016](../product/product-resolutions.md#pr-016--files--media-uses-a-configurable-shared-upload-limit).
 - Existing Core Media ownership/table shape: `packages/core-runtime/src/db/schema.ts` (`mediaAssets`, `mediaLinks`).
-
