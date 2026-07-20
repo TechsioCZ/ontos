@@ -42,6 +42,9 @@ import type {
   DeleteTaskPropertyDefinitionActionFailure,
   DeleteTaskPropertyDefinitionActionOutcome,
   DeleteTaskPropertyDefinitionActionPayload,
+  TransitionTaskRetentionActionFailure,
+  TransitionTaskRetentionActionOutcome,
+  TransitionTaskRetentionActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -56,6 +59,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
   | ConfigureTaskPropertyDefinitionActionFailure
@@ -336,6 +340,27 @@ export const runDeleteTaskPropertyDefinitionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.deleteTaskPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runTransitionTaskRetentionAction = (
+  payload: TransitionTaskRetentionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<TransitionTaskRetentionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.transitionTaskRetentionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.transitionTaskRetentionAction({
         headers: headers ?? {},
         payload,
       }),

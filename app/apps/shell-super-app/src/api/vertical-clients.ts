@@ -1,4 +1,5 @@
 export {
+  runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,

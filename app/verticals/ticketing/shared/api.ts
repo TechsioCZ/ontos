@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  transitionTaskRetentionActionHeadersSchema,
+  transitionTaskRetentionActionFailureSchemas,
+  transitionTaskRetentionActionOutcomeSchema,
+  transitionTaskRetentionActionPayloadSchema,
+} from './actions/transition-task-retention';
+
+import {
   deleteTaskPropertyDefinitionActionHeadersSchema,
   deleteTaskPropertyDefinitionActionFailureSchemas,
   deleteTaskPropertyDefinitionActionOutcomeSchema,
@@ -102,6 +109,12 @@ export type {
   UpdateCheckboxPropertyValueActionPayload,
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
+export type {
+  TransitionTaskRetentionActionFailure,
+  TransitionTaskRetentionActionOutcome,
+  TransitionTaskRetentionActionPayload,
+  TransitionTaskRetentionActionResponse,
+} from './actions/transition-task-retention';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export {
@@ -354,6 +367,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: deleteTaskPropertyDefinitionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'transitionTaskRetentionAction',
+        '/ticketing/actions/transition-task-retention',
+        {
+          error: transitionTaskRetentionActionFailureSchemas,
+          headers: transitionTaskRetentionActionHeadersSchema,
+          payload: transitionTaskRetentionActionPayloadSchema,
+          success: transitionTaskRetentionActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -436,6 +461,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
     routePath: '/ticketing/readiness',
+    source: 'generated-client',
+  },
+  transitionTaskRetentionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:transitionTaskRetentionAction',
+    routePath: '/ticketing/actions/transition-task-retention',
     source: 'generated-client',
   },
   updateCheckboxPropertyValueAction: {

@@ -43,6 +43,13 @@
       "when": 1784569658903,
       "tag": "0005_friendly_zarek",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784572357349,
+      "tag": "0006_fancy_james_howlett",
+      "breakpoints": true
     }
   ]
 }

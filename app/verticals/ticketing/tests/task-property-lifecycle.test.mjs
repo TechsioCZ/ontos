@@ -10,6 +10,7 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-task-collection.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
@@ -292,6 +293,223 @@ test('submitting the committed schema configuration is a semantic no-op', async 
   assert.equal(workspace.response.tasks[0].taskRevision, 1);
 });
 
+test('archive and restore are revision-protected Task mutations through the public Action', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, task } = await createCollectionTaskAndDefinition(operationContext);
+  const [editor] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${operationContext.tenantId}, ${'Task retention editor'}, ${'human'}, ${'active'})
+    returning principal_id
+  `;
+  const editorContext = { ...operationContext, principalId: editor.principal_id };
+
+  const archived = await runRegisteredAction({
+    operationContext: editorContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      taskId: task.response.task.taskId,
+      transition: 'archive',
+    },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+
+  assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
+  assert.deepEqual(archived.response, {
+    retentionState: 'archived',
+    taskId: task.response.task.taskId,
+    taskRevision: 2,
+  });
+
+  const restored = await runRegisteredAction({
+    operationContext: editorContext,
+    payload: {
+      collectionId,
+      expectedRevision: 2,
+      taskId: task.response.task.taskId,
+      transition: 'restore',
+    },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+  assert.equal(restored._tag, 'OperationSucceeded', JSON.stringify(restored));
+  assert.deepEqual(restored.response, {
+    retentionState: 'active',
+    taskId: task.response.task.taskId,
+    taskRevision: 3,
+  });
+
+  const aggregate = await runRegisteredDataAccess({
+    operationContext: editorContext,
+    payload: { collectionId },
+    registration: getTaskCollectionDataAccessRegistration,
+    resultCount: () => 1,
+  });
+  assert.equal(aggregate._tag, 'OperationSucceeded', JSON.stringify(aggregate));
+  assert.equal(aggregate.response.task.revision, 3);
+  assert.equal(aggregate.response.task.lastEditedByPrincipalId, editorContext.principalId);
+});
+
+test('deletion impact includes every retained lifecycle state and excludes hard-deleted Tasks', async () => {
+  const operationContext = await createOperationIdentity();
+  const {
+    collectionId,
+    definition,
+    task: activeTask,
+  } = await createCollectionTaskAndDefinition(operationContext);
+  const createTask = async () => {
+    const created = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+    return created.response.task;
+  };
+  const archivedTask = await createTask();
+  const softDeletedTask = await createTask();
+  const hardDeletedTask = await createTask();
+  const transition = (taskId, expectedRevision, retentionTransition) =>
+    runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision,
+        taskId,
+        transition: retentionTransition,
+      },
+      registration: transitionTaskRetentionActionRegistration,
+    });
+  const preview = () =>
+    runRegisteredDataAccess({
+      operationContext,
+      payload: {
+        collectionId,
+        propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      },
+      registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+      resultCount: () => 1,
+    });
+
+  const initialImpact = await preview();
+  assert.equal(initialImpact._tag, 'OperationSucceeded', JSON.stringify(initialImpact));
+  assert.equal(initialImpact.response.impactCount, 4);
+
+  const archived = await transition(archivedTask.taskId, 1, 'archive');
+  assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
+  const softDeleted = await transition(softDeletedTask.taskId, 1, 'softDelete');
+  assert.equal(softDeleted._tag, 'OperationSucceeded', JSON.stringify(softDeleted));
+
+  const retainedImpact = await preview();
+  assert.equal(retainedImpact._tag, 'OperationSucceeded', JSON.stringify(retainedImpact));
+  assert.equal(retainedImpact.response.impactCount, 4);
+
+  const hardDeleted = await transition(hardDeletedTask.taskId, 1, 'hardDelete');
+  assert.equal(hardDeleted._tag, 'OperationSucceeded', JSON.stringify(hardDeleted));
+  assert.deepEqual(hardDeleted.response, {
+    hardDeletedTaskId: hardDeletedTask.taskId,
+    retentionState: 'hardDeleted',
+  });
+
+  const finalImpact = await preview();
+  assert.equal(finalImpact._tag, 'OperationSucceeded', JSON.stringify(finalImpact));
+  assert.equal(finalImpact.response.impactCount, 3);
+
+  const deleted = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      confirmed: true,
+      expectedImpactCount: 3,
+      expectedRevision: 1,
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    },
+    registration: deleteTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(deleted._tag, 'OperationSucceeded', JSON.stringify(deleted));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.propertyDefinitions, []);
+  assert.deepEqual(
+    workspace.response.tasks.map(({ checkboxValues, taskId }) => ({ checkboxValues, taskId })),
+    [activeTask.response.task, archivedTask, softDeletedTask].map(({ taskId }) => ({
+      checkboxValues: [],
+      taskId,
+    })),
+  );
+});
+
+test('Task retention rejects unauthorized, stale, and replayed writes without accepted changes', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, task } = await createCollectionTaskAndDefinition(operationContext);
+  const payload = {
+    collectionId,
+    expectedRevision: 1,
+    taskId: task.response.task.taskId,
+    transition: 'archive',
+  };
+
+  const unauthorized = await runAction({
+    options: {
+      authorizationChecker: authorizationForRole('Viewer'),
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload,
+    registration: transitionTaskRetentionActionRegistration,
+    transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+  });
+  assert.equal(unauthorized._tag, 'OperationAuthorizationDenied', JSON.stringify(unauthorized));
+
+  const idempotencyKey = randomUUID();
+  const runArchive = () =>
+    runAction({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload,
+      registration: transitionTaskRetentionActionRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': idempotencyKey }) },
+    });
+  const archived = await runArchive();
+  assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
+  const replayed = await runArchive();
+  assert.equal(replayed._tag, 'OperationIdempotencyReplayUnavailable', JSON.stringify(replayed));
+
+  const stale = await runRegisteredAction({
+    operationContext,
+    payload: { ...payload, transition: 'restore' },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+  assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
+
+  const noOp = await runRegisteredAction({
+    operationContext,
+    payload: { ...payload, expectedRevision: 2 },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+  assert.equal(noOp._tag, 'OperationSucceeded', JSON.stringify(noOp));
+  assert.equal(noOp.response.taskRevision, 2);
+  assert.equal(
+    noOp.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
+    false,
+  );
+
+  const aggregate = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskCollectionDataAccessRegistration,
+    resultCount: () => 1,
+  });
+  assert.equal(aggregate._tag, 'OperationSucceeded', JSON.stringify(aggregate));
+  assert.equal(aggregate.response.task.revision, 2);
+});
+
 test('Checkbox duplication copies configuration and generates the first available Copy name', async () => {
   const operationContext = await createOperationIdentity();
   const { collectionId, definition, task } =
@@ -528,12 +746,32 @@ test('shared lifecycle evidence contains metadata but no property names or Check
       },
       { deletedPropertyDefinitionId: 'definition-2', impactCount: 7 },
     );
+  const retentionEvidence =
+    transitionTaskRetentionActionRegistration.descriptor.auditEvent.evidence(
+      {
+        collectionId: 'collection-1',
+        expectedRevision: 1,
+        taskId: 'task-1',
+        transition: 'archive',
+      },
+      { retentionState: 'archived', taskId: 'task-1', taskRevision: 2 },
+    );
 
   assert.equal(JSON.stringify(configureEvidence).includes('Private label'), false);
   assert.equal(Object.hasOwn(configureEvidence, 'name'), false);
   assert.equal(Object.hasOwn(duplicateEvidence, 'value'), false);
   assert.equal(duplicateEvidence.copiedValues, true);
   assert.equal(deleteEvidence.impactCount, 7);
+  assert.deepEqual(retentionEvidence, {
+    changedComponents: ['retentionState'],
+    collectionId: 'collection-1',
+    operation: 'archive',
+    resultingRetentionState: 'archived',
+    taskId: 'task-1',
+    taskRevision: 2,
+  });
+  assert.equal(Object.hasOwn(retentionEvidence, 'title'), false);
+  assert.equal(Object.hasOwn(retentionEvidence, 'value'), false);
 });
 
 test('Checkbox deletion always confirms the current retained-Task impact and removes shared values', async () => {

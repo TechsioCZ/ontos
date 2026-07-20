@@ -1,0 +1,4 @@
+ALTER TABLE "ticketing"."task_revisions" DROP CONSTRAINT "ticketing_task_revisions_reason_ck";--> statement-breakpoint
+ALTER TABLE "ticketing"."tasks" ADD COLUMN "retention_state" text DEFAULT 'active' NOT NULL;--> statement-breakpoint
+ALTER TABLE "ticketing"."task_revisions" ADD CONSTRAINT "ticketing_task_revisions_reason_ck" CHECK ("ticketing"."task_revisions"."reason" in ('created', 'checkbox_value_changed', 'archived', 'restored', 'soft_deleted'));--> statement-breakpoint
+ALTER TABLE "ticketing"."tasks" ADD CONSTRAINT "ticketing_tasks_retention_state_ck" CHECK ("ticketing"."tasks"."retention_state" in ('active', 'archived', 'soft_deleted'));
