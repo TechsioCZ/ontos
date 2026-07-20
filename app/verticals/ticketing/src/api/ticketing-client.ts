@@ -18,6 +18,7 @@ import type {
   OperationContext,
   TicketingReadiness,
   TaskCollectionAggregate,
+  TaskPropertyDeletionImpact,
   TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
   CreateTaskCollectionActionOutcome,
@@ -32,6 +33,15 @@ import type {
   UpdateCheckboxPropertyValueActionOutcome,
   UpdateCheckboxPropertyValueActionPayload,
   FilterTaskCheckboxValuesResponse,
+  ConfigureTaskPropertyDefinitionActionFailure,
+  ConfigureTaskPropertyDefinitionActionOutcome,
+  ConfigureTaskPropertyDefinitionActionPayload,
+  DuplicateTaskPropertyDefinitionActionFailure,
+  DuplicateTaskPropertyDefinitionActionOutcome,
+  DuplicateTaskPropertyDefinitionActionPayload,
+  DeleteTaskPropertyDefinitionActionFailure,
+  DeleteTaskPropertyDefinitionActionOutcome,
+  DeleteTaskPropertyDefinitionActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -46,6 +56,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | DeleteTaskPropertyDefinitionActionFailure
+  | DuplicateTaskPropertyDefinitionActionFailure
+  | ConfigureTaskPropertyDefinitionActionFailure
   | UpdateCheckboxPropertyValueActionFailure
   | CreateCheckboxPropertyDefinitionActionFailure
   | CreateTaskActionFailure
@@ -156,6 +169,24 @@ export const filterTaskCheckboxValues = (
     ),
   );
 
+export const getTaskPropertyDeletionImpact = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<TaskPropertyDeletionImpact> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.getTaskPropertyDeletionImpact,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getTaskPropertyDeletionImpact({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
 export const runCreateTaskCollectionAction = (
   payload: CreateTaskCollectionActionPayload,
   options: TicketingClientOptions & { idempotencyKey?: string } = {},
@@ -256,6 +287,87 @@ export const runUpdateCheckboxPropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updateCheckboxPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureTaskPropertyDefinitionAction = (
+  payload: ConfigureTaskPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureTaskPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureTaskPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureTaskPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDuplicateTaskPropertyDefinitionAction = (
+  payload: DuplicateTaskPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<DuplicateTaskPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.duplicateTaskPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.duplicateTaskPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDeleteTaskPropertyDefinitionAction = (
+  payload: DeleteTaskPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<DeleteTaskPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.deleteTaskPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.deleteTaskPropertyDefinitionAction({
         headers: headers ?? {},
         payload,
       }),

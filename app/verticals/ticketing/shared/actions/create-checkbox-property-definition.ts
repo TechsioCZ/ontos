@@ -7,6 +7,7 @@ import {
 
 export const checkboxPropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literal('checkbox'),
+  hidden: Schema.Boolean,
   mandatory: Schema.Boolean,
   name: Schema.String,
   propertyDefinitionId: Schema.String,

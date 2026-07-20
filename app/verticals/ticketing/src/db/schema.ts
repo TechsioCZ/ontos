@@ -60,6 +60,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
   {
     createdAt: createdAt(),
     datatype: text('datatype').notNull(),
+    hidden: boolean('hidden').default(false).notNull(),
     mandatory: boolean('mandatory').default(false).notNull(),
     name: text('name').notNull(),
     propertyDefinitionId: uuid('property_definition_id').defaultRandom().primaryKey(),

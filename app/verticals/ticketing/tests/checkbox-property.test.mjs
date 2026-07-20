@@ -200,6 +200,7 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
   assert.deepEqual(definition.response.definition, {
     datatype: 'checkbox',
+    hidden: false,
     mandatory: false,
     name: 'Approved',
     propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -223,6 +224,7 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
   assert.deepEqual(workspace.response.propertyDefinitions, [
     {
       datatype: 'checkbox',
+      hidden: false,
       mandatory: false,
       name: 'Approved',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -432,6 +434,7 @@ test('Checkbox Action descriptors expose privacy-safe audit and domain metadata'
   const createResponse = {
     definition: {
       datatype: 'checkbox',
+      hidden: false,
       mandatory: false,
       name: 'Approved',
       propertyDefinitionId: 'definition-1',

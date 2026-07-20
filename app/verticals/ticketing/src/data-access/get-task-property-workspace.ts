@@ -13,6 +13,7 @@ import type {
 
 interface DefinitionRow {
   readonly datatype: 'checkbox';
+  readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
   readonly propertyDefinitionId: string;
@@ -67,6 +68,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const definitionResult = await db.execute(sql`
       select
         definition.datatype,
+        definition.hidden,
         definition.mandatory,
         definition.name,
         definition.property_definition_id as "propertyDefinitionId",

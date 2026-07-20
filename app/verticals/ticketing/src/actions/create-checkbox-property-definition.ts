@@ -20,6 +20,7 @@ import { lockTaskCollectionForPropertyInitialization } from '../task-collection-
 
 interface CheckboxPropertyDefinitionRow {
   readonly datatype: 'checkbox';
+  readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
   readonly propertyDefinitionId: string;
@@ -101,7 +102,7 @@ const createCheckboxPropertyDefinitionActionHandler: ActionHandler<
         ${services.context.tenantId}
       from selected_schema
       on conflict do nothing
-      returning datatype, mandatory, name, property_definition_id, revision
+      returning datatype, hidden, mandatory, name, property_definition_id, revision
     ),
     initialized_values as (
       insert into ticketing.task_checkbox_values (
@@ -123,6 +124,7 @@ const createCheckboxPropertyDefinitionActionHandler: ActionHandler<
     )
     select
       datatype,
+      hidden,
       mandatory,
       name,
       property_definition_id as "propertyDefinitionId",

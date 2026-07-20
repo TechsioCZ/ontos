@@ -1,24 +1,19 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export declare const checkboxPropertyDefinitionSchema: Schema.Struct<{
-  readonly datatype: Schema.Literal<'checkbox'>;
+export declare const configureTaskPropertyDefinitionActionKey: 'ticketing.configureTaskPropertyDefinition';
+export declare const configureTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+  readonly collectionId: Schema.String;
+  readonly expectedRevision: Schema.Finite;
   readonly hidden: Schema.Boolean;
   readonly mandatory: Schema.Boolean;
   readonly name: Schema.String;
   readonly propertyDefinitionId: Schema.String;
-  readonly revision: Schema.Finite;
 }>;
-export declare const createCheckboxPropertyDefinitionActionKey: 'ticketing.createCheckboxPropertyDefinition';
-export declare const createCheckboxPropertyDefinitionActionPayloadSchema: Schema.Struct<{
-  readonly collectionId: Schema.String;
-  readonly mandatory: Schema.Boolean;
-  readonly name: Schema.String;
-}>;
-export declare const createCheckboxPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const configureTaskPropertyDefinitionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionResponseSchema: Schema.Struct<{
+export declare const configureTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
   readonly definition: Schema.Struct<{
     readonly datatype: Schema.Literal<'checkbox'>;
     readonly hidden: Schema.Boolean;
@@ -28,7 +23,7 @@ export declare const createCheckboxPropertyDefinitionActionResponseSchema: Schem
     readonly revision: Schema.Finite;
   }>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const configureTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
@@ -42,7 +37,7 @@ export declare const createCheckboxPropertyDefinitionActionOutcomeSchema: Schema
     }>;
   }>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionFailureSchemas: readonly [
+export declare const configureTaskPropertyDefinitionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -97,7 +92,7 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchemas: reado
     >;
   }>,
 ];
-export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const configureTaskPropertyDefinitionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -154,12 +149,12 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema
     }>,
   ]
 >;
-export type CreateCheckboxPropertyDefinitionActionPayload =
-  typeof createCheckboxPropertyDefinitionActionPayloadSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionResponse =
-  typeof createCheckboxPropertyDefinitionActionResponseSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionOutcome =
-  typeof createCheckboxPropertyDefinitionActionOutcomeSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionFailure =
-  typeof createCheckboxPropertyDefinitionActionFailureSchema.Type;
-export declare const createCheckboxPropertyDefinitionActionTitle: 'Create Checkbox Property Definition';
+export type ConfigureTaskPropertyDefinitionActionPayload =
+  typeof configureTaskPropertyDefinitionActionPayloadSchema.Type;
+export type ConfigureTaskPropertyDefinitionActionResponse =
+  typeof configureTaskPropertyDefinitionActionResponseSchema.Type;
+export type ConfigureTaskPropertyDefinitionActionOutcome =
+  typeof configureTaskPropertyDefinitionActionOutcomeSchema.Type;
+export type ConfigureTaskPropertyDefinitionActionFailure =
+  typeof configureTaskPropertyDefinitionActionFailureSchema.Type;
+export declare const configureTaskPropertyDefinitionActionTitle: 'Configure Task Property Definition';

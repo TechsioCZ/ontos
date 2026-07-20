@@ -1,24 +1,17 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export declare const checkboxPropertyDefinitionSchema: Schema.Struct<{
-  readonly datatype: Schema.Literal<'checkbox'>;
-  readonly hidden: Schema.Boolean;
-  readonly mandatory: Schema.Boolean;
-  readonly name: Schema.String;
-  readonly propertyDefinitionId: Schema.String;
-  readonly revision: Schema.Finite;
-}>;
-export declare const createCheckboxPropertyDefinitionActionKey: 'ticketing.createCheckboxPropertyDefinition';
-export declare const createCheckboxPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+export declare const duplicateTaskPropertyDefinitionActionKey: 'ticketing.duplicateTaskPropertyDefinition';
+export declare const duplicateTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly mandatory: Schema.Boolean;
-  readonly name: Schema.String;
+  readonly copyValues: Schema.Boolean;
+  readonly expectedRevision: Schema.Finite;
+  readonly propertyDefinitionId: Schema.String;
 }>;
-export declare const createCheckboxPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const duplicateTaskPropertyDefinitionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionResponseSchema: Schema.Struct<{
+export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
   readonly definition: Schema.Struct<{
     readonly datatype: Schema.Literal<'checkbox'>;
     readonly hidden: Schema.Boolean;
@@ -28,7 +21,7 @@ export declare const createCheckboxPropertyDefinitionActionResponseSchema: Schem
     readonly revision: Schema.Finite;
   }>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
@@ -42,7 +35,7 @@ export declare const createCheckboxPropertyDefinitionActionOutcomeSchema: Schema
     }>;
   }>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionFailureSchemas: readonly [
+export declare const duplicateTaskPropertyDefinitionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -97,7 +90,7 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchemas: reado
     >;
   }>,
 ];
-export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const duplicateTaskPropertyDefinitionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -154,12 +147,12 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema
     }>,
   ]
 >;
-export type CreateCheckboxPropertyDefinitionActionPayload =
-  typeof createCheckboxPropertyDefinitionActionPayloadSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionResponse =
-  typeof createCheckboxPropertyDefinitionActionResponseSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionOutcome =
-  typeof createCheckboxPropertyDefinitionActionOutcomeSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionFailure =
-  typeof createCheckboxPropertyDefinitionActionFailureSchema.Type;
-export declare const createCheckboxPropertyDefinitionActionTitle: 'Create Checkbox Property Definition';
+export type DuplicateTaskPropertyDefinitionActionPayload =
+  typeof duplicateTaskPropertyDefinitionActionPayloadSchema.Type;
+export type DuplicateTaskPropertyDefinitionActionResponse =
+  typeof duplicateTaskPropertyDefinitionActionResponseSchema.Type;
+export type DuplicateTaskPropertyDefinitionActionOutcome =
+  typeof duplicateTaskPropertyDefinitionActionOutcomeSchema.Type;
+export type DuplicateTaskPropertyDefinitionActionFailure =
+  typeof duplicateTaskPropertyDefinitionActionFailureSchema.Type;
+export declare const duplicateTaskPropertyDefinitionActionTitle: 'Duplicate Task Property Definition';
