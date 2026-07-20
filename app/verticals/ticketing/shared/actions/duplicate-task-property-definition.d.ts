@@ -3,7 +3,7 @@ import type { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const duplicateTaskPropertyDefinitionActionKey: 'ticketing.duplicateTaskPropertyDefinition';
 export declare const duplicateTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly copyValues: Schema.Boolean;
+  readonly copyValues: Schema.optional<Schema.Boolean>;
   readonly expectedRevision: Schema.Finite;
   readonly propertyDefinitionId: Schema.String;
 }>;

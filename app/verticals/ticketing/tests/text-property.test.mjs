@@ -292,8 +292,8 @@ test('whitespace is Empty while an equation or opaque Core Reference alone is no
 });
 
 test('Text search uses readable content with locale case folding and diacritic sensitivity', async () => {
-  const { queryTaskTextValuesDataAccessRegistration } =
-    await import('../src/data-access/query-task-text-values.ts');
+  const { queryTaskPropertyValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-property-values.ts');
   const operationContext = await createOperationIdentity();
   const {
     collectionId,
@@ -365,10 +365,10 @@ test('Text search uses readable content with locale case folding and diacritic s
     },
     payload: {
       collectionId,
-      operation: { query: 'čaj', type: 'search' },
       propertyDefinitionId,
+      query: { datatype: 'text', operation: { query: 'čaj', type: 'search' } },
     },
-    registration: queryTaskTextValuesDataAccessRegistration,
+    registration: queryTaskPropertyValuesDataAccessRegistration,
     resultCount: (response) => response.taskIds.length,
     transport: { headers: new Headers() },
   });
@@ -381,8 +381,8 @@ test('Text search uses readable content with locale case folding and diacritic s
 });
 
 test('Text filters implement positive, negative, equality, boundary, and Empty membership', async () => {
-  const { queryTaskTextValuesDataAccessRegistration } =
-    await import('../src/data-access/query-task-text-values.ts');
+  const { queryTaskPropertyValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-property-values.ts');
   const operationContext = await createOperationIdentity();
   const {
     collectionId,
@@ -434,14 +434,17 @@ test('Text filters implement positive, negative, equality, boundary, and Empty m
       },
       payload: {
         collectionId,
-        operation: {
-          operator,
-          type: 'filter',
-          ...(value === undefined ? {} : { value }),
-        },
         propertyDefinitionId,
+        query: {
+          datatype: 'text',
+          operation: {
+            operator,
+            type: 'filter',
+            ...(value === undefined ? {} : { value }),
+          },
+        },
       },
-      registration: queryTaskTextValuesDataAccessRegistration,
+      registration: queryTaskPropertyValuesDataAccessRegistration,
       resultCount: (response) => response.taskIds.length,
       transport: { headers: new Headers() },
     });
@@ -462,8 +465,8 @@ test('Text filters implement positive, negative, equality, boundary, and Empty m
 });
 
 test('Text sorting and grouping use locale equality, stable identities, and Empty-last ordering', async () => {
-  const { queryTaskTextValuesDataAccessRegistration } =
-    await import('../src/data-access/query-task-text-values.ts');
+  const { queryTaskPropertyValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-property-values.ts');
   const operationContext = await createOperationIdentity();
   const {
     collectionId,
@@ -520,8 +523,12 @@ test('Text sorting and grouping use locale equality, stable identities, and Empt
         authorizationChecker: allowedAuthorization,
         operationContextResolver: operationContextResolver(operationContext),
       },
-      payload: { collectionId, operation, propertyDefinitionId },
-      registration: queryTaskTextValuesDataAccessRegistration,
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'text', operation },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
       resultCount: (response) => response.taskIds.length,
       transport: { headers: new Headers() },
     });
@@ -545,8 +552,8 @@ test('Text sorting and grouping use locale equality, stable identities, and Empt
 });
 
 test('Text queries retain the Task Collection locale independently of later tenant defaults', async () => {
-  const { queryTaskTextValuesDataAccessRegistration } =
-    await import('../src/data-access/query-task-text-values.ts');
+  const { queryTaskPropertyValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-property-values.ts');
   const operationContext = await createOperationIdentity();
   await sqlClient`
     update core.tenants
@@ -584,15 +591,69 @@ test('Text queries retain the Task Collection locale independently of later tena
     },
     payload: {
       collectionId,
-      operation: { query: 'ı', type: 'search' },
       propertyDefinitionId,
+      query: { datatype: 'text', operation: { query: 'ı', type: 'search' } },
     },
-    registration: queryTaskTextValuesDataAccessRegistration,
+    registration: queryTaskPropertyValuesDataAccessRegistration,
     resultCount: (response) => response.taskIds.length,
     transport: { headers: new Headers() },
   });
   assert.equal(searched._tag, 'OperationSucceeded', JSON.stringify(searched));
   assert.deepEqual(searched.response.taskIds, [task.response.task.taskId]);
+});
+
+test('Text matching delegates locale-specific case equivalence to collection collation', async () => {
+  const { queryTaskPropertyValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-property-values.ts');
+  const operationContext = await createOperationIdentity();
+  await sqlClient`
+    update core.tenants
+    set default_locale = 'el'
+    where tenant_id = ${operationContext.tenantId}
+  `;
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndTextDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const updated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      document: {
+        content: [{ marks: [], text: 'ΟΣ', type: 'text' }],
+        type: 'textDocument',
+      },
+      expectedRevision: 1,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: updateTextPropertyValueActionRegistration,
+  });
+  assert.equal(updated._tag, 'OperationSucceeded', JSON.stringify(updated));
+
+  const query = async (operation) => {
+    const result = await runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'text', operation },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: (response) => response.taskIds.length,
+      transport: { headers: new Headers() },
+    });
+    assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));
+    return result.response.taskIds;
+  };
+  const expected = [task.response.task.taskId];
+  assert.deepEqual(await query({ query: 'οσ', type: 'search' }), expected);
+  assert.deepEqual(await query({ operator: 'contains', type: 'filter', value: 'οσ' }), expected);
+  assert.deepEqual(await query({ operator: 'equals', type: 'filter', value: 'οσ' }), expected);
+  assert.deepEqual(await query({ operator: 'startsWith', type: 'filter', value: 'οσ' }), expected);
+  assert.deepEqual(await query({ operator: 'endsWith', type: 'filter', value: 'οσ' }), expected);
 });
 
 test('Text duplication copies only Mandatory configuration and creates independent Empty values', async () => {
@@ -634,7 +695,6 @@ test('Text duplication copies only Mandatory configuration and creates independe
     operationContext,
     payload: {
       collectionId,
-      copyValues: true,
       expectedRevision: configured.response.definition.revision,
       propertyDefinitionId: sourcePropertyDefinitionId,
     },

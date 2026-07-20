@@ -70,6 +70,22 @@ const marksForElement = (element: HTMLElement, inherited: readonly TextMark[]): 
       break;
     }
   }
+  if (
+    ['bold', 'bolder'].includes(element.style.fontWeight) ||
+    Number(element.style.fontWeight) >= 600
+  ) {
+    marks = appendMark(marks, { type: 'bold' });
+  }
+  if (['italic', 'oblique'].includes(element.style.fontStyle)) {
+    marks = appendMark(marks, { type: 'italic' });
+  }
+  const textDecoration = `${element.style.textDecoration} ${element.style.textDecorationLine}`;
+  if (textDecoration.includes('underline')) {
+    marks = appendMark(marks, { type: 'underline' });
+  }
+  if (textDecoration.includes('line-through')) {
+    marks = appendMark(marks, { type: 'strikethrough' });
+  }
   if (element.style.color.length > 0) {
     marks = appendMark(marks, { color: element.style.color, type: 'foregroundColor' });
   }

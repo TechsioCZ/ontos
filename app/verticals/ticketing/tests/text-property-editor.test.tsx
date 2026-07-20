@@ -12,8 +12,12 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.text.backgroundColor': 'Background color',
         'ticketing.text.bold': 'Bold',
         'ticketing.text.code': 'Inline code',
+        'ticketing.text.equation': 'Equation',
         'ticketing.text.foregroundColor': 'Text color',
+        'ticketing.text.insertEquation': 'Insert equation',
         'ticketing.text.italic': 'Italic',
+        'ticketing.text.link': 'Link URL',
+        'ticketing.text.linkApply': 'Apply link',
         'ticketing.text.save': 'Save Text',
         'ticketing.text.saveFailedDescription': 'The Text value could not be saved.',
         'ticketing.text.saveFailedTitle': 'Text save failed',
@@ -65,8 +69,8 @@ test('unsupported pasted blocks flatten while supported inline formatting is pre
     clipboardData: {
       getData: (type: string) =>
         type === 'text/html'
-          ? '<h1>Heading</h1><section><strong>Bold</strong> and <em>italic</em></section><pre><code>code</code></pre>'
-          : 'Heading\nBold and italic\ncode',
+          ? '<h1>Heading</h1><section><strong>Bold</strong> and <em>italic</em> <span style="font-weight: 700; font-style: italic; text-decoration: underline line-through">styled</span></section><pre><code>code</code></pre>'
+          : 'Heading\nBold and italic styled\ncode',
     },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Save Text' }));
@@ -82,6 +86,17 @@ test('unsupported pasted blocks flatten while supported inline formatting is pre
           { marks: [{ type: 'bold' }], text: 'Bold', type: 'text' },
           { marks: [], text: ' and ', type: 'text' },
           { marks: [{ type: 'italic' }], text: 'italic', type: 'text' },
+          { marks: [], text: ' ', type: 'text' },
+          {
+            marks: [
+              { type: 'bold' },
+              { type: 'italic' },
+              { type: 'underline' },
+              { type: 'strikethrough' },
+            ],
+            text: 'styled',
+            type: 'text',
+          },
           { type: 'lineBreak' },
           { marks: [{ type: 'code' }], text: 'code', type: 'text' },
         ],
@@ -93,6 +108,109 @@ test('unsupported pasted blocks flatten while supported inline formatting is pre
     },
     expect.any(String),
   );
+});
+
+test('the visible label names the rich editor and equations have an inline insertion affordance', async () => {
+  const save = rs.fn(() =>
+    Promise.resolve({
+      taskRevision: 2,
+      value: {
+        document: null,
+        propertyDefinitionId: 'property-1',
+        readableText: 'x² + y²',
+        revision: 2,
+      },
+    }),
+  );
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={null}
+      label={propertyLabel}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  const editor = screen.getByRole('textbox', { name: propertyLabel });
+  const visibleLabel = screen.getByText(propertyLabel);
+  expect(editor.getAttribute('aria-labelledby')).toBe(visibleLabel.id);
+  expect(screen.getByRole('textbox', { name: 'Link URL' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Apply link' })).toBeDefined();
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Equation' }), {
+    target: { value: 'x² + y²' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Insert equation' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save Text' }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0]?.[0].document).toEqual({
+    content: [{ expression: 'x² + y²', type: 'equation' }],
+    type: 'textDocument',
+  });
+});
+
+test('inline code and hyperlink controls preserve selected text as inline marks', async () => {
+  const save = rs.fn(() =>
+    Promise.resolve({
+      taskRevision: 2,
+      value: {
+        document: null,
+        propertyDefinitionId: 'property-1',
+        readableText: 'Docs',
+        revision: 2,
+      },
+    }),
+  );
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={{
+        content: [{ marks: [], text: 'Docs', type: 'text' }],
+        type: 'textDocument',
+      }}
+      label={propertyLabel}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  const editor = screen.getByRole('textbox', { name: propertyLabel });
+  const selectEditorText = () => {
+    const textNode = globalThis.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT).nextNode();
+    expect(textNode).not.toBeNull();
+    const range = globalThis.document.createRange();
+    range.selectNodeContents(textNode as Node);
+    const selection = globalThis.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
+
+  selectEditorText();
+  fireEvent.click(screen.getByRole('button', { name: 'Inline code' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Link URL' }), {
+    target: { value: 'https://example.com/docs' },
+  });
+  selectEditorText();
+  fireEvent.click(screen.getByRole('button', { name: 'Apply link' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save Text' }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0]?.[0].document).toEqual({
+    content: [
+      {
+        marks: [{ type: 'code' }, { href: 'https://example.com/docs', type: 'link' }],
+        text: 'Docs',
+        type: 'text',
+      },
+    ],
+    type: 'textDocument',
+  });
 });
 
 test('a stale explicit save keeps the rich-text draft and reuses its idempotency key', async () => {

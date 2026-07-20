@@ -79,6 +79,11 @@ export type {
   TextPropertyDefinition,
 } from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
+export type {
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  TaskPropertyQuery,
+} from './task-property-query';
 export {
   coreReferenceSchema,
   nullableTextDocumentSchema,
@@ -94,11 +99,7 @@ export type {
   TextMark,
   TextPropertyValue,
 } from './text-property';
-export type {
-  QueryTaskTextValuesPayload,
-  QueryTaskTextValuesResponse,
-  TextQueryOperation,
-} from './text-query';
+export type { TextQueryOperation } from './text-query';
 export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
@@ -730,7 +731,7 @@ export declare const ticketingApi: HttpApi.HttpApi<
         HttpApiEndpoint.Json<
           Schema.Struct<{
             readonly collectionId: Schema.String;
-            readonly copyValues: Schema.Boolean;
+            readonly copyValues: Schema.optional<Schema.Boolean>;
             readonly expectedRevision: Schema.Finite;
             readonly propertyDefinitionId: Schema.String;
           }>
@@ -1329,48 +1330,55 @@ export declare const ticketingApi: HttpApi.HttpApi<
         never
       >
     | HttpApiEndpoint.HttpApiEndpoint<
-        'queryTaskTextValues',
+        'queryTaskPropertyValues',
         'POST',
-        '/ticketing/task-properties/text-query',
+        '/ticketing/task-properties/query',
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.Json<
           Schema.Struct<{
             readonly collectionId: Schema.String;
-            readonly operation: Schema.Union<
+            readonly propertyDefinitionId: Schema.String;
+            readonly query: Schema.Union<
               readonly [
                 Schema.Struct<{
-                  readonly query: Schema.String;
-                  readonly type: Schema.Literal<'search'>;
-                }>,
-                Schema.Struct<{
-                  readonly operator: Schema.Literals<
+                  readonly datatype: Schema.Literal<'text'>;
+                  readonly operation: Schema.Union<
                     readonly [
-                      'contains',
-                      'doesNotContain',
-                      'equals',
-                      'doesNotEqual',
-                      'startsWith',
-                      'endsWith',
+                      Schema.Struct<{
+                        readonly query: Schema.String;
+                        readonly type: Schema.Literal<'search'>;
+                      }>,
+                      Schema.Struct<{
+                        readonly operator: Schema.Literals<
+                          readonly [
+                            'contains',
+                            'doesNotContain',
+                            'equals',
+                            'doesNotEqual',
+                            'startsWith',
+                            'endsWith',
+                          ]
+                        >;
+                        readonly type: Schema.Literal<'filter'>;
+                        readonly value: Schema.String;
+                      }>,
+                      Schema.Struct<{
+                        readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+                        readonly type: Schema.Literal<'filter'>;
+                      }>,
+                      Schema.Struct<{
+                        readonly direction: Schema.Literals<readonly ['ascending', 'descending']>;
+                        readonly type: Schema.Literal<'sort'>;
+                      }>,
+                      Schema.Struct<{
+                        readonly type: Schema.Literal<'group'>;
+                      }>,
                     ]
                   >;
-                  readonly type: Schema.Literal<'filter'>;
-                  readonly value: Schema.String;
-                }>,
-                Schema.Struct<{
-                  readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
-                  readonly type: Schema.Literal<'filter'>;
-                }>,
-                Schema.Struct<{
-                  readonly direction: Schema.Literals<readonly ['ascending', 'descending']>;
-                  readonly type: Schema.Literal<'sort'>;
-                }>,
-                Schema.Struct<{
-                  readonly type: Schema.Literal<'group'>;
                 }>,
               ]
             >;
-            readonly propertyDefinitionId: Schema.String;
           }>
         >,
         HttpApiEndpoint.StringTree<
@@ -1962,7 +1970,7 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
-  queryTaskTextValues: {
+  queryTaskPropertyValues: {
     method: string;
     operationId: string;
     routePath: string;

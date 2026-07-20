@@ -40,24 +40,4 @@ export const textQueryOperationSchema = Schema.Union([
   textGroupOperationSchema,
 ]);
 
-export const queryTaskTextValuesPayloadSchema = Schema.Struct({
-  collectionId: Schema.String,
-  operation: textQueryOperationSchema,
-  propertyDefinitionId: Schema.String,
-});
-
-export const queryTaskTextValuesResponseSchema = Schema.Struct({
-  groups: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        heading: Schema.Union([Schema.Null, Schema.String]),
-        taskIds: Schema.Array(Schema.String),
-      }),
-    ),
-  ),
-  taskIds: Schema.Array(Schema.String),
-});
-
 export type TextQueryOperation = typeof textQueryOperationSchema.Type;
-export type QueryTaskTextValuesPayload = typeof queryTaskTextValuesPayloadSchema.Type;
-export type QueryTaskTextValuesResponse = typeof queryTaskTextValuesResponseSchema.Type;

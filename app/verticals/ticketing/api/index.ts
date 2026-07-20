@@ -21,7 +21,7 @@ import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
-import { queryTaskTextValuesDataAccessRegistration } from '../src/data-access/query-task-text-values.ts';
+import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -168,20 +168,20 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
-    .handle('queryTaskTextValues', ({ payload, request }) =>
+    .handle('queryTaskPropertyValues', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
           headers: new Headers(request.headers),
           payload,
-          registration: queryTaskTextValuesDataAccessRegistration,
+          registration: queryTaskPropertyValuesDataAccessRegistration,
           resultCount: (response) => response.taskIds.length,
         }),
       ).pipe(
         Effect.flatMap((outcome) =>
           outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
         ),
-        Effect.withSpan('ultramodern.api.ticketing.queryTaskTextValues', {
-          attributes: operationAttributes(ticketingOperationContexts.queryTaskTextValues),
+        Effect.withSpan('ultramodern.api.ticketing.queryTaskPropertyValues', {
+          attributes: operationAttributes(ticketingOperationContexts.queryTaskPropertyValues),
           kind: 'server',
         }),
       ),

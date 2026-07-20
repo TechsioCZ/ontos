@@ -11,7 +11,7 @@ export const duplicateTaskPropertyDefinitionActionKey =
 
 export const duplicateTaskPropertyDefinitionActionPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
-  copyValues: Schema.Boolean,
+  copyValues: Schema.optional(Schema.Boolean),
   expectedRevision: Schema.Finite,
   propertyDefinitionId: Schema.String,
 });

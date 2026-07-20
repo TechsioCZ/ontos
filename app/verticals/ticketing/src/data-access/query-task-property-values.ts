@@ -3,13 +3,14 @@ import { rowsFromResult } from '@app/core-runtime';
 import type { DataAccessRegistration } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import {
-  queryTaskTextValuesPayloadSchema,
-  queryTaskTextValuesResponseSchema,
-} from '../../shared/text-query.ts';
+  queryTaskPropertyValuesPayloadSchema,
+  queryTaskPropertyValuesResponseSchema,
+} from '../../shared/task-property-query.ts';
 import type {
-  QueryTaskTextValuesPayload,
-  QueryTaskTextValuesResponse,
-} from '../../shared/text-query.ts';
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  TaskPropertyQuery,
+} from '../../shared/task-property-query.ts';
 
 interface TextQueryRow {
   readonly locale: string;
@@ -17,13 +18,48 @@ interface TextQueryRow {
   readonly taskId: string;
 }
 
-const comparableText = (value: string, locale: string): string =>
-  value.normalize('NFC').toLocaleLowerCase(locale);
+interface TextCollation {
+  readonly endsWith: (value: string, search: string) => boolean;
+  readonly equals: (left: string, right: string) => boolean;
+  readonly includes: (value: string, search: string) => boolean;
+  readonly startsWith: (value: string, search: string) => boolean;
+}
+
+const normalizeText = (value: string) => [...value.normalize('NFC')];
+
+const textCollation = (locale: string): TextCollation => {
+  const collator = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'search' });
+  const equals = (left: string, right: string) => collator.compare(left, right) === 0;
+  const findBoundaryMatch = (value: string, search: string, boundary: 'any' | 'end' | 'start') => {
+    const valueCharacters = normalizeText(value);
+    const searchCharacters = normalizeText(search);
+    if (searchCharacters.length === 0) {
+      return true;
+    }
+    const firstStart = boundary === 'end' ? valueCharacters.length - searchCharacters.length : 0;
+    const lastStart = boundary === 'start' ? 0 : valueCharacters.length - searchCharacters.length;
+    for (let start = Math.max(0, firstStart); start <= lastStart; start += 1) {
+      if (equals(valueCharacters.slice(start, start + searchCharacters.length).join(''), search)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return {
+    endsWith: (value, search) => findBoundaryMatch(value, search, 'end'),
+    equals,
+    includes: (value, search) => findBoundaryMatch(value, search, 'any'),
+    startsWith: (value, search) => findBoundaryMatch(value, search, 'start'),
+  };
+};
 
 const matchesTextFilter = (
   readableText: string | null,
-  operation: Extract<QueryTaskTextValuesPayload['operation'], { readonly type: 'filter' }>,
-  locale: string,
+  operation: Extract<
+    Extract<TaskPropertyQuery, { readonly datatype: 'text' }>['operation'],
+    { readonly type: 'filter' }
+  >,
+  collation: TextCollation,
 ): boolean => {
   if (operation.operator === 'isEmpty') {
     return readableText === null;
@@ -38,26 +74,24 @@ const matchesTextFilter = (
     return false;
   }
 
-  const comparableValue = comparableText(operation.value, locale);
-  const comparableReadableText = comparableText(readableText, locale);
   switch (operation.operator) {
     case 'contains': {
-      return comparableReadableText.includes(comparableValue);
+      return collation.includes(readableText, operation.value);
     }
     case 'doesNotContain': {
-      return !comparableReadableText.includes(comparableValue);
+      return !collation.includes(readableText, operation.value);
     }
     case 'equals': {
-      return comparableReadableText === comparableValue;
+      return collation.equals(readableText, operation.value);
     }
     case 'doesNotEqual': {
-      return comparableReadableText !== comparableValue;
+      return !collation.equals(readableText, operation.value);
     }
     case 'startsWith': {
-      return comparableReadableText.startsWith(comparableValue);
+      return collation.startsWith(readableText, operation.value);
     }
     case 'endsWith': {
-      return comparableReadableText.endsWith(comparableValue);
+      return collation.endsWith(readableText, operation.value);
     }
     default: {
       return false;
@@ -117,9 +151,9 @@ const groupTextRows = (rows: readonly TextQueryRow[], locale: string) => {
   });
 };
 
-export const queryTaskTextValuesDataAccessRegistration: DataAccessRegistration<
-  QueryTaskTextValuesPayload,
-  QueryTaskTextValuesResponse
+export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistration<
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse
 > = {
   descriptor: {
     accessKind: 'read',
@@ -130,16 +164,16 @@ export const queryTaskTextValuesDataAccessRegistration: DataAccessRegistration<
       resourceObjectId: (input) => input.collectionId,
       resourceObjectType: 'task_collection',
     },
-    dataAccessKey: 'ticketing.taskTextValues.query',
+    dataAccessKey: 'ticketing.taskPropertyValues.query',
     evidenceCaptureMode: 'metadata_only',
-    evidencePolicyKey: 'ticketing.taskTextValues.query.metadataOnly',
+    evidencePolicyKey: 'ticketing.taskPropertyValues.query.metadataOnly',
     gatewayAudience: 'ticketing',
     moduleStateAccess: 'read',
     servingModuleKey: 'ticketing',
     targetModuleKey: 'ticketing',
     targetResourceType: 'task_collection',
-    transportRequestSchema: queryTaskTextValuesPayloadSchema,
-    transportResponseSchema: queryTaskTextValuesResponseSchema,
+    transportRequestSchema: queryTaskPropertyValuesPayloadSchema,
+    transportResponseSchema: queryTaskPropertyValuesResponseSchema,
   },
   handler: async (input, { context, db }) => {
     const result = await db.execute(sql`
@@ -154,7 +188,7 @@ export const queryTaskTextValuesDataAccessRegistration: DataAccessRegistration<
       inner join ticketing.task_property_definitions as definition
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
-        and definition.datatype = 'text'
+        and definition.datatype = ${input.query.datatype}
       inner join ticketing.task_collections as collection
         on collection.collection_id = task.collection_id
         and collection.tenant_id = task.tenant_id
@@ -164,26 +198,24 @@ export const queryTaskTextValuesDataAccessRegistration: DataAccessRegistration<
     `);
     const rows = rowsFromResult<TextQueryRow>(result);
     const locale = rows.at(0)?.locale ?? 'en-GB';
-    if (input.operation.type === 'sort') {
+    const collation = textCollation(locale);
+    const { operation } = input.query;
+    if (operation.type === 'sort') {
       return {
-        taskIds: sortTextRows(rows, locale, input.operation.direction).map(({ taskId }) => taskId),
+        taskIds: sortTextRows(rows, locale, operation.direction).map(({ taskId }) => taskId),
       };
     }
-    if (input.operation.type === 'group') {
+    if (operation.type === 'group') {
       return {
         groups: groupTextRows(rows, locale),
         taskIds: rows.map(({ taskId }) => taskId).toSorted(),
       };
     }
     const matches =
-      input.operation.type === 'search'
+      operation.type === 'search'
         ? ({ readableText }: TextQueryRow) =>
-            readableText !== null &&
-            comparableText(readableText, locale).includes(
-              comparableText(input.operation.query, locale),
-            )
-        : ({ readableText }: TextQueryRow) =>
-            matchesTextFilter(readableText, input.operation, locale);
+            readableText !== null && collation.includes(readableText, operation.query)
+        : ({ readableText }: TextQueryRow) => matchesTextFilter(readableText, operation, collation);
 
     return {
       taskIds: rows

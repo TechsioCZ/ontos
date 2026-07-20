@@ -1,5 +1,5 @@
 export {
-  queryTaskTextValues,
+  queryTaskPropertyValues,
   runUpdateTextPropertyValueAction,
   runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,

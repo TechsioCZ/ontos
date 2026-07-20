@@ -121,11 +121,14 @@ export const TextPropertyEditor = ({
 }: TextPropertyEditorProps) => {
   const { t } = useModernI18n();
   const editorId = `text-property-${propertyDefinitionId}`;
+  const editorLabelId = `${editorId}-label`;
   const editorRef = useRef<HTMLDivElement>(null);
   const [draftDocument, setDraftDocument] = useState<TextDocument | null>(document);
   const [currentRevision, setCurrentRevision] = useState(revision);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [isSaving, setIsSaving] = useState(false);
+  const [linkHref, setLinkHref] = useState('');
+  const [equationExpression, setEquationExpression] = useState('');
 
   const readEditorDocument = () => {
     const editor = editorRef.current;
@@ -140,6 +143,67 @@ export const TextPropertyEditor = ({
     editorRef.current?.focus();
     globalThis.document.execCommand(command, false, value);
     readEditorDocument();
+  };
+
+  const wrapSelection = (element: HTMLElement) => {
+    const editor = editorRef.current;
+    const selection = globalThis.getSelection();
+    if (
+      editor === null ||
+      selection === null ||
+      selection.rangeCount === 0 ||
+      selection.isCollapsed
+    ) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!editor.contains(range.commonAncestorContainer)) {
+      return;
+    }
+    element.append(range.extractContents());
+    range.insertNode(element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    readEditorDocument();
+  };
+
+  const applyInlineCode = () => {
+    wrapSelection(globalThis.document.createElement('code'));
+  };
+
+  const applyLink = () => {
+    const href = linkHref.trim();
+    if (href.length === 0) {
+      return;
+    }
+    const link = globalThis.document.createElement('a');
+    link.setAttribute('href', href);
+    wrapSelection(link);
+  };
+
+  const insertEquation = () => {
+    const expression = equationExpression.trim();
+    const editor = editorRef.current;
+    if (expression.length === 0 || editor === null) {
+      return;
+    }
+    const equation = globalThis.document.createElement('span');
+    equation.dataset['textEquation'] = expression;
+    equation.textContent = expression;
+    const selection = globalThis.getSelection();
+    if (selection !== null && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      if (editor.contains(range.commonAncestorContainer)) {
+        range.deleteContents();
+        range.insertNode(equation);
+      } else {
+        editor.append(equation);
+      }
+    } else {
+      editor.append(equation);
+    }
+    readEditorDocument();
+    setEquationExpression('');
   };
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -190,7 +254,7 @@ export const TextPropertyEditor = ({
 
   return (
     <div className="ticketing:grid ticketing:gap-2">
-      <Label htmlFor={editorId}>{label}</Label>
+      <Label id={editorLabelId}>{label}</Label>
       {readOnly ? null : (
         <div
           aria-label={`${label} formatting`}
@@ -201,11 +265,10 @@ export const TextPropertyEditor = ({
             ['italic', 'italic'],
             ['underline', 'underline'],
             ['strikethrough', 'strikeThrough'],
-            ['code', 'formatBlock'],
           ].map(([translation, command]) => (
             <Button
               key={command}
-              onClick={() => applyFormat(command, command === 'formatBlock' ? 'code' : undefined)}
+              onClick={() => applyFormat(command)}
               onMouseDown={(event) => event.preventDefault()}
               size="sm"
               theme="borderless"
@@ -215,12 +278,59 @@ export const TextPropertyEditor = ({
               {t(`ticketing.text.${translation}`)}
             </Button>
           ))}
+          <Button
+            onClick={applyInlineCode}
+            onMouseDown={(event) => event.preventDefault()}
+            size="sm"
+            theme="borderless"
+            type="button"
+            variant="secondary"
+          >
+            {t('ticketing.text.code')}
+          </Button>
           <Input
             aria-label={t('ticketing.text.foregroundColor')}
             onChange={(event) => applyFormat('foreColor', event.currentTarget.value)}
             size="sm"
             type="color"
           />
+          <Label htmlFor={`${editorId}-link`}>{t('ticketing.text.link')}</Label>
+          <Input
+            id={`${editorId}-link`}
+            onChange={(event) => setLinkHref(event.currentTarget.value)}
+            size="sm"
+            type="url"
+            value={linkHref}
+          />
+          <Button
+            disabled={linkHref.trim().length === 0}
+            onClick={applyLink}
+            onMouseDown={(event) => event.preventDefault()}
+            size="sm"
+            theme="borderless"
+            type="button"
+            variant="secondary"
+          >
+            {t('ticketing.text.linkApply')}
+          </Button>
+          <Label htmlFor={`${editorId}-equation`}>{t('ticketing.text.equation')}</Label>
+          <Input
+            id={`${editorId}-equation`}
+            onChange={(event) => setEquationExpression(event.currentTarget.value)}
+            size="sm"
+            value={equationExpression}
+          />
+          <Button
+            disabled={equationExpression.trim().length === 0}
+            onClick={insertEquation}
+            onMouseDown={(event) => event.preventDefault()}
+            size="sm"
+            theme="borderless"
+            type="button"
+            variant="secondary"
+          >
+            {t('ticketing.text.insertEquation')}
+          </Button>
           <Input
             aria-label={t('ticketing.text.backgroundColor')}
             onChange={(event) => applyFormat('hiliteColor', event.currentTarget.value)}
@@ -230,7 +340,7 @@ export const TextPropertyEditor = ({
         </div>
       )}
       <div
-        aria-label={label}
+        aria-labelledby={editorLabelId}
         aria-multiline="true"
         className="ticketing:min-h-32 ticketing:rounded-lg ticketing:border ticketing:border-stone-300 ticketing:bg-white ticketing:p-3"
         contentEditable={!readOnly}

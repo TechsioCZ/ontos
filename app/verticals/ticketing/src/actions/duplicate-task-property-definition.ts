@@ -27,7 +27,7 @@ const duplicatedDefinitionEvidence = (
 ) => ({
   changedComponents: ['definition', 'propertyValues'],
   collectionId: input.collectionId,
-  copiedValues: response.definition.datatype === 'text' ? false : input.copyValues,
+  copiedValues: response.definition.datatype === 'text' ? false : (input.copyValues ?? false),
   datatype: response.definition.datatype,
   operation: 'duplicated',
   propertyDefinitionId: response.definition.propertyDefinitionId,
@@ -81,7 +81,7 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
   }
 
   const definition = await duplicateTaskPropertyDefinition({
-    copyValues: input.copyValues,
+    copyValues: input.copyValues ?? false,
     source,
     tx: services.tx,
   });

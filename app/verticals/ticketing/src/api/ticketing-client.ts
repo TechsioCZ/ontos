@@ -51,8 +51,8 @@ import type {
   UpdateTextPropertyValueActionFailure,
   UpdateTextPropertyValueActionOutcome,
   UpdateTextPropertyValueActionPayload,
-  QueryTaskTextValuesPayload,
-  QueryTaskTextValuesResponse,
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -211,16 +211,17 @@ export const getTaskPropertyDeletionImpact = (
     ),
   );
 
-export const queryTaskTextValues = (
-  payload: QueryTaskTextValuesPayload,
+export const queryTaskPropertyValues = (
+  payload: QueryTaskPropertyValuesPayload,
   options: TicketingClientOptions = {},
-): TicketingClientEffect<QueryTaskTextValuesResponse> =>
+): TicketingClientEffect<QueryTaskPropertyValuesResponse> =>
   createTicketingClient({
     ...options,
-    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskTextValues,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.queryTaskPropertyValues,
   }).pipe(
     Effect.flatMap((client) =>
-      client.ticketing.queryTaskTextValues({
+      client.ticketing.queryTaskPropertyValues({
         headers: options.headers ?? {},
         payload,
       }),

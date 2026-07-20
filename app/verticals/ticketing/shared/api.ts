@@ -80,7 +80,10 @@ import {
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
-import { queryTaskTextValuesPayloadSchema, queryTaskTextValuesResponseSchema } from './text-query';
+import {
+  queryTaskPropertyValuesPayloadSchema,
+  queryTaskPropertyValuesResponseSchema,
+} from './task-property-query';
 
 export type {
   CreateTextPropertyDefinitionActionFailure,
@@ -155,6 +158,11 @@ export type {
   TextPropertyDefinition,
 } from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
+export type {
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  TaskPropertyQuery,
+} from './task-property-query';
 export {
   coreReferenceSchema,
   nullableTextDocumentSchema,
@@ -170,11 +178,7 @@ export type {
   TextMark,
   TextPropertyValue,
 } from './text-property';
-export type {
-  QueryTaskTextValuesPayload,
-  QueryTaskTextValuesResponse,
-  TextQueryOperation,
-} from './text-query';
+export type { TextQueryOperation } from './text-query';
 export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
@@ -307,11 +311,11 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
-      HttpApiEndpoint.post('queryTaskTextValues', '/ticketing/task-properties/text-query', {
+      HttpApiEndpoint.post('queryTaskPropertyValues', '/ticketing/task-properties/query', {
         error: coreSdkOperationFailureSchemas,
         headers: operationContextHeadersSchema,
-        payload: queryTaskTextValuesPayloadSchema,
-        success: queryTaskTextValuesResponseSchema,
+        payload: queryTaskPropertyValuesPayloadSchema,
+        success: queryTaskPropertyValuesResponseSchema,
       }),
     )
     .add(
@@ -544,10 +548,10 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing',
     source: 'generated-client',
   },
-  queryTaskTextValues: {
+  queryTaskPropertyValues: {
     method: 'POST',
-    operationId: 'TicketingApi:ticketing:queryTaskTextValues',
-    routePath: '/ticketing/task-properties/text-query',
+    operationId: 'TicketingApi:ticketing:queryTaskPropertyValues',
+    routePath: '/ticketing/task-properties/query',
     source: 'generated-client',
   },
   readiness: {

@@ -12,6 +12,7 @@ import {
   runCreateTextPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
+  runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
   runUpdateTextPropertyValueAction,
@@ -19,6 +20,7 @@ import {
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
 import { TextPropertyEditor } from '../components/text-property-editor';
+import { TextPropertyDuplication } from '../components/text-property-duplication';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -387,46 +389,90 @@ export const TicketingExperience = () => {
                       candidate.propertyDefinitionId === definition.propertyDefinitionId,
                   );
                   return task === undefined || value === undefined ? null : (
-                    <TextPropertyEditor
-                      collectionId={openedTaskPropertyWorkspace.collectionId}
-                      document={value.document}
+                    <div
+                      className="ticketing:grid ticketing:gap-2"
                       key={definition.propertyDefinitionId}
-                      label={definition.name}
-                      onSave={async (draft, idempotencyKey) => {
-                        const operationContextToken = await loadTicketingOperationContextToken();
-                        const outcome = await runEffectRequest(
-                          runUpdateTextPropertyValueAction(draft, {
-                            headers: { 'x-ontos-operation-context': operationContextToken },
-                            idempotencyKey,
-                          }),
-                        );
-                        setOpenedTaskPropertyWorkspace((current) =>
-                          current === undefined
-                            ? current
-                            : {
-                                ...current,
-                                tasks: current.tasks.map((candidate) =>
-                                  candidate.taskId === draft.taskId
-                                    ? {
-                                        ...candidate,
-                                        taskRevision: outcome.response.taskRevision,
-                                        textValues: (candidate.textValues ?? []).map((textValue) =>
-                                          textValue.propertyDefinitionId ===
-                                          draft.propertyDefinitionId
-                                            ? outcome.response.value
-                                            : textValue,
-                                        ),
-                                      }
-                                    : candidate,
-                                ),
-                              },
-                        );
-                        return outcome.response;
-                      }}
-                      propertyDefinitionId={definition.propertyDefinitionId}
-                      revision={value.revision}
-                      taskId={task.taskId}
-                    />
+                    >
+                      <TextPropertyEditor
+                        collectionId={openedTaskPropertyWorkspace.collectionId}
+                        document={value.document}
+                        label={definition.name}
+                        onSave={async (draft, idempotencyKey) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const outcome = await runEffectRequest(
+                            runUpdateTextPropertyValueAction(draft, {
+                              headers: { 'x-ontos-operation-context': operationContextToken },
+                              idempotencyKey,
+                            }),
+                          );
+                          setOpenedTaskPropertyWorkspace((current) =>
+                            current === undefined
+                              ? current
+                              : {
+                                  ...current,
+                                  tasks: current.tasks.map((candidate) =>
+                                    candidate.taskId === draft.taskId
+                                      ? {
+                                          ...candidate,
+                                          taskRevision: outcome.response.taskRevision,
+                                          textValues: (candidate.textValues ?? []).map(
+                                            (textValue) =>
+                                              textValue.propertyDefinitionId ===
+                                              draft.propertyDefinitionId
+                                                ? outcome.response.value
+                                                : textValue,
+                                          ),
+                                        }
+                                      : candidate,
+                                  ),
+                                },
+                          );
+                          return outcome.response;
+                        }}
+                        propertyDefinitionId={definition.propertyDefinitionId}
+                        revision={value.revision}
+                        taskId={task.taskId}
+                      />
+                      <TextPropertyDuplication
+                        collectionId={openedTaskPropertyWorkspace.collectionId}
+                        label={definition.name}
+                        onConfirm={async (draft, idempotencyKey) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const outcome = await runEffectRequest(
+                            runDuplicateTaskPropertyDefinitionAction(draft, {
+                              headers: { 'x-ontos-operation-context': operationContextToken },
+                              idempotencyKey,
+                            }),
+                          );
+                          setOpenedTaskPropertyWorkspace((current) =>
+                            current === undefined
+                              ? current
+                              : {
+                                  ...current,
+                                  propertyDefinitions: [
+                                    ...current.propertyDefinitions,
+                                    outcome.response.definition,
+                                  ],
+                                  tasks: current.tasks.map((candidate) => ({
+                                    ...candidate,
+                                    textValues: [
+                                      ...(candidate.textValues ?? []),
+                                      {
+                                        document: null,
+                                        propertyDefinitionId:
+                                          outcome.response.definition.propertyDefinitionId,
+                                        readableText: null,
+                                        revision: 1,
+                                      },
+                                    ],
+                                  })),
+                                },
+                          );
+                        }}
+                        propertyDefinitionId={definition.propertyDefinitionId}
+                        revision={definition.revision}
+                      />
+                    </div>
                   );
                 }
                 const value = task?.checkboxValues.find(
