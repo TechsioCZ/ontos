@@ -25,8 +25,10 @@ interface FakeEffect<T> {
 const mocks = rs.hoisted(() => ({
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
   readCalls: [] as string[],
+  readFailuresRemaining: 0,
   taskAttempts: 0,
   taskCalls: [] as BoundaryCall<{ readonly collectionId: string }>[],
+  taskFailuresRemaining: 1,
   toastCreate: rs.fn(),
 }));
 
@@ -160,6 +162,10 @@ rs.mock('../src/api/ticketing-client', () => {
     },
     getTaskCollection: (requestedCollectionId: string) => {
       mocks.readCalls.push(requestedCollectionId);
+      if (mocks.readFailuresRemaining > 0) {
+        mocks.readFailuresRemaining -= 1;
+        return failure(new Error('Controlled governed-read failure'));
+      }
       return success(aggregate);
     },
     runCreateTaskAction: (
@@ -168,14 +174,16 @@ rs.mock('../src/api/ticketing-client', () => {
     ) => {
       mocks.taskAttempts += 1;
       mocks.taskCalls.push({ idempotencyKey: options.idempotencyKey, payload });
-      return mocks.taskAttempts === 1
-        ? failure({
-            errorTag: 'OperationExecutionFailed',
-            httpStatus: 500,
-            message: 'Controlled Task failure',
-            ok: false,
-          })
-        : success({ response: { task: aggregate.task } });
+      if (mocks.taskFailuresRemaining > 0) {
+        mocks.taskFailuresRemaining -= 1;
+        return failure({
+          errorTag: 'OperationExecutionFailed',
+          httpStatus: 500,
+          message: 'Controlled Task failure',
+          ok: false,
+        });
+      }
+      return success({ response: { task: aggregate.task } });
     },
     runCreateTaskCollectionAction: (
       payload: Record<string, never>,
@@ -193,8 +201,10 @@ rs.mock('../src/api/ticketing-client', () => {
 beforeEach(() => {
   mocks.collectionCalls.length = 0;
   mocks.readCalls.length = 0;
+  mocks.readFailuresRemaining = 0;
   mocks.taskAttempts = 0;
   mocks.taskCalls.length = 0;
+  mocks.taskFailuresRemaining = 1;
   mocks.toastCreate.mockClear();
   rs.stubGlobal(
     'fetch',
@@ -261,5 +271,34 @@ test('uses one form-scoped idempotency key and rotates it after complete success
     mocks.collectionCalls[0]?.idempotencyKey,
   );
   expect(mocks.taskCalls[2]?.idempotencyKey).toBe(mocks.collectionCalls[1]?.idempotencyKey);
+  expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
+});
+
+test('retries only the governed read after both Actions succeed', async () => {
+  mocks.taskFailuresRemaining = 0;
+  mocks.readFailuresRemaining = 1;
+  render(<TicketingExperience />);
+
+  const createButton = screen.getByRole('button', { name: 'Create Task' });
+  fireEvent.click(createButton);
+
+  await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(1));
+  expect(mocks.collectionCalls).toHaveLength(1);
+  expect(mocks.taskCalls).toHaveLength(1);
+  expect(mocks.taskCalls[0]?.idempotencyKey).toBe(mocks.collectionCalls[0]?.idempotencyKey);
+  expect(mocks.readCalls).toEqual(['collection-1']);
+  expect(mocks.toastCreate).toHaveBeenNthCalledWith(1, {
+    description: 'Controlled governed-read failure',
+    title: 'Task creation failed',
+    type: 'error',
+  });
+  await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(false));
+
+  fireEvent.click(createButton);
+  await screen.findByRole('region', { name: 'Opened Task' });
+  await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(2));
+
+  expect(mocks.collectionCalls).toHaveLength(1);
+  expect(mocks.taskCalls).toHaveLength(1);
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
 });

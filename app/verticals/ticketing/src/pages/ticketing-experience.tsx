@@ -52,6 +52,7 @@ export const TicketingExperience = () => {
   const { language, supportedLanguages, t } = useModernI18n();
   const [formIdempotencyKey, setFormIdempotencyKey] = useState(() => crypto.randomUUID());
   const [pendingTaskCollection, setPendingTaskCollection] = useState<TaskCollectionCreation>();
+  const [pendingTaskCollectionReadId, setPendingTaskCollectionReadId] = useState<string>();
   const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
   const [isCreatingTask, setIsCreatingTask] = useState(false);
 
@@ -68,26 +69,32 @@ export const TicketingExperience = () => {
           { collectionId: taskCollection.collection.collectionId },
           { headers, idempotencyKey: formIdempotencyKey },
         );
-      const createTaskEffect =
-        pendingTaskCollection === undefined
-          ? runCreateTaskCollectionAction(
-              {},
-              {
-                headers,
-                idempotencyKey: formIdempotencyKey,
-              },
+      const taskCollectionEffect =
+        pendingTaskCollectionReadId === undefined
+          ? (pendingTaskCollection === undefined
+              ? runCreateTaskCollectionAction(
+                  {},
+                  {
+                    headers,
+                    idempotencyKey: formIdempotencyKey,
+                  },
+                ).pipe(
+                  Effect.flatMap((outcome) => {
+                    setPendingTaskCollection(outcome.response);
+                    return runTaskCreation(outcome.response);
+                  }),
+                )
+              : runTaskCreation(pendingTaskCollection)
             ).pipe(
               Effect.flatMap((outcome) => {
-                setPendingTaskCollection(outcome.response);
-                return runTaskCreation(outcome.response);
+                const { collectionId } = outcome.response.task;
+                setPendingTaskCollectionReadId(collectionId);
+                return getTaskCollection(collectionId, { headers });
               }),
             )
-          : runTaskCreation(pendingTaskCollection);
+          : getTaskCollection(pendingTaskCollectionReadId, { headers });
       await runEffectRequest(
-        createTaskEffect.pipe(
-          Effect.flatMap((outcome) =>
-            getTaskCollection(outcome.response.task.collectionId, { headers }),
-          ),
+        taskCollectionEffect.pipe(
           Effect.match({
             onFailure: (error) => {
               toaster.create(
@@ -110,6 +117,7 @@ export const TicketingExperience = () => {
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
               setPendingTaskCollection(undefined);
+              setPendingTaskCollectionReadId(undefined);
               setFormIdempotencyKey(crypto.randomUUID());
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
