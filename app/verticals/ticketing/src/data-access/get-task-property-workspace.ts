@@ -10,9 +10,11 @@ import type {
   GetTaskPropertyWorkspacePayload,
   TaskPropertyWorkspace,
 } from '../../shared/task-property-workspace.ts';
+import { canonicalizeNumberValue } from '../../shared/number-value.ts';
 
 interface DefinitionRow {
-  readonly datatype: 'checkbox';
+  readonly datatype: 'checkbox' | 'number';
+  readonly format?: 'number' | 'number_with_separators' | 'percent';
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
@@ -20,7 +22,7 @@ interface DefinitionRow {
   readonly revision: number;
 }
 
-interface ValueRow {
+interface CheckboxValueRow {
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -29,11 +31,23 @@ interface ValueRow {
   readonly value: boolean;
 }
 
+interface NumberValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly value: string | null;
+}
+
 interface TaskRow {
   readonly checkboxValues: {
     propertyDefinitionId: string;
     revision: number;
     value: boolean;
+  }[];
+  readonly numberValues?: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: string;
   }[];
   readonly taskId: string;
   readonly taskRevision: number;
@@ -68,6 +82,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const definitionResult = await db.execute(sql`
       select
         definition.datatype,
+        definition.number_format as format,
         definition.hidden,
         definition.mandatory,
         definition.name,
@@ -79,10 +94,10 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype = 'checkbox'
+        and definition.datatype in ('checkbox', 'number')
       order by definition.created_at, definition.property_definition_id
     `);
-    const valueResult = await db.execute(sql`
+    const checkboxValueResult = await db.execute(sql`
       select
         value.property_definition_id as "propertyDefinitionId",
         value.revision,
@@ -101,13 +116,43 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
-    const definitions = rowsFromResult<DefinitionRow>(definitionResult);
-    const valueRows = rowsFromResult<ValueRow>(valueResult);
+    const numberValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        value.value::text as value
+      from ticketing.task_number_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const definitions = rowsFromResult<DefinitionRow>(definitionResult).map((definition) =>
+      definition.datatype === 'number'
+        ? definition
+        : {
+            datatype: definition.datatype,
+            hidden: definition.hidden,
+            mandatory: definition.mandatory,
+            name: definition.name,
+            propertyDefinitionId: definition.propertyDefinitionId,
+            revision: definition.revision,
+          },
+    );
+    const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+    const valueRows = rowsFromResult<CheckboxValueRow>(checkboxValueResult);
     const tasks = new Map<string, TaskRow>();
 
     for (const row of valueRows) {
       const current = tasks.get(row.taskId) ?? {
         checkboxValues: [],
+        ...(hasNumberDefinitions ? { numberValues: [] } : {}),
         taskId: row.taskId,
         taskRevision: row.taskRevision,
         title: row.title,
@@ -120,6 +165,18 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         });
       }
       tasks.set(row.taskId, current);
+    }
+
+    for (const row of rowsFromResult<NumberValueRow>(numberValueResult)) {
+      const current = tasks.get(row.taskId);
+      if (current === undefined) {
+        continue;
+      }
+      current.numberValues?.push({
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+        value: row.value === null ? null : (canonicalizeNumberValue(row.value) ?? row.value),
+      });
     }
 
     return {

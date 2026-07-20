@@ -67,6 +67,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const currentResult = await services.tx.execute(sql`
     select
       definition.datatype,
+      definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
@@ -97,7 +98,19 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     currentDefinition.name === name
   ) {
     services.markNoOp();
-    return { definition: currentDefinition };
+    return {
+      definition:
+        currentDefinition.datatype === 'number'
+          ? currentDefinition
+          : {
+              datatype: currentDefinition.datatype,
+              hidden: currentDefinition.hidden,
+              mandatory: currentDefinition.mandatory,
+              name: currentDefinition.name,
+              propertyDefinitionId: currentDefinition.propertyDefinitionId,
+              revision: currentDefinition.revision,
+            },
+    };
   }
 
   const result = await services.tx.execute(sql`
@@ -123,6 +136,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       )
     returning
       definition.datatype,
+      definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
@@ -138,7 +152,19 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     });
   }
 
-  return { definition };
+  return {
+    definition:
+      definition.datatype === 'number'
+        ? definition
+        : {
+            datatype: definition.datatype,
+            hidden: definition.hidden,
+            mandatory: definition.mandatory,
+            name: definition.name,
+            propertyDefinitionId: definition.propertyDefinitionId,
+            revision: definition.revision,
+          },
+  };
 };
 
 export const configureTaskPropertyDefinitionActionRegistration: ActionRegistration<

@@ -9,13 +9,16 @@ import {
   Effect,
   getTaskCollection,
   runCreateCheckboxPropertyDefinitionAction,
+  runCreateNumberPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
+  runUpdateNumberPropertyValueAction,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
+import { NumberPropertyEditor } from '../components/number-property-editor';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -66,6 +69,11 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
+  const [numberDefinitionName, setNumberDefinitionName] = useState('');
+  const [numberDefinitionIdempotencyKey, setNumberDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingNumberDefinition, setIsCreatingNumberDefinition] = useState(false);
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -129,12 +137,15 @@ export const TicketingExperience = () => {
               setOpenedTaskCollection(taskCollection);
               setCheckboxDefinitionName('');
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
+              setNumberDefinitionName('');
+              setNumberDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
                 propertyDefinitions: [],
                 tasks: [
                   {
                     checkboxValues: [],
+                    numberValues: [],
                     taskId: taskCollection.task.taskId,
                     taskRevision: taskCollection.task.revision,
                     title: taskCollection.task.title,
@@ -223,6 +234,51 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateNumberDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || numberDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingNumberDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateNumberPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: numberDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: numberDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setNumberDefinitionName('');
+      setNumberDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.number.definitionCreateFailedDescription'),
+        title: t('ticketing.number.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingNumberDefinition(false);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -294,15 +350,91 @@ export const TicketingExperience = () => {
             >
               {t('ticketing.checkbox.definitionCreate')}
             </Button>
+            <FormInput
+              id="number-property-name"
+              label={t('ticketing.number.definitionName')}
+              name="number-property-name"
+              onChange={(event) => setNumberDefinitionName(event.currentTarget.value)}
+              value={numberDefinitionName}
+            />
+            <Button
+              disabled={numberDefinitionName.trim().length === 0}
+              isLoading={isCreatingNumberDefinition}
+              loadingText={t('ticketing.number.definitionCreating')}
+              onClick={() => void handleCreateNumberDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.number.definitionCreate')}
+            </Button>
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
-                const value = task?.checkboxValues.find(
+                if (task === undefined) {
+                  return null;
+                }
+                if (definition.datatype === 'number') {
+                  const value = (task.numberValues ?? []).find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  ) ?? {
+                    propertyDefinitionId: definition.propertyDefinitionId,
+                    revision: 0,
+                    value: null,
+                  };
+                  return (
+                    <NumberPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      format={definition.format}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      locale={language}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateNumberPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        numberValues: [
+                                          ...(candidate.numberValues ?? []).filter(
+                                            (numberValue) =>
+                                              numberValue.propertyDefinitionId !==
+                                              draft.propertyDefinitionId,
+                                          ),
+                                          outcome.response.value,
+                                        ],
+                                        taskRevision: outcome.response.taskRevision,
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      revision={value.revision}
+                      taskId={task.taskId}
+                      value={value.value}
+                    />
+                  );
+                }
+                const value = task.checkboxValues.find(
                   (candidate) => candidate.propertyDefinitionId === definition.propertyDefinitionId,
                 );
-                return task === undefined || value === undefined ? null : (
+                return value === undefined ? null : (
                   <CheckboxPropertyEditor
                     collectionId={openedTaskPropertyWorkspace.collectionId}
                     key={definition.propertyDefinitionId}

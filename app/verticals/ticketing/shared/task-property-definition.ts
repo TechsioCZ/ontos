@@ -9,8 +9,22 @@ export const checkboxPropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const numberPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('number'),
+  format: Schema.Literals(['number', 'number_with_separators', 'percent']),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 // This shared contract is the extension point for each supported Task Property datatype.
-export const taskPropertyDefinitionSchema = checkboxPropertyDefinitionSchema;
+export const taskPropertyDefinitionSchema = Schema.Union([
+  checkboxPropertyDefinitionSchema,
+  numberPropertyDefinitionSchema,
+]);
 
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
+export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
 export type TaskPropertyDefinition = typeof taskPropertyDefinitionSchema.Type;
