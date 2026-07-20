@@ -162,8 +162,9 @@ export const coreSDKErrorHttpStatus = (error: CoreSDKError): number => {
 
 export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
   readonly actionKey: string;
+  readonly auditEvent?: ActionAuditEventDescriptor<TAction, TResponse>;
   readonly auditProfile: OperationAuditProfile;
-  readonly authorization?: ActionAuthorizationRequirement;
+  readonly authorization?: ActionAuthorizationRequirement<TAction>;
   readonly domainEvent?: ActionDomainEventDescriptor<TAction, TResponse>;
   readonly gatewayAudience: string;
   readonly idempotency: 'optional' | 'required';
@@ -176,6 +177,13 @@ export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
   readonly transportResponseSchema: unknown;
 }
 
+export interface ActionAuditEventDescriptor<TAction, TResponse> {
+  readonly evidence: (input: TAction, response: TResponse) => Record<string, unknown>;
+  readonly targetModuleKey: string;
+  readonly targetResourceId: (input: TAction, response: TResponse) => string;
+  readonly targetResourceType: string;
+}
+
 export interface ActionDomainEventDescriptor<TAction, TResponse> {
   readonly eventType: string;
   readonly payload?: (input: TAction, response: TResponse) => unknown;
@@ -185,15 +193,16 @@ export interface ActionDomainEventDescriptor<TAction, TResponse> {
   readonly subjectResourceType: string;
 }
 
-export interface ActionAuthorizationRequirement {
+export interface ActionAuthorizationRequirement<TInput = unknown> {
   readonly permission: string;
   readonly provider: 'spicedb';
-  readonly resourceObjectId: string;
+  readonly resourceObjectId: string | ((input: TInput) => string);
   readonly resourceObjectType: string;
 }
 
 export interface ActionExecutionServices<TAction> {
   readonly context: OperationContext<TAction>;
+  readonly markNoOp: () => void;
   readonly tx: CoreTransaction;
 }
 
@@ -208,10 +217,10 @@ export interface ActionRegistration<TAction, TResponse> {
   readonly policyChecks?: readonly PolicyCheck<TAction>[];
 }
 
-export interface DataAccessDescriptor {
+export interface DataAccessDescriptor<TPayload = unknown> {
   readonly accessKind: OperationAccessKind;
   readonly auditProfile: OperationAuditProfile;
-  readonly authorization?: ActionAuthorizationRequirement;
+  readonly authorization?: ActionAuthorizationRequirement<TPayload>;
   readonly dataAccessKey: string;
   readonly evidenceCaptureMode: OperationEvidenceCaptureMode;
   readonly evidencePolicyKey: string;
@@ -236,7 +245,7 @@ export type DataAccessHandler<TPayload, TResponse> = (
 ) => Promise<TResponse> | TResponse;
 
 export interface DataAccessRegistration<TPayload, TResponse> {
-  readonly descriptor: DataAccessDescriptor;
+  readonly descriptor: DataAccessDescriptor<TPayload>;
   readonly handler: DataAccessHandler<TPayload, TResponse>;
   readonly policyChecks?: readonly PolicyCheck<TPayload>[];
 }
@@ -854,12 +863,15 @@ const writeAuditEvent = async <TAction>({
 
 const toSpiceDbPermissionCheck = <TAction>(
   context: OperationContext<TAction>,
-  requirement: ActionAuthorizationRequirement,
+  requirement: ActionAuthorizationRequirement<TAction>,
 ) =>
   createTenantScopedSpiceDbPermissionCheck({
     permission: requirement.permission,
     principalId: context.principalId,
-    resourceObjectId: requirement.resourceObjectId,
+    resourceObjectId:
+      typeof requirement.resourceObjectId === 'function'
+        ? requirement.resourceObjectId(context.action)
+        : requirement.resourceObjectId,
     resourceObjectType: requirement.resourceObjectType,
     tenantId: context.tenantId,
   });
@@ -877,7 +889,7 @@ const authorizeWithSpiceDb = async <TAction>({
   readonly context: OperationContext<TAction>;
   readonly eventPrefix: 'action' | 'data_access';
   readonly logger: OperationLogger;
-  readonly requirement: ActionAuthorizationRequirement | undefined;
+  readonly requirement: ActionAuthorizationRequirement<TAction> | undefined;
 }): Promise<OperationContext<TAction> | CoreSDKError> => {
   if (requirement === undefined) {
     return writeAuditEvent({
@@ -1305,6 +1317,7 @@ export const runAction = async <TAction, TResponse>({
 
   try {
     return await db.transaction(async (tx): Promise<OperationResult<TAction, TResponse>> => {
+      let actionWasNoOp = false;
       const handlerOutboxMessages: OutboxMessage<string, unknown>[] = [];
       const response = await handler(payload, {
         context: {
@@ -1313,35 +1326,51 @@ export const runAction = async <TAction, TResponse>({
             handlerOutboxMessages.push(message);
           },
         },
+        markNoOp: () => {
+          actionWasNoOp = true;
+        },
         tx,
       });
-      const domainEventId = await persistAutomaticDomainEvent({
-        context: policyCheckedContext,
-        descriptor: descriptor.domainEvent,
-        input: payload,
-        response,
-        tx,
-      });
-      await persistOutboxMessages({
-        domainEventId,
-        messages: handlerOutboxMessages,
-        producerModuleKey: descriptor.domainEvent?.producerModuleKey,
-        tenantId: policyCheckedContext.tenantId,
-        tx,
-      });
+      if (!actionWasNoOp) {
+        const domainEventId = await persistAutomaticDomainEvent({
+          context: policyCheckedContext,
+          descriptor: descriptor.domainEvent,
+          input: payload,
+          response,
+          tx,
+        });
+        await persistOutboxMessages({
+          domainEventId,
+          messages: handlerOutboxMessages,
+          producerModuleKey: descriptor.domainEvent?.producerModuleKey,
+          tenantId: policyCheckedContext.tenantId,
+          tx,
+        });
+      }
       const completedContext = await markActionInvocationStatus(
         policyCheckedContext,
         'succeeded',
         tx,
       );
+      if (actionWasNoOp) {
+        return {
+          _tag: 'OperationSucceeded',
+          context: completedContext,
+          response,
+        } satisfies OperationSucceeded<TAction, TResponse>;
+      }
       const auditedContext = await writeAuditEvent({
         auditProfile: descriptor.auditProfile,
         context: completedContext,
         eventType: 'action.succeeded',
+        evidenceJson: descriptor.auditEvent?.evidence(payload, response),
         executor: tx,
         outcome: 'succeeded',
         outcomeCode: 'action_succeeded',
         outcomeStage: 'execution',
+        targetModuleKey: descriptor.auditEvent?.targetModuleKey,
+        targetResourceId: descriptor.auditEvent?.targetResourceId(payload, response),
+        targetResourceType: descriptor.auditEvent?.targetResourceType,
       });
 
       if ('_tag' in auditedContext) {

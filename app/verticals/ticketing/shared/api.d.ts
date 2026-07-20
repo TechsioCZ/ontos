@@ -1,10 +1,15 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import, typescript/ban-types, typescript/no-empty-object-type -- TypeScript-generated API declaration
 import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+export type {
+  CreateCheckboxPropertyDefinitionActionFailure,
+  CreateCheckboxPropertyDefinitionActionOutcome,
+  CreateCheckboxPropertyDefinitionActionPayload,
+  CreateCheckboxPropertyDefinitionActionResponse,
+} from './actions/create-checkbox-property-definition';
 export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
@@ -17,7 +22,18 @@ export type {
   CreateTaskCollectionActionPayload,
   CreateTaskCollectionActionResponse,
 } from './actions/create-task-collection';
+export type {
+  UpdateCheckboxPropertyValueActionFailure,
+  UpdateCheckboxPropertyValueActionOutcome,
+  UpdateCheckboxPropertyValueActionPayload,
+  UpdateCheckboxPropertyValueActionResponse,
+} from './actions/update-checkbox-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
+export type { TaskPropertyWorkspace } from './task-property-workspace';
+export type {
+  FilterTaskCheckboxValuesPayload,
+  FilterTaskCheckboxValuesResponse,
+} from './checkbox-filter';
 export interface TicketingMarker {
   readonly appId: string;
   readonly build: string;
@@ -65,6 +81,98 @@ export declare const ticketingApi: HttpApi.HttpApi<
   HttpApiGroup.HttpApiGroup<
     'ticketing',
     | HttpApiEndpoint.HttpApiEndpoint<
+        'createCheckboxPropertyDefinitionAction',
+        'POST',
+        '/ticketing/actions/create-checkbox-property-definition',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly mandatory: Schema.Boolean;
+            readonly name: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly definition: Schema.Struct<{
+                readonly datatype: Schema.Literal<'checkbox'>;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
         'createTaskAction',
         'POST',
         '/ticketing/actions/create-task',
@@ -100,73 +208,59 @@ export declare const ticketingApi: HttpApi.HttpApi<
           }>
         >,
         HttpApiEndpoint.Json<
-          Schema.Union<
-            readonly [
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationAuthRequired', 'OperationContextInvalid']
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly [
-                    'OperationDomainRejected',
-                    'OperationIdempotencyConflict',
-                    'OperationIdempotencyReplayUnavailable',
-                    'OperationPolicyDenied',
-                  ]
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
-                >;
-              }>,
-            ]
-          >
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
         >,
         never,
         never
@@ -210,73 +304,143 @@ export declare const ticketingApi: HttpApi.HttpApi<
           }>
         >,
         HttpApiEndpoint.Json<
-          Schema.Union<
-            readonly [
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationAuthRequired', 'OperationContextInvalid']
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly [
-                    'OperationDomainRejected',
-                    'OperationIdempotencyConflict',
-                    'OperationIdempotencyReplayUnavailable',
-                    'OperationPolicyDenied',
-                  ]
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
-                >;
-              }>,
-            ]
-          >
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'filterTaskCheckboxValues',
+        'GET',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+            propertyDefinitionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            value: Schema.Literals<readonly ['true', 'false']>;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly taskIds: Schema.$Array<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
         >,
         never,
         never
@@ -346,73 +510,161 @@ export declare const ticketingApi: HttpApi.HttpApi<
           }>
         >,
         HttpApiEndpoint.Json<
-          Schema.Union<
-            readonly [
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'getTaskPropertyWorkspace',
+        'GET',
+        '/ticketing/task-collections/:collectionId/properties',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly propertyDefinitions: Schema.$Array<
               Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationAuthRequired', 'OperationContextInvalid']
-                >;
-              }>,
+                readonly datatype: Schema.Literal<'checkbox'>;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+              }>
+            >;
+            readonly tasks: Schema.$Array<
               Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                readonly checkboxValues: Schema.$Array<
+                  Schema.Struct<{
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly value: Schema.Boolean;
+                  }>
                 >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly [
-                    'OperationDomainRejected',
-                    'OperationIdempotencyConflict',
-                    'OperationIdempotencyReplayUnavailable',
-                    'OperationPolicyDenied',
-                  ]
-                >;
-              }>,
-              Schema.Struct<{
-                readonly code: Schema.optional<Schema.String>;
-                readonly httpStatus: Schema.Finite;
-                readonly message: Schema.String;
-                readonly ok: Schema.Literal<false>;
-                readonly state: Schema.optional<
-                  Schema.Codec<Schema.Json, Schema.Json, never, never>
-                >;
-                readonly errorTag: Schema.Literals<
-                  readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
-                >;
-              }>,
-            ]
-          >
+                readonly taskId: Schema.String;
+                readonly taskRevision: Schema.Finite;
+                readonly title: Schema.String;
+              }>
+            >;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
         >,
         never,
         never
@@ -450,11 +702,110 @@ export declare const ticketingApi: HttpApi.HttpApi<
         HttpApiEndpoint.Json<never>,
         never,
         never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'updateCheckboxPropertyValueAction',
+        'POST',
+        '/ticketing/actions/update-checkbox-property-value',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly expectedRevision: Schema.Finite;
+            readonly propertyDefinitionId: Schema.String;
+            readonly taskId: Schema.String;
+            readonly value: Schema.Boolean;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly taskRevision: Schema.Finite;
+              readonly value: Schema.Struct<{
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+                readonly value: Schema.Boolean;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
       >,
     false
   >
 >;
 export declare const ticketingOperationContexts: {
+  createCheckboxPropertyDefinitionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   createTaskAction: {
     method: string;
     operationId: string;
@@ -462,6 +813,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   createTaskCollectionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  filterTaskCheckboxValues: {
     method: string;
     operationId: string;
     routePath: string;
@@ -479,6 +836,12 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
+  getTaskPropertyWorkspace: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   list: {
     method: string;
     operationId: string;
@@ -486,6 +849,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   readiness: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  updateCheckboxPropertyValueAction: {
     method: string;
     operationId: string;
     routePath: string;

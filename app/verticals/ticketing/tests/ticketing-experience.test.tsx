@@ -45,7 +45,15 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     onGroup() {},
   });
 
-  for (const endpoint of ['createTaskAction', 'createTaskCollectionAction', 'getTaskCollection']) {
+  for (const endpoint of [
+    'createCheckboxPropertyDefinitionAction',
+    'createTaskAction',
+    'createTaskCollectionAction',
+    'filterTaskCheckboxValues',
+    'getTaskCollection',
+    'getTaskPropertyWorkspace',
+    'updateCheckboxPropertyValueAction',
+  ]) {
     expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);
   }
 });

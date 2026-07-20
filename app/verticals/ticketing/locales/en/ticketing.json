@@ -1,5 +1,16 @@
 {
   "ticketing": {
+    "checkbox": {
+      "definitionCreate": "Add Checkbox property",
+      "definitionCreateFailedDescription": "The Checkbox property could not be created.",
+      "definitionCreateFailedTitle": "Checkbox property creation failed",
+      "definitionCreating": "Adding Checkbox property",
+      "definitionName": "Checkbox property name",
+      "saveFailedDescription": "The Checkbox could not be saved.",
+      "saveFailedTitle": "Checkbox save failed",
+      "staleDescription": "Your checked draft is still here. Reload before trying again.",
+      "staleTitle": "Checkbox changed elsewhere"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

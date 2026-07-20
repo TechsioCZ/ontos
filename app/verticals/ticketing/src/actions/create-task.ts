@@ -15,6 +15,7 @@ import type {
   CreateTaskActionPayload,
   CreateTaskActionResponse,
 } from '../../shared/actions/create-task.ts';
+import { lockTaskCollectionForPropertyInitialization } from '../task-collection-property-initialization-lock.ts';
 import { taskCreationFromRow } from '../task-collection-aggregate.ts';
 import type { TaskCreationRow } from '../task-collection-aggregate.ts';
 
@@ -35,6 +36,12 @@ const createTaskActionHandler: ActionHandler<
   CreateTaskActionPayload,
   CreateTaskActionResponse
 > = async (input, services) => {
+  await lockTaskCollectionForPropertyInitialization({
+    collectionId: input.collectionId,
+    tenantId: services.context.tenantId,
+    tx: services.tx,
+  });
+
   const creationResult = await services.tx.execute(sql`
     with created_task as (
       insert into ticketing.tasks (
@@ -78,6 +85,28 @@ const createTaskActionHandler: ActionHandler<
         task_id,
         ${services.context.tenantId}
       from created_task
+      returning task_id
+    ),
+    initialized_checkbox_values as (
+      insert into ticketing.task_checkbox_values (
+        property_definition_id,
+        task_id,
+        tenant_id,
+        value
+      )
+      select
+        definition.property_definition_id,
+        created_task.task_id,
+        ${services.context.tenantId},
+        false
+      from created_task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = created_task.collection_id
+        and schema.tenant_id = ${services.context.tenantId}
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = ${services.context.tenantId}
+        and definition.datatype = 'checkbox'
       returning task_id
     )
     select

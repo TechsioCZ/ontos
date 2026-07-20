@@ -6,10 +6,14 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
+import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { runCoreSdkAction, runCoreSdkDataAccess } from './action-runtime.ts';
 import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-task-collection.ts';
+import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
+import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -95,6 +99,46 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
+    .handle('getTaskPropertyWorkspace', ({ params, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: { collectionId: params.collectionId },
+          registration: getTaskPropertyWorkspaceDataAccessRegistration,
+          resultCount: (response) => response.tasks.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyWorkspace', {
+          attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyWorkspace),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('filterTaskCheckboxValues', ({ params, query, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            propertyDefinitionId: params.propertyDefinitionId,
+            value: query.value === 'true',
+          },
+          registration: filterTaskCheckboxValuesDataAccessRegistration,
+          resultCount: (response) => response.taskIds.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.filterTaskCheckboxValues', {
+          attributes: operationAttributes(ticketingOperationContexts.filterTaskCheckboxValues),
+          kind: 'server',
+        }),
+      ),
+    )
     .handle('createTaskCollectionAction', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkAction({
@@ -121,6 +165,40 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
         Effect.withSpan('ultramodern.api.ticketing.createTaskAction', {
           attributes: operationAttributes(ticketingOperationContexts.createTaskAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createCheckboxPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createCheckboxPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createCheckboxPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createCheckboxPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updateCheckboxPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateCheckboxPropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateCheckboxPropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updateCheckboxPropertyValueAction,
+          ),
           kind: 'server',
         }),
       ),

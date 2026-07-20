@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  createCheckboxPropertyDefinitionActionHeadersSchema,
+  createCheckboxPropertyDefinitionActionFailureSchemas,
+  createCheckboxPropertyDefinitionActionOutcomeSchema,
+  createCheckboxPropertyDefinitionActionPayloadSchema,
+} from './actions/create-checkbox-property-definition';
+
+import {
   createTaskActionHeadersSchema,
   createTaskActionFailureSchemas,
   createTaskActionOutcomeSchema,
@@ -18,11 +25,25 @@ import {
   createTaskCollectionActionPayloadSchema,
 } from './actions/create-task-collection';
 import {
+  updateCheckboxPropertyValueActionHeadersSchema,
+  updateCheckboxPropertyValueActionFailureSchemas,
+  updateCheckboxPropertyValueActionOutcomeSchema,
+  updateCheckboxPropertyValueActionPayloadSchema,
+} from './actions/update-checkbox-property-value';
+import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
+import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
 import { taskCollectionAggregateSchema } from './task-collection';
+import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 
+export type {
+  CreateCheckboxPropertyDefinitionActionFailure,
+  CreateCheckboxPropertyDefinitionActionOutcome,
+  CreateCheckboxPropertyDefinitionActionPayload,
+  CreateCheckboxPropertyDefinitionActionResponse,
+} from './actions/create-checkbox-property-definition';
 export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
@@ -35,7 +56,18 @@ export type {
   CreateTaskCollectionActionPayload,
   CreateTaskCollectionActionResponse,
 } from './actions/create-task-collection';
+export type {
+  UpdateCheckboxPropertyValueActionFailure,
+  UpdateCheckboxPropertyValueActionOutcome,
+  UpdateCheckboxPropertyValueActionPayload,
+  UpdateCheckboxPropertyValueActionResponse,
+} from './actions/update-checkbox-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
+export type { TaskPropertyWorkspace } from './task-property-workspace';
+export type {
+  FilterTaskCheckboxValuesPayload,
+  FilterTaskCheckboxValuesResponse,
+} from './checkbox-filter';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -152,6 +184,34 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       }),
     )
     .add(
+      HttpApiEndpoint.get(
+        'getTaskPropertyWorkspace',
+        '/ticketing/task-collections/:collectionId/properties',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          success: taskPropertyWorkspaceSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'filterTaskCheckboxValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          query: { value: Schema.Literals(['true', 'false']) },
+          success: filterTaskCheckboxValuesResponseSchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.post(
         'createTaskCollectionAction',
         '/ticketing/actions/create-task-collection',
@@ -170,10 +230,40 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: createTaskActionPayloadSchema,
         success: createTaskActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createCheckboxPropertyDefinitionAction',
+        '/ticketing/actions/create-checkbox-property-definition',
+        {
+          error: createCheckboxPropertyDefinitionActionFailureSchemas,
+          headers: createCheckboxPropertyDefinitionActionHeadersSchema,
+          payload: createCheckboxPropertyDefinitionActionPayloadSchema,
+          success: createCheckboxPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateCheckboxPropertyValueAction',
+        '/ticketing/actions/update-checkbox-property-value',
+        {
+          error: updateCheckboxPropertyValueActionFailureSchemas,
+          headers: updateCheckboxPropertyValueActionHeadersSchema,
+          payload: updateCheckboxPropertyValueActionPayloadSchema,
+          success: updateCheckboxPropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
 export const ticketingOperationContexts = {
+  createCheckboxPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-checkbox-property-definition',
+    source: 'generated-client',
+  },
   createTaskAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskAction',
@@ -184,6 +274,13 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
     routePath: '/ticketing/actions/create-task-collection',
+    source: 'generated-client',
+  },
+  filterTaskCheckboxValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:filterTaskCheckboxValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
     source: 'generated-client',
   },
   get: {
@@ -198,6 +295,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/task-collections/:collectionId',
     source: 'generated-client',
   },
+  getTaskPropertyWorkspace: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyWorkspace',
+    routePath: '/ticketing/task-collections/:collectionId/properties',
+    source: 'generated-client',
+  },
   list: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:list',
@@ -208,6 +311,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
     routePath: '/ticketing/readiness',
+    source: 'generated-client',
+  },
+  updateCheckboxPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
+    routePath: '/ticketing/actions/update-checkbox-property-value',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

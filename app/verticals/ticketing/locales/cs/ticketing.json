@@ -1,5 +1,16 @@
 {
   "ticketing": {
+    "checkbox": {
+      "definitionCreate": "Přidat Checkbox property",
+      "definitionCreateFailedDescription": "Checkbox property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření Checkbox property selhalo",
+      "definitionCreating": "Přidávání Checkbox property",
+      "definitionName": "Název Checkbox property",
+      "saveFailedDescription": "Checkbox se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení Checkboxu selhalo",
+      "staleDescription": "Vaše rozepsaná volba zůstala zachována. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "Checkbox byl změněn jinde"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

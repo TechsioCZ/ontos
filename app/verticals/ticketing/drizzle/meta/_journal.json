@@ -22,6 +22,20 @@
       "when": 1784554198544,
       "tag": "0002_loose_pet_avengers",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784562900229,
+      "tag": "0003_real_living_tribunal",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784563083669,
+      "tag": "0004_empty_star_brand",
+      "breakpoints": true
     }
   ]
 }
