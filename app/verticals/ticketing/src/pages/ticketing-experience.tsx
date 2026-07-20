@@ -50,10 +50,7 @@ const isCreateActionFailure = (
 
 export const TicketingExperience = () => {
   const { language, supportedLanguages, t } = useModernI18n();
-  const [createTaskCollectionIntentId, setCreateTaskCollectionIntentId] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [createTaskIntentId, setCreateTaskIntentId] = useState(() => crypto.randomUUID());
+  const [formIdempotencyKey, setFormIdempotencyKey] = useState(() => crypto.randomUUID());
   const [pendingTaskCollection, setPendingTaskCollection] = useState<TaskCollectionCreation>();
   const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
   const [isCreatingTask, setIsCreatingTask] = useState(false);
@@ -69,7 +66,7 @@ export const TicketingExperience = () => {
       const runTaskCreation = (taskCollection: TaskCollectionCreation) =>
         runCreateTaskAction(
           { collectionId: taskCollection.collection.collectionId },
-          { headers, idempotencyKey: createTaskIntentId },
+          { headers, idempotencyKey: formIdempotencyKey },
         );
       const createTaskEffect =
         pendingTaskCollection === undefined
@@ -77,7 +74,7 @@ export const TicketingExperience = () => {
               {},
               {
                 headers,
-                idempotencyKey: createTaskCollectionIntentId,
+                idempotencyKey: formIdempotencyKey,
               },
             ).pipe(
               Effect.flatMap((outcome) => {
@@ -113,8 +110,7 @@ export const TicketingExperience = () => {
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
               setPendingTaskCollection(undefined);
-              setCreateTaskCollectionIntentId(crypto.randomUUID());
-              setCreateTaskIntentId(crypto.randomUUID());
+              setFormIdempotencyKey(crypto.randomUUID());
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),

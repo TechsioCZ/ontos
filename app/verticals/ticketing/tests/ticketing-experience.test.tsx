@@ -211,7 +211,7 @@ afterEach(() => {
   rs.unstubAllGlobals();
 });
 
-test('retries only a failed Task against the retained collection and recovers the UI', async () => {
+test('uses one form-scoped idempotency key and rotates it after complete success', async () => {
   render(<TicketingExperience />);
 
   const createButton = screen.getByRole('button', { name: 'Create Task' });
@@ -226,7 +226,7 @@ test('retries only a failed Task against the retained collection and recovers th
   expect(mocks.collectionCalls).toHaveLength(1);
   expect(mocks.collectionCalls[0]?.idempotencyKey).toEqual(expect.any(String));
   expect(mocks.taskCalls).toHaveLength(1);
-  expect(mocks.taskCalls[0]?.idempotencyKey).toEqual(expect.any(String));
+  expect(mocks.taskCalls[0]?.idempotencyKey).toBe(mocks.collectionCalls[0]?.idempotencyKey);
   expect(mocks.taskCalls[0]?.payload.collectionId).toBe('collection-1');
   expect(createButton.hasAttribute('disabled')).toBe(false);
   expect(screen.queryByRole('region', { name: 'Opened Task' })).toBeNull();
@@ -250,4 +250,16 @@ test('retries only a failed Task against the retained collection and recovers th
     title: 'Task created',
     type: 'success',
   });
+
+  fireEvent.click(createButton);
+  await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(3));
+
+  expect(mocks.collectionCalls).toHaveLength(2);
+  expect(mocks.taskCalls).toHaveLength(3);
+  expect(mocks.collectionCalls[1]?.idempotencyKey).toEqual(expect.any(String));
+  expect(mocks.collectionCalls[1]?.idempotencyKey).not.toBe(
+    mocks.collectionCalls[0]?.idempotencyKey,
+  );
+  expect(mocks.taskCalls[2]?.idempotencyKey).toBe(mocks.collectionCalls[1]?.idempotencyKey);
+  expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
 });
