@@ -106,6 +106,7 @@ export declare const createTaskCollectionActionFailureSchema: Schema.Union<
     }>,
   ]
 >;
+export declare const createTaskCollectionActionFailureSchemas: typeof createTaskCollectionActionFailureSchema.members;
 export type CreateTaskCollectionActionPayload = typeof createTaskCollectionActionPayloadSchema.Type;
 export type CreateTaskCollectionActionResponse = TaskCollectionCreation;
 export type CreateTaskCollectionActionOutcome = typeof createTaskCollectionActionOutcomeSchema.Type;

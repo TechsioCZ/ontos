@@ -57,6 +57,7 @@ export declare const coreSdkOperationFailureSchema: Schema.Union<
     }>,
   ]
 >;
+export declare const coreSdkOperationFailureSchemas: typeof coreSdkOperationFailureSchema.members;
 export declare const operationContextHeadersSchema: Schema.Struct<{
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;

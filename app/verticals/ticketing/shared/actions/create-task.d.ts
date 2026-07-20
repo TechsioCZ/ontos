@@ -94,6 +94,7 @@ export declare const createTaskActionFailureSchema: Schema.Union<
     }>,
   ]
 >;
+export declare const createTaskActionFailureSchemas: typeof createTaskActionFailureSchema.members;
 export type CreateTaskActionPayload = typeof createTaskActionPayloadSchema.Type;
 export type CreateTaskActionResponse = TaskCreation;
 export type CreateTaskActionOutcome = typeof createTaskActionOutcomeSchema.Type;
