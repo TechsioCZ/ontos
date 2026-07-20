@@ -63,6 +63,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     mandatory: boolean('mandatory').default(false).notNull(),
     name: text('name').notNull(),
     propertyDefinitionId: uuid('property_definition_id').defaultRandom().primaryKey(),
+    revision: integer('revision').default(1).notNull(),
     schemaId: uuid('schema_id')
       .notNull()
       .references(() => taskSchemas.schemaId, { onDelete: 'restrict' }),
@@ -74,7 +75,11 @@ export const taskPropertyDefinitions = ticketingSchema.table(
       sql`lower(${table.name})`,
     ),
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
-    check('ticketing_task_property_definitions_datatype_ck', sql`${table.datatype} in ('title')`),
+    check(
+      'ticketing_task_property_definitions_datatype_ck',
+      sql`${table.datatype} in ('title', 'checkbox')`,
+    ),
+    check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
   ],
 );
 
@@ -123,7 +128,37 @@ export const taskRevisions = ticketingSchema.table(
   (table) => [
     primaryKey({ columns: [table.taskId, table.revision], name: 'ticketing_task_revisions_pk' }),
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
-    check('ticketing_task_revisions_reason_ck', sql`${table.reason} in ('created')`),
+    check(
+      'ticketing_task_revisions_reason_ck',
+      sql`${table.reason} in ('created', 'checkbox_value_changed')`,
+    ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskCheckboxValues = ticketingSchema.table(
+  'task_checkbox_values',
+  {
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(1).notNull(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    value: boolean('value').default(false).notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_checkbox_values_pk',
+    }),
+    index('ticketing_task_checkbox_values_filter_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.value,
+    ),
+    check('ticketing_task_checkbox_values_revision_ck', sql`${table.revision} >= 1`),
   ],
 );

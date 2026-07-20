@@ -8,14 +8,18 @@ import { useState } from 'react';
 import {
   Effect,
   getTaskCollection,
+  runCreateCheckboxPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
   runEffectRequest,
+  runUpdateCheckboxPropertyValueAction,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
+import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
+import type { TaskPropertyWorkspace } from '../../shared/task-property-workspace';
 
 interface ShellOperationContextResponse {
   readonly verticalGatewayTokens?: Readonly<Record<string, string>>;
@@ -54,7 +58,14 @@ export const TicketingExperience = () => {
   const [pendingTaskCollection, setPendingTaskCollection] = useState<TaskCollectionCreation>();
   const [pendingTaskCollectionReadId, setPendingTaskCollectionReadId] = useState<string>();
   const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
+  const [openedTaskPropertyWorkspace, setOpenedTaskPropertyWorkspace] =
+    useState<TaskPropertyWorkspace>();
   const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [checkboxDefinitionName, setCheckboxDefinitionName] = useState('');
+  const [checkboxDefinitionIdempotencyKey, setCheckboxDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -116,6 +127,20 @@ export const TicketingExperience = () => {
             },
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
+              setCheckboxDefinitionName('');
+              setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
+              setOpenedTaskPropertyWorkspace({
+                collectionId: taskCollection.collection.collectionId,
+                propertyDefinitions: [],
+                tasks: [
+                  {
+                    checkboxValues: [],
+                    taskId: taskCollection.task.taskId,
+                    taskRevision: taskCollection.task.revision,
+                    title: taskCollection.task.title,
+                  },
+                ],
+              });
               setPendingTaskCollection(undefined);
               setPendingTaskCollectionReadId(undefined);
               setFormIdempotencyKey(crypto.randomUUID());
@@ -139,6 +164,62 @@ export const TicketingExperience = () => {
       });
     } finally {
       setIsCreatingTask(false);
+    }
+  };
+
+  const handleCreateCheckboxDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || checkboxDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingCheckboxDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateCheckboxPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: checkboxDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: checkboxDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+              tasks: current.tasks.map((task) => ({
+                ...task,
+                checkboxValues: [
+                  ...task.checkboxValues,
+                  {
+                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                    revision: 1,
+                    value: false,
+                  },
+                ],
+              })),
+            },
+      );
+      setCheckboxDefinitionName('');
+      setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.checkbox.definitionCreateFailedDescription'),
+        title: t('ticketing.checkbox.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingCheckboxDefinition(false);
     }
   };
 
@@ -195,6 +276,78 @@ export const TicketingExperience = () => {
             name="title"
             value={openedTaskCollection.task.title}
           />
+          <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
+            <FormInput
+              id="checkbox-property-name"
+              label={t('ticketing.checkbox.definitionName')}
+              name="checkbox-property-name"
+              onChange={(event) => setCheckboxDefinitionName(event.currentTarget.value)}
+              value={checkboxDefinitionName}
+            />
+            <Button
+              disabled={checkboxDefinitionName.trim().length === 0}
+              isLoading={isCreatingCheckboxDefinition}
+              loadingText={t('ticketing.checkbox.definitionCreating')}
+              onClick={() => void handleCreateCheckboxDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.checkbox.definitionCreate')}
+            </Button>
+          </div>
+          {openedTaskPropertyWorkspace === undefined ? null : (
+            <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
+              {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
+                const [task] = openedTaskPropertyWorkspace.tasks;
+                const value = task?.checkboxValues.find(
+                  (candidate) => candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                );
+                return task === undefined || value === undefined ? null : (
+                  <CheckboxPropertyEditor
+                    collectionId={openedTaskPropertyWorkspace.collectionId}
+                    key={definition.propertyDefinitionId}
+                    label={definition.name}
+                    onSave={async (draft, idempotencyKey) => {
+                      const operationContextToken = await loadTicketingOperationContextToken();
+                      const outcome = await runEffectRequest(
+                        runUpdateCheckboxPropertyValueAction(draft, {
+                          headers: { 'x-ontos-operation-context': operationContextToken },
+                          idempotencyKey,
+                        }),
+                      );
+                      setOpenedTaskPropertyWorkspace((current) =>
+                        current === undefined
+                          ? current
+                          : {
+                              ...current,
+                              tasks: current.tasks.map((candidate) =>
+                                candidate.taskId === draft.taskId
+                                  ? {
+                                      ...candidate,
+                                      checkboxValues: candidate.checkboxValues.map(
+                                        (checkboxValue) =>
+                                          checkboxValue.propertyDefinitionId ===
+                                          draft.propertyDefinitionId
+                                            ? outcome.response.value
+                                            : checkboxValue,
+                                      ),
+                                      taskRevision: outcome.response.taskRevision,
+                                    }
+                                  : candidate,
+                              ),
+                            },
+                      );
+                      return outcome.response;
+                    }}
+                    propertyDefinitionId={definition.propertyDefinitionId}
+                    revision={value.revision}
+                    taskId={task.taskId}
+                    value={value.value}
+                  />
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
     </main>

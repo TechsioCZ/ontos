@@ -18,12 +18,20 @@ import type {
   OperationContext,
   TicketingReadiness,
   TaskCollectionAggregate,
+  TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
   CreateTaskCollectionActionOutcome,
   CreateTaskCollectionActionPayload,
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
   CreateTaskActionPayload,
+  CreateCheckboxPropertyDefinitionActionFailure,
+  CreateCheckboxPropertyDefinitionActionOutcome,
+  CreateCheckboxPropertyDefinitionActionPayload,
+  UpdateCheckboxPropertyValueActionFailure,
+  UpdateCheckboxPropertyValueActionOutcome,
+  UpdateCheckboxPropertyValueActionPayload,
+  FilterTaskCheckboxValuesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -38,6 +46,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UpdateCheckboxPropertyValueActionFailure
+  | CreateCheckboxPropertyDefinitionActionFailure
   | CreateTaskActionFailure
   | CreateTaskCollectionActionFailure
   | TicketingNotFound
@@ -109,6 +119,43 @@ export const getTaskCollection = (
     ),
   );
 
+export const getTaskPropertyWorkspace = (
+  collectionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<TaskPropertyWorkspace> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.getTaskPropertyWorkspace,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getTaskPropertyWorkspace({
+        headers: options.headers ?? {},
+        params: { collectionId },
+      }),
+    ),
+  );
+
+export const filterTaskCheckboxValues = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  value: boolean,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<FilterTaskCheckboxValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.filterTaskCheckboxValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.filterTaskCheckboxValues({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
+        query: { value: value ? 'true' : 'false' },
+      }),
+    ),
+  );
+
 export const runCreateTaskCollectionAction = (
   payload: CreateTaskCollectionActionPayload,
   options: TicketingClientOptions & { idempotencyKey?: string } = {},
@@ -155,6 +202,60 @@ export const runCreateTaskAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.createTaskAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateCheckboxPropertyDefinitionAction = (
+  payload: CreateCheckboxPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateCheckboxPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createCheckboxPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createCheckboxPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateCheckboxPropertyValueAction = (
+  payload: UpdateCheckboxPropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateCheckboxPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateCheckboxPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateCheckboxPropertyValueAction({
         headers: headers ?? {},
         payload,
       }),

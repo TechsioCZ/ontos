@@ -15,3 +15,15 @@ definition core_modules {
   permission view = viewer + changer
   permission change = changer
 }
+
+definition task_collection {
+  relation full_access: principal
+  relation editor: principal
+  relation user: principal
+  relation viewer: principal
+
+  permission view_task_properties = full_access + editor + user + viewer
+  permission manage_property_definitions = full_access + editor
+  permission edit_task_property_values = full_access + editor + user
+  permission share = full_access
+}

@@ -79,6 +79,28 @@ const createTaskActionHandler: ActionHandler<
         ${services.context.tenantId}
       from created_task
       returning task_id
+    ),
+    initialized_checkbox_values as (
+      insert into ticketing.task_checkbox_values (
+        property_definition_id,
+        task_id,
+        tenant_id,
+        value
+      )
+      select
+        definition.property_definition_id,
+        created_task.task_id,
+        ${services.context.tenantId},
+        false
+      from created_task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = created_task.collection_id
+        and schema.tenant_id = ${services.context.tenantId}
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = ${services.context.tenantId}
+        and definition.datatype = 'checkbox'
+      returning task_id
     )
     select
       created_task.collection_id as "collectionId",
