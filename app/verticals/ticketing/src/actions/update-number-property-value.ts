@@ -19,6 +19,7 @@ import type {
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
 
 interface CurrentNumberValueRow {
+  readonly mandatory: boolean;
   readonly propertyDefinitionId: string;
   readonly revision: number | null;
   readonly taskRevision: number;
@@ -82,6 +83,7 @@ const updateNumberPropertyValueActionHandler: ActionHandler<
 
   const currentResult = await services.tx.execute(sql`
     select
+      definition.mandatory,
       definition.property_definition_id as "propertyDefinitionId",
       value.revision,
       task.revision as "taskRevision",
@@ -110,6 +112,12 @@ const updateNumberPropertyValueActionHandler: ActionHandler<
     throw rejectAction({
       code: 'ticketing.updateNumberPropertyValue.stale_or_missing',
       message: 'The Number value changed elsewhere or is no longer available.',
+    });
+  }
+  if (current.mandatory && canonicalValue === null) {
+    throw rejectAction({
+      code: 'ticketing.updateNumberPropertyValue.mandatory_empty',
+      message: 'Mandatory Number must contain a value.',
     });
   }
   const currentCanonical =

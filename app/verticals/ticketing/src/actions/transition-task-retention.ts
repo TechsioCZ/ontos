@@ -89,7 +89,13 @@ const transitionTaskRetentionActionHandler: ActionHandler<
 
   if (input.transition === 'hardDelete') {
     const hardDeletionResult = await services.tx.execute(sql`
-      with deleted_values as (
+      with deleted_number_values as (
+        delete from ticketing.task_number_values
+        where task_id = ${input.taskId}
+          and tenant_id = ${services.context.tenantId}
+        returning task_id
+      ),
+      deleted_checkbox_values as (
         delete from ticketing.task_checkbox_values
         where task_id = ${input.taskId}
           and tenant_id = ${services.context.tenantId}

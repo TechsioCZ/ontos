@@ -12,6 +12,7 @@ import { updateNumberPropertyValueActionRegistration } from '../src/actions/upda
 import { configureNumberPropertyFormatActionRegistration } from '../src/actions/configure-number-property-format.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { queryTaskNumberValuesDataAccessRegistration } from '../src/data-access/query-task-number-values.ts';
@@ -81,6 +82,25 @@ const operationContextResolver = (operationContext) => () => ({
 });
 
 const allowedAuthorization = () => ({ _tag: 'Allowed' });
+
+const authorizationForRole =
+  (role, checks = []) =>
+  (check) => {
+    checks.push(check);
+    const permissions = {
+      Editor: ['edit_task_property_values', 'manage_property_definitions', 'view_task_properties'],
+      'Full access': [
+        'edit_task_property_values',
+        'manage_property_definitions',
+        'view_task_properties',
+      ],
+      User: ['edit_task_property_values', 'view_task_properties'],
+      Viewer: ['view_task_properties'],
+    };
+    return permissions[role].includes(check.permission)
+      ? { _tag: 'Allowed' }
+      : { _tag: 'Denied', message: `${role} lacks ${check.permission}.` };
+  };
 
 const runRegisteredAction = ({ operationContext, payload, registration }) =>
   runAction({
@@ -262,6 +282,68 @@ test('invalid and out-of-bound decimals are rejected atomically without replacin
   assert.equal(workspace.response.tasks[0].taskRevision, 2);
 });
 
+test('a Mandatory Number rejects clearing and leaves its committed value and revisions intact', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: true, name: 'Required estimate' },
+    registration: createNumberPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const propertyDefinitionId = definition.response.definition.propertyDefinitionId;
+  const populated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: '5',
+    },
+    registration: updateNumberPropertyValueActionRegistration,
+  });
+  assert.equal(populated._tag, 'OperationSucceeded', JSON.stringify(populated));
+
+  const rejected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: null,
+    },
+    registration: updateNumberPropertyValueActionRegistration,
+  });
+  assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'ticketing.updateNumberPropertyValue.mandatory_empty');
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].taskRevision, 2);
+  assert.deepEqual(workspace.response.tasks[0].numberValues, [
+    { propertyDefinitionId, revision: 1, value: '5' },
+  ]);
+});
+
 test('Number queries use canonical search, mathematical comparisons, numeric sort, and equality groups', async () => {
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
@@ -281,7 +363,7 @@ test('Number queries use canonical search, mathematical comparisons, numeric sor
   const records = [];
 
   for (const value of ['-2', '0', '1', '1.0', '1250', null]) {
-    // oxlint-disable-next-line no-await-in-loop -- Creation order is the public stable tie-breaker.
+    // oxlint-disable-next-line no-await-in-loop -- Tasks are created through the public command seam.
     const task = await runRegisteredAction({
       operationContext,
       payload: { collectionId },
@@ -367,13 +449,23 @@ test('Number queries use canonical search, mathematical comparisons, numeric sor
     (await query({ kind: 'filter', operator: 'is_not_empty' })).items.map(({ taskId }) => taskId),
     ids('-2', '0', '1', '1.0', '1250'),
   );
+  const ascending = await query({ direction: 'ascending', kind: 'sort' });
   assert.deepEqual(
-    (await query({ direction: 'ascending', kind: 'sort' })).items.map(({ value }) => value),
+    ascending.items.map(({ value }) => value),
     ['-2', '0', '1', '1', '1250', null],
   );
   assert.deepEqual(
-    (await query({ direction: 'descending', kind: 'sort' })).items.map(({ value }) => value),
+    ascending.items.filter(({ value }) => value === '1').map(({ taskId }) => taskId),
+    ids('1', '1.0').toSorted(),
+  );
+  const descending = await query({ direction: 'descending', kind: 'sort' });
+  assert.deepEqual(
+    descending.items.map(({ value }) => value),
     ['1250', '1', '1', '0', '-2', null],
+  );
+  assert.deepEqual(
+    descending.items.filter(({ value }) => value === '1').map(({ taskId }) => taskId),
+    ids('1', '1.0').toSorted(),
   );
 
   const grouped = await query({ kind: 'group' });
@@ -381,7 +473,7 @@ test('Number queries use canonical search, mathematical comparisons, numeric sor
     grouped.groups.map(({ value }) => value),
     ['-2', '0', '1', '1250', null],
   );
-  assert.deepEqual(grouped.groups[2].taskIds, ids('1', '1.0'));
+  assert.deepEqual(grouped.groups[2].taskIds, ids('1', '1.0').toSorted());
 });
 
 test('display format changes do not rewrite values and duplication optionally snapshots exact values', async () => {
@@ -537,7 +629,7 @@ test('clearing Number preserves a revision that rejects a stale overwrite and ac
   });
 });
 
-test('Number deletion counts only retained non-empty values and removes the definition after confirmation', async () => {
+test('Number deletion counts non-empty values across retained lifecycle states and excludes hard deletion', async () => {
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
@@ -553,8 +645,15 @@ test('Number deletion counts only retained non-empty values and removes the defi
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
   const propertyDefinitionId = definition.response.definition.propertyDefinitionId;
-  const tasks = [];
-  for (const value of ['0', '5', null]) {
+  const taskCases = [
+    { transition: undefined, value: '0' },
+    { transition: 'archive', value: '5' },
+    { transition: 'softDelete', value: '6' },
+    { transition: 'hardDelete', value: '7' },
+    { clear: true, transition: undefined, value: '8' },
+    { transition: undefined, value: null },
+  ];
+  for (const taskCase of taskCases) {
     // oxlint-disable-next-line no-await-in-loop -- Each Task is independently observable.
     const task = await runRegisteredAction({
       operationContext,
@@ -562,8 +661,7 @@ test('Number deletion counts only retained non-empty values and removes the defi
       registration: createTaskActionRegistration,
     });
     assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
-    tasks.push(task.response.task);
-    if (value !== null) {
+    if (taskCase.value !== null) {
       // oxlint-disable-next-line no-await-in-loop -- Each value uses its own public command.
       const update = await runRegisteredAction({
         operationContext,
@@ -572,25 +670,42 @@ test('Number deletion counts only retained non-empty values and removes the defi
           expectedRevision: 0,
           propertyDefinitionId,
           taskId: task.response.task.taskId,
-          value,
+          value: taskCase.value,
         },
         registration: updateNumberPropertyValueActionRegistration,
       });
       assert.equal(update._tag, 'OperationSucceeded', JSON.stringify(update));
     }
+    if (taskCase.clear) {
+      // oxlint-disable-next-line no-await-in-loop -- Lifecycle cases are asserted independently.
+      const cleared = await runRegisteredAction({
+        operationContext,
+        payload: {
+          collectionId,
+          expectedRevision: 1,
+          propertyDefinitionId,
+          taskId: task.response.task.taskId,
+          value: null,
+        },
+        registration: updateNumberPropertyValueActionRegistration,
+      });
+      assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
+    }
+    if (taskCase.transition !== undefined) {
+      // oxlint-disable-next-line no-await-in-loop -- Lifecycle cases are asserted independently.
+      const transitioned = await runRegisteredAction({
+        operationContext,
+        payload: {
+          collectionId,
+          expectedRevision: 2,
+          taskId: task.response.task.taskId,
+          transition: taskCase.transition,
+        },
+        registration: transitionTaskRetentionActionRegistration,
+      });
+      assert.equal(transitioned._tag, 'OperationSucceeded', JSON.stringify(transitioned));
+    }
   }
-  const cleared = await runRegisteredAction({
-    operationContext,
-    payload: {
-      collectionId,
-      expectedRevision: 1,
-      propertyDefinitionId,
-      taskId: tasks[1].taskId,
-      value: null,
-    },
-    registration: updateNumberPropertyValueActionRegistration,
-  });
-  assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
 
   const impact = await runRegisteredDataAccess({
     operationContext,
@@ -599,14 +714,14 @@ test('Number deletion counts only retained non-empty values and removes the defi
     resultCount: () => 1,
   });
   assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
-  assert.deepEqual(impact.response, { impactCount: 1, propertyDefinitionId, revision: 1 });
+  assert.deepEqual(impact.response, { impactCount: 3, propertyDefinitionId, revision: 1 });
 
   const deleted = await runRegisteredAction({
     operationContext,
     payload: {
       collectionId,
       confirmed: true,
-      expectedImpactCount: 1,
+      expectedImpactCount: 3,
       expectedRevision: 1,
       propertyDefinitionId,
     },
@@ -621,10 +736,130 @@ test('Number deletion counts only retained non-empty values and removes the defi
   });
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.propertyDefinitions, []);
+  assert.equal(workspace.response.tasks.length, 5);
   assert.equal(
     workspace.response.tasks.every(({ numberValues }) => numberValues === undefined),
     true,
   );
+});
+
+test('Number schema, format, value, and query operations enforce the collection role matrix', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const seed = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Seed Number' },
+    registration: createNumberPropertyDefinitionActionRegistration,
+  });
+  assert.equal(seed._tag, 'OperationSucceeded', JSON.stringify(seed));
+  const propertyDefinitionId = seed.response.definition.propertyDefinitionId;
+  const roles = ['Full access', 'Editor', 'User', 'Viewer'];
+
+  for (const role of roles) {
+    const checks = [];
+    // oxlint-disable-next-line no-await-in-loop -- Each role is an independent authorization case.
+    const result = await runAction({
+      options: {
+        authorizationChecker: authorizationForRole(role, checks),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: { collectionId, mandatory: false, name: `${role} Number` },
+      registration: createNumberPropertyDefinitionActionRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+    });
+    assert.equal(
+      result._tag,
+      role === 'Full access' || role === 'Editor'
+        ? 'OperationSucceeded'
+        : 'OperationAuthorizationDenied',
+    );
+    assert.equal(checks[0].permission, 'manage_property_definitions');
+  }
+
+  let definitionRevision = 1;
+  for (const [index, role] of roles.entries()) {
+    const checks = [];
+    // oxlint-disable-next-line no-await-in-loop -- Definition revisions make this matrix sequential.
+    const result = await runAction({
+      options: {
+        authorizationChecker: authorizationForRole(role, checks),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        expectedRevision: definitionRevision,
+        format: index === 0 ? 'percent' : 'number_with_separators',
+        propertyDefinitionId,
+      },
+      registration: configureNumberPropertyFormatActionRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+    });
+    assert.equal(
+      result._tag,
+      role === 'Full access' || role === 'Editor'
+        ? 'OperationSucceeded'
+        : 'OperationAuthorizationDenied',
+    );
+    assert.equal(checks[0].permission, 'manage_property_definitions');
+    if (result._tag === 'OperationSucceeded') {
+      definitionRevision += 1;
+    }
+  }
+
+  let valueRevision = 0;
+  for (const [index, role] of roles.entries()) {
+    const checks = [];
+    // oxlint-disable-next-line no-await-in-loop -- Value revisions make this role matrix sequential.
+    const result = await runAction({
+      options: {
+        authorizationChecker: authorizationForRole(role, checks),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        expectedRevision: valueRevision,
+        propertyDefinitionId,
+        taskId: task.response.task.taskId,
+        value: String(index + 1),
+      },
+      registration: updateNumberPropertyValueActionRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+    });
+    assert.equal(
+      result._tag,
+      role === 'Viewer' ? 'OperationAuthorizationDenied' : 'OperationSucceeded',
+    );
+    assert.equal(checks[0].permission, 'edit_task_property_values');
+    if (result._tag === 'OperationSucceeded') {
+      valueRevision += 1;
+    }
+  }
+
+  const viewerChecks = [];
+  const viewerQuery = await runDataAccess({
+    options: {
+      authorizationChecker: authorizationForRole('Viewer', viewerChecks),
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, direction: 'ascending', kind: 'sort', propertyDefinitionId },
+    registration: queryTaskNumberValuesDataAccessRegistration,
+    resultCount: (response) => response.items.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(viewerQuery._tag, 'OperationSucceeded', JSON.stringify(viewerQuery));
+  assert.equal(viewerChecks[0].permission, 'view_task_properties');
 });
 
 test('Number Action evidence is metadata-only and descriptors use the shared permissions', () => {

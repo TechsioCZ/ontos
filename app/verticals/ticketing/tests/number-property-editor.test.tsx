@@ -65,6 +65,20 @@ test('an invalid paste is rejected as a whole and retains the previous draft', (
   });
 });
 
+test('malformed and foreign grouping separators are rejected instead of changing the number', () => {
+  const save = rs.fn();
+  render(<NumberPropertyEditor {...baseProps} locale="en-GB" onSave={save} />);
+  const input = screen.getByRole('textbox', { name: 'Estimate' });
+  fireEvent.focus(input);
+
+  fireEvent.paste(input, { clipboardData: { getData: () => '1,2' } });
+  fireEvent.paste(input, { clipboardData: { getData: () => '1\u00A0234' } });
+
+  expect((input as HTMLInputElement).value).toBe('10');
+  expect(save).not.toHaveBeenCalled();
+  expect(mocks.toastCreate).toHaveBeenCalledTimes(2);
+});
+
 test('localized input sends one canonical decimal with the form idempotency key', async () => {
   const save = rs.fn(() =>
     Promise.resolve({
@@ -112,4 +126,55 @@ test('a stale save keeps the localized draft and reports the conflict through To
     title: 'Number changed elsewhere',
     type: 'warning',
   });
+});
+
+test('external value, revision, format, and locale changes refresh only a non-editing display', async () => {
+  const save = rs.fn(() =>
+    Promise.resolve({
+      taskRevision: 4,
+      value: { propertyDefinitionId: 'property-1', revision: 4, value: '12.5' },
+    }),
+  );
+  const { rerender } = render(
+    <NumberPropertyEditor {...baseProps} locale="en-GB" onSave={save} value="1234.5" />,
+  );
+  const input = screen.getByRole('textbox', { name: 'Estimate' });
+
+  rerender(
+    <NumberPropertyEditor
+      {...baseProps}
+      format="number_with_separators"
+      locale="cs-CZ"
+      onSave={save}
+      revision={2}
+      value="2000.5"
+    />,
+  );
+  expect((input as HTMLInputElement).value).toBe('2\u00A0000,5');
+
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: '12,5' } });
+  rerender(
+    <NumberPropertyEditor
+      {...baseProps}
+      format="percent"
+      locale="cs-CZ"
+      onSave={save}
+      revision={3}
+      value="25"
+    />,
+  );
+  expect((input as HTMLInputElement).value).toBe('12,5');
+  fireEvent.blur(input);
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save).toHaveBeenCalledWith(
+    {
+      collectionId: 'collection-1',
+      expectedRevision: 3,
+      propertyDefinitionId: 'property-1',
+      taskId: 'task-1',
+      value: '12.5',
+    },
+    expect.any(String),
+  );
 });

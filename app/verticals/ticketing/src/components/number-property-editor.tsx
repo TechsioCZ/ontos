@@ -2,7 +2,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent } from 'react';
 import { canonicalizeNumberValue } from '../../shared/number-value';
 
@@ -62,6 +62,9 @@ const groupInteger = (integer: string, separator: string): string => {
   return groups.join(separator);
 };
 
+const escapeRegularExpression = (value: string): string =>
+  value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+
 export const formatNumberPropertyValue = ({
   format,
   locale,
@@ -94,11 +97,16 @@ export const parseLocalizedNumberPropertyValue = (
     return null;
   }
   const { decimal, group } = localeNumberSymbols(locale);
-  const withoutGroups = trimmed
-    .split(group)
-    .join('')
-    .replaceAll('\u00A0', '')
-    .replaceAll('\u202F', '');
+  const escapedDecimal = escapeRegularExpression(decimal);
+  const escapedGroup = escapeRegularExpression(group);
+  const localizedDecimalPattern = new RegExp(
+    `^-?(?:\\d+|\\d{1,3}(?:${escapedGroup}\\d{3})+)(?:${escapedDecimal}\\d+)?$`,
+    'u',
+  );
+  if (!localizedDecimalPattern.test(trimmed)) {
+    return undefined;
+  }
+  const withoutGroups = trimmed.replaceAll(group, '');
   const canonicalDraft = decimal === '.' ? withoutGroups : withoutGroups.replace(decimal, '.');
   return canonicalizeNumberValue(canonicalDraft);
 };
@@ -128,6 +136,25 @@ export const NumberPropertyEditor = ({
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const previousExternalState = useRef({ format, locale, revision, value });
+
+  useEffect(() => {
+    const previous = previousExternalState.current;
+    const changed =
+      previous.format !== format ||
+      previous.locale !== locale ||
+      previous.revision !== revision ||
+      previous.value !== value;
+    if (!changed) {
+      return;
+    }
+    previousExternalState.current = { format, locale, revision, value };
+    setCommittedValue(value);
+    setCurrentRevision(revision);
+    if (!isEditing) {
+      setDraft(formatNumberPropertyValue({ format, locale, value }));
+    }
+  }, [format, isEditing, locale, revision, value]);
 
   const showInvalidToast = () =>
     toaster.create({

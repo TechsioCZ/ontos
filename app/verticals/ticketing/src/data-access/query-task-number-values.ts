@@ -73,10 +73,10 @@ const queryPredicate = (input: QueryTaskNumberValuesPayload) => {
 
 const queryOrdering = (input: QueryTaskNumberValuesPayload) => {
   if (input.kind === 'sort' && input.direction === 'descending') {
-    return sql`value.value desc nulls last, task.created_at, task.task_id`;
+    return sql`value.value desc nulls last, task.task_id`;
   }
   if (input.kind === 'sort' || input.kind === 'group') {
-    return sql`value.value asc nulls last, task.created_at, task.task_id`;
+    return sql`value.value asc nulls last, task.task_id`;
   }
   return sql`task.created_at, task.task_id`;
 };

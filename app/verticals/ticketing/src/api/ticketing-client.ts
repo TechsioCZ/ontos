@@ -410,15 +410,9 @@ export const runTransitionTaskRetentionAction = (
 
 export const runCreateNumberPropertyDefinitionAction = (
   payload: CreateNumberPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateNumberPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -437,15 +431,9 @@ export const runCreateNumberPropertyDefinitionAction = (
 
 export const runUpdateNumberPropertyValueAction = (
   payload: UpdateNumberPropertyValueActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UpdateNumberPropertyValueActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -464,15 +452,9 @@ export const runUpdateNumberPropertyValueAction = (
 
 export const runConfigureNumberPropertyFormatAction = (
   payload: ConfigureNumberPropertyFormatActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<ConfigureNumberPropertyFormatActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
