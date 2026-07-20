@@ -1,5 +1,5 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
-import { checkboxPropertyDefinitionSchema } from './actions/create-checkbox-property-definition.ts';
+import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
@@ -9,7 +9,7 @@ export const checkboxPropertyValueSchema = Schema.Struct({
 
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
-  propertyDefinitions: Schema.Array(checkboxPropertyDefinitionSchema),
+  propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),

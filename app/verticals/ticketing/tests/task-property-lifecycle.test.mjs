@@ -255,6 +255,43 @@ test('schema configuration trims the name and preserves Checkbox values and Task
   assert.equal(afterRead.response.task.revision, 1);
 });
 
+test('submitting the committed schema configuration is a semantic no-op', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+
+  const noOp = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      hidden: false,
+      mandatory: false,
+      name: '  Approved  ',
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    },
+    registration: configureTaskPropertyDefinitionActionRegistration,
+  });
+
+  assert.equal(noOp._tag, 'OperationSucceeded', JSON.stringify(noOp));
+  assert.equal(
+    noOp.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
+    false,
+  );
+  assert.deepEqual(noOp.response.definition, definition.response.definition);
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.propertyDefinitions, [definition.response.definition]);
+  assert.equal(workspace.response.tasks[0].taskId, task.response.task.taskId);
+  assert.equal(workspace.response.tasks[0].taskRevision, 1);
+});
+
 test('Checkbox duplication copies configuration and generates the first available Copy name', async () => {
   const operationContext = await createOperationIdentity();
   const { collectionId, definition, task } =

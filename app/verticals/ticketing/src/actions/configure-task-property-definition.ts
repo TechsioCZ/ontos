@@ -16,15 +16,7 @@ import type {
   ConfigureTaskPropertyDefinitionActionPayload,
   ConfigureTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/configure-task-property-definition.ts';
-
-interface ConfiguredDefinitionRow {
-  readonly datatype: 'checkbox';
-  readonly hidden: boolean;
-  readonly mandatory: boolean;
-  readonly name: string;
-  readonly propertyDefinitionId: string;
-  readonly revision: number;
-}
+import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
 
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
@@ -72,6 +64,42 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     });
   }
 
+  const currentResult = await services.tx.execute(sql`
+    select
+      definition.datatype,
+      definition.hidden,
+      definition.mandatory,
+      definition.name,
+      definition.property_definition_id as "propertyDefinitionId",
+      definition.revision
+    from ticketing.task_property_definitions as definition
+    inner join ticketing.task_schemas as schema
+      on schema.schema_id = definition.schema_id
+      and schema.tenant_id = definition.tenant_id
+    where definition.property_definition_id = ${input.propertyDefinitionId}
+      and definition.revision = ${input.expectedRevision}
+      and definition.tenant_id = ${services.context.tenantId}
+      and schema.collection_id = ${input.collectionId}
+      and schema.tenant_id = ${services.context.tenantId}
+    for update of definition
+  `);
+  const currentDefinition = rowsFromResult<TaskPropertyDefinition>(currentResult).at(0);
+  if (currentDefinition === undefined) {
+    throw rejectAction({
+      code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
+      message:
+        'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
+    });
+  }
+  if (
+    currentDefinition.hidden === input.hidden &&
+    currentDefinition.mandatory === input.mandatory &&
+    currentDefinition.name === name
+  ) {
+    services.markNoOp();
+    return { definition: currentDefinition };
+  }
+
   const result = await services.tx.execute(sql`
     update ticketing.task_property_definitions as definition
     set
@@ -101,7 +129,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       definition.property_definition_id as "propertyDefinitionId",
       definition.revision
   `);
-  const definition = rowsFromResult<ConfiguredDefinitionRow>(result).at(0);
+  const definition = rowsFromResult<TaskPropertyDefinition>(result).at(0);
   if (definition === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',

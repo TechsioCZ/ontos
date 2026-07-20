@@ -49,6 +49,14 @@ export type {
 } from './actions/update-checkbox-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export {
+  checkboxPropertyDefinitionSchema,
+  taskPropertyDefinitionSchema,
+} from './task-property-definition';
+export type {
+  CheckboxPropertyDefinition,
+  TaskPropertyDefinition,
+} from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
 export type {
   FilterTaskCheckboxValuesPayload,

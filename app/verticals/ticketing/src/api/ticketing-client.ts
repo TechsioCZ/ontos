@@ -77,6 +77,16 @@ export interface TicketingClientOptions {
   traceparent?: string;
 }
 
+type TicketingActionClientOptions = TicketingClientOptions & { idempotencyKey?: string };
+
+const actionHeaders = (options: TicketingActionClientOptions): Record<string, string> | undefined =>
+  options.idempotencyKey === undefined
+    ? options.headers
+    : {
+        ...options.headers,
+        'Idempotency-Key': options.idempotencyKey,
+      };
+
 export const createTicketingClient = (
   options: TicketingClientOptions = {},
 ): TicketingClientEffect<TicketingClient> =>
@@ -189,15 +199,9 @@ export const getTaskPropertyDeletionImpact = (
 
 export const runCreateTaskCollectionAction = (
   payload: CreateTaskCollectionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateTaskCollectionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -216,15 +220,9 @@ export const runCreateTaskCollectionAction = (
 
 export const runCreateTaskAction = (
   payload: CreateTaskActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateTaskActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -242,15 +240,9 @@ export const runCreateTaskAction = (
 
 export const runCreateCheckboxPropertyDefinitionAction = (
   payload: CreateCheckboxPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateCheckboxPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -269,15 +261,9 @@ export const runCreateCheckboxPropertyDefinitionAction = (
 
 export const runUpdateCheckboxPropertyValueAction = (
   payload: UpdateCheckboxPropertyValueActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UpdateCheckboxPropertyValueActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -296,15 +282,9 @@ export const runUpdateCheckboxPropertyValueAction = (
 
 export const runConfigureTaskPropertyDefinitionAction = (
   payload: ConfigureTaskPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<ConfigureTaskPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -323,15 +303,9 @@ export const runConfigureTaskPropertyDefinitionAction = (
 
 export const runDuplicateTaskPropertyDefinitionAction = (
   payload: DuplicateTaskPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<DuplicateTaskPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -350,15 +324,9 @@ export const runDuplicateTaskPropertyDefinitionAction = (
 
 export const runDeleteTaskPropertyDefinitionAction = (
   payload: DeleteTaskPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<DeleteTaskPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,

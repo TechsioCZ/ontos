@@ -1,12 +1,11 @@
 // @effect-diagnostics asyncFunction:off
-import { rejectAction, rowsFromResult } from '@app/core-runtime';
+import { rejectAction } from '@app/core-runtime';
 import type {
   ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
   ActionHandler,
   ActionRegistration,
 } from '@app/core-runtime';
-import { sql } from '@app/core-runtime/db/sql';
 import {
   duplicateTaskPropertyDefinitionActionKey,
   duplicateTaskPropertyDefinitionActionPayloadSchema,
@@ -17,21 +16,16 @@ import type {
   DuplicateTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/duplicate-task-property-definition.ts';
 import { lockTaskCollectionForPropertyInitialization } from '../task-collection-property-initialization-lock.ts';
-
-interface DuplicatedDefinitionRow {
-  readonly datatype: 'checkbox';
-  readonly hidden: boolean;
-  readonly mandatory: boolean;
-  readonly name: string;
-  readonly propertyDefinitionId: string;
-  readonly revision: number;
-}
+import {
+  duplicateTaskPropertyDefinition,
+  lockTaskPropertyDefinitionLifecycleTarget,
+} from '../task-property-definition-lifecycle.ts';
 
 const duplicatedDefinitionEvidence = (
   input: DuplicateTaskPropertyDefinitionActionPayload,
   response: DuplicateTaskPropertyDefinitionActionResponse,
 ) => ({
-  changedComponents: ['definition', 'checkboxValues'],
+  changedComponents: ['definition', 'propertyValues'],
   collectionId: input.collectionId,
   copiedValues: input.copyValues,
   datatype: response.definition.datatype,
@@ -73,94 +67,24 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
     tx: services.tx,
   });
 
-  const result = await services.tx.execute(sql`
-    with source_definition as (
-      select definition.*
-      from ticketing.task_property_definitions as definition
-      inner join ticketing.task_schemas as schema
-        on schema.schema_id = definition.schema_id
-        and schema.tenant_id = definition.tenant_id
-      where definition.property_definition_id = ${input.propertyDefinitionId}
-        and definition.revision = ${input.expectedRevision}
-        and definition.datatype = 'checkbox'
-        and definition.tenant_id = ${services.context.tenantId}
-        and schema.collection_id = ${input.collectionId}
-    ),
-    available_name as (
-      select
-        case
-          when candidate.ordinal = 1 then source_definition.name || ' Copy'
-          else source_definition.name || ' Copy ' || candidate.ordinal::text
-        end as name
-      from source_definition
-      cross join lateral generate_series(1, (
-        select count(*)::integer + 1
-        from ticketing.task_property_definitions as sibling
-        where sibling.schema_id = source_definition.schema_id
-      )) as candidate(ordinal)
-      where not exists (
-        select 1
-        from ticketing.task_property_definitions as sibling
-        where sibling.schema_id = source_definition.schema_id
-          and lower(sibling.name) = lower(
-            case
-              when candidate.ordinal = 1 then source_definition.name || ' Copy'
-              else source_definition.name || ' Copy ' || candidate.ordinal::text
-            end
-          )
-      )
-      order by candidate.ordinal
-      limit 1
-    ),
-    inserted_definition as (
-      insert into ticketing.task_property_definitions (
-        datatype,
-        hidden,
-        mandatory,
-        name,
-        schema_id,
-        tenant_id
-      )
-      select
-        source_definition.datatype,
-        source_definition.hidden,
-        source_definition.mandatory,
-        available_name.name,
-        source_definition.schema_id,
-        source_definition.tenant_id
-      from source_definition
-      cross join available_name
-      returning datatype, hidden, mandatory, name, property_definition_id, revision
-    ),
-    copied_values as (
-      insert into ticketing.task_checkbox_values (
-        property_definition_id,
-        task_id,
-        tenant_id,
-        value
-      )
-      select
-        inserted_definition.property_definition_id,
-        source_value.task_id,
-        source_value.tenant_id,
-        case when ${input.copyValues} then source_value.value else false end
-      from inserted_definition
-      inner join source_definition on true
-      inner join ticketing.task_checkbox_values as source_value
-        on source_value.property_definition_id = source_definition.property_definition_id
-        and source_value.tenant_id = source_definition.tenant_id
-      returning task_id
-    )
-    select
-      inserted_definition.datatype,
-      inserted_definition.hidden,
-      inserted_definition.mandatory,
-      inserted_definition.name,
-      inserted_definition.property_definition_id as "propertyDefinitionId",
-      inserted_definition.revision
-    from inserted_definition
-  `);
-  const definition = rowsFromResult<DuplicatedDefinitionRow>(result).at(0);
+  const source = await lockTaskPropertyDefinitionLifecycleTarget({
+    collectionId: input.collectionId,
+    propertyDefinitionId: input.propertyDefinitionId,
+    tenantId: services.context.tenantId,
+    tx: services.tx,
+  });
+  if (source === undefined || source.revision !== input.expectedRevision) {
+    throw rejectAction({
+      code: 'ticketing.duplicateTaskPropertyDefinition.stale_or_missing',
+      message: 'The Task Property Definition changed elsewhere or is no longer available.',
+    });
+  }
+
+  const definition = await duplicateTaskPropertyDefinition({
+    copyValues: input.copyValues,
+    source,
+    tx: services.tx,
+  });
   if (definition === undefined) {
     throw rejectAction({
       code: 'ticketing.duplicateTaskPropertyDefinition.stale_or_missing',

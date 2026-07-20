@@ -4,7 +4,7 @@ import {
   coreSdkOperationFailureSchemas,
   idempotentActionHeadersSchema,
 } from '../core-sdk-operation.ts';
-import { checkboxPropertyDefinitionSchema } from './create-checkbox-property-definition.ts';
+import { taskPropertyDefinitionSchema } from '../task-property-definition.ts';
 
 export const configureTaskPropertyDefinitionActionKey =
   'ticketing.configureTaskPropertyDefinition' as const;
@@ -21,7 +21,7 @@ export const configureTaskPropertyDefinitionActionPayloadSchema = Schema.Struct(
 export const configureTaskPropertyDefinitionActionHeadersSchema = idempotentActionHeadersSchema;
 
 export const configureTaskPropertyDefinitionActionResponseSchema = Schema.Struct({
-  definition: checkboxPropertyDefinitionSchema,
+  definition: taskPropertyDefinitionSchema,
 });
 
 export const configureTaskPropertyDefinitionActionOutcomeSchema = Schema.Struct({
