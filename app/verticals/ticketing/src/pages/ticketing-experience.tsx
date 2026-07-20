@@ -135,6 +135,7 @@ export const TicketingExperience = () => {
                 tasks: [
                   {
                     checkboxValues: [],
+                    selectValues: [],
                     taskId: taskCollection.task.taskId,
                     taskRevision: taskCollection.task.revision,
                     title: taskCollection.task.title,

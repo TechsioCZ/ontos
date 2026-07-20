@@ -45,6 +45,24 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateSelectPropertyDefinitionActionFailure,
+  CreateSelectPropertyDefinitionActionOutcome,
+  CreateSelectPropertyDefinitionActionPayload,
+  CreateSelectOptionActionFailure,
+  CreateSelectOptionActionOutcome,
+  CreateSelectOptionActionPayload,
+  UpdateSelectOptionActionFailure,
+  UpdateSelectOptionActionOutcome,
+  UpdateSelectOptionActionPayload,
+  UpdateSelectPropertyValueActionFailure,
+  UpdateSelectPropertyValueActionOutcome,
+  UpdateSelectPropertyValueActionPayload,
+  CreateSelectOptionAndSelectActionFailure,
+  CreateSelectOptionAndSelectActionOutcome,
+  CreateSelectOptionAndSelectActionPayload,
+  ConfigureSelectOptionOrderActionFailure,
+  ConfigureSelectOptionOrderActionOutcome,
+  ConfigureSelectOptionOrderActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -59,6 +77,12 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | ConfigureSelectOptionOrderActionFailure
+  | CreateSelectOptionAndSelectActionFailure
+  | UpdateSelectPropertyValueActionFailure
+  | UpdateSelectOptionActionFailure
+  | CreateSelectOptionActionFailure
+  | CreateSelectPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -159,6 +183,7 @@ export const getTaskPropertyWorkspace = (
       client.ticketing.getTaskPropertyWorkspace({
         headers: options.headers ?? {},
         params: { collectionId },
+        query: { locale: options.locale },
       }),
     ),
   );
@@ -361,6 +386,168 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectPropertyDefinitionAction = (
+  payload: CreateSelectPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateSelectPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createSelectPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createSelectPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectOptionAction = (
+  payload: CreateSelectOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateSelectOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createSelectOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createSelectOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateSelectOptionAction = (
+  payload: UpdateSelectOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateSelectOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateSelectOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateSelectOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateSelectPropertyValueAction = (
+  payload: UpdateSelectPropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateSelectPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateSelectPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateSelectPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectOptionAndSelectAction = (
+  payload: CreateSelectOptionAndSelectActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateSelectOptionAndSelectActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createSelectOptionAndSelectAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createSelectOptionAndSelectAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureSelectOptionOrderAction = (
+  payload: ConfigureSelectOptionOrderActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureSelectOptionOrderActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureSelectOptionOrderAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureSelectOptionOrderAction({
         headers: headers ?? {},
         payload,
       }),

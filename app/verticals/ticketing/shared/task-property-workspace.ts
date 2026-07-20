@@ -7,12 +7,19 @@ export const checkboxPropertyValueSchema = Schema.Struct({
   value: Schema.Boolean,
 });
 
+export const selectPropertyValueSchema = Schema.Struct({
+  optionId: Schema.optional(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
+      selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
       title: Schema.String,
@@ -22,6 +29,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
 
 export const getTaskPropertyWorkspacePayloadSchema = Schema.Struct({
   collectionId: Schema.String,
+  locale: Schema.optional(Schema.String),
 });
 
 export type GetTaskPropertyWorkspacePayload = typeof getTaskPropertyWorkspacePayloadSchema.Type;

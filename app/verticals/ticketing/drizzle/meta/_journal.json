@@ -50,6 +50,13 @@
       "when": 1784572357349,
       "tag": "0006_fancy_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784582923717,
+      "tag": "0007_whole_doctor_doom",
+      "breakpoints": true
     }
   ]
 }
