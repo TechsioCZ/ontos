@@ -4,6 +4,20 @@ This workspace is generated as an agent-ready UltraModern.js SuperApp shell.
 Codex should treat the files under `.codex/skills` as local project
 instructions, not optional reading.
 
+## Mandatory Codesmith Generators
+
+When creating any of the following code, always run the matching Codesmith generator
+from this workspace root. Do not create the initial files or wiring by hand; generate
+them first, then adapt the generated output if the task requires it.
+
+- Action: `pnpm scaffold:action -- --vertical <vertical> --action <action>`
+- Microvertical page: `pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>`
+- Outbox message: `pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>`
+- Policy: `pnpm scaffold:policy -- --scope <global|microvertical> --policy <policy>`; add `--vertical <vertical>` when the scope is `microvertical`.
+
+Use the command's `--help` option to discover supported customization flags. The
+generator requirement applies to agents and all delegated work.
+
 ## Quality Gates
 
 Generated workspaces target Node `>=26` and pnpm `11.13.0`. Keep
@@ -39,6 +53,7 @@ behind tunnels and reverse proxies.
 
 Use these skills when the task touches the matching subsystem:
 
+- `techsio-ui-kit-ai`: UI implementation, UI refactors, app interface work, and design-system decisions should use the Techsio UI Kit Ai skills and components.
 - `rsbuild-best-practices`: Modern.js app build configuration, Rsbuild options, assets, type checking, and build debugging.
 - `rspack-best-practices`: Rspack-level bundling, CSS, assets, profiling, and production build behavior.
 - `rspack-tracing`: Rspack build failures, slow builds, crash localization, and trace analysis.
