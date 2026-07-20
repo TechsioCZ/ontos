@@ -107,3 +107,17 @@ Agents may read files under `repos/` to understand upstream patterns, APIs, and 
 ## Skill Provenance
 
 The Rstack skills, public Module Federation skill, and private TechsioCZ skill set are pinned in `.codex/skills-lock.json`. Do not update, remove, or replace them casually. If a skill needs updating, update the lock file and run the affected primitive gate plus `pnpm check`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues; external pull requests are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the canonical `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix` labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.
