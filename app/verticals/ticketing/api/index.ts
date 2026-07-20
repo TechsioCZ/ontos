@@ -6,6 +6,10 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
+import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
+import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
+import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
@@ -13,6 +17,7 @@ import { createTaskCollectionActionRegistration } from '../src/actions/create-ta
 import { runCoreSdkAction, runCoreSdkDataAccess } from './action-runtime.ts';
 import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-task-collection.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
+import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
@@ -139,6 +144,27 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
+    .handle('getTaskPropertyDeletionImpact', ({ params, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            propertyDefinitionId: params.propertyDefinitionId,
+          },
+          registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+          resultCount: () => 1,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyDeletionImpact', {
+          attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyDeletionImpact),
+          kind: 'server',
+        }),
+      ),
+    )
     .handle('createTaskCollectionAction', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkAction({
@@ -202,6 +228,79 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           kind: 'server',
         }),
       ),
+    )
+    .handle('configureTaskPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureTaskPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.configureTaskPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configureTaskPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('duplicateTaskPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: duplicateTaskPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.duplicateTaskPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.duplicateTaskPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('deleteTaskPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: deleteTaskPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.deleteTaskPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.deleteTaskPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('transitionTaskRetentionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: transitionTaskRetentionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.transitionTaskRetentionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
     ),
 );
 

@@ -1,4 +1,9 @@
 export {
+  runTransitionTaskRetentionAction,
+  getTaskPropertyDeletionImpact,
+  runDeleteTaskPropertyDefinitionAction,
+  runDuplicateTaskPropertyDefinitionAction,
+  runConfigureTaskPropertyDefinitionAction,
   filterTaskCheckboxValues,
   runUpdateCheckboxPropertyValueAction,
   runCreateCheckboxPropertyDefinitionAction,

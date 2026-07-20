@@ -1,41 +1,59 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export { checkboxPropertyDefinitionSchema } from '../task-property-definition.ts';
-export declare const createCheckboxPropertyDefinitionActionKey: 'ticketing.createCheckboxPropertyDefinition';
-export declare const createCheckboxPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+export declare const taskRetentionStateSchema: Schema.Literals<
+  readonly ['active', 'archived', 'softDeleted']
+>;
+export declare const transitionTaskRetentionActionKey: 'ticketing.transitionTaskRetention';
+export declare const transitionTaskRetentionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly mandatory: Schema.Boolean;
-  readonly name: Schema.String;
+  readonly expectedRevision: Schema.Finite;
+  readonly taskId: Schema.String;
+  readonly transition: Schema.Literals<readonly ['archive', 'restore', 'softDelete', 'hardDelete']>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const transitionTaskRetentionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Struct<{
-    readonly datatype: Schema.Literal<'checkbox'>;
-    readonly hidden: Schema.Boolean;
-    readonly mandatory: Schema.Boolean;
-    readonly name: Schema.String;
-    readonly propertyDefinitionId: Schema.String;
-    readonly revision: Schema.Finite;
-  }>;
+export declare const retainedTaskTransitionResponseSchema: Schema.Struct<{
+  readonly retentionState: Schema.Literals<readonly ['active', 'archived', 'softDeleted']>;
+  readonly taskId: Schema.String;
+  readonly taskRevision: Schema.Finite;
 }>;
-export declare const createCheckboxPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const hardDeletedTaskTransitionResponseSchema: Schema.Struct<{
+  readonly hardDeletedTaskId: Schema.String;
+  readonly retentionState: Schema.Literal<'hardDeleted'>;
+}>;
+export declare const transitionTaskRetentionActionResponseSchema: Schema.Union<
+  readonly [
+    Schema.Struct<{
+      readonly retentionState: Schema.Literals<readonly ['active', 'archived', 'softDeleted']>;
+      readonly taskId: Schema.String;
+      readonly taskRevision: Schema.Finite;
+    }>,
+    Schema.Struct<{
+      readonly hardDeletedTaskId: Schema.String;
+      readonly retentionState: Schema.Literal<'hardDeleted'>;
+    }>,
+  ]
+>;
+export declare const transitionTaskRetentionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
-  readonly response: Schema.Struct<{
-    readonly definition: Schema.Struct<{
-      readonly datatype: Schema.Literal<'checkbox'>;
-      readonly hidden: Schema.Boolean;
-      readonly mandatory: Schema.Boolean;
-      readonly name: Schema.String;
-      readonly propertyDefinitionId: Schema.String;
-      readonly revision: Schema.Finite;
-    }>;
-  }>;
+  readonly response: Schema.Union<
+    readonly [
+      Schema.Struct<{
+        readonly retentionState: Schema.Literals<readonly ['active', 'archived', 'softDeleted']>;
+        readonly taskId: Schema.String;
+        readonly taskRevision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly hardDeletedTaskId: Schema.String;
+        readonly retentionState: Schema.Literal<'hardDeleted'>;
+      }>,
+    ]
+  >;
 }>;
-export declare const createCheckboxPropertyDefinitionActionFailureSchemas: readonly [
+export declare const transitionTaskRetentionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -90,7 +108,7 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchemas: reado
     >;
   }>,
 ];
-export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const transitionTaskRetentionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -147,12 +165,13 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema
     }>,
   ]
 >;
-export type CreateCheckboxPropertyDefinitionActionPayload =
-  typeof createCheckboxPropertyDefinitionActionPayloadSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionResponse =
-  typeof createCheckboxPropertyDefinitionActionResponseSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionOutcome =
-  typeof createCheckboxPropertyDefinitionActionOutcomeSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionFailure =
-  typeof createCheckboxPropertyDefinitionActionFailureSchema.Type;
-export declare const createCheckboxPropertyDefinitionActionTitle: 'Create Checkbox Property Definition';
+export type TaskRetentionState = typeof taskRetentionStateSchema.Type;
+export type TransitionTaskRetentionActionPayload =
+  typeof transitionTaskRetentionActionPayloadSchema.Type;
+export type TransitionTaskRetentionActionResponse =
+  typeof transitionTaskRetentionActionResponseSchema.Type;
+export type TransitionTaskRetentionActionOutcome =
+  typeof transitionTaskRetentionActionOutcomeSchema.Type;
+export type TransitionTaskRetentionActionFailure =
+  typeof transitionTaskRetentionActionFailureSchema.Type;
+export declare const transitionTaskRetentionActionTitle: 'Transition Task Retention';

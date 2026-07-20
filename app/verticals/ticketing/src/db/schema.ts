@@ -60,6 +60,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
   {
     createdAt: createdAt(),
     datatype: text('datatype').notNull(),
+    hidden: boolean('hidden').default(false).notNull(),
     mandatory: boolean('mandatory').default(false).notNull(),
     name: text('name').notNull(),
     propertyDefinitionId: uuid('property_definition_id').defaultRandom().primaryKey(),
@@ -99,6 +100,7 @@ export const tasks = ticketingSchema.table(
     lastEditedByPrincipalId: uuid('last_edited_by_principal_id')
       .notNull()
       .references(() => principals.principalId, { onDelete: 'restrict' }),
+    retentionState: text('retention_state').default('active').notNull(),
     revision: integer('revision').default(1).notNull(),
     taskId: uuid('task_id').defaultRandom().primaryKey(),
     tenantId: tenantId(),
@@ -108,6 +110,10 @@ export const tasks = ticketingSchema.table(
     index('ticketing_tasks_collection_idx').on(table.tenantId, table.collectionId),
     index('ticketing_tasks_created_by_idx').on(table.tenantId, table.createdByPrincipalId),
     check('ticketing_tasks_revision_ck', sql`${table.revision} >= 1`),
+    check(
+      'ticketing_tasks_retention_state_ck',
+      sql`${table.retentionState} in ('active', 'archived', 'soft_deleted')`,
+    ),
   ],
 );
 
@@ -130,7 +136,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],

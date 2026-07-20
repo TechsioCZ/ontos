@@ -18,6 +18,7 @@ import type {
   OperationContext,
   TicketingReadiness,
   TaskCollectionAggregate,
+  TaskPropertyDeletionImpact,
   TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
   CreateTaskCollectionActionOutcome,
@@ -32,6 +33,18 @@ import type {
   UpdateCheckboxPropertyValueActionOutcome,
   UpdateCheckboxPropertyValueActionPayload,
   FilterTaskCheckboxValuesResponse,
+  ConfigureTaskPropertyDefinitionActionFailure,
+  ConfigureTaskPropertyDefinitionActionOutcome,
+  ConfigureTaskPropertyDefinitionActionPayload,
+  DuplicateTaskPropertyDefinitionActionFailure,
+  DuplicateTaskPropertyDefinitionActionOutcome,
+  DuplicateTaskPropertyDefinitionActionPayload,
+  DeleteTaskPropertyDefinitionActionFailure,
+  DeleteTaskPropertyDefinitionActionOutcome,
+  DeleteTaskPropertyDefinitionActionPayload,
+  TransitionTaskRetentionActionFailure,
+  TransitionTaskRetentionActionOutcome,
+  TransitionTaskRetentionActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -46,6 +59,10 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | TransitionTaskRetentionActionFailure
+  | DeleteTaskPropertyDefinitionActionFailure
+  | DuplicateTaskPropertyDefinitionActionFailure
+  | ConfigureTaskPropertyDefinitionActionFailure
   | UpdateCheckboxPropertyValueActionFailure
   | CreateCheckboxPropertyDefinitionActionFailure
   | CreateTaskActionFailure
@@ -63,6 +80,16 @@ export interface TicketingClientOptions {
   operationContext?: OperationContext;
   traceparent?: string;
 }
+
+type TicketingActionClientOptions = TicketingClientOptions & { idempotencyKey?: string };
+
+const actionHeaders = (options: TicketingActionClientOptions): Record<string, string> | undefined =>
+  options.idempotencyKey === undefined
+    ? options.headers
+    : {
+        ...options.headers,
+        'Idempotency-Key': options.idempotencyKey,
+      };
 
 export const createTicketingClient = (
   options: TicketingClientOptions = {},
@@ -156,17 +183,29 @@ export const filterTaskCheckboxValues = (
     ),
   );
 
+export const getTaskPropertyDeletionImpact = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<TaskPropertyDeletionImpact> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.getTaskPropertyDeletionImpact,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getTaskPropertyDeletionImpact({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
 export const runCreateTaskCollectionAction = (
   payload: CreateTaskCollectionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateTaskCollectionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -185,15 +224,9 @@ export const runCreateTaskCollectionAction = (
 
 export const runCreateTaskAction = (
   payload: CreateTaskActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateTaskActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -211,15 +244,9 @@ export const runCreateTaskAction = (
 
 export const runCreateCheckboxPropertyDefinitionAction = (
   payload: CreateCheckboxPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateCheckboxPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -238,15 +265,9 @@ export const runCreateCheckboxPropertyDefinitionAction = (
 
 export const runUpdateCheckboxPropertyValueAction = (
   payload: UpdateCheckboxPropertyValueActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UpdateCheckboxPropertyValueActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -256,6 +277,90 @@ export const runUpdateCheckboxPropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updateCheckboxPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureTaskPropertyDefinitionAction = (
+  payload: ConfigureTaskPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigureTaskPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureTaskPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureTaskPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDuplicateTaskPropertyDefinitionAction = (
+  payload: DuplicateTaskPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<DuplicateTaskPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.duplicateTaskPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.duplicateTaskPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDeleteTaskPropertyDefinitionAction = (
+  payload: DeleteTaskPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<DeleteTaskPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.deleteTaskPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.deleteTaskPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runTransitionTaskRetentionAction = (
+  payload: TransitionTaskRetentionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<TransitionTaskRetentionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.transitionTaskRetentionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.transitionTaskRetentionAction({
         headers: headers ?? {},
         payload,
       }),

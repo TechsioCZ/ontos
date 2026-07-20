@@ -4,14 +4,9 @@ import {
   coreSdkOperationFailureSchemas,
   idempotentActionHeadersSchema,
 } from '../core-sdk-operation.ts';
+import { checkboxPropertyDefinitionSchema } from '../task-property-definition.ts';
 
-export const checkboxPropertyDefinitionSchema = Schema.Struct({
-  datatype: Schema.Literal('checkbox'),
-  mandatory: Schema.Boolean,
-  name: Schema.String,
-  propertyDefinitionId: Schema.String,
-  revision: Schema.Finite,
-});
+export { checkboxPropertyDefinitionSchema } from '../task-property-definition.ts';
 
 export const createCheckboxPropertyDefinitionActionKey =
   'ticketing.createCheckboxPropertyDefinition' as const;

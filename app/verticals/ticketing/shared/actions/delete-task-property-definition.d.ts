@@ -1,41 +1,30 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export { checkboxPropertyDefinitionSchema } from '../task-property-definition.ts';
-export declare const createCheckboxPropertyDefinitionActionKey: 'ticketing.createCheckboxPropertyDefinition';
-export declare const createCheckboxPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+export declare const deleteTaskPropertyDefinitionActionKey: 'ticketing.deleteTaskPropertyDefinition';
+export declare const deleteTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly mandatory: Schema.Boolean;
-  readonly name: Schema.String;
+  readonly confirmed: Schema.Literal<true>;
+  readonly expectedImpactCount: Schema.Finite;
+  readonly expectedRevision: Schema.Finite;
+  readonly propertyDefinitionId: Schema.String;
 }>;
-export declare const createCheckboxPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const deleteTaskPropertyDefinitionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Struct<{
-    readonly datatype: Schema.Literal<'checkbox'>;
-    readonly hidden: Schema.Boolean;
-    readonly mandatory: Schema.Boolean;
-    readonly name: Schema.String;
-    readonly propertyDefinitionId: Schema.String;
-    readonly revision: Schema.Finite;
-  }>;
+export declare const deleteTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
+  readonly deletedPropertyDefinitionId: Schema.String;
+  readonly impactCount: Schema.Finite;
 }>;
-export declare const createCheckboxPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const deleteTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly definition: Schema.Struct<{
-      readonly datatype: Schema.Literal<'checkbox'>;
-      readonly hidden: Schema.Boolean;
-      readonly mandatory: Schema.Boolean;
-      readonly name: Schema.String;
-      readonly propertyDefinitionId: Schema.String;
-      readonly revision: Schema.Finite;
-    }>;
+    readonly deletedPropertyDefinitionId: Schema.String;
+    readonly impactCount: Schema.Finite;
   }>;
 }>;
-export declare const createCheckboxPropertyDefinitionActionFailureSchemas: readonly [
+export declare const deleteTaskPropertyDefinitionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -90,7 +79,7 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchemas: reado
     >;
   }>,
 ];
-export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const deleteTaskPropertyDefinitionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -147,12 +136,12 @@ export declare const createCheckboxPropertyDefinitionActionFailureSchema: Schema
     }>,
   ]
 >;
-export type CreateCheckboxPropertyDefinitionActionPayload =
-  typeof createCheckboxPropertyDefinitionActionPayloadSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionResponse =
-  typeof createCheckboxPropertyDefinitionActionResponseSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionOutcome =
-  typeof createCheckboxPropertyDefinitionActionOutcomeSchema.Type;
-export type CreateCheckboxPropertyDefinitionActionFailure =
-  typeof createCheckboxPropertyDefinitionActionFailureSchema.Type;
-export declare const createCheckboxPropertyDefinitionActionTitle: 'Create Checkbox Property Definition';
+export type DeleteTaskPropertyDefinitionActionPayload =
+  typeof deleteTaskPropertyDefinitionActionPayloadSchema.Type;
+export type DeleteTaskPropertyDefinitionActionResponse =
+  typeof deleteTaskPropertyDefinitionActionResponseSchema.Type;
+export type DeleteTaskPropertyDefinitionActionOutcome =
+  typeof deleteTaskPropertyDefinitionActionOutcomeSchema.Type;
+export type DeleteTaskPropertyDefinitionActionFailure =
+  typeof deleteTaskPropertyDefinitionActionFailureSchema.Type;
+export declare const deleteTaskPropertyDefinitionActionTitle: 'Delete Task Property Definition';

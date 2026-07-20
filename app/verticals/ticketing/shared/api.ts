@@ -6,6 +6,34 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  transitionTaskRetentionActionHeadersSchema,
+  transitionTaskRetentionActionFailureSchemas,
+  transitionTaskRetentionActionOutcomeSchema,
+  transitionTaskRetentionActionPayloadSchema,
+} from './actions/transition-task-retention';
+
+import {
+  deleteTaskPropertyDefinitionActionHeadersSchema,
+  deleteTaskPropertyDefinitionActionFailureSchemas,
+  deleteTaskPropertyDefinitionActionOutcomeSchema,
+  deleteTaskPropertyDefinitionActionPayloadSchema,
+} from './actions/delete-task-property-definition';
+
+import {
+  duplicateTaskPropertyDefinitionActionHeadersSchema,
+  duplicateTaskPropertyDefinitionActionFailureSchemas,
+  duplicateTaskPropertyDefinitionActionOutcomeSchema,
+  duplicateTaskPropertyDefinitionActionPayloadSchema,
+} from './actions/duplicate-task-property-definition';
+
+import {
+  configureTaskPropertyDefinitionActionHeadersSchema,
+  configureTaskPropertyDefinitionActionFailureSchemas,
+  configureTaskPropertyDefinitionActionOutcomeSchema,
+  configureTaskPropertyDefinitionActionPayloadSchema,
+} from './actions/configure-task-property-definition';
+
+import {
   createCheckboxPropertyDefinitionActionHeadersSchema,
   createCheckboxPropertyDefinitionActionFailureSchemas,
   createCheckboxPropertyDefinitionActionOutcomeSchema,
@@ -36,8 +64,15 @@ import {
   operationContextHeadersSchema,
 } from './core-sdk-operation';
 import { taskCollectionAggregateSchema } from './task-collection';
+import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 
+export type {
+  ConfigureTaskPropertyDefinitionActionFailure,
+  ConfigureTaskPropertyDefinitionActionOutcome,
+  ConfigureTaskPropertyDefinitionActionPayload,
+  ConfigureTaskPropertyDefinitionActionResponse,
+} from './actions/configure-task-property-definition';
 export type {
   CreateCheckboxPropertyDefinitionActionFailure,
   CreateCheckboxPropertyDefinitionActionOutcome,
@@ -57,12 +92,39 @@ export type {
   CreateTaskCollectionActionResponse,
 } from './actions/create-task-collection';
 export type {
+  DeleteTaskPropertyDefinitionActionFailure,
+  DeleteTaskPropertyDefinitionActionOutcome,
+  DeleteTaskPropertyDefinitionActionPayload,
+  DeleteTaskPropertyDefinitionActionResponse,
+} from './actions/delete-task-property-definition';
+export type {
+  DuplicateTaskPropertyDefinitionActionFailure,
+  DuplicateTaskPropertyDefinitionActionOutcome,
+  DuplicateTaskPropertyDefinitionActionPayload,
+  DuplicateTaskPropertyDefinitionActionResponse,
+} from './actions/duplicate-task-property-definition';
+export type {
   UpdateCheckboxPropertyValueActionFailure,
   UpdateCheckboxPropertyValueActionOutcome,
   UpdateCheckboxPropertyValueActionPayload,
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
+export type {
+  TransitionTaskRetentionActionFailure,
+  TransitionTaskRetentionActionOutcome,
+  TransitionTaskRetentionActionPayload,
+  TransitionTaskRetentionActionResponse,
+} from './actions/transition-task-retention';
 export type { TaskCollectionAggregate } from './task-collection';
+export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export {
+  checkboxPropertyDefinitionSchema,
+  taskPropertyDefinitionSchema,
+} from './task-property-definition';
+export type {
+  CheckboxPropertyDefinition,
+  TaskPropertyDefinition,
+} from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
 export type {
   FilterTaskCheckboxValuesPayload,
@@ -212,6 +274,21 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.get(
+        'getTaskPropertyDeletionImpact',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/deletion-impact',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: taskPropertyDeletionImpactSchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.post(
         'createTaskCollectionAction',
         '/ticketing/actions/create-task-collection',
@@ -254,10 +331,64 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: updateCheckboxPropertyValueActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureTaskPropertyDefinitionAction',
+        '/ticketing/actions/configure-task-property-definition',
+        {
+          error: configureTaskPropertyDefinitionActionFailureSchemas,
+          headers: configureTaskPropertyDefinitionActionHeadersSchema,
+          payload: configureTaskPropertyDefinitionActionPayloadSchema,
+          success: configureTaskPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'duplicateTaskPropertyDefinitionAction',
+        '/ticketing/actions/duplicate-task-property-definition',
+        {
+          error: duplicateTaskPropertyDefinitionActionFailureSchemas,
+          headers: duplicateTaskPropertyDefinitionActionHeadersSchema,
+          payload: duplicateTaskPropertyDefinitionActionPayloadSchema,
+          success: duplicateTaskPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'deleteTaskPropertyDefinitionAction',
+        '/ticketing/actions/delete-task-property-definition',
+        {
+          error: deleteTaskPropertyDefinitionActionFailureSchemas,
+          headers: deleteTaskPropertyDefinitionActionHeadersSchema,
+          payload: deleteTaskPropertyDefinitionActionPayloadSchema,
+          success: deleteTaskPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'transitionTaskRetentionAction',
+        '/ticketing/actions/transition-task-retention',
+        {
+          error: transitionTaskRetentionActionFailureSchemas,
+          headers: transitionTaskRetentionActionHeadersSchema,
+          payload: transitionTaskRetentionActionPayloadSchema,
+          success: transitionTaskRetentionActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configureTaskPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureTaskPropertyDefinitionAction',
+    routePath: '/ticketing/actions/configure-task-property-definition',
+    source: 'generated-client',
+  },
   createCheckboxPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
@@ -274,6 +405,18 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
     routePath: '/ticketing/actions/create-task-collection',
+    source: 'generated-client',
+  },
+  deleteTaskPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:deleteTaskPropertyDefinitionAction',
+    routePath: '/ticketing/actions/delete-task-property-definition',
+    source: 'generated-client',
+  },
+  duplicateTaskPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:duplicateTaskPropertyDefinitionAction',
+    routePath: '/ticketing/actions/duplicate-task-property-definition',
     source: 'generated-client',
   },
   filterTaskCheckboxValues: {
@@ -295,6 +438,13 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/task-collections/:collectionId',
     source: 'generated-client',
   },
+  getTaskPropertyDeletionImpact: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyDeletionImpact',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/deletion-impact',
+    source: 'generated-client',
+  },
   getTaskPropertyWorkspace: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskPropertyWorkspace',
@@ -311,6 +461,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
     routePath: '/ticketing/readiness',
+    source: 'generated-client',
+  },
+  transitionTaskRetentionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:transitionTaskRetentionAction',
+    routePath: '/ticketing/actions/transition-task-retention',
     source: 'generated-client',
   },
   updateCheckboxPropertyValueAction: {

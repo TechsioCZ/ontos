@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const checkboxPropertyValueSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
@@ -9,6 +10,7 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly propertyDefinitions: Schema.$Array<
     Schema.Struct<{
       readonly datatype: Schema.Literal<'checkbox'>;
+      readonly hidden: Schema.Boolean;
       readonly mandatory: Schema.Boolean;
       readonly name: Schema.String;
       readonly propertyDefinitionId: Schema.String;

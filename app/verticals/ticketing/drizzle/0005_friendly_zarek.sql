@@ -1,0 +1,1 @@
+ALTER TABLE "ticketing"."task_property_definitions" ADD COLUMN "hidden" boolean DEFAULT false NOT NULL;
