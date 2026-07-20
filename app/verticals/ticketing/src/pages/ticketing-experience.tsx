@@ -15,7 +15,7 @@ import {
 import { ultramodernUiMarker } from '../ultramodern-build';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
-import type { TaskCollectionAggregate } from '../../shared/task-collection';
+import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
 
 interface ShellOperationContextResponse {
   readonly verticalGatewayTokens?: Readonly<Record<string, string>>;
@@ -54,6 +54,7 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [createTaskIntentId, setCreateTaskIntentId] = useState(() => crypto.randomUUID());
+  const [pendingTaskCollection, setPendingTaskCollection] = useState<TaskCollectionCreation>();
   const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
   const [isCreatingTask, setIsCreatingTask] = useState(false);
 
@@ -65,20 +66,28 @@ export const TicketingExperience = () => {
       const headers = {
         'x-ontos-operation-context': operationContextToken,
       };
+      const runTaskCreation = (taskCollection: TaskCollectionCreation) =>
+        runCreateTaskAction(
+          { collectionId: taskCollection.collection.collectionId },
+          { headers, idempotencyKey: createTaskIntentId },
+        );
+      const createTaskEffect =
+        pendingTaskCollection === undefined
+          ? runCreateTaskCollectionAction(
+              {},
+              {
+                headers,
+                idempotencyKey: createTaskCollectionIntentId,
+              },
+            ).pipe(
+              Effect.flatMap((outcome) => {
+                setPendingTaskCollection(outcome.response);
+                return runTaskCreation(outcome.response);
+              }),
+            )
+          : runTaskCreation(pendingTaskCollection);
       await runEffectRequest(
-        runCreateTaskCollectionAction(
-          {},
-          {
-            headers,
-            idempotencyKey: createTaskCollectionIntentId,
-          },
-        ).pipe(
-          Effect.flatMap((outcome) =>
-            runCreateTaskAction(
-              { collectionId: outcome.response.collection.collectionId },
-              { headers, idempotencyKey: createTaskIntentId },
-            ),
-          ),
+        createTaskEffect.pipe(
           Effect.flatMap((outcome) =>
             getTaskCollection(outcome.response.task.collectionId, { headers }),
           ),
@@ -103,6 +112,7 @@ export const TicketingExperience = () => {
             },
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
+              setPendingTaskCollection(undefined);
               setCreateTaskCollectionIntentId(crypto.randomUUID());
               setCreateTaskIntentId(crypto.randomUUID());
               toaster.create({

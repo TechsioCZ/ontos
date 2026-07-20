@@ -187,24 +187,54 @@ test('separate standard Actions create a server-identified collection and then i
   assert.deepEqual(authorizationChecks, []);
 });
 
-test('each Action independently replays its original response', async () => {
+test('successful Action retries are unavailable and never execute creation twice', async () => {
   const operationContext = await createOperationIdentity();
   const collectionKey = randomUUID();
-  const createdCollection = await runCollectionCreation(operationContext, collectionKey);
-  const replayedCollection = await runCollectionCreation(operationContext, collectionKey);
+  let collectionAttempts = 0;
+  const collectionRegistration = {
+    ...createTaskCollectionActionRegistration,
+    handler: (...arguments_) => {
+      collectionAttempts += 1;
+      return createTaskCollectionActionRegistration.handler(...arguments_);
+    },
+  };
+  const createCollection = () =>
+    runAction({
+      options: { operationContextResolver: operationContextResolver(operationContext) },
+      payload: {},
+      registration: collectionRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': collectionKey }) },
+    });
+  const createdCollection = await createCollection();
+  const repeatedCollection = await createCollection();
 
   assert.equal(createdCollection._tag, 'OperationSucceeded');
-  assert.equal(replayedCollection._tag, 'OperationSucceeded');
-  assert.deepEqual(replayedCollection.response, createdCollection.response);
+  assert.equal(repeatedCollection._tag, 'OperationIdempotencyReplayUnavailable');
+  assert.equal(collectionAttempts, 1);
 
   const taskKey = randomUUID();
   const { collectionId } = createdCollection.response.collection;
-  const createdTask = await runTaskCreation(operationContext, collectionId, taskKey);
-  const replayedTask = await runTaskCreation(operationContext, collectionId, taskKey);
+  let taskAttempts = 0;
+  const taskRegistration = {
+    ...createTaskActionRegistration,
+    handler: (...arguments_) => {
+      taskAttempts += 1;
+      return createTaskActionRegistration.handler(...arguments_);
+    },
+  };
+  const createTask = () =>
+    runAction({
+      options: { operationContextResolver: operationContextResolver(operationContext) },
+      payload: { collectionId },
+      registration: taskRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': taskKey }) },
+    });
+  const createdTask = await createTask();
+  const repeatedTask = await createTask();
 
   assert.equal(createdTask._tag, 'OperationSucceeded');
-  assert.equal(replayedTask._tag, 'OperationSucceeded');
-  assert.deepEqual(replayedTask.response, createdTask.response);
+  assert.equal(repeatedTask._tag, 'OperationIdempotencyReplayUnavailable');
+  assert.equal(taskAttempts, 1);
 });
 
 test('CreateTask rejects the same idempotency key with different input', async () => {

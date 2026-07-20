@@ -610,7 +610,6 @@ const findActionInvocation = async ({
     .select({
       actionInvocationId: actionInvocations.actionInvocationId,
       requestHash: actionInvocations.requestHash,
-      responseJson: actionInvocations.responseJson,
       status: actionInvocations.status,
     })
     .from(actionInvocations)
@@ -642,7 +641,6 @@ const claimFailedActionInvocationRetry = async <TAction>({
     .update(actionInvocations)
     .set({
       completedAt: null,
-      responseJson: null,
       status: 'received',
     })
     .where(
@@ -663,7 +661,7 @@ const claimFailedActionInvocationRetry = async <TAction>({
       });
 };
 
-const registerActionInvocation = async <TAction, TResponse>({
+const registerActionInvocation = async <TAction>({
   context,
   idempotencyKey,
   idempotency,
@@ -673,7 +671,7 @@ const registerActionInvocation = async <TAction, TResponse>({
   readonly idempotencyKey: string | undefined;
   readonly idempotency: 'optional' | 'required';
   readonly requestHash: string;
-}): Promise<OperationContext<TAction> | CoreSDKError | OperationSucceeded<TAction, TResponse>> => {
+}): Promise<OperationContext<TAction> | CoreSDKError> => {
   if (idempotency === 'required' && idempotencyKey === undefined) {
     return idempotencyKeyRequired(context.actionKey);
   }
@@ -700,20 +698,7 @@ const registerActionInvocation = async <TAction, TResponse>({
         });
       }
 
-      if (existing.status !== 'succeeded' || existing.responseJson === null) {
-        return replayUnavailable();
-      }
-
-      return {
-        _tag: 'OperationSucceeded',
-        context: attachInvocation(context, {
-          actionInvocationId: existing.actionInvocationId,
-          idempotencyKey,
-          requestHash: hash,
-          status: 'replayed',
-        }),
-        response: existing.responseJson as TResponse,
-      };
+      return replayUnavailable();
     }
   }
 
@@ -749,7 +734,6 @@ const markActionInvocationStatus = async <TAction>(
   context: OperationContext<TAction>,
   status: Extract<OperationActionInvocationStatus, 'succeeded' | 'failed' | 'rejected'>,
   executor: CoreDbExecutor = db,
-  responseJson?: unknown,
 ) => {
   if (context.actionInvocation === undefined) {
     return context;
@@ -759,7 +743,6 @@ const markActionInvocationStatus = async <TAction>(
     .update(actionInvocations)
     .set({
       completedAt: new Date(),
-      ...(responseJson === undefined ? {} : { responseJson }),
       status,
     })
     .where(eq(actionInvocations.actionInvocationId, context.actionInvocation.actionInvocationId));
@@ -1220,7 +1203,7 @@ export const runAction = async <TAction, TResponse>({
 
   const hash = requestHash(payload);
   const idempotencyKey = transport.headers.get('idempotency-key')?.trim() || undefined;
-  const registeredContext = await registerActionInvocation<TAction, TResponse>({
+  const registeredContext = await registerActionInvocation({
     context: actorValidatedContext,
     idempotency: descriptor.idempotency,
     idempotencyKey,
@@ -1312,7 +1295,6 @@ export const runAction = async <TAction, TResponse>({
         policyCheckedContext,
         'succeeded',
         tx,
-        response,
       );
       const auditedContext = await writeAuditEvent({
         auditProfile: descriptor.auditProfile,

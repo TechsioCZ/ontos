@@ -191,7 +191,7 @@ afterEach(() => {
   rs.unstubAllGlobals();
 });
 
-test('retries a failed Task against the replayed collection intent and recovers the UI', async () => {
+test('retries only a failed Task against the retained collection and recovers the UI', async () => {
   render(<TicketingExperience />);
 
   const createButton = screen.getByRole('button', { name: 'Create Task' });
@@ -216,8 +216,7 @@ test('retries a failed Task against the replayed collection intent and recovers 
   const openedTask = await screen.findByRole('region', { name: 'Opened Task' });
   await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(2));
 
-  expect(mocks.collectionCalls).toHaveLength(2);
-  expect(mocks.collectionCalls[1]?.idempotencyKey).toBe(mocks.collectionCalls[0]?.idempotencyKey);
+  expect(mocks.collectionCalls).toHaveLength(1);
   expect(mocks.taskCalls).toHaveLength(2);
   expect(mocks.taskCalls[1]?.idempotencyKey).toBe(mocks.taskCalls[0]?.idempotencyKey);
   expect(mocks.taskCalls.map(({ payload }) => payload.collectionId)).toEqual([
