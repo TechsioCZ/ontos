@@ -39,6 +39,7 @@ test('ticketing page presents rejected action messages through the existing Toas
   assert.match(source, /isCreateTicketActionFailure\(error\)/u);
   assert.match(source, /description: error\.message/u);
   assert.match(source, /title: t\(['"]ticketing\.taskCollection\.createRejected['"]\)/u);
+  assert.match(source, /setCreateTaskCollectionIntentId\(crypto\.randomUUID\(\)\)/u);
   assert.equal(englishLocale.ticketing.taskCollection.createRejected, 'Create Ticket rejected');
   assert.match(source, /type: ['"]error['"]/u);
 });

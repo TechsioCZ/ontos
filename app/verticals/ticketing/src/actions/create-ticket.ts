@@ -1,10 +1,9 @@
 // @effect-diagnostics asyncFunction:off
-import { allowPolicy, denyPolicy, rejectAction, rowsFromResult } from '@app/core-runtime';
+import { rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
   ActionDomainEventDescriptor,
   ActionHandler,
   ActionRegistration,
-  PolicyCheck,
 } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import {
@@ -16,25 +15,9 @@ import type {
   CreateTicketActionPayload,
   CreateTicketActionResponse,
 } from '../../shared/actions/create-ticket.ts';
-
-const validActorPolicyKey = 'ticketing.createTicket.actor.valid';
-
-interface CreatedTaskCollectionRow {
-  readonly collectionCreatedAt: string;
-  readonly collectionId: string;
-  readonly createdAt: string;
-  readonly createdByPrincipalId: string;
-  readonly datatype: 'title';
-  readonly lastEditedAt: string;
-  readonly lastEditedByPrincipalId: string;
-  readonly mandatory: boolean;
-  readonly name: string;
-  readonly propertyDefinitionId: string;
-  readonly revision: number;
-  readonly schemaId: string;
-  readonly taskId: string;
-  readonly title: string;
-}
+import { ticketingPolicies } from '../policies/index.ts';
+import { taskCollectionAggregateFromRow } from '../task-collection-aggregate.ts';
+import type { TaskCollectionAggregateRow } from '../task-collection-aggregate.ts';
 
 const createTicketDomainEvent = {
   eventType: 'ticketing.taskCollection.created',
@@ -150,7 +133,7 @@ const createTicketActionHandler: ActionHandler<
     inner join created_task using (collection_id)
     inner join created_revision using (task_id)
   `);
-  const created = rowsFromResult<CreatedTaskCollectionRow>(creationResult).at(0);
+  const created = rowsFromResult<TaskCollectionAggregateRow>(creationResult).at(0);
 
   if (created === undefined || created.datatype !== 'title') {
     throw rejectAction({
@@ -162,6 +145,7 @@ const createTicketActionHandler: ActionHandler<
   services.context.addOutboxMessage?.({
     payload: {
       actionInvocationId: services.context.actionInvocation?.actionInvocationId,
+      actionKey: createTicketActionKey,
       collectionId: created.collectionId,
       schemaId: created.schemaId,
       taskId: created.taskId,
@@ -169,63 +153,8 @@ const createTicketActionHandler: ActionHandler<
     topic: 'ticketing.taskCollection.created',
   });
 
-  return {
-    collection: {
-      collectionId: created.collectionId,
-      createdAt: created.collectionCreatedAt,
-      schemaId: created.schemaId,
-    },
-    schema: {
-      collectionId: created.collectionId,
-      propertyDefinitions: [
-        {
-          datatype: created.datatype,
-          mandatory: created.mandatory,
-          name: created.name,
-          propertyDefinitionId: created.propertyDefinitionId,
-        },
-      ],
-      schemaId: created.schemaId,
-    },
-    task: {
-      collectionId: created.collectionId,
-      createdAt: created.createdAt,
-      createdByPrincipalId: created.createdByPrincipalId,
-      lastEditedAt: created.lastEditedAt,
-      lastEditedByPrincipalId: created.lastEditedByPrincipalId,
-      revision: created.revision,
-      taskId: created.taskId,
-      title: created.title,
-    },
-  };
+  return taskCollectionAggregateFromRow(created);
 };
-
-const createTicketPolicyChecks: readonly PolicyCheck<CreateTicketActionPayload>[] = [
-  async ({ db, operation }) => {
-    const result = await db.execute(sql`
-      select principal_id as "principalId"
-      from core.principals
-      where principal_id = ${operation.principalId}
-        and tenant_id = ${operation.tenantId}
-        and status = 'active'
-      limit 1
-    `);
-    const actor = rowsFromResult<{ readonly principalId: string }>(result).at(0);
-
-    return actor === undefined
-      ? denyPolicy({
-          code: 'ticketing.createTicket.actor_invalid',
-          message: 'Task creation requires a valid Actor.',
-          policyKey: validActorPolicyKey,
-          reason: 'Trusted operation context did not resolve an active tenant Principal.',
-          state: {},
-        })
-      : allowPolicy({
-          policyKey: validActorPolicyKey,
-          reason: 'Trusted operation context resolved an active tenant Principal.',
-        });
-  },
-];
 
 export const createTicketActionRegistration: ActionRegistration<
   CreateTicketActionPayload,
@@ -248,5 +177,5 @@ export const createTicketActionRegistration: ActionRegistration<
     transportResponseSchema: createTicketActionResponseSchema,
   },
   handler: createTicketActionHandler,
-  policyChecks: createTicketPolicyChecks,
+  policyChecks: [ticketingPolicies.createTicketActorValid],
 };

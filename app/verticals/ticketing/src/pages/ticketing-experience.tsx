@@ -46,7 +46,9 @@ const isCreateTicketActionFailure = (error: unknown): error is CreateTicketActio
 
 export const TicketingExperience = () => {
   const { language, supportedLanguages, t } = useModernI18n();
-  const [createTicketIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [createTaskCollectionIntentId, setCreateTaskCollectionIntentId] = useState(() =>
+    crypto.randomUUID(),
+  );
   const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
   const [isCreatingTicket, setIsCreatingTicket] = useState(false);
 
@@ -61,11 +63,11 @@ export const TicketingExperience = () => {
       await runEffectRequest(
         runCreateTicketAction(
           {
-            collectionId: createTicketIdempotencyKey,
+            collectionId: createTaskCollectionIntentId,
           },
           {
             headers,
-            idempotencyKey: createTicketIdempotencyKey,
+            idempotencyKey: createTaskCollectionIntentId,
           },
         ).pipe(
           Effect.flatMap((outcome) =>
@@ -92,6 +94,7 @@ export const TicketingExperience = () => {
             },
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
+              setCreateTaskCollectionIntentId(crypto.randomUUID());
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),

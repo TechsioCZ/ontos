@@ -1,6 +1,11 @@
 // @effect-diagnostics asyncFunction:off
 import { coreSDKErrorHttpStatus, runAction, runDataAccess } from '@app/core-runtime';
-import type { ActionRegistration, CoreSDKError, DataAccessRegistration } from '@app/core-runtime';
+import type {
+  ActionRegistration,
+  CoreSDKError,
+  DataAccessRegistration,
+  OperationResult,
+} from '@app/core-runtime';
 
 type JsonValue =
   | null
@@ -33,23 +38,9 @@ const toJsonValue = (value: unknown): JsonValue => structuredClone(value) as Jso
 const errorState = (error: CoreSDKError): JsonValue | undefined =>
   error._tag === 'OperationPolicyDenied' ? toJsonValue(error.state) : undefined;
 
-export const runCoreSdkAction = async <TAction, TResponse>({
-  headers,
-  payload,
-  registration,
-}: {
-  readonly headers: Headers;
-  readonly payload: TAction;
-  readonly registration: ActionRegistration<TAction, TResponse>;
-}): Promise<CoreSdkActionTransportOutcome<TResponse>> => {
-  const result = await runAction({
-    payload,
-    registration,
-    transport: {
-      headers,
-    },
-  });
-
+const toCoreSdkTransportOutcome = <TPayload, TResponse>(
+  result: OperationResult<TPayload, TResponse>,
+): CoreSdkActionTransportOutcome<TResponse> => {
   if (result._tag === 'OperationSucceeded') {
     return {
       ...(result.context.actionInvocation?.actionInvocationId === undefined
@@ -73,6 +64,26 @@ export const runCoreSdkAction = async <TAction, TResponse>({
   };
 };
 
+export const runCoreSdkAction = async <TAction, TResponse>({
+  headers,
+  payload,
+  registration,
+}: {
+  readonly headers: Headers;
+  readonly payload: TAction;
+  readonly registration: ActionRegistration<TAction, TResponse>;
+}): Promise<CoreSdkActionTransportOutcome<TResponse>> => {
+  const result = await runAction({
+    payload,
+    registration,
+    transport: {
+      headers,
+    },
+  });
+
+  return toCoreSdkTransportOutcome(result);
+};
+
 export const runCoreSdkDataAccess = async <TPayload, TResponse>({
   headers,
   payload,
@@ -91,22 +102,5 @@ export const runCoreSdkDataAccess = async <TPayload, TResponse>({
     transport: { headers },
   });
 
-  if (result._tag === 'OperationSucceeded') {
-    return {
-      ok: true,
-      response: result.response,
-    };
-  }
-
-  const code = errorCode(result);
-  const state = errorState(result);
-
-  return {
-    ...(code === undefined ? {} : { code }),
-    errorTag: result._tag,
-    httpStatus: coreSDKErrorHttpStatus(result),
-    message: result.message,
-    ok: false,
-    ...(state === undefined ? {} : { state }),
-  };
+  return toCoreSdkTransportOutcome(result);
 };

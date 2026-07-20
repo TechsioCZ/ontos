@@ -10,23 +10,8 @@ import type {
   GetTaskCollectionPayload,
   TaskCollectionAggregate,
 } from '../../shared/task-collection.ts';
-
-interface TaskCollectionAggregateRow {
-  readonly collectionCreatedAt: string;
-  readonly collectionId: string;
-  readonly createdAt: string;
-  readonly createdByPrincipalId: string;
-  readonly datatype: 'title';
-  readonly lastEditedAt: string;
-  readonly lastEditedByPrincipalId: string;
-  readonly mandatory: boolean;
-  readonly name: string;
-  readonly propertyDefinitionId: string;
-  readonly revision: number;
-  readonly schemaId: string;
-  readonly taskId: string;
-  readonly title: string;
-}
+import { taskCollectionAggregateFromRow } from '../task-collection-aggregate.ts';
+import type { TaskCollectionAggregateRow } from '../task-collection-aggregate.ts';
 
 export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
   GetTaskCollectionPayload,
@@ -99,34 +84,6 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
       throw new Error('Task Collection was not found or is incomplete.');
     }
 
-    return {
-      collection: {
-        collectionId: aggregate.collectionId,
-        createdAt: aggregate.collectionCreatedAt,
-        schemaId: aggregate.schemaId,
-      },
-      schema: {
-        collectionId: aggregate.collectionId,
-        propertyDefinitions: [
-          {
-            datatype: aggregate.datatype,
-            mandatory: aggregate.mandatory,
-            name: aggregate.name,
-            propertyDefinitionId: aggregate.propertyDefinitionId,
-          },
-        ],
-        schemaId: aggregate.schemaId,
-      },
-      task: {
-        collectionId: aggregate.collectionId,
-        createdAt: aggregate.createdAt,
-        createdByPrincipalId: aggregate.createdByPrincipalId,
-        lastEditedAt: aggregate.lastEditedAt,
-        lastEditedByPrincipalId: aggregate.lastEditedByPrincipalId,
-        revision: aggregate.revision,
-        taskId: aggregate.taskId,
-        title: aggregate.title,
-      },
-    };
+    return taskCollectionAggregateFromRow(aggregate);
   },
 };
