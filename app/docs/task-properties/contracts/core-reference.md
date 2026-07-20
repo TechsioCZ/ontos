@@ -49,4 +49,3 @@ Core Reference is the shared contract by which Text Mentions and Relations point
 - `../sources/handoffs/ontos-text-property-handoff.md`.
 - [PR-015](../product/product-resolutions.md#pr-015--unresolved-core-references-degrade-to-searchable-plain-text).
 - [PR-020](../product/product-resolutions.md#pr-020--core-references-span-microverticals-and-authorize-when-opened).
-

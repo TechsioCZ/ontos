@@ -57,4 +57,3 @@ The future `to-spec` invocation requires the user to confirm its proposed testin
 2. `to-spec` — after the datatype handoffs are ready to consolidate, synthesize the baseline, referenced Status specification, and resolved decisions above into the product specification. Do not re-interview the user about settled Status behavior. Follow the skill’s required testing-seam confirmation, then publish with `ready-for-agent`.
 3. `to-tickets` — invoke only after the specification exists. Produce small tracer-bullet vertical slices with explicit blocking edges, present the proposed breakdown for user approval, then publish the approved tickets.
 4. `setup-matt-pocock-skills` — invoke before `to-spec` only if the main thread still lacks a configured issue tracker and triage vocabulary.
-

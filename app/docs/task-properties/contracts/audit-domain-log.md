@@ -50,4 +50,3 @@ No Task Property history table, snapshot store, event-sourced aggregate, or addi
 - [PR-001](../product/product-resolutions.md#pr-001--audit-and-domain-logs-are-the-shared-version-record).
 - Existing tables: `packages/core-runtime/src/db/schema.ts` (`auditEvents`, `domainEvents`).
 - Existing writers: `packages/core-runtime/src/core-sdk.ts` (`writeAuditEvent`, `persistAutomaticDomainEvent`).
-
