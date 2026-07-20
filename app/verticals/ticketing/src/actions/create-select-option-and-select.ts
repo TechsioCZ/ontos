@@ -16,7 +16,7 @@ import type {
   CreateSelectOptionAndSelectActionPayload,
   CreateSelectOptionAndSelectActionResponse,
 } from '../../shared/actions/create-select-option-and-select.ts';
-import { normalizeSelectOptionName } from '../select-option-name.ts';
+import { prepareSelectOptionName } from '../select-option-name.ts';
 
 interface AtomicRow {
   readonly color: string;
@@ -68,8 +68,8 @@ const handler: ActionHandler<
   CreateSelectOptionAndSelectActionPayload,
   CreateSelectOptionAndSelectActionResponse
 > = async (input, services) => {
-  const name = input.name.trim().normalize('NFC');
-  if (name.length === 0) {
+  const { displayName, normalizedName } = prepareSelectOptionName(input.name);
+  if (displayName.length === 0) {
     throw rejectAction({
       code: 'ticketing.createSelectOptionAndSelect.name_required',
       message: 'An option name is required.',
@@ -116,8 +116,8 @@ const handler: ActionHandler<
       ) values (
         ${input.color},
         coalesce((select max(option.manual_position) + 1 from ticketing.select_options as option where option.property_definition_id = ${input.propertyDefinitionId}), 0),
-        ${name},
-        ${normalizeSelectOptionName(name)},
+        ${displayName},
+        ${normalizedName},
         ${input.propertyDefinitionId},
         ${services.context.tenantId}
       )

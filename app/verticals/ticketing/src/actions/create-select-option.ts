@@ -17,7 +17,7 @@ import type {
   CreateSelectOptionActionResponse,
 } from '../../shared/actions/create-select-option.ts';
 import type { SelectOption } from '../../shared/task-property-definition.ts';
-import { normalizeSelectOptionName } from '../select-option-name.ts';
+import { prepareSelectOptionName } from '../select-option-name.ts';
 
 interface CreatedOptionRow extends SelectOption {
   readonly definitionRevision: number;
@@ -61,8 +61,8 @@ const handler: ActionHandler<
   CreateSelectOptionActionPayload,
   CreateSelectOptionActionResponse
 > = async (input, services) => {
-  const name = input.name.trim().normalize('NFC');
-  if (name.length === 0) {
+  const { displayName, normalizedName } = prepareSelectOptionName(input.name);
+  if (displayName.length === 0) {
     throw rejectAction({
       code: 'ticketing.createSelectOption.name_required',
       message: 'An option name is required.',
@@ -87,8 +87,8 @@ const handler: ActionHandler<
       select
         ${input.color},
         coalesce((select max(option.manual_position) + 1 from ticketing.select_options as option where option.property_definition_id = ${input.propertyDefinitionId}), 0),
-        ${name},
-        ${normalizeSelectOptionName(name)},
+        ${displayName},
+        ${normalizedName},
         locked_definition.property_definition_id,
         ${services.context.tenantId}
       from locked_definition

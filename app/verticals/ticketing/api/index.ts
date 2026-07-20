@@ -315,20 +315,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: createSelectPropertyDefinitionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createSelectPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createSelectPropertyDefinitionAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.createSelectPropertyDefinitionAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.createSelectPropertyDefinitionAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('createSelectOptionAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -337,18 +332,13 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: createSelectOptionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
-          ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.createSelectOptionAction', {
-            attributes: operationAttributes(ticketingOperationContexts.createSelectOptionAction),
-            kind: 'server',
-          }),
-        ),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createSelectOptionAction', {
+          attributes: operationAttributes(ticketingOperationContexts.createSelectOptionAction),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('updateSelectOptionAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -357,18 +347,13 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: updateSelectOptionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
-          ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.updateSelectOptionAction', {
-            attributes: operationAttributes(ticketingOperationContexts.updateSelectOptionAction),
-            kind: 'server',
-          }),
-        ),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateSelectOptionAction', {
+          attributes: operationAttributes(ticketingOperationContexts.updateSelectOptionAction),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('updateSelectPropertyValueAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -377,20 +362,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: updateSelectPropertyValueActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateSelectPropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updateSelectPropertyValueAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.updateSelectPropertyValueAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.updateSelectPropertyValueAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('createSelectOptionAndSelectAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -399,20 +379,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: createSelectOptionAndSelectActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createSelectOptionAndSelectAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createSelectOptionAndSelectAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.createSelectOptionAndSelectAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.createSelectOptionAndSelectAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('configureSelectOptionOrderAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -421,20 +396,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: configureSelectOptionOrderActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.configureSelectOptionOrderAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configureSelectOptionOrderAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.configureSelectOptionOrderAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.configureSelectOptionOrderAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     ),
 );
 

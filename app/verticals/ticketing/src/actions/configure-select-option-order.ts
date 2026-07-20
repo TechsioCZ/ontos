@@ -18,32 +18,12 @@ import type {
 } from '../../shared/actions/configure-select-option-order.ts';
 import type {
   SelectOption,
-  SelectOptionOrderMode,
   SelectPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
+import { orderSelectOptions } from '../select-option-order.ts';
 
 type DefinitionRow = Omit<SelectPropertyDefinition, 'options'>;
 type OptionRow = SelectOption;
-
-const displayedOptions = (
-  options: readonly SelectOption[],
-  mode: SelectOptionOrderMode,
-  locale: string,
-): SelectOption[] => {
-  if (mode === 'manual') {
-    return options.toSorted(
-      (left, right) =>
-        left.manualPosition - right.manualPosition || left.optionId.localeCompare(right.optionId),
-    );
-  }
-  const collator = new Intl.Collator(locale, { sensitivity: 'variant', usage: 'sort' });
-  const direction = mode === 'reverse_alphabetical' ? -1 : 1;
-  return options.toSorted(
-    (left, right) =>
-      direction * collator.compare(left.name.normalize('NFC'), right.name.normalize('NFC')) ||
-      left.optionId.localeCompare(right.optionId),
-  );
-};
 
 const evidence = (
   input: ConfigureSelectOptionOrderActionPayload,
@@ -113,8 +93,14 @@ const handler: ActionHandler<
       and tenant_id = ${services.context.tenantId}
   `);
   const options = rowsFromResult<OptionRow>(optionResult);
-  let ordered = displayedOptions(options, definition.optionOrderMode, input.viewerLocale);
-  if (input.optionOrderMode === 'manual' && input.manualOptionIds !== undefined) {
+  let ordered = orderSelectOptions(options, definition.optionOrderMode, input.viewerLocale);
+  const isAutomaticToManual =
+    definition.optionOrderMode !== 'manual' && input.optionOrderMode === 'manual';
+  if (
+    input.optionOrderMode === 'manual' &&
+    !isAutomaticToManual &&
+    input.manualOptionIds !== undefined
+  ) {
     const uniqueIds = new Set(input.manualOptionIds);
     if (
       uniqueIds.size !== options.length ||
@@ -178,7 +164,7 @@ const handler: ActionHandler<
     definition: {
       ...definition,
       optionOrderMode: input.optionOrderMode,
-      options: displayedOptions(ordered, input.optionOrderMode, input.viewerLocale),
+      options: orderSelectOptions(ordered, input.optionOrderMode, input.viewerLocale),
       revision,
     },
   };

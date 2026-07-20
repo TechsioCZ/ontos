@@ -17,6 +17,7 @@ import type {
   SelectPropertyDefinition,
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
+import { orderSelectOptions } from '../select-option-order.ts';
 
 interface DefinitionRow {
   readonly datatype: 'checkbox' | 'select';
@@ -47,26 +48,6 @@ interface SelectValueRow {
   readonly revision: number;
   readonly taskId: string;
 }
-
-const orderOptions = (
-  options: readonly SelectOption[],
-  mode: SelectOptionOrderMode,
-  locale: string,
-): SelectOption[] => {
-  if (mode === 'manual') {
-    return options.toSorted(
-      (left, right) =>
-        left.manualPosition - right.manualPosition || left.optionId.localeCompare(right.optionId),
-    );
-  }
-  const collator = new Intl.Collator(locale, { sensitivity: 'variant', usage: 'sort' });
-  const direction = mode === 'reverse_alphabetical' ? -1 : 1;
-  return options.toSorted(
-    (left, right) =>
-      direction * collator.compare(left.name.normalize('NFC'), right.name.normalize('NFC')) ||
-      left.optionId.localeCompare(right.optionId),
-  );
-};
 
 export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistration<
   GetTaskPropertyWorkspacePayload,
@@ -174,7 +155,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         mandatory: definition.mandatory,
         name: definition.name,
         optionOrderMode: definition.optionOrderMode ?? 'manual',
-        options: orderOptions(
+        options: orderSelectOptions(
           optionRows
             .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
             .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),

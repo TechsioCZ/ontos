@@ -17,7 +17,7 @@ import type {
   UpdateSelectOptionActionResponse,
 } from '../../shared/actions/update-select-option.ts';
 import type { SelectOption } from '../../shared/task-property-definition.ts';
-import { normalizeSelectOptionName } from '../select-option-name.ts';
+import { prepareSelectOptionName } from '../select-option-name.ts';
 
 interface UpdatedOptionRow extends SelectOption {
   readonly definitionRevision: number;
@@ -60,8 +60,8 @@ const handler: ActionHandler<
   UpdateSelectOptionActionPayload,
   UpdateSelectOptionActionResponse
 > = async (input, services) => {
-  const name = input.name.trim().normalize('NFC');
-  if (name.length === 0) {
+  const { displayName, normalizedName } = prepareSelectOptionName(input.name);
+  if (displayName.length === 0) {
     throw rejectAction({
       code: 'ticketing.updateSelectOption.name_required',
       message: 'An option name is required.',
@@ -71,8 +71,8 @@ const handler: ActionHandler<
     with updated_option as (
       update ticketing.select_options as option
       set color = ${input.color},
-          name = ${name},
-          normalized_name = ${normalizeSelectOptionName(name)},
+          name = ${displayName},
+          normalized_name = ${normalizedName},
           revision = option.revision + 1
       from ticketing.task_property_definitions as definition
       inner join ticketing.task_schemas as schema
@@ -88,7 +88,7 @@ const handler: ActionHandler<
           select 1 from ticketing.select_options as sibling
           where sibling.property_definition_id = option.property_definition_id
             and sibling.option_id <> option.option_id
-            and sibling.normalized_name = ${normalizeSelectOptionName(name)}
+            and sibling.normalized_name = ${normalizedName}
         )
       returning option.color, option.manual_position, option.name, option.option_id, option.property_definition_id, option.revision
     ), updated_definition as (

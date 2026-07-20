@@ -285,6 +285,7 @@ test('automatic option order uses viewer locale and switching to Manual snapshot
   assert.equal(definition._tag, 'OperationSucceeded');
   const { propertyDefinitionId } = definition.response.definition;
   let definitionRevision = 1;
+  const optionIds = [];
   for (const [name, color] of [
     ['Zulu', 'red'],
     ['Älg', 'green'],
@@ -303,6 +304,7 @@ test('automatic option order uses viewer locale and switching to Manual snapshot
       registration: createSelectOptionActionRegistration,
     });
     assert.equal(option._tag, 'OperationSucceeded');
+    optionIds.push(option.response.option.optionId);
     ({ definitionRevision } = option.response);
   }
   const alphabetical = await runRegisteredAction({
@@ -349,6 +351,7 @@ test('automatic option order uses viewer locale and switching to Manual snapshot
     payload: {
       collectionId,
       expectedRevision: reverse.response.definition.revision,
+      manualOptionIds: optionIds,
       optionOrderMode: 'manual',
       propertyDefinitionId,
       viewerLocale: 'sv-SE',
@@ -361,6 +364,85 @@ test('automatic option order uses viewer locale and switching to Manual snapshot
     'Zulu',
     'Alpha',
   ]);
+
+  const curatedOptionIds = manual.response.definition.options
+    .map(({ optionId }) => optionId)
+    .toReversed();
+  const curated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: manual.response.definition.revision,
+      manualOptionIds: curatedOptionIds,
+      optionOrderMode: 'manual',
+      propertyDefinitionId,
+      viewerLocale: 'en-GB',
+    },
+    registration: configureSelectOptionOrderActionRegistration,
+  });
+  assert.equal(curated._tag, 'OperationSucceeded', JSON.stringify(curated));
+  assert.deepEqual(
+    curated.response.definition.options.map(({ optionId }) => optionId),
+    curatedOptionIds,
+  );
+});
+
+test('Reverse alphabetical reverses stable identity tie-breaks', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId } = await createCollectionAndTask(operationContext);
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Tie-breaks' },
+    registration: createSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded');
+  const { propertyDefinitionId } = definition.response.definition;
+  let definitionRevision = 1;
+  for (const name of ['Same', 'Same\u200B']) {
+    // oxlint-disable-next-line no-await-in-loop -- Catalog revisions make this setup sequential.
+    const option = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        color: 'red',
+        expectedDefinitionRevision: definitionRevision,
+        name,
+        propertyDefinitionId,
+      },
+      registration: createSelectOptionActionRegistration,
+    });
+    assert.equal(option._tag, 'OperationSucceeded', JSON.stringify(option));
+    ({ definitionRevision } = option.response);
+  }
+  const alphabetical = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: definitionRevision,
+      optionOrderMode: 'alphabetical',
+      propertyDefinitionId,
+      viewerLocale: 'en-GB',
+    },
+    registration: configureSelectOptionOrderActionRegistration,
+  });
+  assert.equal(alphabetical._tag, 'OperationSucceeded', JSON.stringify(alphabetical));
+  const alphabeticalIds = alphabetical.response.definition.options.map(({ optionId }) => optionId);
+  const reverse = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: alphabetical.response.definition.revision,
+      optionOrderMode: 'reverse_alphabetical',
+      propertyDefinitionId,
+      viewerLocale: 'en-GB',
+    },
+    registration: configureSelectOptionOrderActionRegistration,
+  });
+  assert.equal(reverse._tag, 'OperationSucceeded', JSON.stringify(reverse));
+  assert.deepEqual(
+    reverse.response.definition.options.map(({ optionId }) => optionId),
+    alphabeticalIds.toReversed(),
+  );
 });
 
 test('a User selects and clears existing options while a Viewer remains read-only', async () => {
