@@ -1,5 +1,6 @@
 export type {
   ActionAuthorizationRequirement,
+  ActionAuditEventDescriptor,
   ActionDescriptor,
   ActionDomainEventDescriptor,
   ActionDomainRejection,

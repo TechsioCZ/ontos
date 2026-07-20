@@ -1,6 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 import { rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
+  ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
   ActionHandler,
   ActionRegistration,
@@ -15,6 +16,7 @@ import type {
   CreateCheckboxPropertyDefinitionActionPayload,
   CreateCheckboxPropertyDefinitionActionResponse,
 } from '../../shared/actions/create-checkbox-property-definition.ts';
+import { lockTaskCollectionForPropertyInitialization } from '../task-collection-property-initialization-lock.ts';
 
 interface CheckboxPropertyDefinitionRow {
   readonly datatype: 'checkbox';
@@ -24,15 +26,31 @@ interface CheckboxPropertyDefinitionRow {
   readonly revision: number;
 }
 
+const checkboxPropertyDefinitionEvidence = (
+  input: CreateCheckboxPropertyDefinitionActionPayload,
+  response: CreateCheckboxPropertyDefinitionActionResponse,
+) => ({
+  changedComponents: ['definition'],
+  collectionId: input.collectionId,
+  datatype: response.definition.datatype,
+  operation: 'created',
+  propertyDefinitionId: response.definition.propertyDefinitionId,
+  revision: response.definition.revision,
+});
+
+const createCheckboxPropertyDefinitionAuditEvent = {
+  evidence: checkboxPropertyDefinitionEvidence,
+  targetModuleKey: 'ticketing',
+  targetResourceId: (_input, response) => response.definition.propertyDefinitionId,
+  targetResourceType: 'task_property_definition',
+} satisfies ActionAuditEventDescriptor<
+  CreateCheckboxPropertyDefinitionActionPayload,
+  CreateCheckboxPropertyDefinitionActionResponse
+>;
+
 const createCheckboxPropertyDefinitionDomainEvent = {
   eventType: 'ticketing.taskPropertyDefinition.created',
-  payload: (_input, response) => ({
-    changedComponents: ['definition'],
-    datatype: response.definition.datatype,
-    operation: 'created',
-    propertyDefinitionId: response.definition.propertyDefinitionId,
-    revision: response.definition.revision,
-  }),
+  payload: checkboxPropertyDefinitionEvidence,
   producerModuleKey: 'ticketing',
   subjectModuleKey: 'ticketing',
   subjectResourceId: (_input, response) => response.definition.propertyDefinitionId,
@@ -53,6 +71,12 @@ const createCheckboxPropertyDefinitionActionHandler: ActionHandler<
       message: 'A Task Property Definition name is required.',
     });
   }
+
+  await lockTaskCollectionForPropertyInitialization({
+    collectionId: input.collectionId,
+    tenantId: services.context.tenantId,
+    tx: services.tx,
+  });
 
   const result = await services.tx.execute(sql`
     with selected_schema as (
@@ -123,6 +147,7 @@ export const createCheckboxPropertyDefinitionActionRegistration: ActionRegistrat
 > = {
   descriptor: {
     actionKey: createCheckboxPropertyDefinitionActionKey,
+    auditEvent: createCheckboxPropertyDefinitionAuditEvent,
     auditProfile: 'standard',
     authorization: {
       permission: 'manage_property_definitions',

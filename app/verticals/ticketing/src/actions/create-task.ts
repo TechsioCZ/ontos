@@ -15,6 +15,7 @@ import type {
   CreateTaskActionPayload,
   CreateTaskActionResponse,
 } from '../../shared/actions/create-task.ts';
+import { lockTaskCollectionForPropertyInitialization } from '../task-collection-property-initialization-lock.ts';
 import { taskCreationFromRow } from '../task-collection-aggregate.ts';
 import type { TaskCreationRow } from '../task-collection-aggregate.ts';
 
@@ -35,6 +36,12 @@ const createTaskActionHandler: ActionHandler<
   CreateTaskActionPayload,
   CreateTaskActionResponse
 > = async (input, services) => {
+  await lockTaskCollectionForPropertyInitialization({
+    collectionId: input.collectionId,
+    tenantId: services.context.tenantId,
+    tx: services.tx,
+  });
+
   const creationResult = await services.tx.execute(sql`
     with created_task as (
       insert into ticketing.tasks (

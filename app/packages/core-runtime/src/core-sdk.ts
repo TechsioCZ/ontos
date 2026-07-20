@@ -162,6 +162,7 @@ export const coreSDKErrorHttpStatus = (error: CoreSDKError): number => {
 
 export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
   readonly actionKey: string;
+  readonly auditEvent?: ActionAuditEventDescriptor<TAction, TResponse>;
   readonly auditProfile: OperationAuditProfile;
   readonly authorization?: ActionAuthorizationRequirement<TAction>;
   readonly domainEvent?: ActionDomainEventDescriptor<TAction, TResponse>;
@@ -174,6 +175,13 @@ export interface ActionDescriptor<TAction = unknown, TResponse = unknown> {
    */
   readonly transportRequestSchema: unknown;
   readonly transportResponseSchema: unknown;
+}
+
+export interface ActionAuditEventDescriptor<TAction, TResponse> {
+  readonly evidence: (input: TAction, response: TResponse) => Record<string, unknown>;
+  readonly targetModuleKey: string;
+  readonly targetResourceId: (input: TAction, response: TResponse) => string;
+  readonly targetResourceType: string;
 }
 
 export interface ActionDomainEventDescriptor<TAction, TResponse> {
@@ -194,6 +202,7 @@ export interface ActionAuthorizationRequirement<TInput = unknown> {
 
 export interface ActionExecutionServices<TAction> {
   readonly context: OperationContext<TAction>;
+  readonly markNoOp: () => void;
   readonly tx: CoreTransaction;
 }
 
@@ -1308,6 +1317,7 @@ export const runAction = async <TAction, TResponse>({
 
   try {
     return await db.transaction(async (tx): Promise<OperationResult<TAction, TResponse>> => {
+      let actionWasNoOp = false;
       const handlerOutboxMessages: OutboxMessage<string, unknown>[] = [];
       const response = await handler(payload, {
         context: {
@@ -1316,35 +1326,51 @@ export const runAction = async <TAction, TResponse>({
             handlerOutboxMessages.push(message);
           },
         },
+        markNoOp: () => {
+          actionWasNoOp = true;
+        },
         tx,
       });
-      const domainEventId = await persistAutomaticDomainEvent({
-        context: policyCheckedContext,
-        descriptor: descriptor.domainEvent,
-        input: payload,
-        response,
-        tx,
-      });
-      await persistOutboxMessages({
-        domainEventId,
-        messages: handlerOutboxMessages,
-        producerModuleKey: descriptor.domainEvent?.producerModuleKey,
-        tenantId: policyCheckedContext.tenantId,
-        tx,
-      });
+      if (!actionWasNoOp) {
+        const domainEventId = await persistAutomaticDomainEvent({
+          context: policyCheckedContext,
+          descriptor: descriptor.domainEvent,
+          input: payload,
+          response,
+          tx,
+        });
+        await persistOutboxMessages({
+          domainEventId,
+          messages: handlerOutboxMessages,
+          producerModuleKey: descriptor.domainEvent?.producerModuleKey,
+          tenantId: policyCheckedContext.tenantId,
+          tx,
+        });
+      }
       const completedContext = await markActionInvocationStatus(
         policyCheckedContext,
         'succeeded',
         tx,
       );
+      if (actionWasNoOp) {
+        return {
+          _tag: 'OperationSucceeded',
+          context: completedContext,
+          response,
+        } satisfies OperationSucceeded<TAction, TResponse>;
+      }
       const auditedContext = await writeAuditEvent({
         auditProfile: descriptor.auditProfile,
         context: completedContext,
         eventType: 'action.succeeded',
+        evidenceJson: descriptor.auditEvent?.evidence(payload, response),
         executor: tx,
         outcome: 'succeeded',
         outcomeCode: 'action_succeeded',
         outcomeStage: 'execution',
+        targetModuleKey: descriptor.auditEvent?.targetModuleKey,
+        targetResourceId: descriptor.auditEvent?.targetResourceId(payload, response),
+        targetResourceType: descriptor.auditEvent?.targetResourceType,
       });
 
       if ('_tag' in auditedContext) {

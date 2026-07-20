@@ -1,6 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 import { rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
+  ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
   ActionHandler,
   ActionRegistration,
@@ -16,24 +17,42 @@ import type {
   UpdateCheckboxPropertyValueActionResponse,
 } from '../../shared/actions/update-checkbox-property-value.ts';
 
-interface UpdatedCheckboxValueRow {
+interface CurrentCheckboxValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskRevision: number;
   readonly value: boolean;
 }
 
+type UpdatedCheckboxValueRow = CurrentCheckboxValueRow;
+
+const checkboxPropertyValueEvidence = (
+  input: UpdateCheckboxPropertyValueActionPayload,
+  response: UpdateCheckboxPropertyValueActionResponse,
+) => ({
+  changedComponents: ['checkboxValue'],
+  collectionId: input.collectionId,
+  datatype: 'checkbox',
+  operation: 'changed',
+  propertyDefinitionId: input.propertyDefinitionId,
+  revision: response.value.revision,
+  taskId: input.taskId,
+  taskRevision: response.taskRevision,
+});
+
+const updateCheckboxPropertyValueAuditEvent = {
+  evidence: checkboxPropertyValueEvidence,
+  targetModuleKey: 'ticketing',
+  targetResourceId: (input) => input.taskId,
+  targetResourceType: 'task',
+} satisfies ActionAuditEventDescriptor<
+  UpdateCheckboxPropertyValueActionPayload,
+  UpdateCheckboxPropertyValueActionResponse
+>;
+
 const updateCheckboxPropertyValueDomainEvent = {
   eventType: 'ticketing.taskPropertyValue.changed',
-  payload: (input, response) => ({
-    changedComponents: ['checkboxValue'],
-    datatype: 'checkbox',
-    operation: 'changed',
-    propertyDefinitionId: input.propertyDefinitionId,
-    revision: response.value.revision,
-    taskId: input.taskId,
-    taskRevision: response.taskRevision,
-  }),
+  payload: checkboxPropertyValueEvidence,
   producerModuleKey: 'ticketing',
   subjectModuleKey: 'ticketing',
   subjectResourceId: (input) => input.taskId,
@@ -47,32 +66,58 @@ const updateCheckboxPropertyValueActionHandler: ActionHandler<
   UpdateCheckboxPropertyValueActionPayload,
   UpdateCheckboxPropertyValueActionResponse
 > = async (input, services) => {
+  const currentResult = await services.tx.execute(sql`
+    select
+      value.property_definition_id as "propertyDefinitionId",
+      value.revision,
+      task.revision as "taskRevision",
+      value.value
+    from ticketing.task_checkbox_values as value
+    inner join ticketing.tasks as task
+      on task.task_id = value.task_id
+      and task.tenant_id = value.tenant_id
+    inner join ticketing.task_property_definitions as definition
+      on definition.property_definition_id = value.property_definition_id
+      and definition.tenant_id = value.tenant_id
+      and definition.datatype = 'checkbox'
+    where value.task_id = ${input.taskId}
+      and value.property_definition_id = ${input.propertyDefinitionId}
+      and value.revision = ${input.expectedRevision}
+      and value.tenant_id = ${services.context.tenantId}
+      and task.collection_id = ${input.collectionId}
+    for update of value, task
+  `);
+  const current = rowsFromResult<CurrentCheckboxValueRow>(currentResult).at(0);
+
+  if (current === undefined) {
+    throw rejectAction({
+      code: 'ticketing.updateCheckboxPropertyValue.stale_or_missing',
+      message: 'The Checkbox value changed elsewhere or is no longer available.',
+    });
+  }
+
+  if (current.value === input.value) {
+    services.markNoOp();
+    return {
+      taskRevision: current.taskRevision,
+      value: {
+        propertyDefinitionId: current.propertyDefinitionId,
+        revision: current.revision,
+        value: current.value,
+      },
+    };
+  }
+
   const result = await services.tx.execute(sql`
-    with current_value as (
-      select value.property_definition_id, value.task_id
-      from ticketing.task_checkbox_values as value
-      inner join ticketing.tasks as task
-        on task.task_id = value.task_id
-        and task.tenant_id = value.tenant_id
-      inner join ticketing.task_property_definitions as definition
-        on definition.property_definition_id = value.property_definition_id
-        and definition.tenant_id = value.tenant_id
-        and definition.datatype = 'checkbox'
-      where value.task_id = ${input.taskId}
-        and value.property_definition_id = ${input.propertyDefinitionId}
-        and value.revision = ${input.expectedRevision}
-        and value.tenant_id = ${services.context.tenantId}
-        and task.collection_id = ${input.collectionId}
-      for update of value, task
-    ),
-    updated_value as (
+    with updated_value as (
       update ticketing.task_checkbox_values as value
       set
         revision = value.revision + 1,
         value = ${input.value}
-      from current_value
-      where value.task_id = current_value.task_id
-        and value.property_definition_id = current_value.property_definition_id
+      where value.task_id = ${input.taskId}
+        and value.property_definition_id = ${input.propertyDefinitionId}
+        and value.revision = ${input.expectedRevision}
+        and value.tenant_id = ${services.context.tenantId}
       returning
         value.property_definition_id,
         value.revision,
@@ -143,6 +188,7 @@ export const updateCheckboxPropertyValueActionRegistration: ActionRegistration<
 > = {
   descriptor: {
     actionKey: updateCheckboxPropertyValueActionKey,
+    auditEvent: updateCheckboxPropertyValueAuditEvent,
     auditProfile: 'sensitive',
     authorization: {
       permission: 'edit_task_property_values',

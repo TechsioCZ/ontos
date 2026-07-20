@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import { fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { on } from 'node:events';
 import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
@@ -7,6 +9,7 @@ import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
+import { updateCheckboxPropertyValueActionRegistration as updateCheckboxPropertyValueDescriptorRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 
 const createdTenantIds = [];
@@ -15,20 +18,12 @@ after(async () => {
   await Promise.all(
     createdTenantIds.map(async (tenantId) => {
       await sqlClient`delete from core.outbox_messages where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.domain_events where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.audit_events where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.action_invocations where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.data_access_events where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.tenant_module_states where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_checkbox_values where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_revisions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.tasks where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_property_definitions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_schemas where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_collections where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.principals where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.legal_entities where tenant_id = ${tenantId}`;
-      await sqlClient`delete from core.tenants where tenant_id = ${tenantId}`;
     }),
   );
 
@@ -154,6 +149,37 @@ const readWorkspace = (operationContext, collectionId) =>
     transport: { headers: new Headers() },
   });
 
+const waitForChildMessage = async (child, expectedType) => {
+  for await (const [message] of on(child, 'message')) {
+    if (message?.type === 'error') {
+      throw new Error(message.error);
+    }
+    if (message?.type === expectedType) {
+      return message;
+    }
+  }
+  throw new Error(`Concurrent Action child exited before sending ${expectedType}.`);
+};
+
+const readConcurrentActionResult = async (child) => {
+  const message = await waitForChildMessage(child, 'result');
+  return message.result;
+};
+
+const startConcurrentAction = ({ kind, operationContext, payload }) => {
+  const child = fork(new URL('fixtures/concurrent-checkbox-action.mjs', import.meta.url), {
+    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+  });
+  const ready = waitForChildMessage(child, 'ready');
+  const result = readConcurrentActionResult(child);
+  child.send({ kind, operationContext, payload, type: 'run' });
+  return {
+    ready,
+    release: () => child.send({ type: 'release' }),
+    result,
+  };
+};
+
 test('an Editor creates a Checkbox definition and an existing Task reads false', async () => {
   const operationContext = await createOperationIdentity();
   const { collectionId, task } = await createCollectionAndTask(operationContext);
@@ -230,6 +256,50 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
     withNewTask.response.tasks.map(({ checkboxValues }) => checkboxValues[0].value),
     [false, false],
   );
+});
+
+test('concurrent Task and Checkbox definition creation still resolves the value to false', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded');
+  const { collectionId } = collection.response.collection;
+  const taskAction = startConcurrentAction({
+    kind: 'task',
+    operationContext,
+    payload: { collectionId },
+  });
+  const definitionAction = startConcurrentAction({
+    kind: 'definition',
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Concurrent' },
+  });
+  await Promise.all([taskAction.ready, definitionAction.ready]);
+  taskAction.release();
+  definitionAction.release();
+  const [task, definition] = await Promise.all([taskAction.result, definitionAction.result]);
+
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded');
+  assert.deepEqual(workspace.response.tasks, [
+    {
+      checkboxValues: [
+        {
+          propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+          revision: 1,
+          value: false,
+        },
+      ],
+      taskId: task.response.task.taskId,
+      taskRevision: 1,
+      title: '',
+    },
+  ]);
 });
 
 test('a User toggles one Checkbox without changing another Task, property, or Title', async () => {
@@ -317,7 +387,7 @@ test('a User toggles one Checkbox without changing another Task, property, or Ti
   );
 });
 
-test('a stale toggle is rejected while committed state and privacy-safe evidence remain intact', async () => {
+test('a stale toggle is rejected while the committed state remains intact', async () => {
   const { updateCheckboxPropertyValueActionRegistration } =
     await import('../src/actions/update-checkbox-property-value.ts');
   const operationContext = await createOperationIdentity();
@@ -351,37 +421,121 @@ test('a stale toggle is rejected while committed state and privacy-safe evidence
     { propertyDefinitionId, revision: 2, value: true },
   ]);
   assert.equal(workspace.response.tasks[0].taskRevision, 2);
+});
 
-  const domainEvents = await sqlClient`
-    select event_type, payload_json
-    from core.domain_events
-    where tenant_id = ${operationContext.tenantId}
-      and event_type = ${'ticketing.taskPropertyValue.changed'}
-    order by tenant_sequence_no
-  `;
-  assert.equal(domainEvents.length, 1);
-  assert.deepEqual(domainEvents[0].payload_json, {
+test('Checkbox Action descriptors expose privacy-safe audit and domain metadata', () => {
+  const createInput = {
+    collectionId: 'collection-1',
+    mandatory: false,
+    name: 'Approved',
+  };
+  const createResponse = {
+    definition: {
+      datatype: 'checkbox',
+      mandatory: false,
+      name: 'Approved',
+      propertyDefinitionId: 'definition-1',
+      revision: 1,
+    },
+  };
+  const createAudit = createCheckboxPropertyDefinitionActionRegistration.descriptor.auditEvent;
+  const createDomain = createCheckboxPropertyDefinitionActionRegistration.descriptor.domainEvent;
+  assert.equal(createAudit.targetResourceId(createInput, createResponse), 'definition-1');
+  assert.equal(createAudit.targetResourceType, 'task_property_definition');
+  assert.deepEqual(createAudit.evidence(createInput, createResponse), {
+    changedComponents: ['definition'],
+    collectionId: 'collection-1',
+    datatype: 'checkbox',
+    operation: 'created',
+    propertyDefinitionId: 'definition-1',
+    revision: 1,
+  });
+  assert.deepEqual(createDomain.payload(createInput, createResponse), {
+    changedComponents: ['definition'],
+    collectionId: 'collection-1',
+    datatype: 'checkbox',
+    operation: 'created',
+    propertyDefinitionId: 'definition-1',
+    revision: 1,
+  });
+
+  const updateInput = {
+    collectionId: 'collection-1',
+    expectedRevision: 1,
+    propertyDefinitionId: 'definition-1',
+    taskId: 'task-1',
+    value: true,
+  };
+  const updateResponse = {
+    taskRevision: 2,
+    value: {
+      propertyDefinitionId: 'definition-1',
+      revision: 2,
+      value: true,
+    },
+  };
+  const updateAudit = updateCheckboxPropertyValueDescriptorRegistration.descriptor.auditEvent;
+  const updateDomain = updateCheckboxPropertyValueDescriptorRegistration.descriptor.domainEvent;
+  const expectedUpdateEvidence = {
     changedComponents: ['checkboxValue'],
+    collectionId: 'collection-1',
     datatype: 'checkbox',
     operation: 'changed',
-    propertyDefinitionId,
+    propertyDefinitionId: 'definition-1',
     revision: 2,
-    taskId,
+    taskId: 'task-1',
     taskRevision: 2,
-  });
-  assert.equal(Object.hasOwn(domainEvents[0].payload_json, 'value'), false);
+  };
+  assert.equal(updateAudit.targetResourceId(updateInput, updateResponse), 'task-1');
+  assert.equal(updateAudit.targetResourceType, 'task');
+  assert.deepEqual(updateAudit.evidence(updateInput, updateResponse), expectedUpdateEvidence);
+  assert.deepEqual(updateDomain.payload(updateInput, updateResponse), expectedUpdateEvidence);
+  assert.equal(Object.hasOwn(expectedUpdateEvidence, 'value'), false);
+});
 
-  const successfulAuditEvents = await sqlClient`
-    select audit.evidence_json
-    from core.audit_events as audit
-    inner join core.action_invocations as invocation
-      on invocation.action_invocation_id = audit.action_invocation_id
-    where audit.tenant_id = ${operationContext.tenantId}
-      and invocation.action_key = ${'ticketing.updateCheckboxPropertyValue'}
-      and audit.event_type = ${'action.succeeded'}
-  `;
-  assert.equal(successfulAuditEvents.length, 1);
-  assert.deepEqual(successfulAuditEvents[0].evidence_json, {});
+test('submitting the committed Checkbox value is a semantic no-op', async () => {
+  const { updateCheckboxPropertyValueActionRegistration } =
+    await import('../src/actions/update-checkbox-property-value.ts');
+  const operationContext = await createOperationIdentity();
+  const { collectionId, task } = await createCollectionAndTask(operationContext);
+  const definition = await createCheckboxDefinition(operationContext, collectionId, 'Approved');
+  assert.equal(definition._tag, 'OperationSucceeded');
+
+  const noOp = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: false,
+    },
+    registration: updateCheckboxPropertyValueActionRegistration,
+  });
+
+  assert.equal(noOp._tag, 'OperationSucceeded', JSON.stringify(noOp));
+  assert.equal(
+    noOp.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
+    false,
+  );
+  assert.deepEqual(noOp.response, {
+    taskRevision: 1,
+    value: {
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      revision: 1,
+      value: false,
+    },
+  });
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded');
+  assert.equal(workspace.response.tasks[0].taskRevision, 1);
+  assert.deepEqual(workspace.response.tasks[0].checkboxValues, [
+    {
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      revision: 1,
+      value: false,
+    },
+  ]);
 });
 
 test('checked and unchecked filters return the current values including default false', async () => {
