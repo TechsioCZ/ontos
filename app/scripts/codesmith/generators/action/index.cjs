@@ -165,7 +165,7 @@ const ${actionCamel}ActionFailure = <const TErrorTags extends readonly string[]>
     errorTag: Schema.Literals(errorTags),
   }).pipe(HttpApiSchema.status(httpStatus));
 
-export const ${actionCamel}ActionFailureSchema = Schema.Union([
+export const ${actionCamel}ActionFailureSchemas = [
   ${actionCamel}ActionFailure(['OperationAuthRequired', 'OperationContextInvalid'], 401),
   ${actionCamel}ActionFailure(
     ['OperationAuthorizationDenied', 'OperationModuleStateDenied'],
@@ -182,7 +182,11 @@ export const ${actionCamel}ActionFailureSchema = Schema.Union([
     409,
   ),
   ${actionCamel}ActionFailure(['OperationExecutionFailed', 'OperationPersistenceFailed'], 500),
-]);
+] as const;
+
+export const ${actionCamel}ActionFailureSchema = Schema.Union(
+  ${actionCamel}ActionFailureSchemas,
+);
 
 export type ${actionPascal}ActionPayload = typeof ${actionCamel}ActionPayloadSchema.Type;
 export type ${actionPascal}ActionResponse = typeof ${actionCamel}ActionResponseSchema.Type;
@@ -398,7 +402,7 @@ const updateSharedApi = async ({
 
   const importBlock = `import {
   ${actionCamel}ActionHeadersSchema,
-  ${actionCamel}ActionFailureSchema,
+  ${actionCamel}ActionFailureSchemas,
   ${actionCamel}ActionOutcomeSchema,
   ${actionCamel}ActionPayloadSchema,
 } from './actions/${actionFile}';
@@ -420,7 +424,7 @@ export type {
   const endpointBlock = `    )
     .add(
       HttpApiEndpoint.post('${endpointName}', '${routePath}', {
-        error: ${actionCamel}ActionFailureSchema,
+        error: ${actionCamel}ActionFailureSchemas,
         headers: ${actionCamel}ActionHeadersSchema,
         payload: ${actionCamel}ActionPayloadSchema,
         success: ${actionCamel}ActionOutcomeSchema,

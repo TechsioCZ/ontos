@@ -661,6 +661,33 @@ const claimFailedActionInvocationRetry = async <TAction>({
       });
 };
 
+const resolveExistingActionInvocation = <TAction>({
+  context,
+  existing,
+  idempotencyKey,
+  requestHash: hash,
+}: {
+  readonly context: OperationContext<TAction>;
+  readonly existing: NonNullable<Awaited<ReturnType<typeof findActionInvocation>>>;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+}): Promise<OperationContext<TAction> | CoreSDKError> => {
+  if (existing.requestHash !== hash) {
+    return Promise.resolve(idempotencyConflict());
+  }
+
+  if (existing.status === 'failed') {
+    return claimFailedActionInvocationRetry({
+      actionInvocationId: existing.actionInvocationId,
+      context,
+      idempotencyKey,
+      requestHash: hash,
+    });
+  }
+
+  return Promise.resolve(replayUnavailable());
+};
+
 const registerActionInvocation = async <TAction>({
   context,
   idempotencyKey,
@@ -685,20 +712,12 @@ const registerActionInvocation = async <TAction>({
     });
 
     if (existing !== undefined) {
-      if (existing.requestHash !== hash) {
-        return idempotencyConflict();
-      }
-
-      if (existing.status === 'failed') {
-        return claimFailedActionInvocationRetry({
-          actionInvocationId: existing.actionInvocationId,
-          context,
-          idempotencyKey,
-          requestHash: hash,
-        });
-      }
-
-      return replayUnavailable();
+      return resolveExistingActionInvocation({
+        context,
+        existing,
+        idempotencyKey,
+        requestHash: hash,
+      });
     }
   }
 
@@ -714,11 +733,30 @@ const registerActionInvocation = async <TAction>({
       status: 'received',
       tenantId: context.tenantId,
     })
+    .onConflictDoNothing()
     .returning({
       actionInvocationId: actionInvocations.actionInvocationId,
     });
 
   if (inserted === undefined) {
+    if (idempotencyKey !== undefined) {
+      const existing = await findActionInvocation({
+        actionKey: context.actionKey,
+        idempotencyKey,
+        principalId: context.principalId,
+        tenantId: context.tenantId,
+      });
+
+      if (existing !== undefined) {
+        return resolveExistingActionInvocation({
+          context,
+          existing,
+          idempotencyKey,
+          requestHash: hash,
+        });
+      }
+    }
+
     return persistenceFailed();
   }
 

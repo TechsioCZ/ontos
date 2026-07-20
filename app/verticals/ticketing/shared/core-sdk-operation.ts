@@ -17,7 +17,7 @@ const failureSchema = <const TErrorTags extends readonly string[]>(
     errorTag: Schema.Literals(errorTags),
   }).pipe(HttpApiSchema.status(httpStatus));
 
-export const coreSdkOperationFailureSchema = Schema.Union([
+export const coreSdkOperationFailureSchemas = [
   failureSchema(['OperationAuthRequired', 'OperationContextInvalid'], 401),
   failureSchema(['OperationAuthorizationDenied', 'OperationModuleStateDenied'], 403),
   failureSchema(['OperationIdempotencyKeyRequired'], 428),
@@ -31,7 +31,9 @@ export const coreSdkOperationFailureSchema = Schema.Union([
     409,
   ),
   failureSchema(['OperationExecutionFailed', 'OperationPersistenceFailed'], 500),
-]);
+] as const;
+
+export const coreSdkOperationFailureSchema = Schema.Union(coreSdkOperationFailureSchemas);
 
 export const operationContextHeadersSchema = Schema.Struct({
   'x-ontos-operation-context': Schema.optional(Schema.String),

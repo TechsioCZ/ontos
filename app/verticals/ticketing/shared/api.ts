@@ -7,17 +7,20 @@ import {
 } from '@modern-js/plugin-bff/effect-client';
 import {
   createTaskActionHeadersSchema,
-  createTaskActionFailureSchema,
+  createTaskActionFailureSchemas,
   createTaskActionOutcomeSchema,
   createTaskActionPayloadSchema,
 } from './actions/create-task';
 import {
   createTaskCollectionActionHeadersSchema,
-  createTaskCollectionActionFailureSchema,
+  createTaskCollectionActionFailureSchemas,
   createTaskCollectionActionOutcomeSchema,
   createTaskCollectionActionPayloadSchema,
 } from './actions/create-task-collection';
-import { coreSdkOperationFailureSchema, operationContextHeadersSchema } from './core-sdk-operation';
+import {
+  coreSdkOperationFailureSchemas,
+  operationContextHeadersSchema,
+} from './core-sdk-operation';
 import { taskCollectionAggregateSchema } from './task-collection';
 
 export type {
@@ -140,7 +143,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.get('getTaskCollection', '/ticketing/task-collections/:collectionId', {
-        error: coreSdkOperationFailureSchema,
+        error: coreSdkOperationFailureSchemas,
         headers: operationContextHeadersSchema,
         params: {
           collectionId: Schema.String,
@@ -153,7 +156,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         'createTaskCollectionAction',
         '/ticketing/actions/create-task-collection',
         {
-          error: createTaskCollectionActionFailureSchema,
+          error: createTaskCollectionActionFailureSchemas,
           headers: createTaskCollectionActionHeadersSchema,
           payload: createTaskCollectionActionPayloadSchema,
           success: createTaskCollectionActionOutcomeSchema,
@@ -162,7 +165,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.post('createTaskAction', '/ticketing/actions/create-task', {
-        error: createTaskActionFailureSchema,
+        error: createTaskActionFailureSchemas,
         headers: createTaskActionHeadersSchema,
         payload: createTaskActionPayloadSchema,
         success: createTaskActionOutcomeSchema,

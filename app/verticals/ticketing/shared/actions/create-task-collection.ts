@@ -1,6 +1,7 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import {
   coreSdkOperationFailureSchema,
+  coreSdkOperationFailureSchemas,
   idempotentActionHeadersSchema,
 } from '../core-sdk-operation.ts';
 import { taskCollectionCreationSchema } from '../task-collection.ts';
@@ -21,6 +22,7 @@ export const createTaskCollectionActionOutcomeSchema = Schema.Struct({
 });
 
 export const createTaskCollectionActionFailureSchema = coreSdkOperationFailureSchema;
+export const createTaskCollectionActionFailureSchemas = coreSdkOperationFailureSchemas;
 
 export type CreateTaskCollectionActionPayload = typeof createTaskCollectionActionPayloadSchema.Type;
 export type CreateTaskCollectionActionResponse = TaskCollectionCreation;

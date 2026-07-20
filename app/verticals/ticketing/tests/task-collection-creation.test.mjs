@@ -237,6 +237,49 @@ test('successful Action retries are unavailable and never execute creation twice
   assert.equal(taskAttempts, 1);
 });
 
+test('concurrent first-use duplicates resolve through the idempotency contract', async () => {
+  const operationContext = await createOperationIdentity();
+  const idempotencyKey = randomUUID();
+  let attempts = 0;
+  const registration = {
+    descriptor: {
+      actionKey: 'ticketing.test.concurrentFirstUse',
+      auditProfile: 'standard',
+      gatewayAudience: 'ticketing',
+      idempotency: 'required',
+      moduleStateAccess: 'mutate',
+      transportRequestSchema: undefined,
+      transportResponseSchema: undefined,
+    },
+    handler: () => {
+      attempts += 1;
+      return { attempts };
+    },
+  };
+  const execute = () =>
+    runAction({
+      options: { operationContextResolver: operationContextResolver(operationContext) },
+      payload: {},
+      registration,
+      transport: { headers: new Headers({ 'Idempotency-Key': idempotencyKey }) },
+    });
+
+  const settled = await Promise.allSettled(Array.from({ length: 8 }, execute));
+
+  assert.equal(
+    settled.every((result) => result.status === 'fulfilled'),
+    true,
+    JSON.stringify(settled),
+  );
+  const outcomes = settled.map((result) => result.value);
+  assert.equal(outcomes.filter(({ _tag }) => _tag === 'OperationSucceeded').length, 1);
+  assert.equal(
+    outcomes.filter(({ _tag }) => _tag === 'OperationIdempotencyReplayUnavailable').length,
+    7,
+  );
+  assert.equal(attempts, 1);
+});
+
 test('CreateTask rejects the same idempotency key with different input', async () => {
   const operationContext = await createOperationIdentity();
   const firstCollection = await runCollectionCreation(operationContext);

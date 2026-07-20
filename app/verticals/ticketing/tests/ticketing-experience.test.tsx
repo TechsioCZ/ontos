@@ -1,6 +1,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { HttpApi } from '@modern-js/plugin-bff/effect-client';
 import { afterEach, beforeEach, expect, rs, test } from '@rstest/core';
 import type { ReactNode } from 'react';
+import { ticketingApi } from '../shared/api';
 import { TicketingExperience } from '../src/pages/ticketing-experience';
 
 interface BoundaryCall<TPayload> {
@@ -27,6 +29,24 @@ const mocks = rs.hoisted(() => ({
   taskCalls: [] as BoundaryCall<{ readonly collectionId: string }>[],
   toastCreate: rs.fn(),
 }));
+
+test('Ticketing API publishes the CoreSDK failure status classes', () => {
+  const errorsByEndpoint = new Map<string, readonly number[]>();
+
+  HttpApi.reflect(ticketingApi, {
+    onEndpoint({ endpoint, errors }) {
+      errorsByEndpoint.set(
+        endpoint.name,
+        [...errors.keys()].toSorted((left, right) => left - right),
+      );
+    },
+    onGroup() {},
+  });
+
+  for (const endpoint of ['createTaskAction', 'createTaskCollectionAction', 'getTaskCollection']) {
+    expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);
+  }
+});
 
 rs.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
