@@ -16,6 +16,17 @@
     "role": "ticketing",
     "routeSurface": "Route surface owned by this vertical.",
     "title": "Ticketing Vertical",
+    "taskCollection": {
+      "create": "Create Task Collection",
+      "createFailed": "Task creation failed",
+      "createRejected": "Task creation rejected",
+      "createRequestFailed": "Task creation request failed.",
+      "createdDescription": "The durable blank Task is ready.",
+      "createdTitle": "Task Collection created",
+      "creating": "Creating Task",
+      "openedTask": "Opened Task",
+      "title": "Title"
+    },
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
       "ticketing": {

@@ -17,6 +17,7 @@ import {
   dataAccessEvents,
   domainEvents,
   outboxMessages,
+  principals,
 } from './db/schema.ts';
 import type { CoreDbExecutor, CoreReadonlyDbExecutor, CoreTransaction } from './db/types.ts';
 import { checkModuleStateAccess, isInstalledModuleKey } from './module-state.ts';
@@ -436,6 +437,29 @@ const resolveContext = <TAction>({
     : contextInvalid(result.error);
 };
 
+const validateActionActor = async <TAction>(
+  context: OperationContext<TAction>,
+): Promise<OperationContext<TAction> | OperationContextInvalid> => {
+  const actor = await db
+    .select({ principalId: principals.principalId })
+    .from(principals)
+    .where(
+      and(
+        eq(principals.principalId, context.principalId),
+        eq(principals.tenantId, context.tenantId),
+        eq(principals.status, 'active'),
+      ),
+    )
+    .limit(1);
+
+  return actor.length === 1
+    ? context
+    : {
+        _tag: 'OperationContextInvalid',
+        message: 'The operation Actor must be an active Principal in its tenant.',
+      };
+};
+
 const attachInvocation = <TAction>(
   context: OperationContext<TAction>,
   invocation: {
@@ -602,6 +626,68 @@ const findActionInvocation = async ({
   return existing;
 };
 
+const claimFailedActionInvocationRetry = async <TAction>({
+  context,
+  actionInvocationId,
+  idempotencyKey,
+  requestHash: hash,
+}: {
+  readonly actionInvocationId: string;
+  readonly context: OperationContext<TAction>;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+}): Promise<OperationContext<TAction> | OperationIdempotencyReplayUnavailable> => {
+  const [claimed] = await db
+    .update(actionInvocations)
+    .set({
+      completedAt: null,
+      status: 'received',
+    })
+    .where(
+      and(
+        eq(actionInvocations.actionInvocationId, actionInvocationId),
+        eq(actionInvocations.status, 'failed'),
+      ),
+    )
+    .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+
+  return claimed === undefined
+    ? replayUnavailable()
+    : attachInvocation(context, {
+        actionInvocationId: claimed.actionInvocationId,
+        idempotencyKey,
+        requestHash: hash,
+        status: 'received',
+      });
+};
+
+const resolveExistingActionInvocation = <TAction>({
+  context,
+  existing,
+  idempotencyKey,
+  requestHash: hash,
+}: {
+  readonly context: OperationContext<TAction>;
+  readonly existing: NonNullable<Awaited<ReturnType<typeof findActionInvocation>>>;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+}): Promise<OperationContext<TAction> | CoreSDKError> => {
+  if (existing.requestHash !== hash) {
+    return Promise.resolve(idempotencyConflict());
+  }
+
+  if (existing.status === 'failed') {
+    return claimFailedActionInvocationRetry({
+      actionInvocationId: existing.actionInvocationId,
+      context,
+      idempotencyKey,
+      requestHash: hash,
+    });
+  }
+
+  return Promise.resolve(replayUnavailable());
+};
+
 const registerActionInvocation = async <TAction>({
   context,
   idempotencyKey,
@@ -626,7 +712,12 @@ const registerActionInvocation = async <TAction>({
     });
 
     if (existing !== undefined) {
-      return existing.requestHash === hash ? replayUnavailable() : idempotencyConflict();
+      return resolveExistingActionInvocation({
+        context,
+        existing,
+        idempotencyKey,
+        requestHash: hash,
+      });
     }
   }
 
@@ -642,11 +733,30 @@ const registerActionInvocation = async <TAction>({
       status: 'received',
       tenantId: context.tenantId,
     })
+    .onConflictDoNothing()
     .returning({
       actionInvocationId: actionInvocations.actionInvocationId,
     });
 
   if (inserted === undefined) {
+    if (idempotencyKey !== undefined) {
+      const existing = await findActionInvocation({
+        actionKey: context.actionKey,
+        idempotencyKey,
+        principalId: context.principalId,
+        tenantId: context.tenantId,
+      });
+
+      if (existing !== undefined) {
+        return resolveExistingActionInvocation({
+          context,
+          existing,
+          idempotencyKey,
+          requestHash: hash,
+        });
+      }
+    }
+
     return persistenceFailed();
   }
 
@@ -1123,10 +1233,16 @@ export const runAction = async <TAction, TResponse>({
     return context;
   }
 
+  const actorValidatedContext = await validateActionActor(context);
+
+  if ('_tag' in actorValidatedContext) {
+    return actorValidatedContext;
+  }
+
   const hash = requestHash(payload);
   const idempotencyKey = transport.headers.get('idempotency-key')?.trim() || undefined;
   const registeredContext = await registerActionInvocation({
-    context,
+    context: actorValidatedContext,
     idempotency: descriptor.idempotency,
     idempotencyKey,
     requestHash: hash,

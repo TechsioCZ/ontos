@@ -6,18 +6,36 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
-  createTicketActionHeadersSchema,
-  createTicketActionFailureSchema,
-  createTicketActionOutcomeSchema,
-  createTicketActionPayloadSchema,
-} from './actions/create-ticket';
+  createTaskActionHeadersSchema,
+  createTaskActionFailureSchemas,
+  createTaskActionOutcomeSchema,
+  createTaskActionPayloadSchema,
+} from './actions/create-task';
+import {
+  createTaskCollectionActionHeadersSchema,
+  createTaskCollectionActionFailureSchemas,
+  createTaskCollectionActionOutcomeSchema,
+  createTaskCollectionActionPayloadSchema,
+} from './actions/create-task-collection';
+import {
+  coreSdkOperationFailureSchemas,
+  operationContextHeadersSchema,
+} from './core-sdk-operation';
+import { taskCollectionAggregateSchema } from './task-collection';
 
 export type {
-  CreateTicketActionFailure,
-  CreateTicketActionOutcome,
-  CreateTicketActionPayload,
-  CreateTicketActionResponse,
-} from './actions/create-ticket';
+  CreateTaskActionFailure,
+  CreateTaskActionOutcome,
+  CreateTaskActionPayload,
+  CreateTaskActionResponse,
+} from './actions/create-task';
+export type {
+  CreateTaskCollectionActionFailure,
+  CreateTaskCollectionActionOutcome,
+  CreateTaskCollectionActionPayload,
+  CreateTaskCollectionActionResponse,
+} from './actions/create-task-collection';
+export type { TaskCollectionAggregate } from './task-collection';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -46,16 +64,8 @@ export interface TicketingReadiness {
   readonly versionSkew: 'none';
 }
 
-export interface TicketingCreatePayload {
-  readonly title: string;
-}
-
 export interface TicketingListResponse {
   readonly items: readonly TicketingItem[];
-}
-
-export interface TicketingCreateResponse {
-  readonly item: TicketingItem;
 }
 
 export interface TicketingNotFound {
@@ -88,10 +98,6 @@ export const ticketingReadinessSchema: Schema.Codec<TicketingReadiness> = Schema
   marker: ticketingMarkerSchema,
   status: Schema.Literal('ready'),
   versionSkew: Schema.Literal('none'),
-});
-
-export const ticketingCreatePayloadSchema: Schema.Codec<TicketingCreatePayload> = Schema.Struct({
-  title: Schema.String,
 });
 
 export const ticketingNotFoundSchema: Schema.Codec<TicketingNotFound> = Schema.TaggedStruct(
@@ -136,40 +142,60 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       }),
     )
     .add(
-      HttpApiEndpoint.post('create', '/ticketing', {
-        payload: ticketingCreatePayloadSchema,
-        success: Schema.Struct({
-          item: ticketingItemSchema,
-        }),
+      HttpApiEndpoint.get('getTaskCollection', '/ticketing/task-collections/:collectionId', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        params: {
+          collectionId: Schema.String,
+        },
+        success: taskCollectionAggregateSchema,
       }),
     )
     .add(
-      HttpApiEndpoint.post('createTicketAction', '/ticketing/actions/create-ticket', {
-        error: createTicketActionFailureSchema,
-        headers: createTicketActionHeadersSchema,
-        payload: createTicketActionPayloadSchema,
-        success: createTicketActionOutcomeSchema,
+      HttpApiEndpoint.post(
+        'createTaskCollectionAction',
+        '/ticketing/actions/create-task-collection',
+        {
+          error: createTaskCollectionActionFailureSchemas,
+          headers: createTaskCollectionActionHeadersSchema,
+          payload: createTaskCollectionActionPayloadSchema,
+          success: createTaskCollectionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createTaskAction', '/ticketing/actions/create-task', {
+        error: createTaskActionFailureSchemas,
+        headers: createTaskActionHeadersSchema,
+        payload: createTaskActionPayloadSchema,
+        success: createTaskActionOutcomeSchema,
       }),
     ),
 );
 
 export const ticketingOperationContexts = {
-  create: {
+  createTaskAction: {
     method: 'POST',
-    operationId: 'TicketingApi:ticketing:create',
-    routePath: '/ticketing',
+    operationId: 'TicketingApi:ticketing:createTaskAction',
+    routePath: '/ticketing/actions/create-task',
     source: 'generated-client',
   },
-  createTicketAction: {
+  createTaskCollectionAction: {
     method: 'POST',
-    operationId: 'TicketingApi:ticketing:createTicketAction',
-    routePath: '/ticketing/actions/create-ticket',
+    operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
+    routePath: '/ticketing/actions/create-task-collection',
     source: 'generated-client',
   },
   get: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:get',
     routePath: '/ticketing/:id',
+    source: 'generated-client',
+  },
+  getTaskCollection: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskCollection',
+    routePath: '/ticketing/task-collections/:collectionId',
     source: 'generated-client',
   },
   list: {

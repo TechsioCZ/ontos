@@ -6,8 +6,10 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
-import { runCoreSdkAction } from './action-runtime.ts';
-import { createTicketActionRegistration } from '../src/actions/create-ticket.ts';
+import { createTaskActionRegistration } from '../src/actions/create-task.ts';
+import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
+import { runCoreSdkAction, runCoreSdkDataAccess } from './action-runtime.ts';
+import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-task-collection.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -75,42 +77,53 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       );
     })
-    .handle('create', ({ payload }) =>
-      Effect.succeed({
-        item: {
-          id: `generated-ticketing-${payload.title
-            .toLowerCase()
-            .replaceAll(/[^a-z0-9]+/gu, '-')
-            .replaceAll(/^-|-$/gu, '')}`,
-          marker: ultramodernApiMarker,
-          title: payload.title,
-        },
-      }).pipe(
-        Effect.withSpan('ultramodern.api.ticketing.create', {
-          attributes: operationAttributes(ticketingOperationContexts.create),
+    .handle('getTaskCollection', ({ params, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: { collectionId: params.collectionId },
+          registration: getTaskCollectionDataAccessRegistration,
+          resultCount: () => 1,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.getTaskCollection', {
+          attributes: operationAttributes(ticketingOperationContexts.getTaskCollection),
           kind: 'server',
         }),
       ),
     )
-    .handle('createTicketAction', ({ payload, request }) =>
+    .handle('createTaskCollectionAction', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkAction({
           headers: new Headers(request.headers),
           payload,
-          registration: createTicketActionRegistration,
+          registration: createTaskCollectionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
-          ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.createTicketAction', {
-            attributes: operationAttributes(ticketingOperationContexts.createTicketAction),
-            kind: 'server',
-          }),
-        ),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createTaskCollectionAction', {
+          attributes: operationAttributes(ticketingOperationContexts.createTaskCollectionAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createTaskAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createTaskActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createTaskAction', {
+          attributes: operationAttributes(ticketingOperationContexts.createTaskAction),
+          kind: 'server',
+        }),
+      ),
     ),
 );
 

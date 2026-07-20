@@ -2,11 +2,20 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
-import { Effect, runCreateTicketAction, runEffectRequest } from '../api/ticketing-client';
+import {
+  Effect,
+  getTaskCollection,
+  runCreateTaskAction,
+  runCreateTaskCollectionAction,
+  runEffectRequest,
+} from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
-import type { CreateTicketActionFailure } from '../../shared/actions/create-ticket';
+import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
+import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
+import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
 
 interface ShellOperationContextResponse {
   readonly verticalGatewayTokens?: Readonly<Record<string, string>>;
@@ -29,7 +38,9 @@ const loadTicketingOperationContextToken = async (): Promise<string> => {
   return token;
 };
 
-const isCreateTicketActionFailure = (error: unknown): error is CreateTicketActionFailure =>
+const isCreateActionFailure = (
+  error: unknown,
+): error is CreateTaskActionFailure | CreateTaskCollectionActionFailure =>
   typeof error === 'object' &&
   error !== null &&
   'ok' in error &&
@@ -39,48 +50,78 @@ const isCreateTicketActionFailure = (error: unknown): error is CreateTicketActio
 
 export const TicketingExperience = () => {
   const { language, supportedLanguages, t } = useModernI18n();
-  const [createTicketIdempotencyKey] = useState(() => crypto.randomUUID());
-  const [isCreatingTicket, setIsCreatingTicket] = useState(false);
+  const [formIdempotencyKey, setFormIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [pendingTaskCollection, setPendingTaskCollection] = useState<TaskCollectionCreation>();
+  const [pendingTaskCollectionReadId, setPendingTaskCollectionReadId] = useState<string>();
+  const [openedTaskCollection, setOpenedTaskCollection] = useState<TaskCollectionAggregate>();
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
-  const handleCreateTicket = async () => {
-    setIsCreatingTicket(true);
+  const handleCreateTask = async () => {
+    setIsCreatingTask(true);
 
     try {
       const operationContextToken = await loadTicketingOperationContextToken();
+      const headers = {
+        'x-ontos-operation-context': operationContextToken,
+      };
+      const runTaskCreation = (taskCollection: TaskCollectionCreation) =>
+        runCreateTaskAction(
+          { collectionId: taskCollection.collection.collectionId },
+          { headers, idempotencyKey: formIdempotencyKey },
+        );
+      const taskCollectionEffect =
+        pendingTaskCollectionReadId === undefined
+          ? (pendingTaskCollection === undefined
+              ? runCreateTaskCollectionAction(
+                  {},
+                  {
+                    headers,
+                    idempotencyKey: formIdempotencyKey,
+                  },
+                ).pipe(
+                  Effect.flatMap((outcome) => {
+                    setPendingTaskCollection(outcome.response);
+                    return runTaskCreation(outcome.response);
+                  }),
+                )
+              : runTaskCreation(pendingTaskCollection)
+            ).pipe(
+              Effect.flatMap((outcome) => {
+                const { collectionId } = outcome.response.task;
+                setPendingTaskCollectionReadId(collectionId);
+                return getTaskCollection(collectionId, { headers });
+              }),
+            )
+          : getTaskCollection(pendingTaskCollectionReadId, { headers });
       await runEffectRequest(
-        runCreateTicketAction(
-          {
-            summary: 'Create Action Called',
-            targetResourceId: `ticket-${createTicketIdempotencyKey}`,
-          },
-          {
-            headers: {
-              'x-ontos-operation-context': operationContextToken,
-            },
-            idempotencyKey: createTicketIdempotencyKey,
-          },
-        ).pipe(
+        taskCollectionEffect.pipe(
           Effect.match({
             onFailure: (error) => {
               toaster.create(
-                isCreateTicketActionFailure(error)
+                isCreateActionFailure(error)
                   ? {
                       description: error.message,
-                      title: 'Create Ticket rejected',
+                      title: t('ticketing.taskCollection.createRejected'),
                       type: 'error',
                     }
                   : {
                       description:
-                        error instanceof Error ? error.message : 'Create Ticket request failed.',
-                      title: 'Create Ticket failed',
+                        error instanceof Error
+                          ? error.message
+                          : t('ticketing.taskCollection.createRequestFailed'),
+                      title: t('ticketing.taskCollection.createFailed'),
                       type: 'error',
                     },
               );
             },
-            onSuccess: (outcome) => {
+            onSuccess: (taskCollection) => {
+              setOpenedTaskCollection(taskCollection);
+              setPendingTaskCollection(undefined);
+              setPendingTaskCollectionReadId(undefined);
+              setFormIdempotencyKey(crypto.randomUUID());
               toaster.create({
-                description: outcome.response.message,
-                title: 'Create Ticket action passed',
+                description: t('ticketing.taskCollection.createdDescription'),
+                title: t('ticketing.taskCollection.createdTitle'),
                 type: 'success',
               });
             },
@@ -89,12 +130,15 @@ export const TicketingExperience = () => {
       );
     } catch (error) {
       toaster.create({
-        description: error instanceof Error ? error.message : 'Create Ticket request failed.',
-        title: 'Create Ticket failed',
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.taskCollection.createRequestFailed'),
+        title: t('ticketing.taskCollection.createFailed'),
         type: 'error',
       });
     } finally {
-      setIsCreatingTicket(false);
+      setIsCreatingTask(false);
     }
   };
 
@@ -131,14 +175,28 @@ export const TicketingExperience = () => {
       </p>
       <div className="ticketing:mt-8">
         <Button
-          isLoading={isCreatingTicket}
-          loadingText="Creating ticket"
-          onClick={() => void handleCreateTicket()}
+          isLoading={isCreatingTask}
+          loadingText={t('ticketing.taskCollection.creating')}
+          onClick={() => void handleCreateTask()}
           type="button"
         >
-          Create Ticket
+          {t('ticketing.taskCollection.create')}
         </Button>
       </div>
+      {openedTaskCollection === undefined ? null : (
+        <section
+          aria-label={t('ticketing.taskCollection.openedTask')}
+          className="ticketing:mt-8 ticketing:max-w-2xl ticketing:rounded-2xl ticketing:bg-white ticketing:p-6 ticketing:shadow-xl ticketing:shadow-stone-900/10"
+        >
+          <FormInput
+            disabled
+            id={`task-title-${openedTaskCollection.task.taskId}`}
+            label={t('ticketing.taskCollection.title')}
+            name="title"
+            value={openedTaskCollection.task.title}
+          />
+        </section>
+      )}
     </main>
   );
 };

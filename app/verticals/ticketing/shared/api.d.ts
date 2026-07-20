@@ -1,3 +1,4 @@
+// oxlint-disable typescript/consistent-type-imports, import/newline-after-import, typescript/ban-types, typescript/no-empty-object-type -- TypeScript-generated API declaration
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -5,11 +6,18 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 export type {
-  CreateTicketActionFailure,
-  CreateTicketActionOutcome,
-  CreateTicketActionPayload,
-  CreateTicketActionResponse,
-} from './actions/create-ticket';
+  CreateTaskActionFailure,
+  CreateTaskActionOutcome,
+  CreateTaskActionPayload,
+  CreateTaskActionResponse,
+} from './actions/create-task';
+export type {
+  CreateTaskCollectionActionFailure,
+  CreateTaskCollectionActionOutcome,
+  CreateTaskCollectionActionPayload,
+  CreateTaskCollectionActionResponse,
+} from './actions/create-task-collection';
+export type { TaskCollectionAggregate } from './task-collection';
 export interface TicketingMarker {
   readonly appId: string;
   readonly build: string;
@@ -34,14 +42,8 @@ export interface TicketingReadiness {
   readonly status: 'ready';
   readonly versionSkew: 'none';
 }
-export interface TicketingCreatePayload {
-  readonly title: string;
-}
 export interface TicketingListResponse {
   readonly items: readonly TicketingItem[];
-}
-export interface TicketingCreateResponse {
-  readonly item: TicketingItem;
 }
 export interface TicketingNotFound {
   readonly _tag: 'TicketingNotFound';
@@ -50,7 +52,6 @@ export interface TicketingNotFound {
 export declare const ticketingMarkerSchema: Schema.Codec<TicketingMarker>;
 export declare const ticketingItemSchema: Schema.Codec<TicketingItem>;
 export declare const ticketingReadinessSchema: Schema.Codec<TicketingReadiness>;
-export declare const ticketingCreatePayloadSchema: Schema.Codec<TicketingCreatePayload>;
 export declare const ticketingNotFoundSchema: Schema.Codec<TicketingNotFound>;
 export interface OperationContext {
   method: string;
@@ -64,34 +65,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
   HttpApiGroup.HttpApiGroup<
     'ticketing',
     | HttpApiEndpoint.HttpApiEndpoint<
-        'create',
+        'createTaskAction',
         'POST',
-        '/ticketing',
-        HttpApiEndpoint.StringTree<never>,
-        HttpApiEndpoint.StringTree<never>,
-        HttpApiEndpoint.Json<
-          Schema.Codec<TicketingCreatePayload, TicketingCreatePayload, never, never>
-        >,
-        HttpApiEndpoint.StringTree<never>,
-        HttpApiEndpoint.Json<
-          Schema.Struct<{
-            readonly item: Schema.Codec<TicketingItem, TicketingItem, never, never>;
-          }>
-        >,
-        HttpApiEndpoint.Json<never>,
-        never,
-        never
-      >
-    | HttpApiEndpoint.HttpApiEndpoint<
-        'createTicketAction',
-        'POST',
-        '/ticketing/actions/create-ticket',
+        '/ticketing/actions/create-task',
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.Json<
           Schema.Struct<{
-            readonly summary: Schema.String;
-            readonly targetResourceId: Schema.String;
+            readonly collectionId: Schema.String;
           }>
         >,
         HttpApiEndpoint.StringTree<
@@ -105,22 +86,197 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly actionInvocationId: Schema.optional<Schema.String>;
             readonly ok: Schema.Literal<true>;
             readonly response: Schema.Struct<{
-              readonly accepted: Schema.Literal<true>;
-              readonly actionKey: Schema.Literal<'ticketing.createTicket'>;
-              readonly message: Schema.String;
-              readonly targetResourceId: Schema.String;
+              readonly task: Schema.Struct<{
+                readonly collectionId: Schema.String;
+                readonly createdAt: Schema.String;
+                readonly createdByPrincipalId: Schema.String;
+                readonly lastEditedAt: Schema.String;
+                readonly lastEditedByPrincipalId: Schema.String;
+                readonly revision: Schema.Finite;
+                readonly taskId: Schema.String;
+                readonly title: Schema.String;
+              }>;
             }>;
           }>
         >,
         HttpApiEndpoint.Json<
+          Schema.Union<
+            readonly [
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationAuthRequired', 'OperationContextInvalid']
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly [
+                    'OperationDomainRejected',
+                    'OperationIdempotencyConflict',
+                    'OperationIdempotencyReplayUnavailable',
+                    'OperationPolicyDenied',
+                  ]
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+                >;
+              }>,
+            ]
+          >
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'createTaskCollectionAction',
+        'POST',
+        '/ticketing/actions/create-task-collection',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<Schema.Struct<{}>>,
+        HttpApiEndpoint.StringTree<
           Schema.Struct<{
-            readonly code: Schema.optional<Schema.String>;
-            readonly errorTag: Schema.String;
-            readonly httpStatus: Schema.Finite;
-            readonly message: Schema.String;
-            readonly ok: Schema.Literal<false>;
-            readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
           }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly collection: Schema.Struct<{
+                readonly collectionId: Schema.String;
+                readonly createdAt: Schema.String;
+                readonly schemaId: Schema.String;
+              }>;
+              readonly schema: Schema.Struct<{
+                readonly collectionId: Schema.String;
+                readonly propertyDefinitions: Schema.$Array<
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'title'>;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                  }>
+                >;
+                readonly schemaId: Schema.String;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Union<
+            readonly [
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationAuthRequired', 'OperationContextInvalid']
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly [
+                    'OperationDomainRejected',
+                    'OperationIdempotencyConflict',
+                    'OperationIdempotencyReplayUnavailable',
+                    'OperationPolicyDenied',
+                  ]
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+                >;
+              }>,
+            ]
+          >
         >,
         never,
         never
@@ -139,6 +295,125 @@ export declare const ticketingApi: HttpApi.HttpApi<
         HttpApiEndpoint.StringTree<never>,
         HttpApiEndpoint.Json<Schema.Codec<TicketingItem, TicketingItem, never, never>>,
         HttpApiEndpoint.Json<Schema.Codec<TicketingNotFound, TicketingNotFound, never, never>>,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'getTaskCollection',
+        'GET',
+        '/ticketing/task-collections/:collectionId',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collection: Schema.Struct<{
+              readonly collectionId: Schema.String;
+              readonly createdAt: Schema.String;
+              readonly schemaId: Schema.String;
+            }>;
+            readonly schema: Schema.Struct<{
+              readonly collectionId: Schema.String;
+              readonly propertyDefinitions: Schema.$Array<
+                Schema.Struct<{
+                  readonly datatype: Schema.Literal<'title'>;
+                  readonly mandatory: Schema.Boolean;
+                  readonly name: Schema.String;
+                  readonly propertyDefinitionId: Schema.String;
+                }>
+              >;
+              readonly schemaId: Schema.String;
+            }>;
+            readonly task: Schema.Struct<{
+              readonly collectionId: Schema.String;
+              readonly createdAt: Schema.String;
+              readonly createdByPrincipalId: Schema.String;
+              readonly lastEditedAt: Schema.String;
+              readonly lastEditedByPrincipalId: Schema.String;
+              readonly revision: Schema.Finite;
+              readonly taskId: Schema.String;
+              readonly title: Schema.String;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Union<
+            readonly [
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationAuthRequired', 'OperationContextInvalid']
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly [
+                    'OperationDomainRejected',
+                    'OperationIdempotencyConflict',
+                    'OperationIdempotencyReplayUnavailable',
+                    'OperationPolicyDenied',
+                  ]
+                >;
+              }>,
+              Schema.Struct<{
+                readonly code: Schema.optional<Schema.String>;
+                readonly httpStatus: Schema.Finite;
+                readonly message: Schema.String;
+                readonly ok: Schema.Literal<false>;
+                readonly state: Schema.optional<
+                  Schema.Codec<Schema.Json, Schema.Json, never, never>
+                >;
+                readonly errorTag: Schema.Literals<
+                  readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+                >;
+              }>,
+            ]
+          >
+        >,
         never,
         never
       >
@@ -180,19 +455,25 @@ export declare const ticketingApi: HttpApi.HttpApi<
   >
 >;
 export declare const ticketingOperationContexts: {
-  create: {
+  createTaskAction: {
     method: string;
     operationId: string;
     routePath: string;
     source: 'generated-client';
   };
-  createTicketAction: {
+  createTaskCollectionAction: {
     method: string;
     operationId: string;
     routePath: string;
     source: 'generated-client';
   };
   get: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  getTaskCollection: {
     method: string;
     operationId: string;
     routePath: string;

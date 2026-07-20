@@ -1,6 +1,11 @@
 // @effect-diagnostics asyncFunction:off
-import { coreSDKErrorHttpStatus, runAction } from '@app/core-runtime';
-import type { ActionRegistration, CoreSDKError } from '@app/core-runtime';
+import { coreSDKErrorHttpStatus, runAction, runDataAccess } from '@app/core-runtime';
+import type {
+  ActionRegistration,
+  CoreSDKError,
+  DataAccessRegistration,
+  OperationResult,
+} from '@app/core-runtime';
 
 type JsonValue =
   | null
@@ -10,7 +15,7 @@ type JsonValue =
   | { readonly [key: string]: JsonValue }
   | readonly JsonValue[];
 
-export type CoreSdkActionTransportOutcome<TResponse> =
+export type CoreSdkOperationTransportOutcome<TResponse> =
   | {
       readonly actionInvocationId?: string;
       readonly ok: true;
@@ -33,23 +38,9 @@ const toJsonValue = (value: unknown): JsonValue => structuredClone(value) as Jso
 const errorState = (error: CoreSDKError): JsonValue | undefined =>
   error._tag === 'OperationPolicyDenied' ? toJsonValue(error.state) : undefined;
 
-export const runCoreSdkAction = async <TAction, TResponse>({
-  headers,
-  payload,
-  registration,
-}: {
-  readonly headers: Headers;
-  readonly payload: TAction;
-  readonly registration: ActionRegistration<TAction, TResponse>;
-}): Promise<CoreSdkActionTransportOutcome<TResponse>> => {
-  const result = await runAction({
-    payload,
-    registration,
-    transport: {
-      headers,
-    },
-  });
-
+const toCoreSdkTransportOutcome = <TPayload, TResponse>(
+  result: OperationResult<TPayload, TResponse>,
+): CoreSdkOperationTransportOutcome<TResponse> => {
   if (result._tag === 'OperationSucceeded') {
     return {
       ...(result.context.actionInvocation?.actionInvocationId === undefined
@@ -71,4 +62,43 @@ export const runCoreSdkAction = async <TAction, TResponse>({
     ok: false,
     ...(state === undefined ? {} : { state }),
   };
+};
+
+export const runCoreSdkAction = async <TAction, TResponse>({
+  headers,
+  payload,
+  registration,
+}: {
+  readonly headers: Headers;
+  readonly payload: TAction;
+  readonly registration: ActionRegistration<TAction, TResponse>;
+}): Promise<CoreSdkOperationTransportOutcome<TResponse>> => {
+  const result = await runAction({
+    payload,
+    registration,
+    transport: { headers },
+  });
+
+  return toCoreSdkTransportOutcome(result);
+};
+
+export const runCoreSdkDataAccess = async <TPayload, TResponse>({
+  headers,
+  payload,
+  registration,
+  resultCount,
+}: {
+  readonly headers: Headers;
+  readonly payload: TPayload;
+  readonly registration: DataAccessRegistration<TPayload, TResponse>;
+  readonly resultCount: (response: TResponse) => number;
+}): Promise<CoreSdkOperationTransportOutcome<TResponse>> => {
+  const result = await runDataAccess({
+    payload,
+    registration,
+    resultCount,
+    transport: { headers },
+  });
+
+  return toCoreSdkTransportOutcome(result);
 };

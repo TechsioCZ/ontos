@@ -24,6 +24,7 @@ This contract supplies the shared Core identity behavior required by Person, Cre
 
 - Actor is the human or named system Principal actually responsible for an operation.
 - Core derives Actor from trusted operation context. Public Task or Task Property payloads cannot choose or override Actor, Originating Principal, or System Principal identity.
+- Before a standard Action executes or registers its retry identity, CoreSDK verifies that the trusted Actor is an active Principal belonging to the operation tenant. Missing Principals, cross-tenant Principals, and disabled or archived Principals make the operation context invalid; vertical policies do not duplicate this identity check.
 - Manual Task creation uses the authenticated human Principal as Actor.
 - Import, automation, duplication, template, and other creation paths use the Principal actually responsible for creating the new Task. A human is used only when the operation is genuinely executed in that human's name.
 - If a creation path cannot establish a valid Actor, Task creation fails. An administrator, arbitrary user, anonymous identity, or generic System Principal is not substituted merely to avoid failure.
