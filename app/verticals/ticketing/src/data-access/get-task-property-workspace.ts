@@ -10,11 +10,10 @@ import type {
   GetTaskPropertyWorkspacePayload,
   TaskPropertyWorkspace,
 } from '../../shared/task-property-workspace.ts';
+import type { TextDocument } from '../../shared/text-property.ts';
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
 
-interface DefinitionRow {
-  readonly datatype: 'checkbox' | 'number';
-  readonly format?: 'number' | 'number_with_separators' | 'percent';
+interface DefinitionFields {
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
@@ -22,14 +21,13 @@ interface DefinitionRow {
   readonly revision: number;
 }
 
-interface CheckboxValueRow {
-  readonly propertyDefinitionId: string | null;
-  readonly revision: number;
-  readonly taskId: string;
-  readonly taskRevision: number;
-  readonly title: string;
-  readonly value: boolean;
-}
+type DefinitionRow =
+  | (DefinitionFields & { readonly datatype: 'checkbox' })
+  | (DefinitionFields & {
+      readonly datatype: 'number';
+      readonly format: 'number' | 'number_with_separators' | 'percent';
+    })
+  | (DefinitionFields & { readonly datatype: 'text' });
 
 interface NumberValueRow {
   readonly propertyDefinitionId: string;
@@ -38,19 +36,42 @@ interface NumberValueRow {
   readonly value: string | null;
 }
 
+interface TextValueRow {
+  readonly document: TextDocument | null;
+  readonly propertyDefinitionId: string;
+  readonly readableText: string | null;
+  readonly revision: number;
+  readonly taskId: string;
+}
+
+interface ValueRow {
+  readonly propertyDefinitionId: string | null;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly title: string;
+  readonly value: boolean;
+}
+
 interface TaskRow {
   readonly checkboxValues: {
     propertyDefinitionId: string;
     revision: number;
     value: boolean;
   }[];
-  readonly numberValues?: {
+  numberValues?: {
     propertyDefinitionId: string;
     revision: number;
-    value: string;
+    value: string | null;
   }[];
   readonly taskId: string;
   readonly taskRevision: number;
+  textValues?: {
+    document: TextDocument | null;
+    propertyDefinitionId: string;
+    readableText: string | null;
+    revision: number;
+  }[];
   readonly title: string;
 }
 
@@ -94,10 +115,10 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'number')
+        and definition.datatype in ('checkbox', 'number', 'text')
       order by definition.created_at, definition.property_definition_id
     `);
-    const checkboxValueResult = await db.execute(sql`
+    const valueResult = await db.execute(sql`
       select
         value.property_definition_id as "propertyDefinitionId",
         value.revision,
@@ -116,6 +137,25 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
+    const textValueResult = await db.execute(sql`
+      select
+        value.document,
+        value.property_definition_id as "propertyDefinitionId",
+        value.readable_text as "readableText",
+        value.revision,
+        value.task_id as "taskId"
+      from ticketing.task_text_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'text'
+      where task.collection_id = ${input.collectionId}
+        and task.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
     const numberValueResult = await db.execute(sql`
       select
         value.property_definition_id as "propertyDefinitionId",
@@ -129,8 +169,9 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       inner join ticketing.task_property_definitions as definition
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'number'
       where task.collection_id = ${input.collectionId}
-        and value.tenant_id = ${context.tenantId}
+        and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
     const definitions = rowsFromResult<DefinitionRow>(definitionResult).map((definition) =>
@@ -145,9 +186,11 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
             revision: definition.revision,
           },
     );
-    const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
-    const valueRows = rowsFromResult<CheckboxValueRow>(checkboxValueResult);
+    const valueRows = rowsFromResult<ValueRow>(valueResult);
+    const textValueRows = rowsFromResult<TextValueRow>(textValueResult);
     const tasks = new Map<string, TaskRow>();
+    const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+    const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
 
     for (const row of valueRows) {
       const current = tasks.get(row.taskId) ?? {
@@ -155,6 +198,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         ...(hasNumberDefinitions ? { numberValues: [] } : {}),
         taskId: row.taskId,
         taskRevision: row.taskRevision,
+        ...(hasTextDefinitions ? { textValues: [] } : {}),
         title: row.title,
       };
       if (row.propertyDefinitionId !== null) {
@@ -167,12 +211,17 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       tasks.set(row.taskId, current);
     }
 
+    for (const row of textValueRows) {
+      tasks.get(row.taskId)?.textValues?.push({
+        document: row.document,
+        propertyDefinitionId: row.propertyDefinitionId,
+        readableText: row.readableText,
+        revision: row.revision,
+      });
+    }
+
     for (const row of rowsFromResult<NumberValueRow>(numberValueResult)) {
-      const current = tasks.get(row.taskId);
-      if (current === undefined) {
-        continue;
-      }
-      current.numberValues?.push({
+      tasks.get(row.taskId)?.numberValues?.push({
         propertyDefinitionId: row.propertyDefinitionId,
         revision: row.revision,
         value: row.value === null ? null : (canonicalizeNumberValue(row.value) ?? row.value),

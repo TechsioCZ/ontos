@@ -15,7 +15,7 @@ import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/d
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
-import { queryTaskNumberValuesDataAccessRegistration } from '../src/data-access/query-task-number-values.ts';
+import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 
 const createdTenantIds = [];
 
@@ -388,12 +388,16 @@ test('Number queries use canonical search, mathematical comparisons, numeric sor
     }
   }
 
-  const query = async (payload) => {
+  const query = async (operation) => {
     const result = await runRegisteredDataAccess({
       operationContext,
-      payload: { collectionId, propertyDefinitionId, ...payload },
-      registration: queryTaskNumberValuesDataAccessRegistration,
-      resultCount: (response) => response.items.length + response.groups.length,
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'number', operation },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: (response) => response.taskIds.length + (response.groups?.length ?? 0),
     });
     assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));
     return result.response;
@@ -401,76 +405,59 @@ test('Number queries use canonical search, mathematical comparisons, numeric sor
   const ids = (...values) =>
     records.filter((record) => values.includes(record.value)).map((record) => record.taskId);
 
+  assert.deepEqual((await query({ query: '25', type: 'search' })).taskIds, ids('1250').toSorted());
   assert.deepEqual(
-    (await query({ kind: 'search', search: '25' })).items.map(({ taskId }) => taskId),
-    ids('1250'),
+    (await query({ operator: 'greaterThan', type: 'filter', value: '0' })).taskIds,
+    ids('1', '1.0', '1250').toSorted(),
   );
   assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'greater_than', value: '0' })).items.map(
-      ({ taskId }) => taskId,
-    ),
-    ids('1', '1.0', '1250'),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'equal', value: '1.00' })).items.map(
-      ({ taskId }) => taskId,
-    ),
-    ids('1', '1.0'),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'not_equal', value: '1' })).items.map(
-      ({ taskId }) => taskId,
-    ),
-    ids('-2', '0', '1250'),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'less_than', value: '0' })).items.map(
-      ({ taskId }) => taskId,
-    ),
-    ids('-2'),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'greater_than_or_equal', value: '1' })).items.map(
-      ({ taskId }) => taskId,
-    ),
-    ids('1', '1.0', '1250'),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'less_than_or_equal', value: '0' })).items.map(
-      ({ taskId }) => taskId,
-    ),
-    ids('-2', '0'),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'is_empty' })).items.map(({ taskId }) => taskId),
-    ids(null),
-  );
-  assert.deepEqual(
-    (await query({ kind: 'filter', operator: 'is_not_empty' })).items.map(({ taskId }) => taskId),
-    ids('-2', '0', '1', '1.0', '1250'),
-  );
-  const ascending = await query({ direction: 'ascending', kind: 'sort' });
-  assert.deepEqual(
-    ascending.items.map(({ value }) => value),
-    ['-2', '0', '1', '1', '1250', null],
-  );
-  assert.deepEqual(
-    ascending.items.filter(({ value }) => value === '1').map(({ taskId }) => taskId),
+    (await query({ operator: 'equal', type: 'filter', value: '1.00' })).taskIds,
     ids('1', '1.0').toSorted(),
   );
-  const descending = await query({ direction: 'descending', kind: 'sort' });
   assert.deepEqual(
-    descending.items.map(({ value }) => value),
-    ['1250', '1', '1', '0', '-2', null],
+    (await query({ operator: 'notEqual', type: 'filter', value: '1' })).taskIds,
+    ids('-2', '0', '1250').toSorted(),
   );
   assert.deepEqual(
-    descending.items.filter(({ value }) => value === '1').map(({ taskId }) => taskId),
-    ids('1', '1.0').toSorted(),
+    (await query({ operator: 'lessThan', type: 'filter', value: '0' })).taskIds,
+    ids('-2').toSorted(),
   );
+  assert.deepEqual(
+    (await query({ operator: 'greaterThanOrEqual', type: 'filter', value: '1' })).taskIds,
+    ids('1', '1.0', '1250').toSorted(),
+  );
+  assert.deepEqual(
+    (await query({ operator: 'lessThanOrEqual', type: 'filter', value: '0' })).taskIds,
+    ids('-2', '0').toSorted(),
+  );
+  assert.deepEqual(
+    (await query({ operator: 'isEmpty', type: 'filter' })).taskIds,
+    ids(null).toSorted(),
+  );
+  assert.deepEqual(
+    (await query({ operator: 'isNotEmpty', type: 'filter' })).taskIds,
+    ids('-2', '0', '1', '1.0', '1250').toSorted(),
+  );
+  const ascending = await query({ direction: 'ascending', type: 'sort' });
+  assert.deepEqual(ascending.taskIds, [
+    ...ids('-2'),
+    ...ids('0'),
+    ...ids('1', '1.0').toSorted(),
+    ...ids('1250'),
+    ...ids(null),
+  ]);
+  const descending = await query({ direction: 'descending', type: 'sort' });
+  assert.deepEqual(descending.taskIds, [
+    ...ids('1250'),
+    ...ids('1', '1.0').toSorted(),
+    ...ids('0'),
+    ...ids('-2'),
+    ...ids(null),
+  ]);
 
-  const grouped = await query({ kind: 'group' });
+  const grouped = await query({ type: 'group' });
   assert.deepEqual(
-    grouped.groups.map(({ value }) => value),
+    grouped.groups.map(({ heading }) => heading),
     ['-2', '0', '1', '1250', null],
   );
   assert.deepEqual(grouped.groups[2].taskIds, ids('1', '1.0').toSorted());
@@ -853,9 +840,13 @@ test('Number schema, format, value, and query operations enforce the collection 
       authorizationChecker: authorizationForRole('Viewer', viewerChecks),
       operationContextResolver: operationContextResolver(operationContext),
     },
-    payload: { collectionId, direction: 'ascending', kind: 'sort', propertyDefinitionId },
-    registration: queryTaskNumberValuesDataAccessRegistration,
-    resultCount: (response) => response.items.length,
+    payload: {
+      collectionId,
+      propertyDefinitionId,
+      query: { datatype: 'number', operation: { direction: 'ascending', type: 'sort' } },
+    },
+    registration: queryTaskPropertyValuesDataAccessRegistration,
+    resultCount: (response) => response.taskIds.length,
     transport: { headers: new Headers() },
   });
   assert.equal(viewerQuery._tag, 'OperationSucceeded', JSON.stringify(viewerQuery));

@@ -78,6 +78,45 @@ const checkboxLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const textLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ source, target, tx }) => {
+    await tx.execute(sql`
+      insert into ticketing.task_text_values (
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        ${target.propertyDefinitionId},
+        source_value.task_id,
+        source_value.tenant_id
+      from ticketing.task_text_values as source_value
+      where source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_text_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_text_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.readable_text is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const numberLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     if (!copyValues) {
@@ -126,6 +165,7 @@ const numberLifecycleAdapter: TaskPropertyLifecycleAdapter = {
 const lifecycleAdapters = {
   checkbox: checkboxLifecycleAdapter,
   number: numberLifecycleAdapter,
+  text: textLifecycleAdapter,
 } satisfies Readonly<Record<string, TaskPropertyLifecycleAdapter>>;
 
 type SupportedTaskPropertyDatatype = keyof typeof lifecycleAdapters;
@@ -279,7 +319,7 @@ export const duplicateTaskPropertyDefinition = async ({
     )
     select
       ${source.datatype},
-      ${source.hidden},
+      ${source.datatype === 'text' ? false : source.hidden},
       ${source.mandatory},
       available_name.name,
       ${source.numberFormat},

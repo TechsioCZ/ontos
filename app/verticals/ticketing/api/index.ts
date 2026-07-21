@@ -7,8 +7,10 @@ import type {
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
 import { configureNumberPropertyFormatActionRegistration } from '../src/actions/configure-number-property-format.ts';
-import { updateNumberPropertyValueActionRegistration } from '../src/actions/update-number-property-value.ts';
 import { createNumberPropertyDefinitionActionRegistration } from '../src/actions/create-number-property-definition.ts';
+import { updateNumberPropertyValueActionRegistration } from '../src/actions/update-number-property-value.ts';
+import { updateTextPropertyValueActionRegistration } from '../src/actions/update-text-property-value.ts';
+import { createTextPropertyDefinitionActionRegistration } from '../src/actions/create-text-property-definition.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
@@ -22,7 +24,7 @@ import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
-import { queryTaskNumberValuesDataAccessRegistration } from '../src/data-access/query-task-number-values.ts';
+import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -148,32 +150,6 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
-    .handle('queryTaskNumberValues', ({ params, query, request }) =>
-      Effect.promise(() =>
-        runCoreSdkDataAccess({
-          headers: new Headers(request.headers),
-          payload: {
-            collectionId: params.collectionId,
-            direction: query.direction,
-            kind: query.kind,
-            operator: query.operator,
-            propertyDefinitionId: params.propertyDefinitionId,
-            search: query.search,
-            value: query.value,
-          },
-          registration: queryTaskNumberValuesDataAccessRegistration,
-          resultCount: (response) => response.items.length + response.groups.length,
-        }),
-      ).pipe(
-        Effect.flatMap((outcome) =>
-          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
-        ),
-        Effect.withSpan('ultramodern.api.ticketing.queryTaskNumberValues', {
-          attributes: operationAttributes(ticketingOperationContexts.queryTaskNumberValues),
-          kind: 'server',
-        }),
-      ),
-    )
     .handle('getTaskPropertyDeletionImpact', ({ params, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
@@ -191,6 +167,24 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyDeletionImpact', {
           attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyDeletionImpact),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('queryTaskPropertyValues', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload,
+          registration: queryTaskPropertyValuesDataAccessRegistration,
+          resultCount: (response) => response.taskIds.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.queryTaskPropertyValues', {
+          attributes: operationAttributes(ticketingOperationContexts.queryTaskPropertyValues),
           kind: 'server',
         }),
       ),
@@ -332,6 +326,38 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           }),
         ),
     )
+    .handle('createTextPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createTextPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createTextPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createTextPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updateTextPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateTextPropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateTextPropertyValueAction', {
+          attributes: operationAttributes(ticketingOperationContexts.updateTextPropertyValueAction),
+          kind: 'server',
+        }),
+      ),
+    )
     .handle('createNumberPropertyDefinitionAction', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkAction({
@@ -339,20 +365,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: createNumberPropertyDefinitionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createNumberPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createNumberPropertyDefinitionAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.createNumberPropertyDefinitionAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.createNumberPropertyDefinitionAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('updateNumberPropertyValueAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -361,20 +382,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: updateNumberPropertyValueActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateNumberPropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updateNumberPropertyValueAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.updateNumberPropertyValueAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.updateNumberPropertyValueAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('configureNumberPropertyFormatAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -383,20 +399,15 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: configureNumberPropertyFormatActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.configureNumberPropertyFormatAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configureNumberPropertyFormatAction,
           ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.configureNumberPropertyFormatAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.configureNumberPropertyFormatAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+          kind: 'server',
+        }),
+      ),
     ),
 );
 

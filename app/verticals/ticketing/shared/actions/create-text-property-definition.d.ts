@@ -1,85 +1,40 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export declare const duplicateTaskPropertyDefinitionActionKey: 'ticketing.duplicateTaskPropertyDefinition';
-export declare const duplicateTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+export declare const createTextPropertyDefinitionActionKey: 'ticketing.createTextPropertyDefinition';
+export declare const createTextPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly copyValues: Schema.optional<Schema.Boolean>;
-  readonly expectedRevision: Schema.Finite;
-  readonly propertyDefinitionId: Schema.String;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const createTextPropertyDefinitionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Union<
-    readonly [
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'checkbox'>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'number'>;
-        readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'text'>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-    ]
-  >;
+export declare const createTextPropertyDefinitionActionResponseSchema: Schema.Struct<{
+  readonly definition: Schema.Struct<{
+    readonly datatype: Schema.Literal<'text'>;
+    readonly hidden: Schema.Boolean;
+    readonly mandatory: Schema.Boolean;
+    readonly name: Schema.String;
+    readonly propertyDefinitionId: Schema.String;
+    readonly revision: Schema.Finite;
+  }>;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const createTextPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly definition: Schema.Union<
-      readonly [
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'checkbox'>;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'number'>;
-          readonly format: Schema.Literals<
-            readonly ['number', 'number_with_separators', 'percent']
-          >;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'text'>;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-      ]
-    >;
+    readonly definition: Schema.Struct<{
+      readonly datatype: Schema.Literal<'text'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>;
   }>;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionFailureSchemas: readonly [
+export declare const createTextPropertyDefinitionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -134,7 +89,7 @@ export declare const duplicateTaskPropertyDefinitionActionFailureSchemas: readon
     >;
   }>,
 ];
-export declare const duplicateTaskPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const createTextPropertyDefinitionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -191,12 +146,12 @@ export declare const duplicateTaskPropertyDefinitionActionFailureSchema: Schema.
     }>,
   ]
 >;
-export type DuplicateTaskPropertyDefinitionActionPayload =
-  typeof duplicateTaskPropertyDefinitionActionPayloadSchema.Type;
-export type DuplicateTaskPropertyDefinitionActionResponse =
-  typeof duplicateTaskPropertyDefinitionActionResponseSchema.Type;
-export type DuplicateTaskPropertyDefinitionActionOutcome =
-  typeof duplicateTaskPropertyDefinitionActionOutcomeSchema.Type;
-export type DuplicateTaskPropertyDefinitionActionFailure =
-  typeof duplicateTaskPropertyDefinitionActionFailureSchema.Type;
-export declare const duplicateTaskPropertyDefinitionActionTitle: 'Duplicate Task Property Definition';
+export type CreateTextPropertyDefinitionActionPayload =
+  typeof createTextPropertyDefinitionActionPayloadSchema.Type;
+export type CreateTextPropertyDefinitionActionResponse =
+  typeof createTextPropertyDefinitionActionResponseSchema.Type;
+export type CreateTextPropertyDefinitionActionOutcome =
+  typeof createTextPropertyDefinitionActionOutcomeSchema.Type;
+export type CreateTextPropertyDefinitionActionFailure =
+  typeof createTextPropertyDefinitionActionFailureSchema.Type;
+export declare const createTextPropertyDefinitionActionTitle: 'Create Text Property Definition';

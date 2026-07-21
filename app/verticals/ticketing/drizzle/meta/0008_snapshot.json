@@ -1,6 +1,6 @@
 {
-  "id": "ab5567ce-a6eb-441b-95d3-cf9f3ab67adf",
-  "prevId": "776ee2e5-cbf4-45b2-a553-d0f5839dab08",
+  "id": "e9055750-440b-4acf-8f3f-5ea9d8f05ed8",
+  "prevId": "ab5567ce-a6eb-441b-95d3-cf9f3ab67adf",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -150,6 +150,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "locale": {
+          "name": "locale",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
         },
         "tenant_id": {
           "name": "tenant_id",

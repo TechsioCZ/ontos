@@ -45,17 +45,23 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateTextPropertyDefinitionActionFailure,
+  CreateTextPropertyDefinitionActionOutcome,
+  CreateTextPropertyDefinitionActionPayload,
+  UpdateTextPropertyValueActionFailure,
+  UpdateTextPropertyValueActionOutcome,
+  UpdateTextPropertyValueActionPayload,
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  ConfigureNumberPropertyFormatActionFailure,
+  ConfigureNumberPropertyFormatActionOutcome,
+  ConfigureNumberPropertyFormatActionPayload,
   CreateNumberPropertyDefinitionActionFailure,
   CreateNumberPropertyDefinitionActionOutcome,
   CreateNumberPropertyDefinitionActionPayload,
   UpdateNumberPropertyValueActionFailure,
   UpdateNumberPropertyValueActionOutcome,
   UpdateNumberPropertyValueActionPayload,
-  ConfigureNumberPropertyFormatActionFailure,
-  ConfigureNumberPropertyFormatActionOutcome,
-  ConfigureNumberPropertyFormatActionPayload,
-  QueryTaskNumberValuesPayload,
-  QueryTaskNumberValuesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -73,6 +79,8 @@ export type TicketingClientError =
   | ConfigureNumberPropertyFormatActionFailure
   | UpdateNumberPropertyValueActionFailure
   | CreateNumberPropertyDefinitionActionFailure
+  | UpdateTextPropertyValueActionFailure
+  | CreateTextPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -197,32 +205,6 @@ export const filterTaskCheckboxValues = (
     ),
   );
 
-export const queryTaskNumberValues = (
-  payload: QueryTaskNumberValuesPayload,
-  options: TicketingClientOptions = {},
-): TicketingClientEffect<QueryTaskNumberValuesResponse> =>
-  createTicketingClient({
-    ...options,
-    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskNumberValues,
-  }).pipe(
-    Effect.flatMap((client) =>
-      client.ticketing.queryTaskNumberValues({
-        headers: options.headers ?? {},
-        params: {
-          collectionId: payload.collectionId,
-          propertyDefinitionId: payload.propertyDefinitionId,
-        },
-        query: {
-          direction: payload.direction,
-          kind: payload.kind,
-          operator: payload.operator,
-          search: payload.search,
-          value: payload.value,
-        },
-      }),
-    ),
-  );
-
 export const getTaskPropertyDeletionImpact = (
   collectionId: string,
   propertyDefinitionId: string,
@@ -237,6 +219,23 @@ export const getTaskPropertyDeletionImpact = (
       client.ticketing.getTaskPropertyDeletionImpact({
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const queryTaskPropertyValues = (
+  payload: QueryTaskPropertyValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskPropertyValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.queryTaskPropertyValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskPropertyValues({
+        headers: options.headers ?? {},
+        payload,
       }),
     ),
   );
@@ -401,6 +400,60 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateTextPropertyDefinitionAction = (
+  payload: CreateTextPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateTextPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createTextPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createTextPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateTextPropertyValueAction = (
+  payload: UpdateTextPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateTextPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateTextPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateTextPropertyValueAction({
         headers: headers ?? {},
         payload,
       }),
