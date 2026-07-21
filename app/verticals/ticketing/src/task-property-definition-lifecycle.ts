@@ -568,8 +568,17 @@ export const duplicateTaskPropertyDefinition = async ({
     return undefined;
   }
   if (target.datatype === 'number') {
-    await adapter.copyValues({ copyValues, source, target, tx });
-    return target;
+    const definition: TaskPropertyDefinition = {
+      datatype: 'number',
+      format: target.format,
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    return definition;
   }
   if (target.datatype === 'select') {
     return undefined;

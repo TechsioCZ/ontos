@@ -29,7 +29,15 @@ const toTaskPropertyDefinition = (
     if (definition.cardinality === null) {
       throw new Error('Person Task Property configuration is missing.');
     }
-    return { ...definition, cardinality: definition.cardinality };
+    return {
+      cardinality: definition.cardinality,
+      datatype: 'person',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
   }
   return definition;
 };

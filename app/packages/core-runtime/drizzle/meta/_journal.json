@@ -12,22 +12,8 @@
     {
       "idx": 1,
       "version": "7",
-      "when": 1784618206779,
-      "tag": "0001_parched_firebird",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1784618744560,
-      "tag": "0002_naive_groot",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1784622001455,
-      "tag": "0003_sour_mattie_franklin",
+      "when": 1784646332591,
+      "tag": "0001_optimal_garia",
       "breakpoints": true
     }
   ]

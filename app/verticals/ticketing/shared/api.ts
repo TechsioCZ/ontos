@@ -1014,16 +1014,16 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
 );
 
 export const ticketingOperationContexts = {
-  configurePersonPropertyCardinalityAction: {
-    method: 'POST',
-    operationId: 'TicketingApi:ticketing:configurePersonPropertyCardinalityAction',
-    routePath: '/ticketing/actions/configure-person-property-cardinality',
-    source: 'generated-client',
-  },
   configureNumberPropertyFormatAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureNumberPropertyFormatAction',
     routePath: '/ticketing/actions/configure-number-property-format',
+    source: 'generated-client',
+  },
+  configurePersonPropertyCardinalityAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configurePersonPropertyCardinalityAction',
+    routePath: '/ticketing/actions/configure-person-property-cardinality',
     source: 'generated-client',
   },
   configureSelectOptionOrderAction: {

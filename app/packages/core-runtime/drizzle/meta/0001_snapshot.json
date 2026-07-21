@@ -1,5 +1,5 @@
 {
-  "id": "3e022c5a-4582-4c7f-a7f5-198b8bf84aa2",
+  "id": "239d0704-bc96-4853-9452-8415ab61621d",
   "prevId": "010d0fba-013b-49c0-964c-3c6f2079490b",
   "version": "7",
   "dialect": "postgresql",
@@ -2471,6 +2471,18 @@
       "name": "principal_directory_entries",
       "schema": "core",
       "columns": {
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "login": {
+          "name": "login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "membership_kind": {
           "name": "membership_kind",
           "type": "text",
@@ -2568,6 +2580,131 @@
           "value": "\"core\".\"principal_directory_entries\".\"membership_status\" in ('active', 'departed')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "core.principal_directory_field_visibility": {
+      "name": "principal_directory_field_visibility",
+      "schema": "core",
+      "columns": {
+        "display_name_visible": {
+          "name": "display_name_visible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "email_visible": {
+          "name": "email_visible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "login_visible": {
+          "name": "login_visible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "subject_principal_id": {
+          "name": "subject_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "viewer_principal_id": {
+          "name": "viewer_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "core_principal_directory_field_visibility_tenant_idx": {
+          "name": "core_principal_directory_field_visibility_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "viewer_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "principal_directory_field_visibility_subject_principal_id_principals_principal_id_fk": {
+          "name": "principal_directory_field_visibility_subject_principal_id_principals_principal_id_fk",
+          "tableFrom": "principal_directory_field_visibility",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "subject_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "principal_directory_field_visibility_tenant_id_tenants_tenant_id_fk": {
+          "name": "principal_directory_field_visibility_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "principal_directory_field_visibility",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "principal_directory_field_visibility_viewer_principal_id_principals_principal_id_fk": {
+          "name": "principal_directory_field_visibility_viewer_principal_id_principals_principal_id_fk",
+          "tableFrom": "principal_directory_field_visibility",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "viewer_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "core_principal_directory_field_visibility_pk": {
+          "name": "core_principal_directory_field_visibility_pk",
+          "columns": [
+            "viewer_principal_id",
+            "subject_principal_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "core.principals": {

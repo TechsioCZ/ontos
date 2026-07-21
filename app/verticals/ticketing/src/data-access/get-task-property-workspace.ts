@@ -78,7 +78,15 @@ const taskPropertyDefinitionFromRow = (
     };
   }
   if (definition.datatype === 'person') {
-    return definition;
+    return {
+      cardinality: definition.cardinality,
+      datatype: 'person',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
   }
   return {
     datatype: definition.datatype,
@@ -202,6 +210,21 @@ interface TaskRow {
   }[];
 }
 
+const optionalTaskValueArraysFactory = (
+  definitions: readonly TaskPropertyDefinition[],
+): (() => Partial<Pick<TaskRow, 'numberValues' | 'personValues' | 'textValues' | 'urlValues'>>) => {
+  const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+  const hasPersonDefinitions = definitions.some(({ datatype }) => datatype === 'person');
+  const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
+  const hasUrlDefinitions = definitions.some(({ datatype }) => datatype === 'url');
+  return () => ({
+    ...(hasNumberDefinitions ? { numberValues: [] } : {}),
+    ...(hasPersonDefinitions ? { personValues: [] } : {}),
+    ...(hasTextDefinitions ? { textValues: [] } : {}),
+    ...(hasUrlDefinitions ? { urlValues: [] } : {}),
+  });
+};
+
 const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow[]): void => {
   for (const row of rows) {
     const task = tasks.get(row.taskId);
@@ -256,23 +279,17 @@ const taskRowsFromValues = ({
   readonly valueRows: readonly ValueRow[];
 }): TaskRow[] => {
   const tasks = new Map<string, TaskRow>();
-  const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
-  const hasPersonDefinitions = definitions.some(({ datatype }) => datatype === 'person');
-  const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
-  const hasUrlDefinitions = definitions.some(({ datatype }) => datatype === 'url');
+  const optionalTaskValueArrays = optionalTaskValueArraysFactory(definitions);
 
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
       checkboxValues: [],
       emailValues: [],
       phoneValues: [],
-      ...(hasNumberDefinitions ? { numberValues: [] } : {}),
-      ...(hasPersonDefinitions ? { personValues: [] } : {}),
+      ...optionalTaskValueArrays(),
       taskId: row.taskId,
       taskRevision: row.taskRevision,
-      ...(hasTextDefinitions ? { textValues: [] } : {}),
       title: row.title,
-      ...(hasUrlDefinitions ? { urlValues: [] } : {}),
     };
     if (row.propertyDefinitionId !== null) {
       current.checkboxValues.push({
