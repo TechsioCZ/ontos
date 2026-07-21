@@ -6,11 +6,13 @@ import type { TaskCreationRow } from './task-collection-aggregate.ts';
 
 export const createTaskAggregate = async ({
   collectionId,
+  createdAt,
   principalId,
   tenantId,
   tx,
 }: {
   readonly collectionId: string;
+  readonly createdAt: string;
   readonly principalId: string;
   readonly tenantId: string;
   readonly tx: CoreTransaction;
@@ -19,13 +21,17 @@ export const createTaskAggregate = async ({
     with created_task as (
       insert into ticketing.tasks (
         collection_id,
+        created_at,
         created_by_principal_id,
+        last_edited_at,
         last_edited_by_principal_id,
         tenant_id
       )
       select
         collection_id,
+        ${createdAt}::timestamptz,
         ${principalId},
+        ${createdAt}::timestamptz,
         ${principalId},
         ${tenantId}
       from ticketing.task_collections
@@ -106,6 +112,46 @@ export const createTaskAggregate = async ({
         on definition.schema_id = schema.schema_id
         and definition.tenant_id = ${tenantId}
         and definition.datatype = 'checkbox'
+      returning task_id
+    ),
+    initialized_text_values as (
+      insert into ticketing.task_text_values (
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        definition.property_definition_id,
+        created_task.task_id,
+        ${tenantId}
+      from created_task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = created_task.collection_id
+        and schema.tenant_id = ${tenantId}
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = ${tenantId}
+        and definition.datatype = 'text'
+      returning task_id
+    ),
+    initialized_url_values as (
+      insert into ticketing.task_url_values (
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        definition.property_definition_id,
+        created_task.task_id,
+        ${tenantId}
+      from created_task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = created_task.collection_id
+        and schema.tenant_id = ${tenantId}
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = ${tenantId}
+        and definition.datatype = 'url'
       returning task_id
     )
     select

@@ -37,6 +37,7 @@ const duplicateTaskActionHandler: ActionHandler<
   DuplicateTaskActionPayload,
   DuplicateTaskActionResponse
 > = async (input, services) => {
+  const createdAt = services.clock.now().toISOString();
   await lockTaskCollectionForPropertyInitialization({
     collectionId: input.collectionId,
     tenantId: services.context.tenantId,
@@ -63,6 +64,7 @@ const duplicateTaskActionHandler: ActionHandler<
 
   const created = await createTaskAggregate({
     collectionId: input.collectionId,
+    createdAt,
     principalId: services.context.principalId,
     tenantId: services.context.tenantId,
     tx: services.tx,

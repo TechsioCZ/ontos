@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, rs, test } from '@rstest/core';
 import { CheckboxPropertyEditor } from '../src/components/checkbox-property-editor';
 
@@ -22,7 +22,6 @@ rs.mock('@techsio/ui-kit/molecules/toast', () => ({
 }));
 
 afterEach(() => {
-  cleanup();
   mocks.toastCreate.mockClear();
 });
 

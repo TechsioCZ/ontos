@@ -68,6 +68,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const currentResult = await services.tx.execute(sql`
     select
       definition.datatype,
+      definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
@@ -100,7 +101,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     currentDefinition.name === name
   ) {
     services.markNoOp();
-    return { definition: currentDefinition };
+    return {
+      definition: currentDefinition,
+    };
   }
 
   const result = await services.tx.execute(sql`
@@ -126,6 +129,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       )
     returning
       definition.datatype,
+      definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
@@ -143,7 +147,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   }
   const definition = taskPropertyDefinitionFromRow(definitionRow);
 
-  return { definition };
+  return {
+    definition,
+  };
 };
 
 export const configureTaskPropertyDefinitionActionRegistration: ActionRegistration<

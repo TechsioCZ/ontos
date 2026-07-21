@@ -11,10 +11,71 @@
       "staleDescription": "Your checked draft is still here. Reload before trying again.",
       "staleTitle": "Checkbox changed elsewhere"
     },
+    "email": {
+      "activate": "Write email",
+      "definitionCreate": "Add Email property",
+      "definitionCreateFailedDescription": "The Email property could not be created.",
+      "definitionCreateFailedTitle": "Email property creation failed",
+      "definitionCreating": "Adding Email property",
+      "definitionName": "Email property name",
+      "invalid": "Enter one valid email address.",
+      "saveFailedDescription": "The Email could not be saved.",
+      "saveFailedTitle": "Email save failed",
+      "staleDescription": "Your Email draft is still here. Reload before trying again.",
+      "staleTitle": "Email changed elsewhere"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",
       "switcher": "Language"
+    },
+    "intrinsic": {
+      "createFailedDescription": "The intrinsic property could not be created.",
+      "createFailedTitle": "Intrinsic property creation failed",
+      "created_by": {
+        "create": "Add Created by property",
+        "creating": "Adding Created by property",
+        "name": "Created by"
+      },
+      "created_time": {
+        "create": "Add Created time property",
+        "creating": "Adding Created time property",
+        "details": "Details",
+        "name": "Created time"
+      },
+      "inactive": "inactive"
+    },
+    "phone": {
+      "call": "Call",
+      "copy": "Copy",
+      "copiedDescription": "The exact Phone value is on your clipboard.",
+      "copiedTitle": "Phone copied",
+      "copyFailedDescription": "The Phone value could not be copied.",
+      "copyFailedTitle": "Phone copy failed",
+      "definitionCreate": "Add Phone property",
+      "definitionCreateFailedDescription": "The Phone property could not be created.",
+      "definitionCreateFailedTitle": "Phone property creation failed",
+      "definitionCreating": "Adding Phone property",
+      "definitionName": "Phone property name",
+      "invalid": "Enter one control-free line of at most 256 characters.",
+      "save": "Save",
+      "saveFailedDescription": "The Phone value could not be saved.",
+      "saveFailedTitle": "Phone save failed",
+      "staleDescription": "Your Phone draft is still here. Reload before trying again.",
+      "staleTitle": "Phone changed elsewhere"
+    },
+    "number": {
+      "definitionCreate": "Add Number property",
+      "definitionCreateFailedDescription": "The Number property could not be created.",
+      "definitionCreateFailedTitle": "Number property creation failed",
+      "definitionCreating": "Adding Number property",
+      "definitionName": "Number property name",
+      "invalidDescription": "Enter a valid number.",
+      "invalidTitle": "Invalid number",
+      "saveFailedDescription": "The Number could not be saved.",
+      "saveFailedTitle": "Number save failed",
+      "staleDescription": "Your number draft is still here. Reload before trying again.",
+      "staleTitle": "Number changed elsewhere"
     },
     "routes": {
       "home": "Home"
@@ -37,6 +98,52 @@
       "creating": "Creating Task",
       "openedTask": "Opened Task",
       "title": "Title"
+    },
+    "text": {
+      "backgroundColor": "Background color",
+      "bold": "Bold",
+      "code": "Code",
+      "definitionCreate": "Add Text property",
+      "definitionCreateFailedDescription": "The Text property could not be created.",
+      "definitionCreateFailedTitle": "Text property creation failed",
+      "definitionCreating": "Adding Text property",
+      "definitionName": "Text property name",
+      "duplicate": "Duplicate {name}",
+      "duplicateConfirm": "Confirm duplication",
+      "duplicateDescription": "The duplicate keeps Mandatory configuration and starts Empty.",
+      "duplicateFailedDescription": "The Text property could not be duplicated.",
+      "duplicateFailedTitle": "Text duplication failed",
+      "duplicating": "Duplicating Text property",
+      "equation": "Equation",
+      "foregroundColor": "Text color",
+      "insertEquation": "Insert equation",
+      "italic": "Italic",
+      "link": "Link URL",
+      "linkApply": "Apply link",
+      "save": "Save Text",
+      "saveFailedDescription": "The Text value could not be saved.",
+      "saveFailedTitle": "Text save failed",
+      "saving": "Saving Text",
+      "staleDescription": "Your rich-text draft is still here. Reload the current value before trying again.",
+      "staleTitle": "Text changed elsewhere",
+      "strikethrough": "Strikethrough",
+      "underline": "Underline"
+    },
+    "url": {
+      "copy": "Copy URL",
+      "definitionCreate": "Add URL property",
+      "definitionCreateFailedDescription": "The URL property could not be created.",
+      "definitionCreateFailedTitle": "URL property creation failed",
+      "definitionCreating": "Adding URL property",
+      "definitionName": "URL property name",
+      "invalid": "Enter one absolute HTTP or HTTPS URL.",
+      "open": "Open URL",
+      "save": "Save URL",
+      "saveFailedDescription": "The URL could not be saved.",
+      "saveFailedTitle": "URL save failed",
+      "saving": "Saving URL",
+      "staleDescription": "Your URL draft is still here. Reload before trying again.",
+      "staleTitle": "URL changed elsewhere"
     },
     "widgetBody": "Owns a vertical route surface.",
     "pages": {

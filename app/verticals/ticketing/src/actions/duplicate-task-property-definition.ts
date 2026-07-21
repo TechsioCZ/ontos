@@ -25,9 +25,16 @@ const duplicatedDefinitionEvidence = (
   input: DuplicateTaskPropertyDefinitionActionPayload,
   response: DuplicateTaskPropertyDefinitionActionResponse,
 ) => ({
-  changedComponents: ['definition', 'propertyValues'],
+  changedComponents:
+    response.definition.datatype === 'created_by' || response.definition.datatype === 'created_time'
+      ? ['definition']
+      : ['definition', 'propertyValues'],
   collectionId: input.collectionId,
-  copiedValues: input.copyValues,
+  copiedValues:
+    response.definition.datatype !== 'created_by' &&
+    response.definition.datatype !== 'created_time' &&
+    response.definition.datatype !== 'text' &&
+    (input.copyValues ?? false),
   datatype: response.definition.datatype,
   operation: 'duplicated',
   propertyDefinitionId: response.definition.propertyDefinitionId,
@@ -87,7 +94,10 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
   }
 
   const definition = await duplicateTaskPropertyDefinition({
-    copyValues: input.copyValues,
+    copyValues:
+      source.datatype !== 'created_by' &&
+      source.datatype !== 'created_time' &&
+      (input.copyValues ?? false),
     source,
     tx: services.tx,
   });

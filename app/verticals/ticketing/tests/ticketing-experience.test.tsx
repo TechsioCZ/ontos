@@ -23,13 +23,33 @@ interface FakeEffect<T> {
 }
 
 const mocks = rs.hoisted(() => ({
+  capabilityAllowed: true,
+  capabilityAttempts: 0,
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
+  intrinsicCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly datatype: 'created_by' | 'created_time';
+    readonly mandatory: boolean;
+    readonly name: string;
+  }>[],
   readCalls: [] as string[],
   readFailuresRemaining: 0,
   taskAttempts: 0,
   taskCalls: [] as BoundaryCall<{ readonly collectionId: string }>[],
   taskFailuresRemaining: 1,
   toastCreate: rs.fn(),
+  urlDefinitionCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly mandatory: boolean;
+    readonly name: string;
+  }>[],
+  urlUpdateCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly expectedRevision: number;
+    readonly propertyDefinitionId: string;
+    readonly taskId: string;
+    readonly value: string;
+  }>[],
 }));
 
 test('Ticketing API publishes the CoreSDK failure status classes', () => {
@@ -46,13 +66,27 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
   });
 
   for (const endpoint of [
+    'configurePrincipalTimeZonePreferenceAction',
     'createCheckboxPropertyDefinitionAction',
+    'createIntrinsicPropertyDefinitionAction',
+    'createEmailPropertyDefinitionAction',
+    'createPhonePropertyDefinitionAction',
     'createTaskAction',
     'createTaskCollectionAction',
+    'createTextPropertyDefinitionAction',
+    'createUrlPropertyDefinitionAction',
     'filterTaskCheckboxValues',
     'getTaskCollection',
+    'getTaskPropertyEditCapability',
     'getTaskPropertyWorkspace',
+    'queryIntrinsicTaskProperties',
+    'queryTaskPropertyValues',
+    'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
+    'updateEmailPropertyValueAction',
+    'updatePhonePropertyValueAction',
+    'updateTextPropertyValueAction',
+    'updateUrlPropertyValueAction',
   ]) {
     expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);
   }
@@ -64,8 +98,26 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
     supportedLanguages: ['en'],
     t: (key: string) =>
       ({
+        'ticketing.email.definitionCreate': 'Create Email property',
+        'ticketing.email.definitionCreating': 'Creating Email property',
+        'ticketing.email.definitionName': 'Email property name',
+        'ticketing.intrinsic.created_by.create': 'Add Created by property',
+        'ticketing.intrinsic.created_by.creating': 'Adding Created by property',
+        'ticketing.intrinsic.created_by.name': 'Created by',
+        'ticketing.intrinsic.created_time.create': 'Add Created time property',
+        'ticketing.intrinsic.created_time.creating': 'Adding Created time property',
+        'ticketing.intrinsic.created_time.details': 'Details',
+        'ticketing.intrinsic.created_time.name': 'Created time',
+        'ticketing.intrinsic.inactive': 'inactive',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
+        'ticketing.phone.call': 'Call',
+        'ticketing.phone.copy': 'Copy',
+        'ticketing.phone.definitionCreate': 'Add Phone property',
+        'ticketing.phone.definitionCreating': 'Adding Phone property',
+        'ticketing.phone.definitionName': 'Phone property name',
+        'ticketing.phone.invalid': 'Enter one control-free line of at most 256 characters.',
+        'ticketing.phone.save': 'Save Phone',
         'ticketing.role': 'Ticketing',
         'ticketing.taskCollection.create': 'Create Task',
         'ticketing.taskCollection.createFailed': 'Task creation failed',
@@ -77,6 +129,12 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.taskCollection.openedTask': 'Opened Task',
         'ticketing.taskCollection.title': 'Title',
         'ticketing.title': 'Ticketing',
+        'ticketing.url.definitionCreate': 'Add URL property',
+        'ticketing.url.definitionCreating': 'Adding URL property',
+        'ticketing.url.definitionName': 'URL property name',
+        'ticketing.url.open': 'Open URL',
+        'ticketing.url.save': 'Save URL',
+        'ticketing.url.saving': 'Saving URL',
       })[key] ?? key,
   }),
 }));
@@ -176,6 +234,106 @@ rs.mock('../src/api/ticketing-client', () => {
       }
       return success(aggregate);
     },
+    getTaskPropertyEditCapability: () => {
+      mocks.capabilityAttempts += 1;
+      return mocks.capabilityAllowed
+        ? success({ canEdit: true })
+        : failure({ httpStatus: 403, message: 'Viewer is read-only.', ok: false });
+    },
+    getTaskPropertyWorkspace: () =>
+      success({
+        collectionId,
+        effectiveTimeZone: { source: 'browser', timeZone: 'Europe/Prague' },
+        propertyDefinitions: [
+          {
+            datatype: 'created_time',
+            hidden: false,
+            mandatory: false,
+            name: 'Created time',
+            propertyDefinitionId: 'created-time-1',
+            revision: 1,
+          },
+          {
+            datatype: 'created_time',
+            hidden: true,
+            mandatory: false,
+            name: 'Hidden Created time',
+            propertyDefinitionId: 'created-time-hidden',
+            revision: 1,
+          },
+        ],
+        tasks: [
+          {
+            checkboxValues: [],
+            createdAt: aggregate.task.createdAt,
+            emailValues: [],
+            numberValues: [],
+            phoneValues: [],
+            selectValues: [],
+            taskId,
+            taskRevision: 1,
+            title: '',
+            urlValues: [],
+          },
+        ],
+      }),
+    runCreateEmailPropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'email',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'email-property-1',
+            revision: 1,
+          },
+        },
+      }),
+    runCreateIntrinsicPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly datatype: 'created_by' | 'created_time';
+        readonly mandatory: boolean;
+        readonly name: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.intrinsicCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          definition: {
+            datatype: payload.datatype,
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'created-time-1',
+            revision: 1,
+          },
+        },
+      });
+    },
+    runCreatePhonePropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'phone',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'phone-property-1',
+            revision: 1,
+          },
+        },
+      }),
     runCreateTaskAction: (
       payload: { readonly collectionId: string },
       options: { readonly idempotencyKey?: string },
@@ -202,18 +360,70 @@ rs.mock('../src/api/ticketing-client', () => {
         response: { collection: aggregate.collection, schema: aggregate.schema },
       });
     },
-    runEffectRequest: (current: FakeEffect<unknown>) => current.result.value,
+    runCreateUrlPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly mandatory: boolean;
+        readonly name: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.urlDefinitionCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          definition: {
+            datatype: 'url',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name.trim(),
+            propertyDefinitionId: 'url-property-1',
+            revision: 1,
+          },
+        },
+      });
+    },
+    runEffectRequest: (current: FakeEffect<unknown>) =>
+      current.result.ok
+        ? Promise.resolve(current.result.value)
+        : Promise.reject(current.result.value),
+    runUpdateUrlPropertyValueAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly expectedRevision: number;
+        readonly propertyDefinitionId: string;
+        readonly taskId: string;
+        readonly value: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.urlUpdateCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          taskRevision: 2,
+          value: {
+            propertyDefinitionId: payload.propertyDefinitionId,
+            revision: 1,
+            value: payload.value.trim(),
+          },
+        },
+      });
+    },
   };
 });
 
 beforeEach(() => {
+  mocks.capabilityAllowed = true;
+  mocks.capabilityAttempts = 0;
   mocks.collectionCalls.length = 0;
+  mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
   mocks.taskAttempts = 0;
   mocks.taskCalls.length = 0;
   mocks.taskFailuresRemaining = 1;
   mocks.toastCreate.mockClear();
+  mocks.urlDefinitionCalls.length = 0;
+  mocks.urlUpdateCalls.length = 0;
   rs.stubGlobal(
     'fetch',
     rs.fn(() =>
@@ -309,4 +519,95 @@ test('retries only the governed read after both Actions succeed', async () => {
   expect(mocks.collectionCalls).toHaveLength(1);
   expect(mocks.taskCalls).toHaveLength(1);
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
+});
+
+test('creates and renders an intrinsic property through the application path', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  fireEvent.click(screen.getByRole('button', { name: 'Add Created time property' }));
+
+  await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
+  await waitFor(() => expect(document.querySelector('time')).not.toBeNull());
+  expect(document.querySelectorAll('time')).toHaveLength(2);
+  expect(mocks.intrinsicCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    datatype: 'created_time',
+    mandatory: false,
+    name: 'Created time',
+  });
+  expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T12:00:00.000Z');
+  fireEvent.click(screen.getByText('Details'));
+  expect(document.querySelector('details')?.hasAttribute('open')).toBe(true);
+  expect(document.querySelectorAll('time')[1]?.textContent).toContain(':00:00');
+});
+
+test('creates, edits, and opens a URL through the public Ticketing surface', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+    target: { value: 'Reference URL' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
+
+  const valueInput = await screen.findByRole('textbox', { name: 'Reference URL' });
+  const exactValue = 'HTTPS://Example.com/%7EExact?Q=One#Part';
+  fireEvent.change(valueInput, { target: { value: exactValue } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save URL' }));
+
+  const open = await screen.findByRole('link', { name: 'Open URL' });
+  expect(open.getAttribute('href')).toBe(exactValue);
+  expect(mocks.urlDefinitionCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    mandatory: false,
+    name: 'Reference URL',
+  });
+  expect(mocks.urlUpdateCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    expectedRevision: 0,
+    propertyDefinitionId: 'url-property-1',
+    taskId: 'task-1',
+    value: exactValue,
+  });
+});
+
+test('wires a denied value-edit capability to read-only property editors', async () => {
+  mocks.capabilityAllowed = false;
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  await waitFor(() => expect(mocks.capabilityAttempts).toBe(1));
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email property name' }), {
+    target: { value: 'Contact email' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create Email property' }));
+
+  const email = await screen.findByRole('textbox', { name: 'Contact email' });
+  expect(email).toHaveAttribute('readonly');
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+    target: { value: 'Reference URL' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
+
+  const url = await screen.findByRole('textbox', { name: 'Reference URL' });
+  expect(url).toHaveAttribute('readonly');
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Phone property name' }), {
+    target: { value: 'Direct line' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add Phone property' }));
+
+  const phone = await screen.findByRole('textbox', { name: 'Direct line' });
+  expect(phone).toHaveAttribute('readonly');
+  expect(screen.queryByRole('button', { name: 'Save Phone' })).not.toBeInTheDocument();
 });
