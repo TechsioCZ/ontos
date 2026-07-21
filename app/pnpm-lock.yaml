@@ -172,6 +172,9 @@ importers:
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(kysely@0.29.2)(pg@8.21.0)(postgres@3.4.9)
+      mime-types:
+        specifier: 3.0.2
+        version: 3.0.2
       pg:
         specifier: 8.21.0
         version: 8.21.0
@@ -182,6 +185,9 @@ importers:
       '@effect/tsgo':
         specifier: 0.14.6
         version: 0.14.6
+      '@types/mime-types':
+        specifier: ^3.0.1
+        version: 3.0.1
       '@types/node':
         specifier: ^20
         version: 20.19.43
@@ -3159,6 +3165,9 @@ packages:
 
   '@types/loadable__component@5.13.10':
     resolution: {integrity: sha512-2/LjmgG1JcGPj7T3NViq7BB5cvOA0s63gL3Gv+FPULj2L+3ExWfsNQcsFPUIOoGsVUJeZxgNPf320JZDyxjtCQ==}
+
+  '@types/mime-types@3.0.1':
+    resolution: {integrity: sha512-xRMsfuQbnRq1Ef+C+RKaENOxXX87Ygl38W1vDfPHRku02TgQr+Qd8iivLtAMcR0KF5/29xlnFihkTlbqFrGOVQ==}
 
   '@types/node@20.19.43':
     resolution: {integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==}
@@ -9746,6 +9755,8 @@ snapshots:
   '@types/loadable__component@5.13.10':
     dependencies:
       '@types/react': 19.2.17
+
+  '@types/mime-types@3.0.1': {}
 
   '@types/node@20.19.43':
     dependencies:

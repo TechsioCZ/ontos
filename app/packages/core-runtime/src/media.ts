@@ -1,6 +1,7 @@
 // @effect-diagnostics asyncFunction:off extendsNativeError:off globalDate:off nodeBuiltinImport:off
 import { createHash, randomUUID } from 'node:crypto';
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { lookup as lookupMimeType } from 'mime-types';
 import type { OperationContext } from './operation-context.ts';
 import type { CoreReadonlyDbExecutor, CoreTransaction } from './db/types.ts';
 import { mediaAssetBytes, mediaAssets } from './db/schema.ts';
@@ -33,6 +34,8 @@ export interface CommittedMediaAsset {
   readonly mediaAssetId: string;
 }
 
+export type MediaAssetProjection = CommittedMediaAsset;
+
 const detectedMimeType = (bytes: Uint8Array): string | undefined => {
   if (
     bytes.length >= 8 &&
@@ -56,21 +59,13 @@ const detectedMimeType = (bytes: Uint8Array): string | undefined => {
   return undefined;
 };
 
-const extensionMimeTypes = new Map([
-  ['gif', 'image/gif'],
-  ['jpeg', 'image/jpeg'],
-  ['jpg', 'image/jpeg'],
-  ['pdf', 'application/pdf'],
-  ['png', 'image/png'],
-  ['webp', 'image/webp'],
-]);
-
 const suppliedExtensionMimeType = (filename: string): string | undefined => {
   const separator = filename.lastIndexOf('.');
   if (separator <= 0 || separator === filename.length - 1) {
     return undefined;
   }
-  return extensionMimeTypes.get(filename.slice(separator + 1).toLowerCase());
+  const resolved = lookupMimeType(filename);
+  return resolved === false || resolved === 'application/octet-stream' ? undefined : resolved;
 };
 
 const meaningfulClientMimeType = (clientMimeType: string | undefined): string | undefined => {
@@ -175,6 +170,36 @@ export type AuthorizedMediaDownloadResult =
         readonly mimeType: string;
       };
     };
+
+export const getMediaAssetProjections = async (
+  input: { readonly mediaAssetIds: readonly string[]; readonly tenantId: string },
+  services: { readonly db: CoreReadonlyDbExecutor },
+): Promise<readonly MediaAssetProjection[]> => {
+  if (input.mediaAssetIds.length === 0) {
+    return [];
+  }
+  const assets = await services.db
+    .select({
+      byteSize: mediaAssets.byteSize,
+      displayFilename: mediaAssets.displayFilename,
+      effectiveMimeType: mediaAssets.mimeType,
+      mediaAssetId: mediaAssets.mediaAssetId,
+    })
+    .from(mediaAssets)
+    .where(
+      and(
+        eq(mediaAssets.tenantId, input.tenantId),
+        inArray(mediaAssets.mediaAssetId, [...new Set(input.mediaAssetIds)]),
+      ),
+    );
+  return assets.map((asset) => ({
+    access: 'download',
+    byteSize: Number(asset.byteSize),
+    displayFilename: asset.displayFilename,
+    effectiveMimeType: asset.effectiveMimeType,
+    mediaAssetId: asset.mediaAssetId,
+  }));
+};
 
 export const getAuthorizedMediaDownload = async (
   input: { readonly mediaAssetId: string; readonly tenantId: string },

@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off
-import { rowsFromResult } from '@app/core-runtime';
+import { getMediaAssetProjections, rowsFromResult } from '@app/core-runtime';
 import type { DataAccessRegistration } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import {
@@ -136,16 +136,19 @@ interface ValueRow {
   readonly value: boolean;
 }
 
-interface FilesMediaItemRow {
-  readonly access: 'download';
-  readonly byteSize: number;
-  readonly displayFilename: string;
-  readonly effectiveMimeType: string;
+interface StoredFilesMediaItemRow {
   readonly itemId: string;
   readonly mediaAssetId: string;
   readonly position: number;
   readonly propertyDefinitionId: string;
   readonly taskId: string;
+}
+
+interface FilesMediaItemRow extends StoredFilesMediaItemRow {
+  readonly access: 'download';
+  readonly byteSize: number;
+  readonly displayFilename: string;
+  readonly effectiveMimeType: string;
 }
 
 interface TaskRow {
@@ -506,19 +509,12 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     `);
     const filesMediaResult = await db.execute(sql`
       select
-        'download' as access,
-        asset.byte_size::double precision as "byteSize",
-        asset.display_filename as "displayFilename",
-        asset.mime_type as "effectiveMimeType",
         item.item_id as "itemId",
         item.media_asset_id as "mediaAssetId",
         item.position,
         item.property_definition_id as "propertyDefinitionId",
         item.task_id as "taskId"
       from ticketing.task_files_media_items as item
-      inner join core.media_assets as asset
-        on asset.media_asset_id = item.media_asset_id
-        and asset.tenant_id = item.tenant_id
       inner join ticketing.tasks as task
         on task.task_id = item.task_id
         and task.tenant_id = item.tenant_id
@@ -531,13 +527,29 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
       definitionResult,
     ).map((definition) => taskPropertyDefinitionFromRow(definition, optionRows, locale));
+    const storedFilesMediaRows = rowsFromResult<StoredFilesMediaItemRow>(filesMediaResult);
+    const assetProjections = await getMediaAssetProjections(
+      {
+        mediaAssetIds: storedFilesMediaRows.map(({ mediaAssetId }) => mediaAssetId),
+        tenantId: context.tenantId,
+      },
+      { db },
+    );
+    const assetsById = new Map(assetProjections.map((asset) => [asset.mediaAssetId, asset]));
+    const filesMediaRows: FilesMediaItemRow[] = [];
+    for (const item of storedFilesMediaRows) {
+      const asset = assetsById.get(item.mediaAssetId);
+      if (asset !== undefined) {
+        filesMediaRows.push({ ...asset, ...item });
+      }
+    }
     return {
       collectionId: input.collectionId,
       propertyDefinitions: [...definitions],
       tasks: taskRowsFromValues({
         definitions,
         emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
-        filesMediaRows: rowsFromResult<FilesMediaItemRow>(filesMediaResult),
+        filesMediaRows,
         numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
         phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
         selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),

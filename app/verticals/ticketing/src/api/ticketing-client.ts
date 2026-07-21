@@ -909,15 +909,9 @@ export const runUpdatePhonePropertyValueAction = (
 
 export const runCreateFilesMediaPropertyDefinitionAction = (
   payload: CreateFilesMediaPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateFilesMediaPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -937,15 +931,9 @@ export const runCreateFilesMediaPropertyDefinitionAction = (
 
 export const runUploadFilesMediaItemAction = (
   payload: UploadFilesMediaItemActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UploadFilesMediaItemActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,

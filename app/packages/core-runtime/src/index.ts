@@ -69,6 +69,7 @@ export { rowsFromResult } from './sql-result.ts';
 export {
   commitMediaAssetUpload,
   getAuthorizedMediaDownload,
+  getMediaAssetProjections,
   getMediaUploadPolicy,
   MediaUploadConfigurationError,
 } from './media.ts';
@@ -77,6 +78,7 @@ export type {
   AuthorizedMediaDownloadResult,
   CommittedMediaAsset,
   MediaAssetUploadInput,
+  MediaAssetProjection,
   MediaUploadPolicy,
 } from './media.ts';
 export {

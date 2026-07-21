@@ -217,6 +217,20 @@ test('a positive content mismatch rejects the action and commits no Files & medi
     message: 'Detected file content conflicts with a supplied filename extension or MIME type.',
   });
 
+  const unmappedExtension = await runRegisteredAction({
+    operationContext,
+    payload: {
+      bytesBase64: png.toString('base64'),
+      collectionId,
+      filename: 'invoice.docx',
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.equal(unmappedExtension._tag, 'OperationDomainRejected');
+  assert.equal(unmappedExtension.code, 'core.media.type_mismatch');
+
   const workspace = await runDataAccess({
     options: {
       authorizationChecker: allowedAuthorization,
