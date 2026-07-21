@@ -12,12 +12,14 @@ import type {
 } from '../../shared/email-query.ts';
 
 interface EmailQueryRow {
+  readonly collectionLocale: string;
   readonly normalizedValue: string | null;
   readonly taskId: string;
   readonly value: string | null;
 }
 
 const compareNormalizedValues = (
+  collator: Intl.Collator,
   left: EmailQueryRow,
   right: EmailQueryRow,
   direction: 'ascending' | 'descending',
@@ -28,9 +30,7 @@ const compareNormalizedValues = (
   if (right.normalizedValue === null) {
     return -1;
   }
-  const compared = left.normalizedValue.localeCompare(right.normalizedValue, 'en', {
-    sensitivity: 'variant',
-  });
+  const compared = collator.compare(left.normalizedValue, right.normalizedValue);
   if (compared === 0) {
     return left.taskId.localeCompare(right.taskId);
   }
@@ -64,6 +64,7 @@ export const queryTaskEmailValuesDataAccessRegistration: DataAccessRegistration<
   handler: async (input, { context, db }) => {
     const result = await db.execute(sql`
       select
+        collection.locale as "collectionLocale",
         value.normalized_value as "normalizedValue",
         task.task_id as "taskId",
         value.value
@@ -71,6 +72,9 @@ export const queryTaskEmailValuesDataAccessRegistration: DataAccessRegistration<
       inner join ticketing.task_schemas as schema
         on schema.schema_id = definition.schema_id
         and schema.tenant_id = definition.tenant_id
+      inner join ticketing.task_collections as collection
+        on collection.collection_id = schema.collection_id
+        and collection.tenant_id = schema.tenant_id
       inner join ticketing.tasks as task
         on task.collection_id = schema.collection_id
         and task.tenant_id = schema.tenant_id
@@ -85,6 +89,11 @@ export const queryTaskEmailValuesDataAccessRegistration: DataAccessRegistration<
       order by task.task_id
     `);
     const rows = rowsFromResult<EmailQueryRow>(result);
+    const collectionLocale = rows.at(0)?.collectionLocale ?? 'en-GB';
+    const collator = new Intl.Collator(collectionLocale, {
+      sensitivity: 'accent',
+      usage: 'sort',
+    });
     const operand = input.query.toLowerCase();
     let selected = rows;
 
@@ -120,13 +129,13 @@ export const queryTaskEmailValuesDataAccessRegistration: DataAccessRegistration<
       }
       case 'sort_ascending': {
         selected = [...rows].toSorted((left, right) =>
-          compareNormalizedValues(left, right, 'ascending'),
+          compareNormalizedValues(collator, left, right, 'ascending'),
         );
         break;
       }
       case 'sort_descending': {
         selected = [...rows].toSorted((left, right) =>
-          compareNormalizedValues(left, right, 'descending'),
+          compareNormalizedValues(collator, left, right, 'descending'),
         );
         break;
       }
@@ -162,7 +171,7 @@ export const queryTaskEmailValuesDataAccessRegistration: DataAccessRegistration<
       if (right.key === null) {
         return -1;
       }
-      return left.key.localeCompare(right.key, 'en', { sensitivity: 'variant' });
+      return collator.compare(left.key, right.key);
     });
     return { groups, taskIds: rows.map(({ taskId }) => taskId) };
   },

@@ -1,19 +1,21 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 
+export const emailQueryOperationSchema = Schema.Literals([
+  'search',
+  'is',
+  'is_not',
+  'contains',
+  'does_not_contain',
+  'is_empty',
+  'is_not_empty',
+  'sort_ascending',
+  'sort_descending',
+  'group',
+]);
+
 export const queryTaskEmailValuesPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
-  operation: Schema.Literals([
-    'search',
-    'is',
-    'is_not',
-    'contains',
-    'does_not_contain',
-    'is_empty',
-    'is_not_empty',
-    'sort_ascending',
-    'sort_descending',
-    'group',
-  ]),
+  operation: emailQueryOperationSchema,
   propertyDefinitionId: Schema.String,
   query: Schema.String,
 });

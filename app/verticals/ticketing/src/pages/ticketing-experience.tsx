@@ -7,6 +7,7 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import {
   Effect,
+  getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateCheckboxPropertyDefinitionAction,
   runCreateEmailPropertyDefinitionAction,
@@ -74,6 +75,7 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
+  const [canEditTaskPropertyValues, setCanEditTaskPropertyValues] = useState(false);
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -154,6 +156,11 @@ export const TicketingExperience = () => {
               setPendingTaskCollection(undefined);
               setPendingTaskCollectionReadId(undefined);
               setFormIdempotencyKey(crypto.randomUUID());
+              void runEffectRequest(
+                getTaskPropertyEditCapability(taskCollection.collection.collectionId, { headers }),
+              )
+                .then(({ canEdit }) => setCanEditTaskPropertyValues(canEdit))
+                .catch(() => setCanEditTaskPropertyValues(false));
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),
@@ -405,9 +412,7 @@ export const TicketingExperience = () => {
                                             ({ propertyDefinitionId }) =>
                                               propertyDefinitionId !== draft.propertyDefinitionId,
                                           ),
-                                          ...(outcome.response.value === null
-                                            ? []
-                                            : [outcome.response.value]),
+                                          outcome.response.value,
                                         ],
                                         taskRevision: outcome.response.taskRevision,
                                       }
@@ -418,6 +423,7 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
                       revision={emailValue?.revision ?? 0}
                       taskId={task.taskId}
                       value={emailValue?.value ?? null}
@@ -465,6 +471,7 @@ export const TicketingExperience = () => {
                       return outcome.response;
                     }}
                     propertyDefinitionId={definition.propertyDefinitionId}
+                    readOnly={!canEditTaskPropertyValues}
                     revision={value.revision}
                     taskId={task.taskId}
                     value={value.value}

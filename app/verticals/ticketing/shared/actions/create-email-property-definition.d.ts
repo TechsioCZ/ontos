@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export { emailPropertyDefinitionSchema } from '../task-property-definition.ts';
 export declare const createEmailPropertyDefinitionActionKey: 'ticketing.createEmailPropertyDefinition';
 export declare const createEmailPropertyDefinitionActionPayloadSchema: Schema.Struct<{

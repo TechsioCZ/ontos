@@ -1,0 +1,2 @@
+ALTER TABLE "ticketing"."task_email_values" DROP CONSTRAINT "ticketing_task_email_values_normalized_ck";--> statement-breakpoint
+ALTER TABLE "ticketing"."task_email_values" ADD CONSTRAINT "ticketing_task_email_values_normalized_ck" CHECK (("ticketing"."task_email_values"."normalized_value" is null and "ticketing"."task_email_values"."value" is null) or "ticketing"."task_email_values"."normalized_value" = lower("ticketing"."task_email_values"."value"));

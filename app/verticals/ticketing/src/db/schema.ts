@@ -28,6 +28,7 @@ export const taskCollections = ticketingSchema.table(
   {
     collectionId: uuid('collection_id').defaultRandom().primaryKey(),
     createdAt: createdAt(),
+    locale: text('locale').default('en-GB').notNull(),
     tenantId: tenantId(),
   },
   (table) => [
@@ -172,7 +173,7 @@ export const taskCheckboxValues = ticketingSchema.table(
 export const taskEmailValues = ticketingSchema.table(
   'task_email_values',
   {
-    normalizedValue: text('normalized_value').notNull(),
+    normalizedValue: text('normalized_value'),
     propertyDefinitionId: uuid('property_definition_id')
       .notNull()
       .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
@@ -181,7 +182,7 @@ export const taskEmailValues = ticketingSchema.table(
       .notNull()
       .references(() => tasks.taskId, { onDelete: 'restrict' }),
     tenantId: tenantId(),
-    value: text('value').notNull(),
+    value: text('value'),
   },
   (table) => [
     primaryKey({
@@ -198,7 +199,7 @@ export const taskEmailValues = ticketingSchema.table(
     check('ticketing_task_email_values_trimmed_ck', sql`btrim(${table.value}) = ${table.value}`),
     check(
       'ticketing_task_email_values_normalized_ck',
-      sql`${table.normalizedValue} = lower(${table.value})`,
+      sql`(${table.normalizedValue} is null and ${table.value} is null) or ${table.normalizedValue} = lower(${table.value})`,
     ),
     check(
       'ticketing_task_email_values_length_ck',

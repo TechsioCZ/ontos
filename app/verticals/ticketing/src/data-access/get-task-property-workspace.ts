@@ -24,7 +24,7 @@ interface EmailValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskId: string;
-  readonly value: string;
+  readonly value: string | null;
 }
 
 interface ValueRow {
@@ -45,7 +45,7 @@ interface TaskRow {
   readonly emailValues: {
     propertyDefinitionId: string;
     revision: number;
-    value: string;
+    value: string | null;
   }[];
   readonly taskId: string;
   readonly taskRevision: number;

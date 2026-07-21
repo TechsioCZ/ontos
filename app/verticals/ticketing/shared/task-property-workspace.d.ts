@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const checkboxPropertyValueSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
@@ -7,7 +8,7 @@ export declare const checkboxPropertyValueSchema: Schema.Struct<{
 export declare const emailPropertyValueSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
-  readonly value: Schema.String;
+  readonly value: Schema.NullOr<Schema.String>;
 }>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
@@ -46,7 +47,7 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
         Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
-          readonly value: Schema.String;
+          readonly value: Schema.NullOr<Schema.String>;
         }>
       >;
       readonly taskId: Schema.String;

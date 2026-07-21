@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const coreSdkOperationFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;

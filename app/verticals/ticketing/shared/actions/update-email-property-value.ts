@@ -20,7 +20,7 @@ export const updateEmailPropertyValueActionHeadersSchema = idempotentActionHeade
 
 export const updateEmailPropertyValueActionResponseSchema = Schema.Struct({
   taskRevision: Schema.Finite,
-  value: Schema.NullOr(emailPropertyValueSchema),
+  value: emailPropertyValueSchema,
 });
 
 export const updateEmailPropertyValueActionOutcomeSchema = Schema.Struct({

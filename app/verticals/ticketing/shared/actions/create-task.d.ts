@@ -1,5 +1,6 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
 import type { TaskCreation } from '../task-collection.ts';
+
 export declare const createTaskActionKey: 'ticketing.createTask';
 export declare const createTaskActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;

@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const updateEmailPropertyValueActionKey: 'ticketing.updateEmailPropertyValue';
 export declare const updateEmailPropertyValueActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
@@ -13,26 +14,22 @@ export declare const updateEmailPropertyValueActionHeadersSchema: Schema.Struct<
 }>;
 export declare const updateEmailPropertyValueActionResponseSchema: Schema.Struct<{
   readonly taskRevision: Schema.Finite;
-  readonly value: Schema.NullOr<
-    Schema.Struct<{
-      readonly propertyDefinitionId: Schema.String;
-      readonly revision: Schema.Finite;
-      readonly value: Schema.String;
-    }>
-  >;
+  readonly value: Schema.Struct<{
+    readonly propertyDefinitionId: Schema.String;
+    readonly revision: Schema.Finite;
+    readonly value: Schema.NullOr<Schema.String>;
+  }>;
 }>;
 export declare const updateEmailPropertyValueActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
     readonly taskRevision: Schema.Finite;
-    readonly value: Schema.NullOr<
-      Schema.Struct<{
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-        readonly value: Schema.String;
-      }>
-    >;
+    readonly value: Schema.Struct<{
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+      readonly value: Schema.NullOr<Schema.String>;
+    }>;
   }>;
 }>;
 export declare const updateEmailPropertyValueActionFailureSchemas: readonly [

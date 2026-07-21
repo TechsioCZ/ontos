@@ -5,6 +5,7 @@ import { after, test } from 'node:test';
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
+import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
@@ -12,6 +13,7 @@ import { transitionTaskRetentionActionRegistration } from '../src/actions/transi
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
+import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
@@ -23,6 +25,7 @@ after(async () => {
     createdTenantIds.map(async (tenantId) => {
       await sqlClient`delete from core.outbox_messages where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_email_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_checkbox_values where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_revisions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.tasks where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_property_definitions where tenant_id = ${tenantId}`;
@@ -33,11 +36,11 @@ after(async () => {
   await sqlClient.end({ timeout: 1 });
 });
 
-const createOperationIdentity = async () => {
+const createOperationIdentity = async (defaultLocale = 'en-GB') => {
   const suffix = `${Date.now()}-${randomUUID()}`;
   const [tenant] = await sqlClient`
     insert into core.tenants (name, slug, default_locale, status)
-    values (${'Email property tenant'}, ${`email-property-${suffix}`}, ${'en-GB'}, ${'active'})
+    values (${'Email property tenant'}, ${`email-property-${suffix}`}, ${defaultLocale}, ${'active'})
     returning tenant_id
   `;
   createdTenantIds.push(tenant.tenant_id);
@@ -325,6 +328,71 @@ test('Email search matches a case-insensitive literal substring through the publ
   ]);
 });
 
+test('Email sorting and grouping use the Task Collection locale', async () => {
+  const operationContext = await createOperationIdentity('cs-CZ');
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded');
+  const { collectionId } = collection.response.collection;
+  const tasks = await Promise.all(
+    Array.from({ length: 3 }, () =>
+      runRegisteredAction({
+        operationContext,
+        payload: { collectionId },
+        registration: createTaskActionRegistration,
+      }),
+    ),
+  );
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Czech order' },
+    registration: createEmailPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded');
+  const { propertyDefinitionId } = definition.response.definition;
+  for (const [index, value] of ['h@example.com', 'ch@example.com', 'i@example.com'].entries()) {
+    // oxlint-disable-next-line no-await-in-loop -- Public writes establish deterministic rows.
+    const saved = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 0,
+        propertyDefinitionId,
+        taskId: tasks[index].response.task.taskId,
+        value,
+      },
+      registration: updateEmailPropertyValueActionRegistration,
+    });
+    assert.equal(saved._tag, 'OperationSucceeded');
+  }
+
+  const sorted = await queryEmailValues(operationContext, {
+    collectionId,
+    operation: 'sort_ascending',
+    propertyDefinitionId,
+    query: '',
+  });
+  assert.equal(sorted._tag, 'OperationSucceeded');
+  assert.deepEqual(
+    sorted.response.taskIds,
+    tasks.map(({ response }) => response.task.taskId),
+  );
+  const grouped = await queryEmailValues(operationContext, {
+    collectionId,
+    operation: 'group',
+    propertyDefinitionId,
+    query: '',
+  });
+  assert.equal(grouped._tag, 'OperationSucceeded');
+  assert.deepEqual(
+    grouped.response.groups.map(({ key }) => key),
+    ['h@example.com', 'ch@example.com', 'i@example.com'],
+  );
+});
+
 test('Email edits reject invalid, Mandatory-empty, and stale drafts without replacing committed state', async () => {
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
@@ -417,10 +485,84 @@ test('Email edits reject invalid, Mandatory-empty, and stale drafts without repl
   assert.equal(optionalAgain._tag, 'OperationSucceeded');
   const cleared = await update(2, '   ');
   assert.equal(cleared._tag, 'OperationSucceeded');
-  assert.equal(cleared.response.value, null);
+  assert.deepEqual(cleared.response.value, {
+    propertyDefinitionId,
+    revision: 3,
+    value: null,
+  });
   const afterClear = await readWorkspace(operationContext, collectionId);
   assert.equal(afterClear._tag, 'OperationSucceeded');
-  assert.deepEqual(afterClear.response.tasks[0].emailValues, []);
+  assert.deepEqual(afterClear.response.tasks[0].emailValues, [cleared.response.value]);
+  const emptyAfterClear = await queryEmailValues(operationContext, {
+    collectionId,
+    operation: 'is_empty',
+    propertyDefinitionId,
+    query: '',
+  });
+  assert.equal(emptyAfterClear._tag, 'OperationSucceeded');
+  assert.deepEqual(emptyAfterClear.response.taskIds, [taskId]);
+  const impactAfterClear = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, propertyDefinitionId },
+    registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(impactAfterClear._tag, 'OperationSucceeded');
+  assert.equal(impactAfterClear.response.impactCount, 0);
+
+  const repopulated = await update(3, 'again@example.com');
+  assert.equal(repopulated._tag, 'OperationSucceeded');
+  assert.equal(repopulated.response.value.revision, 4);
+  const abaStale = await update(1, 'old-client@example.com');
+  assert.equal(abaStale._tag, 'OperationDomainRejected');
+  assert.equal(abaStale.code, 'ticketing.updateEmailPropertyValue.stale_or_missing');
+});
+
+test('an unrelated Task value save is rejected while a Mandatory Email remains Empty', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded');
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  const mandatoryEmail = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: true, name: 'Required contact' },
+    registration: createEmailPropertyDefinitionActionRegistration,
+  });
+  const checkbox = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Reviewed' },
+    registration: createCheckboxPropertyDefinitionActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded');
+  assert.equal(mandatoryEmail._tag, 'OperationSucceeded');
+  assert.equal(checkbox._tag, 'OperationSucceeded');
+
+  const unrelatedSave = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: checkbox.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: true,
+    },
+    registration: updateCheckboxPropertyValueActionRegistration,
+  });
+  assert.equal(unrelatedSave._tag, 'OperationDomainRejected');
+  assert.equal(unrelatedSave.code, 'ticketing.taskEdit.mandatory_email_empty');
 });
 
 test('Email duplication and confirmed deletion preserve generic retained-Task lifecycle semantics', async () => {

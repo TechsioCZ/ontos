@@ -23,6 +23,8 @@ interface FakeEffect<T> {
 }
 
 const mocks = rs.hoisted(() => ({
+  capabilityAllowed: true,
+  capabilityAttempts: 0,
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
   readCalls: [] as string[],
   readFailuresRemaining: 0,
@@ -51,6 +53,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'createTaskCollectionAction',
     'filterTaskCheckboxValues',
     'getTaskCollection',
+    'getTaskPropertyEditCapability',
     'getTaskPropertyWorkspace',
     'updateCheckboxPropertyValueAction',
   ]) {
@@ -64,6 +67,9 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
     supportedLanguages: ['en'],
     t: (key: string) =>
       ({
+        'ticketing.email.definitionCreate': 'Create Email property',
+        'ticketing.email.definitionCreating': 'Creating Email property',
+        'ticketing.email.definitionName': 'Email property name',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
         'ticketing.role': 'Ticketing',
@@ -176,6 +182,29 @@ rs.mock('../src/api/ticketing-client', () => {
       }
       return success(aggregate);
     },
+    getTaskPropertyEditCapability: () => {
+      mocks.capabilityAttempts += 1;
+      return mocks.capabilityAllowed
+        ? success({ canEdit: true })
+        : failure({ httpStatus: 403, message: 'Viewer is read-only.', ok: false });
+    },
+    runCreateEmailPropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'email',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'email-property-1',
+            revision: 1,
+          },
+        },
+      }),
     runCreateTaskAction: (
       payload: { readonly collectionId: string },
       options: { readonly idempotencyKey?: string },
@@ -202,11 +231,16 @@ rs.mock('../src/api/ticketing-client', () => {
         response: { collection: aggregate.collection, schema: aggregate.schema },
       });
     },
-    runEffectRequest: (current: FakeEffect<unknown>) => current.result.value,
+    runEffectRequest: (current: FakeEffect<unknown>) =>
+      current.result.ok
+        ? Promise.resolve(current.result.value)
+        : Promise.reject(current.result.value),
   };
 });
 
 beforeEach(() => {
+  mocks.capabilityAllowed = true;
+  mocks.capabilityAttempts = 0;
   mocks.collectionCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
@@ -309,4 +343,22 @@ test('retries only the governed read after both Actions succeed', async () => {
   expect(mocks.collectionCalls).toHaveLength(1);
   expect(mocks.taskCalls).toHaveLength(1);
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
+});
+
+test('wires a denied value-edit capability to a read-only Email editor', async () => {
+  mocks.capabilityAllowed = false;
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  await waitFor(() => expect(mocks.capabilityAttempts).toBe(1));
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email property name' }), {
+    target: { value: 'Contact email' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create Email property' }));
+
+  const email = await screen.findByRole('textbox', { name: 'Contact email' });
+  expect((email as HTMLInputElement).readOnly).toBe(true);
 });

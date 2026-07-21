@@ -99,6 +99,7 @@ const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
       from ticketing.task_email_values as source_value
       where source_value.property_definition_id = ${source.propertyDefinitionId}
         and source_value.tenant_id = ${source.tenantId}
+        and source_value.value is not null
     `);
   },
   deleteValues: async ({ target, tx }) => {
@@ -117,6 +118,7 @@ const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
         and task.tenant_id = value.tenant_id
       where value.property_definition_id = ${target.propertyDefinitionId}
         and value.tenant_id = ${target.tenantId}
+        and value.value is not null
     `);
     return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
   },

@@ -73,13 +73,14 @@ import {
   updateCheckboxPropertyValueActionPayloadSchema,
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
-import { queryTaskEmailValuesResponseSchema } from './email-query';
+import { emailQueryOperationSchema, queryTaskEmailValuesResponseSchema } from './email-query';
 import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
+import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 
 export type {
@@ -145,6 +146,7 @@ export type {
 } from './actions/transition-task-retention';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export type { TaskPropertyEditCapability } from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
@@ -292,6 +294,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.get(
+        'getTaskPropertyEditCapability',
+        '/ticketing/task-collections/:collectionId/properties/edit-capability',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          success: taskPropertyEditCapabilitySchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
         'filterTaskCheckboxValues',
         '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
         {
@@ -333,18 +347,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           query: {
-            operation: Schema.Literals([
-              'search',
-              'is',
-              'is_not',
-              'contains',
-              'does_not_contain',
-              'is_empty',
-              'is_not_empty',
-              'sort_ascending',
-              'sort_descending',
-              'group',
-            ]),
+            operation: emailQueryOperationSchema,
             query: Schema.String,
           },
           success: queryTaskEmailValuesResponseSchema,
@@ -536,6 +539,12 @@ export const ticketingOperationContexts = {
     operationId: 'TicketingApi:ticketing:getTaskPropertyDeletionImpact',
     routePath:
       '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/deletion-impact',
+    source: 'generated-client',
+  },
+  getTaskPropertyEditCapability: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyEditCapability',
+    routePath: '/ticketing/task-collections/:collectionId/properties/edit-capability',
     source: 'generated-client',
   },
   getTaskPropertyWorkspace: {

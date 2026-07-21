@@ -1,4 +1,19 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
+export declare const emailQueryOperationSchema: Schema.Literals<
+  readonly [
+    'search',
+    'is',
+    'is_not',
+    'contains',
+    'does_not_contain',
+    'is_empty',
+    'is_not_empty',
+    'sort_ascending',
+    'sort_descending',
+    'group',
+  ]
+>;
 export declare const queryTaskEmailValuesPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
   readonly operation: Schema.Literals<

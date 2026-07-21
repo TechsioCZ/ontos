@@ -16,10 +16,10 @@ export interface EmailPropertyDraft {
 
 export interface SavedEmailPropertyValue {
   readonly taskRevision: number;
-  readonly value: null | {
+  readonly value: {
     readonly propertyDefinitionId: string;
     readonly revision: number;
-    readonly value: string;
+    readonly value: string | null;
   };
 }
 
@@ -89,8 +89,8 @@ export const EmailPropertyEditor = ({
         },
         idempotencyKey,
       );
-      const nextValue = saved.value?.value ?? null;
-      setCurrentRevision(saved.value?.revision ?? 0);
+      const nextValue = saved.value.value;
+      setCurrentRevision(saved.value.revision);
       setDraftValue(nextValue ?? '');
       setSavedValue(nextValue);
       setIdempotencyKey(crypto.randomUUID());

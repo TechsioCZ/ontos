@@ -30,11 +30,7 @@ interface UpdatedEmailValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskRevision: number;
-  readonly value: string;
-}
-
-interface UpdatedTaskRow {
-  readonly taskRevision: number;
+  readonly value: string | null;
 }
 
 const emailPropertyValueEvidence = (
@@ -44,9 +40,9 @@ const emailPropertyValueEvidence = (
   changedComponents: ['emailValue'],
   collectionId: input.collectionId,
   datatype: 'email',
-  operation: response.value === null ? 'cleared' : 'changed',
+  operation: response.value.value === null ? 'cleared' : 'changed',
   propertyDefinitionId: input.propertyDefinitionId,
-  revision: response.value?.revision ?? input.expectedRevision + 1,
+  revision: response.value.revision,
   taskId: input.taskId,
   taskRevision: response.taskRevision,
 });
@@ -129,14 +125,11 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
     services.markNoOp();
     return {
       taskRevision: current.taskRevision,
-      value:
-        current.value === null
-          ? null
-          : {
-              propertyDefinitionId: current.propertyDefinitionId,
-              revision: current.valueRevision ?? 0,
-              value: current.value,
-            },
+      value: {
+        propertyDefinitionId: current.propertyDefinitionId,
+        revision: current.valueRevision ?? 0,
+        value: current.value,
+      },
     };
   }
 
@@ -221,11 +214,15 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
 
   const result = await services.tx.execute(sql`
     with changed_value as (
-      delete from ticketing.task_email_values
+      update ticketing.task_email_values
+      set
+        normalized_value = null,
+        revision = revision + 1,
+        value = null
       where task_id = ${input.taskId}
         and property_definition_id = ${input.propertyDefinitionId}
         and tenant_id = ${services.context.tenantId}
-      returning task_id
+      returning property_definition_id, revision, task_id, value
     ),
     updated_task as (
       update ticketing.tasks as task
@@ -257,18 +254,30 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
       from updated_task
       returning task_id
     )
-    select updated_task.revision as "taskRevision"
-    from updated_task
+    select
+      changed_value.property_definition_id as "propertyDefinitionId",
+      changed_value.revision,
+      updated_task.revision as "taskRevision",
+      changed_value.value
+    from changed_value
+    inner join updated_task using (task_id)
     inner join created_revision using (task_id)
   `);
-  const updatedTask = rowsFromResult<UpdatedTaskRow>(result).at(0);
-  if (updatedTask === undefined) {
+  const updated = rowsFromResult<UpdatedEmailValueRow>(result).at(0);
+  if (updated === undefined) {
     throw rejectAction({
       code: 'ticketing.updateEmailPropertyValue.stale_or_missing',
       message: 'The Email value changed elsewhere or is no longer available.',
     });
   }
-  return { taskRevision: updatedTask.taskRevision, value: null };
+  return {
+    taskRevision: updated.taskRevision,
+    value: {
+      propertyDefinitionId: updated.propertyDefinitionId,
+      revision: updated.revision,
+      value: updated.value,
+    },
+  };
 };
 
 export const updateEmailPropertyValueActionRegistration: ActionRegistration<
