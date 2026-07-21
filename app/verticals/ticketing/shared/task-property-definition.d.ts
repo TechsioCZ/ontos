@@ -8,6 +8,14 @@ export declare const checkboxPropertyDefinitionSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
 }>;
+export declare const datePropertyDefinitionSchema: Schema.Struct<{
+  readonly datatype: Schema.Literal<'date'>;
+  readonly hidden: Schema.Boolean;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
 export declare const intrinsicPropertyDefinitionSchema: Schema.Struct<{
   readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
   readonly hidden: Schema.Boolean;
@@ -107,6 +115,14 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
       readonly revision: Schema.Finite;
     }>,
     Schema.Struct<{
+      readonly datatype: Schema.Literal<'date'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>,
+    Schema.Struct<{
       readonly datatype: Schema.Literal<'email'>;
       readonly hidden: Schema.Boolean;
       readonly mandatory: Schema.Boolean;
@@ -187,6 +203,7 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
   ]
 >;
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
+export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;

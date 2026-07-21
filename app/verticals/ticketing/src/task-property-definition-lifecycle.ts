@@ -160,6 +160,51 @@ const personLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const dateLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    if (!copyValues) {
+      return;
+    }
+    await tx.execute(sql`
+      insert into ticketing.task_date_values (
+        property_definition_id,
+        task_id,
+        tenant_id,
+        value
+      )
+      select
+        ${target.propertyDefinitionId},
+        source_value.task_id,
+        source_value.tenant_id,
+        source_value.value
+      from ticketing.task_date_values as source_value
+      where source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+        and source_value.value is not null
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_date_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_date_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.value is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     if (!copyValues) {
@@ -398,6 +443,7 @@ const lifecycleAdapters = {
   checkbox: checkboxLifecycleAdapter,
   created_by: intrinsicLifecycleAdapter,
   created_time: intrinsicLifecycleAdapter,
+  date: dateLifecycleAdapter,
   email: emailLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
@@ -631,6 +677,7 @@ export const duplicateTaskPropertyDefinition = async ({
     return definition;
   }
   if (
+    target.datatype === 'date' ||
     target.datatype === 'created_by' ||
     target.datatype === 'created_time' ||
     target.datatype === 'email' ||

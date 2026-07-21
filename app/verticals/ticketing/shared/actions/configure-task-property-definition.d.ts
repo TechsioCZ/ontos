@@ -25,6 +25,14 @@ export declare const configureTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literal<'date'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literal<'email'>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
@@ -113,6 +121,14 @@ export declare const configureTaskPropertyDefinitionActionOutcomeSchema: Schema.
       readonly [
         Schema.Struct<{
           readonly datatype: Schema.Literal<'checkbox'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'date'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;

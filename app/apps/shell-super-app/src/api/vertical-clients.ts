@@ -1,5 +1,8 @@
 export {
+  groupTaskDateValues,
   runConfigurePersonPropertyCardinalityAction,
+  runCreateDatePropertyDefinitionAction,
+  runUpdateDatePropertyValueAction,
   runConfigurePrincipalTimeZonePreferenceAction,
   runCreateIntrinsicPropertyDefinitionAction,
   runCreatePersonPropertyDefinitionAction,

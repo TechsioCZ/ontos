@@ -34,6 +34,7 @@ import type {
   UpdateCheckboxPropertyValueActionOutcome,
   UpdateCheckboxPropertyValueActionPayload,
   FilterTaskCheckboxValuesResponse,
+  GroupTaskDateValuesResponse,
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
   ConfigureTaskPropertyDefinitionActionPayload,
@@ -103,6 +104,12 @@ import type {
   UpdatePhonePropertyValueActionFailure,
   UpdatePhonePropertyValueActionOutcome,
   UpdatePhonePropertyValueActionPayload,
+  CreateDatePropertyDefinitionActionFailure,
+  CreateDatePropertyDefinitionActionOutcome,
+  CreateDatePropertyDefinitionActionPayload,
+  UpdateDatePropertyValueActionFailure,
+  UpdateDatePropertyValueActionOutcome,
+  UpdateDatePropertyValueActionPayload,
   ConfigurePersonPropertyCardinalityActionFailure,
   ConfigurePersonPropertyCardinalityActionOutcome,
   ConfigurePersonPropertyCardinalityActionPayload,
@@ -137,6 +144,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | CreateDatePropertyDefinitionActionFailure
+  | UpdateDatePropertyValueActionFailure
   | ConfigurePersonPropertyCardinalityActionFailure
   | CreatePersonPropertyDefinitionActionFailure
   | UpdatePersonPropertyValueActionFailure
@@ -347,6 +356,23 @@ export const filterTaskCheckboxValues = (
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
         query: { value: value ? 'true' : 'false' },
+      }),
+    ),
+  );
+
+export const groupTaskDateValues = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<GroupTaskDateValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.groupTaskDateValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.groupTaskDateValues({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
       }),
     ),
   );
@@ -642,6 +668,48 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateDatePropertyDefinitionAction = (
+  payload: CreateDatePropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateDatePropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createDatePropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createDatePropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateDatePropertyValueAction = (
+  payload: UpdateDatePropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateDatePropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateDatePropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateDatePropertyValueAction({
         headers: headers ?? {},
         payload,
       }),

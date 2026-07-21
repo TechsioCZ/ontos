@@ -37,6 +37,12 @@ export type {
   CreateEmailPropertyDefinitionActionResponse,
 } from './actions/create-email-property-definition';
 export type {
+  CreateDatePropertyDefinitionActionFailure,
+  CreateDatePropertyDefinitionActionOutcome,
+  CreateDatePropertyDefinitionActionPayload,
+  CreateDatePropertyDefinitionActionResponse,
+} from './actions/create-date-property-definition';
+export type {
   UpdateEmailPropertyValueActionFailure,
   UpdateEmailPropertyValueActionOutcome,
   UpdateEmailPropertyValueActionPayload,
@@ -157,6 +163,12 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdateDatePropertyValueActionFailure,
+  UpdateDatePropertyValueActionOutcome,
+  UpdateDatePropertyValueActionPayload,
+  UpdateDatePropertyValueActionResponse,
+} from './actions/update-date-property-value';
+export type {
   UpdatePhonePropertyValueActionFailure,
   UpdatePhonePropertyValueActionOutcome,
   UpdatePhonePropertyValueActionPayload,
@@ -191,6 +203,7 @@ export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact
 export type { TaskPropertyEditCapability } from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
+  datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   personPropertyDefinitionSchema,
@@ -204,6 +217,7 @@ export {
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  DatePropertyDefinition,
   EmailPropertyDefinition,
   NumberPropertyDefinition,
   PersonPropertyDefinition,
@@ -248,6 +262,7 @@ export type {
 } from './checkbox-filter';
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
+export type { GroupTaskDateValuesPayload, GroupTaskDateValuesResponse } from './date-grouping';
 export type { QueryTaskPersonValuesPayload, QueryTaskPersonValuesResponse } from './person-query';
 export type {
   SearchEligiblePeoplePayload,
@@ -748,6 +763,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'date'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'email'>;
                     readonly hidden: Schema.Boolean;
                     readonly mandatory: Schema.Boolean;
@@ -916,6 +939,99 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly response: Schema.Struct<{
               readonly definition: Schema.Struct<{
                 readonly datatype: Schema.Literal<'checkbox'>;
+                readonly hidden: Schema.Boolean;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'createDatePropertyDefinitionAction',
+        'POST',
+        '/ticketing/actions/create-date-property-definition',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly mandatory: Schema.Boolean;
+            readonly name: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly definition: Schema.Struct<{
+                readonly datatype: Schema.Literal<'date'>;
                 readonly hidden: Schema.Boolean;
                 readonly mandatory: Schema.Boolean;
                 readonly name: Schema.String;
@@ -2256,6 +2372,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'date'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'email'>;
                     readonly hidden: Schema.Boolean;
                     readonly mandatory: Schema.Boolean;
@@ -2809,6 +2933,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'date'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'email'>;
                     readonly hidden: Schema.Boolean;
                     readonly mandatory: Schema.Boolean;
@@ -2906,6 +3038,13 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly displayName: Schema.String;
                     readonly inactive: Schema.Boolean;
                     readonly principalId: Schema.String;
+                  }>
+                >;
+                readonly dateValues: Schema.$Array<
+                  Schema.Struct<{
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly value: Schema.NullOr<Schema.String>;
                   }>
                 >;
                 readonly emailValues: Schema.$Array<
@@ -3048,6 +3187,91 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     }>
                   >
                 >;
+              }>
+            >;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'groupTaskDateValues',
+        'GET',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-groups',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+            propertyDefinitionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly groups: Schema.$Array<
+              Schema.Struct<{
+                readonly taskIds: Schema.$Array<Schema.String>;
+                readonly value: Schema.NullOr<Schema.String>;
               }>
             >;
           }>
@@ -4097,6 +4321,101 @@ export declare const ticketingApi: HttpApi.HttpApi<
         never
       >
     | HttpApiEndpoint.HttpApiEndpoint<
+        'updateDatePropertyValueAction',
+        'POST',
+        '/ticketing/actions/update-date-property-value',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly expectedRevision: Schema.Finite;
+            readonly propertyDefinitionId: Schema.String;
+            readonly taskId: Schema.String;
+            readonly value: Schema.NullOr<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly taskRevision: Schema.Finite;
+              readonly value: Schema.NullOr<
+                Schema.Struct<{
+                  readonly propertyDefinitionId: Schema.String;
+                  readonly revision: Schema.Finite;
+                  readonly value: Schema.NullOr<Schema.String>;
+                }>
+              >;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
         'updateEmailPropertyValueAction',
         'POST',
         '/ticketing/actions/update-email-property-value',
@@ -5016,6 +5335,12 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
+  createDatePropertyDefinitionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   createEmailPropertyDefinitionAction: {
     method: string;
     operationId: string;
@@ -5136,6 +5461,12 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
+  groupTaskDateValues: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   list: {
     method: string;
     operationId: string;
@@ -5191,6 +5522,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   updateCheckboxPropertyValueAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  updateDatePropertyValueAction: {
     method: string;
     operationId: string;
     routePath: string;

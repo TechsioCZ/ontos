@@ -8,6 +8,12 @@ export const checkboxPropertyValueSchema = Schema.Struct({
   value: Schema.Boolean,
 });
 
+export const datePropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.NullOr(Schema.String),
+});
+
 export const selectPropertyValueSchema = Schema.Struct({
   optionId: Schema.optional(Schema.String),
   propertyDefinitionId: Schema.String,
@@ -72,6 +78,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
           principalId: Schema.String,
         }),
       ),
+      dateValues: Schema.Array(datePropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
