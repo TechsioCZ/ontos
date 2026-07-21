@@ -1,4 +1,5 @@
 export {
+  runDeleteSelectOptionAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,
@@ -34,6 +35,7 @@ export {
   runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
+  getSelectOptionDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,
   runConfigureTaskPropertyDefinitionAction,

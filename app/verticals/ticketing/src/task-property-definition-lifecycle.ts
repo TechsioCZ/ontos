@@ -2,7 +2,12 @@
 import { rowsFromResult } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import type { CoreReadonlyDbExecutor, CoreTransaction } from '@app/core-runtime/db/types';
-import type { TaskPropertyDefinition } from '../shared/task-property-definition.ts';
+import type {
+  SelectOption,
+  SelectOptionOrderMode,
+  SelectPropertyDefinition,
+  TaskPropertyDefinition,
+} from '../shared/task-property-definition.ts';
 import type { TaskPropertyDeletionImpact } from '../shared/task-property-deletion-impact.ts';
 
 interface TaskPropertyDefinitionLifecycleTarget {
@@ -14,7 +19,9 @@ interface TaskPropertyDefinitionLifecycleTarget {
   readonly numberFormat: string | null;
   readonly propertyDefinitionId: string;
   readonly revision: number;
+  readonly schemaPosition: string;
   readonly schemaId: string;
+  readonly selectOptionOrderMode: SelectOptionOrderMode | null;
   readonly tenantId: string;
 }
 
@@ -407,6 +414,87 @@ const numberLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const selectLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    await tx.execute(sql`
+      with option_mapping as materialized (
+        select
+          gen_random_uuid() as target_option_id,
+          source_option.color,
+          source_option.manual_position,
+          source_option.name,
+          source_option.normalized_name,
+          source_option.option_id as source_option_id
+        from ticketing.select_options as source_option
+        where source_option.property_definition_id = ${source.propertyDefinitionId}
+          and source_option.tenant_id = ${source.tenantId}
+      ), copied_options as (
+        insert into ticketing.select_options (
+          color,
+          manual_position,
+          name,
+          normalized_name,
+          option_id,
+          property_definition_id,
+          tenant_id
+        )
+        select
+          option_mapping.color,
+          option_mapping.manual_position,
+          option_mapping.name,
+          option_mapping.normalized_name,
+          option_mapping.target_option_id,
+          ${target.propertyDefinitionId},
+          ${source.tenantId}
+        from option_mapping
+        returning option_id
+      )
+      insert into ticketing.task_select_values (
+        option_id,
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        option_mapping.target_option_id,
+        ${target.propertyDefinitionId},
+        source_value.task_id,
+        source_value.tenant_id
+      from ticketing.task_select_values as source_value
+      inner join option_mapping
+        on option_mapping.source_option_id = source_value.option_id
+      where ${copyValues}
+        and source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_select_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+    await tx.execute(sql`
+      delete from ticketing.select_options
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_select_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.option_id is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const urlLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     await tx.execute(sql`
@@ -477,6 +565,7 @@ const lifecycleAdapters = {
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
   phone: phoneLifecycleAdapter,
+  select: selectLifecycleAdapter,
   text: textLifecycleAdapter,
   url: urlLifecycleAdapter,
 } satisfies Readonly<Record<string, TaskPropertyLifecycleAdapter>>;
@@ -519,7 +608,9 @@ export const findTaskPropertyDefinitionLifecycleTarget = async ({
         definition.number_format as "numberFormat",
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision,
+        definition.schema_position as "schemaPosition",
         definition.schema_id as "schemaId",
+        definition.select_option_order_mode as "selectOptionOrderMode",
         definition.tenant_id as "tenantId"
       from ticketing.task_property_definitions as definition
       left join ticketing.task_person_property_configurations as configuration
@@ -556,7 +647,9 @@ export const lockTaskPropertyDefinitionLifecycleTarget = async ({
         definition.number_format as "numberFormat",
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision,
+        definition.schema_position as "schemaPosition",
         definition.schema_id as "schemaId",
+        definition.select_option_order_mode as "selectOptionOrderMode",
         definition.tenant_id as "tenantId"
       from ticketing.task_property_definitions as definition
       left join ticketing.task_person_property_configurations as configuration
@@ -629,13 +722,20 @@ export const duplicateTaskPropertyDefinition = async ({
       order by candidate.ordinal
       limit 1
     )
+    , positions as (
+      select sibling.schema_position
+      from ticketing.task_property_definitions as sibling
+      where sibling.schema_id = ${source.schemaId}
+    )
     insert into ticketing.task_property_definitions (
       datatype,
       hidden,
       mandatory,
       name,
       number_format,
+      schema_position,
       schema_id,
+      select_option_order_mode,
       tenant_id
     )
     select
@@ -644,7 +744,22 @@ export const duplicateTaskPropertyDefinition = async ({
       ${source.mandatory},
       available_name.name,
       ${source.numberFormat},
+      case
+        when ${source.datatype} <> 'select' then
+          coalesce((select max(schema_position) from positions), 0) + 1
+        when not exists (
+          select 1 from positions where schema_position > ${source.schemaPosition}::numeric
+        ) then ${source.schemaPosition}::numeric + 1
+        else (
+          ${source.schemaPosition}::numeric + (
+            select min(schema_position)
+            from positions
+            where schema_position > ${source.schemaPosition}::numeric
+          )
+        ) / 2
+      end,
       ${source.schemaId},
+      ${source.selectOptionOrderMode},
       ${source.tenantId}
     from available_name
     returning
@@ -655,7 +770,8 @@ export const duplicateTaskPropertyDefinition = async ({
       mandatory,
       name,
       property_definition_id as "propertyDefinitionId",
-      revision
+      revision,
+      select_option_order_mode as "optionOrderMode"
   `);
   const target = rowsFromResult<TaskPropertyDefinition>(result).at(0);
   if (target === undefined) {
@@ -675,7 +791,36 @@ export const duplicateTaskPropertyDefinition = async ({
     return definition;
   }
   if (target.datatype === 'select') {
-    return undefined;
+    if (source.selectOptionOrderMode === null) {
+      throw new Error('Select Task Property option ordering mode is missing.');
+    }
+    const definition: SelectPropertyDefinition = {
+      datatype: 'select',
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      optionOrderMode: source.selectOptionOrderMode,
+      options: [],
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    const optionsResult = await tx.execute(sql`
+      select
+        color,
+        manual_position as "manualPosition",
+        name,
+        option_id as "optionId",
+        revision
+      from ticketing.select_options
+      where property_definition_id = ${definition.propertyDefinitionId}
+        and tenant_id = ${source.tenantId}
+      order by manual_position, option_id
+    `);
+    return {
+      ...definition,
+      options: rowsFromResult<SelectOption>(optionsResult),
+    };
   }
   if (target.datatype === 'person') {
     if (source.cardinality === null) {

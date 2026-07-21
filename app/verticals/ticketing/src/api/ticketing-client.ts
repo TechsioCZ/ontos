@@ -19,6 +19,7 @@ import type {
   TicketingReadiness,
   TaskCollectionAggregate,
   TaskPropertyDeletionImpact,
+  SelectOptionDeletionImpact,
   TaskPropertyEditCapability,
   TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
@@ -145,6 +146,9 @@ import type {
   DuplicateTaskActionFailure,
   DuplicateTaskActionOutcome,
   DuplicateTaskActionPayload,
+  DeleteSelectOptionActionFailure,
+  DeleteSelectOptionActionOutcome,
+  DeleteSelectOptionActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -159,6 +163,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | DeleteSelectOptionActionFailure
   | DuplicateTaskActionFailure
   | ConfigureIdPropertyPrefixActionFailure
   | CreateIdPropertyDefinitionActionFailure
@@ -507,6 +512,25 @@ export const getTaskPropertyDeletionImpact = (
       client.ticketing.getTaskPropertyDeletionImpact({
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const getSelectOptionDeletionImpact = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  optionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<SelectOptionDeletionImpact> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.getSelectOptionDeletionImpact,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getSelectOptionDeletionImpact({
+        headers: options.headers ?? {},
+        params: { collectionId, optionId, propertyDefinitionId },
       }),
     ),
   );
@@ -1290,6 +1314,33 @@ export const runDuplicateTaskAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.duplicateTaskAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runDeleteSelectOptionAction = (
+  payload: DeleteSelectOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<DeleteSelectOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.deleteSelectOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.deleteSelectOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };

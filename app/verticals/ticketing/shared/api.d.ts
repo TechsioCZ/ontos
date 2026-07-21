@@ -6,6 +6,12 @@ import type {
 } from '@modern-js/plugin-bff/effect-client';
 
 export type {
+  DeleteSelectOptionActionFailure,
+  DeleteSelectOptionActionOutcome,
+  DeleteSelectOptionActionPayload,
+  DeleteSelectOptionActionResponse,
+} from './actions/delete-select-option';
+export type {
   ConfigureIdPropertyPrefixActionFailure,
   ConfigureIdPropertyPrefixActionOutcome,
   ConfigureIdPropertyPrefixActionPayload,
@@ -229,6 +235,7 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export type { SelectOptionDeletionImpact } from './select-option-deletion-impact';
 export type { TaskPropertyEditCapability } from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
@@ -2581,6 +2588,99 @@ export declare const ticketingApi: HttpApi.HttpApi<
         never
       >
     | HttpApiEndpoint.HttpApiEndpoint<
+        'deleteSelectOptionAction',
+        'POST',
+        '/ticketing/actions/delete-select-option',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly confirmed: Schema.Boolean;
+            readonly expectedDefinitionRevision: Schema.Finite;
+            readonly expectedImpactCount: Schema.Finite;
+            readonly expectedOptionRevision: Schema.Finite;
+            readonly optionId: Schema.String;
+            readonly propertyDefinitionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly definitionRevision: Schema.Finite;
+              readonly deletedOptionId: Schema.String;
+              readonly impactCount: Schema.Finite;
+              readonly propertyDefinitionId: Schema.String;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
         'deleteTaskPropertyDefinitionAction',
         'POST',
         '/ticketing/actions/delete-task-property-definition',
@@ -3068,6 +3168,91 @@ export declare const ticketingApi: HttpApi.HttpApi<
         never
       >
     | HttpApiEndpoint.HttpApiEndpoint<
+        'getSelectOptionDeletionImpact',
+        'GET',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/select-options/:optionId/deletion-impact',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+            optionId: Schema.String;
+            propertyDefinitionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly definitionRevision: Schema.Finite;
+            readonly impactCount: Schema.Finite;
+            readonly optionId: Schema.String;
+            readonly optionRevision: Schema.Finite;
+            readonly propertyDefinitionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
         'getTaskCollection',
         'GET',
         '/ticketing/task-collections/:collectionId',
@@ -3357,18 +3542,18 @@ export declare const ticketingApi: HttpApi.HttpApi<
         HttpApiEndpoint.Json<
           Schema.Struct<{
             readonly collectionId: Schema.String;
-            readonly idGroups: Schema.$Array<
-              Schema.Struct<{
-                readonly number: Schema.String;
-                readonly taskIds: Schema.$Array<Schema.String>;
-              }>
-            >;
             readonly effectiveTimeZone: Schema.optional<
               Schema.Struct<{
                 readonly source: Schema.Literals<
                   readonly ['browser_fallback', 'configured', 'system_fallback']
                 >;
                 readonly timeZone: Schema.String;
+              }>
+            >;
+            readonly idGroups: Schema.$Array<
+              Schema.Struct<{
+                readonly number: Schema.String;
+                readonly taskIds: Schema.$Array<Schema.String>;
               }>
             >;
             readonly propertyDefinitions: Schema.$Array<
@@ -4279,6 +4464,22 @@ export declare const ticketingApi: HttpApi.HttpApi<
                       }>,
                       Schema.Struct<{
                         readonly type: Schema.Literal<'group'>;
+                      }>,
+                    ]
+                  >;
+                }>,
+                Schema.Struct<{
+                  readonly datatype: Schema.Literal<'select'>;
+                  readonly operation: Schema.Union<
+                    readonly [
+                      Schema.Struct<{
+                        readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+                        readonly type: Schema.Literal<'filter'>;
+                      }>,
+                      Schema.Struct<{
+                        readonly operator: Schema.Literals<readonly ['is', 'isNot']>;
+                        readonly optionId: Schema.String;
+                        readonly type: Schema.Literal<'filter'>;
                       }>,
                     ]
                   >;
@@ -5944,13 +6145,13 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
-  createIntrinsicPropertyDefinitionAction: {
+  createIdPropertyDefinitionAction: {
     method: string;
     operationId: string;
     routePath: string;
     source: 'generated-client';
   };
-  createIdPropertyDefinitionAction: {
+  createIntrinsicPropertyDefinitionAction: {
     method: string;
     operationId: string;
     routePath: string;
@@ -6016,19 +6217,25 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
+  deleteSelectOptionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   deleteTaskPropertyDefinitionAction: {
     method: string;
     operationId: string;
     routePath: string;
     source: 'generated-client';
   };
-  duplicateTaskPropertyDefinitionAction: {
+  duplicateTaskAction: {
     method: string;
     operationId: string;
     routePath: string;
     source: 'generated-client';
   };
-  duplicateTaskAction: {
+  duplicateTaskPropertyDefinitionAction: {
     method: string;
     operationId: string;
     routePath: string;
@@ -6041,6 +6248,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   get: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  getSelectOptionDeletionImpact: {
     method: string;
     operationId: string;
     routePath: string;

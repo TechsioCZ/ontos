@@ -6,6 +6,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { deleteSelectOptionActionRegistration } from '../src/actions/delete-select-option.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -48,6 +49,7 @@ import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
+import { getSelectOptionDeletionImpactDataAccessRegistration } from '../src/data-access/get-select-option-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import { groupTaskDateValuesDataAccessRegistration } from '../src/data-access/group-task-date-values.ts';
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
@@ -377,6 +379,28 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyDeletionImpact', {
           attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyDeletionImpact),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('getSelectOptionDeletionImpact', ({ params, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            optionId: params.optionId,
+            propertyDefinitionId: params.propertyDefinitionId,
+          },
+          registration: getSelectOptionDeletionImpactDataAccessRegistration,
+          resultCount: () => 1,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.getSelectOptionDeletionImpact', {
+          attributes: operationAttributes(ticketingOperationContexts.getSelectOptionDeletionImpact),
           kind: 'server',
         }),
       ),
@@ -1052,6 +1076,26 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           kind: 'server',
         }),
       ),
+    )
+    .handle('deleteSelectOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: deleteSelectOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.deleteSelectOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.deleteSelectOptionAction),
+            kind: 'server',
+          }),
+        ),
     ),
 );
 
