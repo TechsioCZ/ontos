@@ -450,7 +450,7 @@ test('creates, edits, and opens a URL through the public Ticketing surface', asy
   });
 });
 
-test('wires a denied value-edit capability to a read-only Email editor', async () => {
+test('wires a denied value-edit capability to read-only property editors', async () => {
   mocks.capabilityAllowed = false;
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
@@ -466,4 +466,12 @@ test('wires a denied value-edit capability to a read-only Email editor', async (
 
   const email = await screen.findByRole('textbox', { name: 'Contact email' });
   expect((email as HTMLInputElement).readOnly).toBe(true);
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+    target: { value: 'Reference URL' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
+
+  const url = await screen.findByRole('textbox', { name: 'Reference URL' });
+  expect((url as HTMLInputElement).readOnly).toBe(true);
 });

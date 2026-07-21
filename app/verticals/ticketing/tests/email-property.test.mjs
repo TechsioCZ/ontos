@@ -6,6 +6,10 @@ import { runAction, runDataAccess } from '../../../packages/core-runtime/src/cor
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
+import { createNumberPropertyDefinitionActionRegistration } from '../src/actions/create-number-property-definition.ts';
+import { createSelectPropertyDefinitionActionRegistration } from '../src/actions/create-select-property-definition.ts';
+import { createTextPropertyDefinitionActionRegistration } from '../src/actions/create-text-property-definition.ts';
+import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
@@ -14,6 +18,10 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
 import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
+import { updateNumberPropertyValueActionRegistration } from '../src/actions/update-number-property-value.ts';
+import { updateSelectPropertyValueActionRegistration } from '../src/actions/update-select-property-value.ts';
+import { updateTextPropertyValueActionRegistration } from '../src/actions/update-text-property-value.ts';
+import { updateUrlPropertyValueActionRegistration } from '../src/actions/update-url-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
@@ -26,6 +34,11 @@ after(async () => {
       await sqlClient`delete from core.outbox_messages where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_email_values where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_checkbox_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_number_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_select_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_text_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_url_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.select_options where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_revisions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.tasks where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_property_definitions where tenant_id = ${tenantId}`;
@@ -522,7 +535,7 @@ test('Email edits reject invalid, Mandatory-empty, and stale drafts without repl
   assert.equal(abaStale.code, 'ticketing.updateEmailPropertyValue.stale_or_missing');
 });
 
-test('an unrelated Task value save is rejected while a Mandatory Email remains Empty', async () => {
+test('every ordinary integrated Task value save is rejected while a Mandatory Email remains Empty', async () => {
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
@@ -563,6 +576,79 @@ test('an unrelated Task value save is rejected while a Mandatory Email remains E
   });
   assert.equal(unrelatedSave._tag, 'OperationDomainRejected');
   assert.equal(unrelatedSave.code, 'ticketing.taskEdit.mandatory_email_empty');
+
+  const ordinaryDefinitions = await Promise.all(
+    [
+      ['Estimate', createNumberPropertyDefinitionActionRegistration],
+      ['State', createSelectPropertyDefinitionActionRegistration],
+      ['Notes', createTextPropertyDefinitionActionRegistration],
+      ['Reference', createUrlPropertyDefinitionActionRegistration],
+    ].map(([name, registration]) =>
+      runRegisteredAction({
+        operationContext,
+        payload: { collectionId, mandatory: false, name },
+        registration,
+      }),
+    ),
+  );
+  assert.equal(
+    ordinaryDefinitions.every(({ _tag }) => _tag === 'OperationSucceeded'),
+    true,
+  );
+  const [number, select, text, url] = ordinaryDefinitions;
+  const { taskId } = task.response.task;
+  const attemptedSaves = await Promise.all([
+    runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 0,
+        propertyDefinitionId: number.response.definition.propertyDefinitionId,
+        taskId,
+        value: '12.5',
+      },
+      registration: updateNumberPropertyValueActionRegistration,
+    }),
+    runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 0,
+        propertyDefinitionId: select.response.definition.propertyDefinitionId,
+        taskId,
+      },
+      registration: updateSelectPropertyValueActionRegistration,
+    }),
+    runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        document: {
+          content: [{ marks: [], text: 'Draft', type: 'text' }],
+          type: 'textDocument',
+        },
+        expectedRevision: 1,
+        propertyDefinitionId: text.response.definition.propertyDefinitionId,
+        taskId,
+      },
+      registration: updateTextPropertyValueActionRegistration,
+    }),
+    runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 0,
+        propertyDefinitionId: url.response.definition.propertyDefinitionId,
+        taskId,
+        value: 'https://example.com',
+      },
+      registration: updateUrlPropertyValueActionRegistration,
+    }),
+  ]);
+  for (const attemptedSave of attemptedSaves) {
+    assert.equal(attemptedSave._tag, 'OperationDomainRejected');
+    assert.equal(attemptedSave.code, 'ticketing.taskEdit.mandatory_email_empty');
+  }
 });
 
 test('Email duplication and confirmed deletion preserve generic retained-Task lifecycle semantics', async () => {

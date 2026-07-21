@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import { rejectAction, rowsFromResult } from '@app/core-runtime';
 import type { CoreReadonlyDbExecutor } from '@app/core-runtime/db/types';
 import { sql } from '@app/core-runtime/db/sql';

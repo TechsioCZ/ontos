@@ -723,6 +723,7 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
                       revision={value.revision}
                       taskId={task.taskId}
                       value={value.value}
@@ -776,6 +777,7 @@ export const TicketingExperience = () => {
                           return outcome.response;
                         }}
                         propertyDefinitionId={definition.propertyDefinitionId}
+                        readOnly={!canEditTaskPropertyValues}
                         revision={value.revision}
                         taskId={task.taskId}
                       />
@@ -864,6 +866,7 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
                       revision={value.revision}
                       taskId={task.taskId}
                       value={value.value}
