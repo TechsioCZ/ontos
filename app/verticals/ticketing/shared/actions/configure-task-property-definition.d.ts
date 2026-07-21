@@ -14,27 +14,159 @@ export declare const configureTaskPropertyDefinitionActionHeadersSchema: Schema.
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
 export declare const configureTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Struct<{
-    readonly datatype: Schema.Literal<'checkbox'>;
-    readonly hidden: Schema.Boolean;
-    readonly mandatory: Schema.Boolean;
-    readonly name: Schema.String;
-    readonly propertyDefinitionId: Schema.String;
-    readonly revision: Schema.Finite;
-  }>;
+  readonly definition: Schema.Union<
+    readonly [
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'checkbox'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'email'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'number'>;
+        readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'phone'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'select'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly optionOrderMode: Schema.Literals<
+          readonly ['manual', 'alphabetical', 'reverse_alphabetical']
+        >;
+        readonly options: Schema.$Array<
+          Schema.Struct<{
+            readonly color: Schema.String;
+            readonly manualPosition: Schema.Finite;
+            readonly name: Schema.String;
+            readonly optionId: Schema.String;
+            readonly revision: Schema.Finite;
+          }>
+        >;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'text'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'url'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+    ]
+  >;
 }>;
 export declare const configureTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly definition: Schema.Struct<{
-      readonly datatype: Schema.Literal<'checkbox'>;
-      readonly hidden: Schema.Boolean;
-      readonly mandatory: Schema.Boolean;
-      readonly name: Schema.String;
-      readonly propertyDefinitionId: Schema.String;
-      readonly revision: Schema.Finite;
-    }>;
+    readonly definition: Schema.Union<
+      readonly [
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'checkbox'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'email'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'number'>;
+          readonly format: Schema.Literals<
+            readonly ['number', 'number_with_separators', 'percent']
+          >;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'phone'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'select'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly optionOrderMode: Schema.Literals<
+            readonly ['manual', 'alphabetical', 'reverse_alphabetical']
+          >;
+          readonly options: Schema.$Array<
+            Schema.Struct<{
+              readonly color: Schema.String;
+              readonly manualPosition: Schema.Finite;
+              readonly name: Schema.String;
+              readonly optionId: Schema.String;
+              readonly revision: Schema.Finite;
+            }>
+          >;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'text'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'url'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+      ]
+    >;
   }>;
 }>;
 export declare const configureTaskPropertyDefinitionActionFailureSchemas: readonly [

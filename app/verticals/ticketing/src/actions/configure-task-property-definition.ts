@@ -18,6 +18,40 @@ import type {
 } from '../../shared/actions/configure-task-property-definition.ts';
 import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
 
+const configuredDefinition = (definition: TaskPropertyDefinition): TaskPropertyDefinition => {
+  if (definition.datatype === 'checkbox') {
+    return {
+      datatype: 'checkbox',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
+  }
+  if (definition.datatype === 'number' || definition.datatype === 'select') {
+    return definition;
+  }
+  if (definition.datatype === 'phone') {
+    return {
+      datatype: 'phone',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
+  }
+  return {
+    datatype: 'text',
+    hidden: definition.hidden,
+    mandatory: definition.mandatory,
+    name: definition.name,
+    propertyDefinitionId: definition.propertyDefinitionId,
+    revision: definition.revision,
+  };
+};
+
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
   response: ConfigureTaskPropertyDefinitionActionResponse,
@@ -67,6 +101,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const currentResult = await services.tx.execute(sql`
     select
       definition.datatype,
+      definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
@@ -97,7 +132,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     currentDefinition.name === name
   ) {
     services.markNoOp();
-    return { definition: currentDefinition };
+    return {
+      definition: configuredDefinition(currentDefinition),
+    };
   }
 
   const result = await services.tx.execute(sql`
@@ -123,6 +160,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       )
     returning
       definition.datatype,
+      definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
@@ -138,7 +176,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     });
   }
 
-  return { definition };
+  return {
+    definition: configuredDefinition(definition),
+  };
 };
 
 export const configureTaskPropertyDefinitionActionRegistration: ActionRegistration<

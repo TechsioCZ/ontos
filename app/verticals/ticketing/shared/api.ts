@@ -6,18 +6,120 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
-  configurePrincipalTimeZonePreferenceActionHeadersSchema,
   configurePrincipalTimeZonePreferenceActionFailureSchemas,
+  configurePrincipalTimeZonePreferenceActionHeadersSchema,
   configurePrincipalTimeZonePreferenceActionOutcomeSchema,
   configurePrincipalTimeZonePreferenceActionPayloadSchema,
 } from './actions/configure-principal-time-zone-preference';
-
 import {
-  createIntrinsicPropertyDefinitionActionHeadersSchema,
   createIntrinsicPropertyDefinitionActionFailureSchemas,
+  createIntrinsicPropertyDefinitionActionHeadersSchema,
   createIntrinsicPropertyDefinitionActionOutcomeSchema,
   createIntrinsicPropertyDefinitionActionPayloadSchema,
 } from './actions/create-intrinsic-property-definition';
+import {
+  createPhonePropertyDefinitionActionHeadersSchema,
+  createPhonePropertyDefinitionActionFailureSchemas,
+  createPhonePropertyDefinitionActionOutcomeSchema,
+  createPhonePropertyDefinitionActionPayloadSchema,
+} from './actions/create-phone-property-definition';
+import {
+  updatePhonePropertyValueActionHeadersSchema,
+  updatePhonePropertyValueActionFailureSchemas,
+  updatePhonePropertyValueActionOutcomeSchema,
+  updatePhonePropertyValueActionPayloadSchema,
+} from './actions/update-phone-property-value';
+import {
+  createEmailPropertyDefinitionActionFailureSchemas,
+  createEmailPropertyDefinitionActionHeadersSchema,
+  createEmailPropertyDefinitionActionOutcomeSchema,
+  createEmailPropertyDefinitionActionPayloadSchema,
+} from './actions/create-email-property-definition';
+import {
+  updateEmailPropertyValueActionFailureSchemas,
+  updateEmailPropertyValueActionHeadersSchema,
+  updateEmailPropertyValueActionOutcomeSchema,
+  updateEmailPropertyValueActionPayloadSchema,
+} from './actions/update-email-property-value';
+import {
+  createUrlPropertyDefinitionActionFailureSchemas,
+  createUrlPropertyDefinitionActionHeadersSchema,
+  createUrlPropertyDefinitionActionOutcomeSchema,
+  createUrlPropertyDefinitionActionPayloadSchema,
+} from './actions/create-url-property-definition';
+import {
+  updateUrlPropertyValueActionFailureSchemas,
+  updateUrlPropertyValueActionHeadersSchema,
+  updateUrlPropertyValueActionOutcomeSchema,
+  updateUrlPropertyValueActionPayloadSchema,
+} from './actions/update-url-property-value';
+import {
+  configureSelectOptionOrderActionHeadersSchema,
+  configureSelectOptionOrderActionFailureSchemas,
+  configureSelectOptionOrderActionOutcomeSchema,
+  configureSelectOptionOrderActionPayloadSchema,
+} from './actions/configure-select-option-order';
+import {
+  createSelectOptionAndSelectActionHeadersSchema,
+  createSelectOptionAndSelectActionFailureSchemas,
+  createSelectOptionAndSelectActionOutcomeSchema,
+  createSelectOptionAndSelectActionPayloadSchema,
+} from './actions/create-select-option-and-select';
+import {
+  updateSelectPropertyValueActionHeadersSchema,
+  updateSelectPropertyValueActionFailureSchemas,
+  updateSelectPropertyValueActionOutcomeSchema,
+  updateSelectPropertyValueActionPayloadSchema,
+} from './actions/update-select-property-value';
+import {
+  updateSelectOptionActionHeadersSchema,
+  updateSelectOptionActionFailureSchemas,
+  updateSelectOptionActionOutcomeSchema,
+  updateSelectOptionActionPayloadSchema,
+} from './actions/update-select-option';
+import {
+  createSelectOptionActionHeadersSchema,
+  createSelectOptionActionFailureSchemas,
+  createSelectOptionActionOutcomeSchema,
+  createSelectOptionActionPayloadSchema,
+} from './actions/create-select-option';
+import {
+  createSelectPropertyDefinitionActionHeadersSchema,
+  createSelectPropertyDefinitionActionFailureSchemas,
+  createSelectPropertyDefinitionActionOutcomeSchema,
+  createSelectPropertyDefinitionActionPayloadSchema,
+} from './actions/create-select-property-definition';
+import {
+  configureNumberPropertyFormatActionHeadersSchema,
+  configureNumberPropertyFormatActionFailureSchemas,
+  configureNumberPropertyFormatActionOutcomeSchema,
+  configureNumberPropertyFormatActionPayloadSchema,
+} from './actions/configure-number-property-format';
+import {
+  createNumberPropertyDefinitionActionHeadersSchema,
+  createNumberPropertyDefinitionActionFailureSchemas,
+  createNumberPropertyDefinitionActionOutcomeSchema,
+  createNumberPropertyDefinitionActionPayloadSchema,
+} from './actions/create-number-property-definition';
+import {
+  updateNumberPropertyValueActionHeadersSchema,
+  updateNumberPropertyValueActionFailureSchemas,
+  updateNumberPropertyValueActionOutcomeSchema,
+  updateNumberPropertyValueActionPayloadSchema,
+} from './actions/update-number-property-value';
+import {
+  updateTextPropertyValueActionHeadersSchema,
+  updateTextPropertyValueActionFailureSchemas,
+  updateTextPropertyValueActionOutcomeSchema,
+  updateTextPropertyValueActionPayloadSchema,
+} from './actions/update-text-property-value';
+
+import {
+  createTextPropertyDefinitionActionHeadersSchema,
+  createTextPropertyDefinitionActionFailureSchemas,
+  createTextPropertyDefinitionActionOutcomeSchema,
+  createTextPropertyDefinitionActionPayloadSchema,
+} from './actions/create-text-property-definition';
 
 import {
   transitionTaskRetentionActionHeadersSchema,
@@ -73,6 +175,7 @@ import {
   updateCheckboxPropertyValueActionPayloadSchema,
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
+import { emailQueryOperationSchema, queryTaskEmailValuesResponseSchema } from './email-query';
 import {
   queryIntrinsicTaskPropertiesPayloadSchema,
   queryIntrinsicTaskPropertiesResponseSchema,
@@ -83,7 +186,13 @@ import {
 } from './core-sdk-operation';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
+import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
+import {
+  queryTaskPropertyValuesPayloadSchema,
+  queryTaskPropertyValuesResponseSchema,
+} from './task-property-query';
+import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
 export type {
   ConfigurePrincipalTimeZonePreferenceActionFailure,
@@ -91,6 +200,54 @@ export type {
   ConfigurePrincipalTimeZonePreferenceActionPayload,
   ConfigurePrincipalTimeZonePreferenceActionResponse,
 } from './actions/configure-principal-time-zone-preference';
+export type {
+  CreateEmailPropertyDefinitionActionFailure,
+  CreateEmailPropertyDefinitionActionOutcome,
+  CreateEmailPropertyDefinitionActionPayload,
+  CreateEmailPropertyDefinitionActionResponse,
+} from './actions/create-email-property-definition';
+export type {
+  UpdateEmailPropertyValueActionFailure,
+  UpdateEmailPropertyValueActionOutcome,
+  UpdateEmailPropertyValueActionPayload,
+  UpdateEmailPropertyValueActionResponse,
+} from './actions/update-email-property-value';
+export type {
+  ConfigureNumberPropertyFormatActionFailure,
+  ConfigureNumberPropertyFormatActionOutcome,
+  ConfigureNumberPropertyFormatActionPayload,
+  ConfigureNumberPropertyFormatActionResponse,
+} from './actions/configure-number-property-format';
+export type {
+  ConfigureSelectOptionOrderActionFailure,
+  ConfigureSelectOptionOrderActionOutcome,
+  ConfigureSelectOptionOrderActionPayload,
+  ConfigureSelectOptionOrderActionResponse,
+} from './actions/configure-select-option-order';
+export type {
+  CreateNumberPropertyDefinitionActionFailure,
+  CreateNumberPropertyDefinitionActionOutcome,
+  CreateNumberPropertyDefinitionActionPayload,
+  CreateNumberPropertyDefinitionActionResponse,
+} from './actions/create-number-property-definition';
+export type {
+  UpdateNumberPropertyValueActionFailure,
+  UpdateNumberPropertyValueActionOutcome,
+  UpdateNumberPropertyValueActionPayload,
+  UpdateNumberPropertyValueActionResponse,
+} from './actions/update-number-property-value';
+export type {
+  CreateTextPropertyDefinitionActionFailure,
+  CreateTextPropertyDefinitionActionOutcome,
+  CreateTextPropertyDefinitionActionPayload,
+  CreateTextPropertyDefinitionActionResponse,
+} from './actions/create-text-property-definition';
+export type {
+  UpdateTextPropertyValueActionFailure,
+  UpdateTextPropertyValueActionOutcome,
+  UpdateTextPropertyValueActionPayload,
+  UpdateTextPropertyValueActionResponse,
+} from './actions/update-text-property-value';
 export type {
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
@@ -110,6 +267,30 @@ export type {
   CreateIntrinsicPropertyDefinitionActionResponse,
 } from './actions/create-intrinsic-property-definition';
 export type {
+  CreatePhonePropertyDefinitionActionFailure,
+  CreatePhonePropertyDefinitionActionOutcome,
+  CreatePhonePropertyDefinitionActionPayload,
+  CreatePhonePropertyDefinitionActionResponse,
+} from './actions/create-phone-property-definition';
+export type {
+  CreateSelectOptionAndSelectActionFailure,
+  CreateSelectOptionAndSelectActionOutcome,
+  CreateSelectOptionAndSelectActionPayload,
+  CreateSelectOptionAndSelectActionResponse,
+} from './actions/create-select-option-and-select';
+export type {
+  CreateSelectOptionActionFailure,
+  CreateSelectOptionActionOutcome,
+  CreateSelectOptionActionPayload,
+  CreateSelectOptionActionResponse,
+} from './actions/create-select-option';
+export type {
+  CreateSelectPropertyDefinitionActionFailure,
+  CreateSelectPropertyDefinitionActionOutcome,
+  CreateSelectPropertyDefinitionActionPayload,
+  CreateSelectPropertyDefinitionActionResponse,
+} from './actions/create-select-property-definition';
+export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
   CreateTaskActionPayload,
@@ -121,6 +302,12 @@ export type {
   CreateTaskCollectionActionPayload,
   CreateTaskCollectionActionResponse,
 } from './actions/create-task-collection';
+export type {
+  CreateUrlPropertyDefinitionActionFailure,
+  CreateUrlPropertyDefinitionActionOutcome,
+  CreateUrlPropertyDefinitionActionPayload,
+  CreateUrlPropertyDefinitionActionResponse,
+} from './actions/create-url-property-definition';
 export type {
   DeleteTaskPropertyDefinitionActionFailure,
   DeleteTaskPropertyDefinitionActionOutcome,
@@ -140,26 +327,95 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdatePhonePropertyValueActionFailure,
+  UpdatePhonePropertyValueActionOutcome,
+  UpdatePhonePropertyValueActionPayload,
+  UpdatePhonePropertyValueActionResponse,
+} from './actions/update-phone-property-value';
+export type {
+  UpdateUrlPropertyValueActionFailure,
+  UpdateUrlPropertyValueActionOutcome,
+  UpdateUrlPropertyValueActionPayload,
+  UpdateUrlPropertyValueActionResponse,
+} from './actions/update-url-property-value';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
   TransitionTaskRetentionActionResponse,
 } from './actions/transition-task-retention';
+export type {
+  UpdateSelectOptionActionFailure,
+  UpdateSelectOptionActionOutcome,
+  UpdateSelectOptionActionPayload,
+  UpdateSelectOptionActionResponse,
+} from './actions/update-select-option';
+export type {
+  UpdateSelectPropertyValueActionFailure,
+  UpdateSelectPropertyValueActionOutcome,
+  UpdateSelectPropertyValueActionPayload,
+  UpdateSelectPropertyValueActionResponse,
+} from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export type { TaskPropertyEditCapability } from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
+  emailPropertyDefinitionSchema,
+  numberPropertyDefinitionSchema,
+  phonePropertyDefinitionSchema,
+  selectOptionOrderModeSchema,
+  selectOptionSchema,
+  selectPropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
+  textPropertyDefinitionSchema,
+  urlPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  EmailPropertyDefinition,
+  NumberPropertyDefinition,
+  PhonePropertyDefinition,
+  SelectOption,
+  SelectOptionOrderMode,
+  SelectPropertyDefinition,
   TaskPropertyDefinition,
+  TextPropertyDefinition,
+  UrlPropertyDefinition,
 } from './task-property-definition';
+export { phoneTelHref, validatePhoneValue } from './phone-value';
+export type { PhoneValueValidationFailure, PhoneValueValidationResult } from './phone-value';
+export { emailMailtoHref, parseEmailValue } from './email-value';
+export type { ParsedEmailValue } from './email-value';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
+export type {
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  TaskPropertyQuery,
+} from './task-property-query';
+export {
+  coreReferenceSchema,
+  nullableTextDocumentSchema,
+  textDocumentSchema,
+  textInlineNodeSchema,
+  textMarkSchema,
+  textPropertyValueSchema,
+} from './text-property';
+export type {
+  CoreReference,
+  TextDocument,
+  TextInlineNode,
+  TextMark,
+  TextPropertyValue,
+} from './text-property';
+export type { TextQueryOperation } from './text-query';
+export type { NumberQueryOperation } from './number-query';
 export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
 } from './checkbox-filter';
+export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
+export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 export type {
   IntrinsicTaskPropertyQueryOperation,
   QueryIntrinsicTaskPropertiesPayload,
@@ -288,7 +544,10 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           error: coreSdkOperationFailureSchemas,
           headers: operationContextHeadersSchema,
           params: { collectionId: Schema.String },
-          query: { browserTimeZone: Schema.optional(Schema.String) },
+          query: {
+            browserTimeZone: Schema.optional(Schema.String),
+            locale: Schema.optional(Schema.String),
+          },
           success: taskPropertyWorkspaceSchema,
         },
       ),
@@ -308,6 +567,34 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.get(
+        'getTaskPropertyEditCapability',
+        '/ticketing/task-collections/:collectionId/properties/edit-capability',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          success: taskPropertyEditCapabilitySchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('queryTaskPropertyValues', '/ticketing/task-properties/query', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        payload: queryTaskPropertyValuesPayloadSchema,
+        success: queryTaskPropertyValuesResponseSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('queryTaskUrlValues', '/ticketing/queries/task-url-values', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        payload: queryTaskUrlValuesPayloadSchema,
+        success: queryTaskUrlValuesResponseSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.get(
         'filterTaskCheckboxValues',
         '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
         {
@@ -319,6 +606,25 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           },
           query: { value: Schema.Literals(['true', 'false']) },
           success: filterTaskCheckboxValuesResponseSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'queryTaskEmailValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/email-query',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          query: {
+            operation: emailQueryOperationSchema,
+            query: Schema.String,
+          },
+          success: queryTaskEmailValuesResponseSchema,
         },
       ),
     )
@@ -371,6 +677,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.post(
+        'createIntrinsicPropertyDefinitionAction',
+        '/ticketing/actions/create-intrinsic-property-definition',
+        {
+          error: createIntrinsicPropertyDefinitionActionFailureSchemas,
+          headers: createIntrinsicPropertyDefinitionActionHeadersSchema,
+          payload: createIntrinsicPropertyDefinitionActionPayloadSchema,
+          success: createIntrinsicPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configurePrincipalTimeZonePreferenceAction',
+        '/ticketing/actions/configure-principal-time-zone-preference',
+        {
+          error: configurePrincipalTimeZonePreferenceActionFailureSchemas,
+          headers: configurePrincipalTimeZonePreferenceActionHeadersSchema,
+          payload: configurePrincipalTimeZonePreferenceActionPayloadSchema,
+          success: configurePrincipalTimeZonePreferenceActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
         'updateCheckboxPropertyValueAction',
         '/ticketing/actions/update-checkbox-property-value',
         {
@@ -378,6 +708,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           headers: updateCheckboxPropertyValueActionHeadersSchema,
           payload: updateCheckboxPropertyValueActionPayloadSchema,
           success: updateCheckboxPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createEmailPropertyDefinitionAction',
+        '/ticketing/actions/create-email-property-definition',
+        {
+          error: createEmailPropertyDefinitionActionFailureSchemas,
+          headers: createEmailPropertyDefinitionActionHeadersSchema,
+          payload: createEmailPropertyDefinitionActionPayloadSchema,
+          success: createEmailPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateEmailPropertyValueAction',
+        '/ticketing/actions/update-email-property-value',
+        {
+          error: updateEmailPropertyValueActionFailureSchemas,
+          headers: updateEmailPropertyValueActionHeadersSchema,
+          payload: updateEmailPropertyValueActionPayloadSchema,
+          success: updateEmailPropertyValueActionOutcomeSchema,
         },
       ),
     )
@@ -431,35 +785,195 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.post(
-        'createIntrinsicPropertyDefinitionAction',
-        '/ticketing/actions/create-intrinsic-property-definition',
+        'createTextPropertyDefinitionAction',
+        '/ticketing/actions/create-text-property-definition',
         {
-          error: createIntrinsicPropertyDefinitionActionFailureSchemas,
-          headers: createIntrinsicPropertyDefinitionActionHeadersSchema,
-          payload: createIntrinsicPropertyDefinitionActionPayloadSchema,
-          success: createIntrinsicPropertyDefinitionActionOutcomeSchema,
+          error: createTextPropertyDefinitionActionFailureSchemas,
+          headers: createTextPropertyDefinitionActionHeadersSchema,
+          payload: createTextPropertyDefinitionActionPayloadSchema,
+          success: createTextPropertyDefinitionActionOutcomeSchema,
         },
       ),
     )
     .add(
       HttpApiEndpoint.post(
-        'configurePrincipalTimeZonePreferenceAction',
-        '/ticketing/actions/configure-principal-time-zone-preference',
+        'updateTextPropertyValueAction',
+        '/ticketing/actions/update-text-property-value',
         {
-          error: configurePrincipalTimeZonePreferenceActionFailureSchemas,
-          headers: configurePrincipalTimeZonePreferenceActionHeadersSchema,
-          payload: configurePrincipalTimeZonePreferenceActionPayloadSchema,
-          success: configurePrincipalTimeZonePreferenceActionOutcomeSchema,
+          error: updateTextPropertyValueActionFailureSchemas,
+          headers: updateTextPropertyValueActionHeadersSchema,
+          payload: updateTextPropertyValueActionPayloadSchema,
+          success: updateTextPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createNumberPropertyDefinitionAction',
+        '/ticketing/actions/create-number-property-definition',
+        {
+          error: createNumberPropertyDefinitionActionFailureSchemas,
+          headers: createNumberPropertyDefinitionActionHeadersSchema,
+          payload: createNumberPropertyDefinitionActionPayloadSchema,
+          success: createNumberPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateNumberPropertyValueAction',
+        '/ticketing/actions/update-number-property-value',
+        {
+          error: updateNumberPropertyValueActionFailureSchemas,
+          headers: updateNumberPropertyValueActionHeadersSchema,
+          payload: updateNumberPropertyValueActionPayloadSchema,
+          success: updateNumberPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureNumberPropertyFormatAction',
+        '/ticketing/actions/configure-number-property-format',
+        {
+          error: configureNumberPropertyFormatActionFailureSchemas,
+          headers: configureNumberPropertyFormatActionHeadersSchema,
+          payload: configureNumberPropertyFormatActionPayloadSchema,
+          success: configureNumberPropertyFormatActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createSelectPropertyDefinitionAction',
+        '/ticketing/actions/create-select-property-definition',
+        {
+          error: createSelectPropertyDefinitionActionFailureSchemas,
+          headers: createSelectPropertyDefinitionActionHeadersSchema,
+          payload: createSelectPropertyDefinitionActionPayloadSchema,
+          success: createSelectPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createSelectOptionAction', '/ticketing/actions/create-select-option', {
+        error: createSelectOptionActionFailureSchemas,
+        headers: createSelectOptionActionHeadersSchema,
+        payload: createSelectOptionActionPayloadSchema,
+        success: createSelectOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateSelectOptionAction', '/ticketing/actions/update-select-option', {
+        error: updateSelectOptionActionFailureSchemas,
+        headers: updateSelectOptionActionHeadersSchema,
+        payload: updateSelectOptionActionPayloadSchema,
+        success: updateSelectOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateSelectPropertyValueAction',
+        '/ticketing/actions/update-select-property-value',
+        {
+          error: updateSelectPropertyValueActionFailureSchemas,
+          headers: updateSelectPropertyValueActionHeadersSchema,
+          payload: updateSelectPropertyValueActionPayloadSchema,
+          success: updateSelectPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createSelectOptionAndSelectAction',
+        '/ticketing/actions/create-select-option-and-select',
+        {
+          error: createSelectOptionAndSelectActionFailureSchemas,
+          headers: createSelectOptionAndSelectActionHeadersSchema,
+          payload: createSelectOptionAndSelectActionPayloadSchema,
+          success: createSelectOptionAndSelectActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureSelectOptionOrderAction',
+        '/ticketing/actions/configure-select-option-order',
+        {
+          error: configureSelectOptionOrderActionFailureSchemas,
+          headers: configureSelectOptionOrderActionHeadersSchema,
+          payload: configureSelectOptionOrderActionPayloadSchema,
+          success: configureSelectOptionOrderActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createUrlPropertyDefinitionAction',
+        '/ticketing/actions/create-url-property-definition',
+        {
+          error: createUrlPropertyDefinitionActionFailureSchemas,
+          headers: createUrlPropertyDefinitionActionHeadersSchema,
+          payload: createUrlPropertyDefinitionActionPayloadSchema,
+          success: createUrlPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateUrlPropertyValueAction',
+        '/ticketing/actions/update-url-property-value',
+        {
+          error: updateUrlPropertyValueActionFailureSchemas,
+          headers: updateUrlPropertyValueActionHeadersSchema,
+          payload: updateUrlPropertyValueActionPayloadSchema,
+          success: updateUrlPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createPhonePropertyDefinitionAction',
+        '/ticketing/actions/create-phone-property-definition',
+        {
+          error: createPhonePropertyDefinitionActionFailureSchemas,
+          headers: createPhonePropertyDefinitionActionHeadersSchema,
+          payload: createPhonePropertyDefinitionActionPayloadSchema,
+          success: createPhonePropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updatePhonePropertyValueAction',
+        '/ticketing/actions/update-phone-property-value',
+        {
+          error: updatePhonePropertyValueActionFailureSchemas,
+          headers: updatePhonePropertyValueActionHeadersSchema,
+          payload: updatePhonePropertyValueActionPayloadSchema,
+          success: updatePhonePropertyValueActionOutcomeSchema,
         },
       ),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configureNumberPropertyFormatAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureNumberPropertyFormatAction',
+    routePath: '/ticketing/actions/configure-number-property-format',
+    source: 'generated-client',
+  },
   configurePrincipalTimeZonePreferenceAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configurePrincipalTimeZonePreferenceAction',
     routePath: '/ticketing/actions/configure-principal-time-zone-preference',
+    source: 'generated-client',
+  },
+  configureSelectOptionOrderAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureSelectOptionOrderAction',
+    routePath: '/ticketing/actions/configure-select-option-order',
     source: 'generated-client',
   },
   configureTaskPropertyDefinitionAction: {
@@ -474,10 +988,46 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/create-checkbox-property-definition',
     source: 'generated-client',
   },
+  createEmailPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createEmailPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-email-property-definition',
+    source: 'generated-client',
+  },
   createIntrinsicPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createIntrinsicPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-intrinsic-property-definition',
+    source: 'generated-client',
+  },
+  createNumberPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createNumberPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-number-property-definition',
+    source: 'generated-client',
+  },
+  createPhonePropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createPhonePropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-phone-property-definition',
+    source: 'generated-client',
+  },
+  createSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createSelectOptionAction',
+    routePath: '/ticketing/actions/create-select-option',
+    source: 'generated-client',
+  },
+  createSelectOptionAndSelectAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createSelectOptionAndSelectAction',
+    routePath: '/ticketing/actions/create-select-option-and-select',
+    source: 'generated-client',
+  },
+  createSelectPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createSelectPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-select-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -490,6 +1040,18 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
     routePath: '/ticketing/actions/create-task-collection',
+    source: 'generated-client',
+  },
+  createTextPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createTextPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-text-property-definition',
+    source: 'generated-client',
+  },
+  createUrlPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createUrlPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-url-property-definition',
     source: 'generated-client',
   },
   deleteTaskPropertyDefinitionAction: {
@@ -530,6 +1092,12 @@ export const ticketingOperationContexts = {
       '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/deletion-impact',
     source: 'generated-client',
   },
+  getTaskPropertyEditCapability: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyEditCapability',
+    routePath: '/ticketing/task-collections/:collectionId/properties/edit-capability',
+    source: 'generated-client',
+  },
   getTaskPropertyWorkspace: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskPropertyWorkspace',
@@ -548,6 +1116,25 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/task-collections/:collectionId/intrinsic-property-query',
     source: 'generated-client',
   },
+  queryTaskEmailValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:queryTaskEmailValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/email-query',
+    source: 'generated-client',
+  },
+  queryTaskPropertyValues: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:queryTaskPropertyValues',
+    routePath: '/ticketing/task-properties/query',
+    source: 'generated-client',
+  },
+  queryTaskUrlValues: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:queryTaskUrlValues',
+    routePath: '/ticketing/queries/task-url-values',
+    source: 'generated-client',
+  },
   readiness: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
@@ -564,6 +1151,48 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
     routePath: '/ticketing/actions/update-checkbox-property-value',
+    source: 'generated-client',
+  },
+  updateEmailPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateEmailPropertyValueAction',
+    routePath: '/ticketing/actions/update-email-property-value',
+    source: 'generated-client',
+  },
+  updateNumberPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateNumberPropertyValueAction',
+    routePath: '/ticketing/actions/update-number-property-value',
+    source: 'generated-client',
+  },
+  updatePhonePropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updatePhonePropertyValueAction',
+    routePath: '/ticketing/actions/update-phone-property-value',
+    source: 'generated-client',
+  },
+  updateSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateSelectOptionAction',
+    routePath: '/ticketing/actions/update-select-option',
+    source: 'generated-client',
+  },
+  updateSelectPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateSelectPropertyValueAction',
+    routePath: '/ticketing/actions/update-select-property-value',
+    source: 'generated-client',
+  },
+  updateTextPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateTextPropertyValueAction',
+    routePath: '/ticketing/actions/update-text-property-value',
+    source: 'generated-client',
+  },
+  updateUrlPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateUrlPropertyValueAction',
+    routePath: '/ticketing/actions/update-url-property-value',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

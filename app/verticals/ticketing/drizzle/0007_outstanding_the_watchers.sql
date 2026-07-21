@@ -1,0 +1,20 @@
+CREATE TABLE "ticketing"."task_text_values" (
+	"document" jsonb,
+	"property_definition_id" uuid NOT NULL,
+	"readable_text" text,
+	"revision" integer DEFAULT 1 NOT NULL,
+	"task_id" uuid NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	CONSTRAINT "ticketing_task_text_values_pk" PRIMARY KEY("task_id","property_definition_id"),
+	CONSTRAINT "ticketing_task_text_values_revision_ck" CHECK ("ticketing"."task_text_values"."revision" >= 1),
+	CONSTRAINT "ticketing_task_text_values_empty_ck" CHECK (("ticketing"."task_text_values"."document" is null) = ("ticketing"."task_text_values"."readable_text" is null))
+);
+--> statement-breakpoint
+ALTER TABLE "ticketing"."task_property_definitions" DROP CONSTRAINT "ticketing_task_property_definitions_datatype_ck";--> statement-breakpoint
+ALTER TABLE "ticketing"."task_revisions" DROP CONSTRAINT "ticketing_task_revisions_reason_ck";--> statement-breakpoint
+ALTER TABLE "ticketing"."task_text_values" ADD CONSTRAINT "task_text_values_property_definition_id_task_property_definitions_property_definition_id_fk" FOREIGN KEY ("property_definition_id") REFERENCES "ticketing"."task_property_definitions"("property_definition_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ticketing"."task_text_values" ADD CONSTRAINT "task_text_values_task_id_tasks_task_id_fk" FOREIGN KEY ("task_id") REFERENCES "ticketing"."tasks"("task_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ticketing"."task_text_values" ADD CONSTRAINT "task_text_values_tenant_id_tenants_tenant_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "core"."tenants"("tenant_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "ticketing_task_text_values_query_idx" ON "ticketing"."task_text_values" USING btree ("tenant_id","property_definition_id","readable_text");--> statement-breakpoint
+ALTER TABLE "ticketing"."task_property_definitions" ADD CONSTRAINT "ticketing_task_property_definitions_datatype_ck" CHECK ("ticketing"."task_property_definitions"."datatype" in ('title', 'checkbox', 'text'));--> statement-breakpoint
+ALTER TABLE "ticketing"."task_revisions" ADD CONSTRAINT "ticketing_task_revisions_reason_ck" CHECK ("ticketing"."task_revisions"."reason" in ('created', 'checkbox_value_changed', 'text_value_changed', 'archived', 'restored', 'soft_deleted'));

@@ -40,9 +40,9 @@ const createTaskCollectionActionHandler: ActionHandler<
   const creationResult = await services.tx.execute(sql`
     with created_collection as (
       insert into ticketing.task_collections (locale, tenant_id)
-      select default_locale, tenant_id
-      from core.tenants
-      where tenant_id = ${services.context.tenantId}
+      select tenant.default_locale, tenant.tenant_id
+      from core.tenants as tenant
+      where tenant.tenant_id = ${services.context.tenantId}
       returning collection_id, created_at
     ),
     created_schema as (
