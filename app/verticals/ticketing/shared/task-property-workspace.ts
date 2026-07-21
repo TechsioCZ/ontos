@@ -7,6 +7,12 @@ export const checkboxPropertyValueSchema = Schema.Struct({
   value: Schema.Boolean,
 });
 
+export const urlPropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.NullOr(Schema.String),
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
@@ -16,6 +22,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       taskId: Schema.String,
       taskRevision: Schema.Finite,
       title: Schema.String,
+      urlValues: Schema.optional(Schema.Array(urlPropertyValueSchema)),
     }),
   ),
 });
@@ -25,4 +32,6 @@ export const getTaskPropertyWorkspacePayloadSchema = Schema.Struct({
 });
 
 export type GetTaskPropertyWorkspacePayload = typeof getTaskPropertyWorkspacePayloadSchema.Type;
+export type CheckboxPropertyValue = typeof checkboxPropertyValueSchema.Type;
 export type TaskPropertyWorkspace = typeof taskPropertyWorkspaceSchema.Type;
+export type UrlPropertyValue = typeof urlPropertyValueSchema.Type;

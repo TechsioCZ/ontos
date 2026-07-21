@@ -12,7 +12,7 @@ import type {
 } from '../../shared/task-property-workspace.ts';
 
 interface DefinitionRow {
-  readonly datatype: 'checkbox';
+  readonly datatype: 'checkbox' | 'url';
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
@@ -20,25 +20,37 @@ interface DefinitionRow {
   readonly revision: number;
 }
 
-interface ValueRow {
-  readonly propertyDefinitionId: string | null;
-  readonly revision: number;
+interface TaskRow {
+  readonly checkboxValues: CheckboxValue[];
   readonly taskId: string;
   readonly taskRevision: number;
   readonly title: string;
+  readonly urlValues: UrlValue[];
+}
+
+interface BaseTaskRow {
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly title: string;
+}
+
+interface CheckboxValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
   readonly value: boolean;
 }
 
-interface TaskRow {
-  readonly checkboxValues: {
-    propertyDefinitionId: string;
-    revision: number;
-    value: boolean;
-  }[];
+type CheckboxValue = Omit<CheckboxValueRow, 'taskId'>;
+
+interface UrlValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
   readonly taskId: string;
-  readonly taskRevision: number;
-  readonly title: string;
+  readonly value: string | null;
 }
+
+type UrlValue = Omit<UrlValueRow, 'taskId'>;
 
 export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistration<
   GetTaskPropertyWorkspacePayload,
@@ -79,53 +91,84 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype = 'checkbox'
+        and definition.datatype in ('checkbox', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
-    const valueResult = await db.execute(sql`
+    const taskResult = await db.execute(sql`
+      select
+        task.task_id as "taskId",
+        task.revision as "taskRevision",
+        task.title
+      from ticketing.tasks as task
+      where task.collection_id = ${input.collectionId}
+        and task.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id
+    `);
+    const checkboxResult = await db.execute(sql`
       select
         value.property_definition_id as "propertyDefinitionId",
         value.revision,
-        task.task_id as "taskId",
-        task.revision as "taskRevision",
-        task.title,
+        value.task_id as "taskId",
         value.value
-      from ticketing.tasks as task
-      left join ticketing.task_checkbox_values as value
-        on value.task_id = task.task_id
-        and value.tenant_id = task.tenant_id
-      left join ticketing.task_property_definitions as definition
+      from ticketing.task_checkbox_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'checkbox'
       where task.collection_id = ${input.collectionId}
-        and task.tenant_id = ${context.tenantId}
-      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+        and value.tenant_id = ${context.tenantId}
+      order by definition.created_at, value.property_definition_id
     `);
-    const definitions = rowsFromResult<DefinitionRow>(definitionResult);
-    const valueRows = rowsFromResult<ValueRow>(valueResult);
-    const tasks = new Map<string, TaskRow>();
+    const urlResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        value.value
+      from ticketing.task_url_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'url'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by definition.created_at, value.property_definition_id
+    `);
+    const tasks = new Map<string, TaskRow>(
+      [...rowsFromResult<BaseTaskRow>(taskResult)].map((task) => [
+        task.taskId,
+        { ...task, checkboxValues: [], urlValues: [] },
+      ]),
+    );
 
-    for (const row of valueRows) {
-      const current = tasks.get(row.taskId) ?? {
-        checkboxValues: [],
-        taskId: row.taskId,
-        taskRevision: row.taskRevision,
-        title: row.title,
-      };
-      if (row.propertyDefinitionId !== null) {
-        current.checkboxValues.push({
-          propertyDefinitionId: row.propertyDefinitionId,
-          revision: row.revision,
-          value: row.value,
-        });
-      }
-      tasks.set(row.taskId, current);
+    for (const value of rowsFromResult<CheckboxValueRow>(checkboxResult)) {
+      tasks.get(value.taskId)?.checkboxValues.push({
+        propertyDefinitionId: value.propertyDefinitionId,
+        revision: value.revision,
+        value: value.value,
+      });
+    }
+    const urlValues = rowsFromResult<UrlValueRow>(urlResult);
+    for (const value of urlValues) {
+      tasks.get(value.taskId)?.urlValues.push({
+        propertyDefinitionId: value.propertyDefinitionId,
+        revision: value.revision,
+        value: value.value,
+      });
     }
 
     return {
       collectionId: input.collectionId,
-      propertyDefinitions: [...definitions],
-      tasks: [...tasks.values()],
+      propertyDefinitions: [...rowsFromResult<DefinitionRow>(definitionResult)],
+      tasks: [...tasks.values()].map(({ urlValues: taskUrlValues, ...task }) =>
+        urlValues.length === 0 ? task : { ...task, urlValues: taskUrlValues },
+      ),
     };
   },
 };

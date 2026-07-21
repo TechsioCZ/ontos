@@ -45,6 +45,14 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateUrlPropertyDefinitionActionFailure,
+  CreateUrlPropertyDefinitionActionOutcome,
+  CreateUrlPropertyDefinitionActionPayload,
+  UpdateUrlPropertyValueActionFailure,
+  UpdateUrlPropertyValueActionOutcome,
+  UpdateUrlPropertyValueActionPayload,
+  QueryTaskUrlValuesPayload,
+  QueryTaskUrlValuesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -59,6 +67,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UpdateUrlPropertyValueActionFailure
+  | CreateUrlPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -179,6 +189,22 @@ export const filterTaskCheckboxValues = (
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
         query: { value: value ? 'true' : 'false' },
+      }),
+    ),
+  );
+
+export const queryTaskUrlValues = (
+  payload: QueryTaskUrlValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskUrlValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskUrlValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskUrlValues({
+        headers: options.headers ?? {},
+        payload,
       }),
     ),
   );
@@ -361,6 +387,60 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateUrlPropertyDefinitionAction = (
+  payload: CreateUrlPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateUrlPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createUrlPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createUrlPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateUrlPropertyValueAction = (
+  payload: UpdateUrlPropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateUrlPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateUrlPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateUrlPropertyValueAction({
         headers: headers ?? {},
         payload,
       }),

@@ -78,7 +78,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'url')`,
     ),
     check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -136,7 +136,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -166,5 +166,32 @@ export const taskCheckboxValues = ticketingSchema.table(
       table.value,
     ),
     check('ticketing_task_checkbox_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskUrlValues = ticketingSchema.table(
+  'task_url_values',
+  {
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(0).notNull(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    value: text('value'),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_url_values_pk',
+    }),
+    index('ticketing_task_url_values_query_idx').on(table.tenantId, table.propertyDefinitionId),
+    check('ticketing_task_url_values_revision_ck', sql`${table.revision} >= 0`),
+    check(
+      'ticketing_task_url_values_byte_length_ck',
+      sql`${table.value} is null or octet_length(${table.value}) <= 8000`,
+    ),
   ],
 );

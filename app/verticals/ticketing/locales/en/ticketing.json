@@ -38,6 +38,10 @@
       "openedTask": "Opened Task",
       "title": "Title"
     },
+    "url": {
+      "copy": "Copy URL",
+      "open": "Open URL"
+    },
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
       "ticketing": {

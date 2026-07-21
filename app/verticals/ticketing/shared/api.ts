@@ -6,6 +6,18 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  updateUrlPropertyValueActionHeadersSchema,
+  updateUrlPropertyValueActionFailureSchemas,
+  updateUrlPropertyValueActionOutcomeSchema,
+  updateUrlPropertyValueActionPayloadSchema,
+} from './actions/update-url-property-value';
+import {
+  createUrlPropertyDefinitionActionHeadersSchema,
+  createUrlPropertyDefinitionActionFailureSchemas,
+  createUrlPropertyDefinitionActionOutcomeSchema,
+  createUrlPropertyDefinitionActionPayloadSchema,
+} from './actions/create-url-property-definition';
+import {
   transitionTaskRetentionActionHeadersSchema,
   transitionTaskRetentionActionFailureSchemas,
   transitionTaskRetentionActionOutcomeSchema,
@@ -66,6 +78,7 @@ import {
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
+import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
 export type {
   ConfigureTaskPropertyDefinitionActionFailure,
@@ -92,6 +105,12 @@ export type {
   CreateTaskCollectionActionResponse,
 } from './actions/create-task-collection';
 export type {
+  CreateUrlPropertyDefinitionActionFailure,
+  CreateUrlPropertyDefinitionActionOutcome,
+  CreateUrlPropertyDefinitionActionPayload,
+  CreateUrlPropertyDefinitionActionResponse,
+} from './actions/create-url-property-definition';
+export type {
   DeleteTaskPropertyDefinitionActionFailure,
   DeleteTaskPropertyDefinitionActionOutcome,
   DeleteTaskPropertyDefinitionActionPayload,
@@ -110,6 +129,12 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdateUrlPropertyValueActionFailure,
+  UpdateUrlPropertyValueActionOutcome,
+  UpdateUrlPropertyValueActionPayload,
+  UpdateUrlPropertyValueActionResponse,
+} from './actions/update-url-property-value';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
@@ -120,16 +145,19 @@ export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact
 export {
   checkboxPropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
+  urlPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
   TaskPropertyDefinition,
+  UrlPropertyDefinition,
 } from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
 export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
 } from './checkbox-filter';
+export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -274,6 +302,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.post('queryTaskUrlValues', '/ticketing/queries/task-url-values', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        payload: queryTaskUrlValuesPayloadSchema,
+        success: queryTaskUrlValuesResponseSchema,
+      }),
+    )
+    .add(
       HttpApiEndpoint.get(
         'getTaskPropertyDeletionImpact',
         '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/deletion-impact',
@@ -379,6 +415,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: transitionTaskRetentionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createUrlPropertyDefinitionAction',
+        '/ticketing/actions/create-url-property-definition',
+        {
+          error: createUrlPropertyDefinitionActionFailureSchemas,
+          headers: createUrlPropertyDefinitionActionHeadersSchema,
+          payload: createUrlPropertyDefinitionActionPayloadSchema,
+          success: createUrlPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateUrlPropertyValueAction',
+        '/ticketing/actions/update-url-property-value',
+        {
+          error: updateUrlPropertyValueActionFailureSchemas,
+          headers: updateUrlPropertyValueActionHeadersSchema,
+          payload: updateUrlPropertyValueActionPayloadSchema,
+          success: updateUrlPropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -405,6 +465,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskCollectionAction',
     routePath: '/ticketing/actions/create-task-collection',
+    source: 'generated-client',
+  },
+  createUrlPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createUrlPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-url-property-definition',
     source: 'generated-client',
   },
   deleteTaskPropertyDefinitionAction: {
@@ -457,6 +523,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing',
     source: 'generated-client',
   },
+  queryTaskUrlValues: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:queryTaskUrlValues',
+    routePath: '/ticketing/queries/task-url-values',
+    source: 'generated-client',
+  },
   readiness: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
@@ -473,6 +545,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
     routePath: '/ticketing/actions/update-checkbox-property-value',
+    source: 'generated-client',
+  },
+  updateUrlPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateUrlPropertyValueAction',
+    routePath: '/ticketing/actions/update-url-property-value',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

@@ -38,6 +38,10 @@
       "openedTask": "Otevřený úkol",
       "title": "Název"
     },
+    "url": {
+      "copy": "Kopírovat URL",
+      "open": "Otevřít URL"
+    },
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
       "ticketing": {
