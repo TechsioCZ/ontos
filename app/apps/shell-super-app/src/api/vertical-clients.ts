@@ -1,4 +1,9 @@
 export {
+  runUpdateStatusOptionAction,
+  runCreateStatusOptionAction,
+  runUpdateStatusPropertyValueAction,
+  runConfigureStatusDefaultAction,
+  runCreateStatusPropertyDefinitionAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,

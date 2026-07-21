@@ -278,6 +278,7 @@ rs.mock('../src/api/ticketing-client', () => {
             numberValues: [],
             phoneValues: [],
             selectValues: [],
+            statusValues: [],
             taskId,
             taskRevision: 1,
             title: '',

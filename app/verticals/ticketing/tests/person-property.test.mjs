@@ -315,6 +315,7 @@ test('an eligible tenant member can be assigned through the Person action and pu
         },
       ],
       phoneValues: [],
+      statusValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 2,
       title: '',

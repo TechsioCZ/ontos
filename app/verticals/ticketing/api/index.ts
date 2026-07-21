@@ -6,6 +6,11 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { updateStatusOptionActionRegistration } from '../src/actions/update-status-option.ts';
+import { createStatusOptionActionRegistration } from '../src/actions/create-status-option.ts';
+import { updateStatusPropertyValueActionRegistration } from '../src/actions/update-status-property-value.ts';
+import { configureStatusDefaultActionRegistration } from '../src/actions/configure-status-default.ts';
+import { createStatusPropertyDefinitionActionRegistration } from '../src/actions/create-status-property-definition.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -1052,6 +1057,112 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           kind: 'server',
         }),
       ),
+    )
+    .handle('createStatusPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createStatusPropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createStatusPropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createStatusPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configureStatusDefaultAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureStatusDefaultActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configureStatusDefaultAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configureStatusDefaultAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateStatusPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateStatusPropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateStatusPropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateStatusPropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createStatusOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createStatusOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createStatusOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.createStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateStatusOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateStatusOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateStatusOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.updateStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
     ),
 );
 

@@ -71,6 +71,34 @@ export const selectPropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const statusGroupKeySchema = Schema.Literals(['todo', 'in_progress', 'complete']);
+
+export const statusOptionSchema = Schema.Struct({
+  color: Schema.String,
+  group: statusGroupKeySchema,
+  name: Schema.String,
+  optionId: Schema.String,
+  position: Schema.Finite,
+  revision: Schema.Finite,
+});
+
+export const statusGroupSchema = Schema.Struct({
+  group: statusGroupKeySchema,
+  label: Schema.String,
+  options: Schema.Array(statusOptionSchema),
+});
+
+export const statusPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('status'),
+  defaultOptionId: Schema.String,
+  groups: Schema.Array(statusGroupSchema),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const textPropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literal('text'),
   hidden: Schema.Boolean,
@@ -139,6 +167,7 @@ export const taskPropertyDefinitionSchema = Schema.Union([
   personPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
   selectPropertyDefinitionSchema,
+  statusPropertyDefinitionSchema,
   textPropertyDefinitionSchema,
   urlPropertyDefinitionSchema,
 ]);
@@ -155,6 +184,10 @@ export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;
 export type SelectOptionOrderMode = typeof selectOptionOrderModeSchema.Type;
 export type SelectPropertyDefinition = typeof selectPropertyDefinitionSchema.Type;
+export type StatusGroup = typeof statusGroupSchema.Type;
+export type StatusGroupKey = typeof statusGroupKeySchema.Type;
+export type StatusOption = typeof statusOptionSchema.Type;
+export type StatusPropertyDefinition = typeof statusPropertyDefinitionSchema.Type;
 export type TextPropertyDefinition = typeof textPropertyDefinitionSchema.Type;
 export type UrlPropertyDefinition = typeof urlPropertyDefinitionSchema.Type;
 export type TaskPropertyDefinition = typeof taskPropertyDefinitionSchema.Type;
