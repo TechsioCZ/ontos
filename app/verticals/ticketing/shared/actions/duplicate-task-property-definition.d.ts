@@ -31,6 +31,14 @@ export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literal<'number'>;
         readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
         readonly hidden: Schema.Boolean;
@@ -111,6 +119,14 @@ export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;

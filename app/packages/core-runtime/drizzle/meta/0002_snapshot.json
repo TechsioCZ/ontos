@@ -1,6 +1,6 @@
 {
-  "id": "bcb8c8f5-9cb8-4f3b-81ae-b07659d09ead",
-  "prevId": "010d0fba-013b-49c0-964c-3c6f2079490b",
+  "id": "d9888c43-35fc-4f8e-9b95-f5c5240a0a32",
+  "prevId": "bcb8c8f5-9cb8-4f3b-81ae-b07659d09ead",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2465,6 +2465,246 @@
           "value": "\"core\".\"principal_auth_bindings\".\"status\" in ('active', 'revoked', 'disabled')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "core.principal_directory_entries": {
+      "name": "principal_directory_entries",
+      "schema": "core",
+      "columns": {
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "login": {
+          "name": "login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "membership_kind": {
+          "name": "membership_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "membership_status": {
+          "name": "membership_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "principal_id": {
+          "name": "principal_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "core_principal_directory_entries_tenant_membership_idx": {
+          "name": "core_principal_directory_entries_tenant_membership_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "membership_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "membership_kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "principal_directory_entries_principal_id_principals_principal_id_fk": {
+          "name": "principal_directory_entries_principal_id_principals_principal_id_fk",
+          "tableFrom": "principal_directory_entries",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "principal_directory_entries_tenant_id_tenants_tenant_id_fk": {
+          "name": "principal_directory_entries_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "principal_directory_entries",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "core_principal_directory_entries_membership_kind_ck": {
+          "name": "core_principal_directory_entries_membership_kind_ck",
+          "value": "\"core\".\"principal_directory_entries\".\"membership_kind\" in ('member', 'guest')"
+        },
+        "core_principal_directory_entries_membership_status_ck": {
+          "name": "core_principal_directory_entries_membership_status_ck",
+          "value": "\"core\".\"principal_directory_entries\".\"membership_status\" in ('active', 'departed')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "core.principal_directory_field_visibility": {
+      "name": "principal_directory_field_visibility",
+      "schema": "core",
+      "columns": {
+        "display_name_visible": {
+          "name": "display_name_visible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "email_visible": {
+          "name": "email_visible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "login_visible": {
+          "name": "login_visible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "subject_principal_id": {
+          "name": "subject_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "viewer_principal_id": {
+          "name": "viewer_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "core_principal_directory_field_visibility_tenant_idx": {
+          "name": "core_principal_directory_field_visibility_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "viewer_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "principal_directory_field_visibility_subject_principal_id_principals_principal_id_fk": {
+          "name": "principal_directory_field_visibility_subject_principal_id_principals_principal_id_fk",
+          "tableFrom": "principal_directory_field_visibility",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "subject_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "principal_directory_field_visibility_tenant_id_tenants_tenant_id_fk": {
+          "name": "principal_directory_field_visibility_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "principal_directory_field_visibility",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "principal_directory_field_visibility_viewer_principal_id_principals_principal_id_fk": {
+          "name": "principal_directory_field_visibility_viewer_principal_id_principals_principal_id_fk",
+          "tableFrom": "principal_directory_field_visibility",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "viewer_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "core_principal_directory_field_visibility_pk": {
+          "name": "core_principal_directory_field_visibility_pk",
+          "columns": [
+            "viewer_principal_id",
+            "subject_principal_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "core.principal_time_zone_preferences": {

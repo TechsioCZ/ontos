@@ -36,6 +36,7 @@ const createTaskActionHandler: ActionHandler<
   CreateTaskActionPayload,
   CreateTaskActionResponse
 > = async (input, services) => {
+  const createdAt = services.clock.now().toISOString();
   await lockTaskCollectionForPropertyInitialization({
     collectionId: input.collectionId,
     tenantId: services.context.tenantId,
@@ -46,13 +47,17 @@ const createTaskActionHandler: ActionHandler<
     with created_task as (
       insert into ticketing.tasks (
         collection_id,
+        created_at,
         created_by_principal_id,
+        last_edited_at,
         last_edited_by_principal_id,
         tenant_id
       )
       select
         collection_id,
+        ${createdAt}::timestamptz,
         ${services.context.principalId},
+        ${createdAt}::timestamptz,
         ${services.context.principalId},
         ${services.context.tenantId}
       from ticketing.task_collections

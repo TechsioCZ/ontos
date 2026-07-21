@@ -26,6 +26,12 @@ const mocks = rs.hoisted(() => ({
   capabilityAllowed: true,
   capabilityAttempts: 0,
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
+  intrinsicCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly datatype: 'created_by' | 'created_time';
+    readonly mandatory: boolean;
+    readonly name: string;
+  }>[],
   readCalls: [] as string[],
   readFailuresRemaining: 0,
   taskAttempts: 0,
@@ -60,7 +66,9 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
   });
 
   for (const endpoint of [
+    'configurePrincipalTimeZonePreferenceAction',
     'createCheckboxPropertyDefinitionAction',
+    'createIntrinsicPropertyDefinitionAction',
     'createEmailPropertyDefinitionAction',
     'createPhonePropertyDefinitionAction',
     'createTaskAction',
@@ -71,6 +79,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'getTaskCollection',
     'getTaskPropertyEditCapability',
     'getTaskPropertyWorkspace',
+    'queryIntrinsicTaskProperties',
     'queryTaskPropertyValues',
     'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
@@ -92,6 +101,14 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.email.definitionCreate': 'Create Email property',
         'ticketing.email.definitionCreating': 'Creating Email property',
         'ticketing.email.definitionName': 'Email property name',
+        'ticketing.intrinsic.created_by.create': 'Add Created by property',
+        'ticketing.intrinsic.created_by.creating': 'Adding Created by property',
+        'ticketing.intrinsic.created_by.name': 'Created by',
+        'ticketing.intrinsic.created_time.create': 'Add Created time property',
+        'ticketing.intrinsic.created_time.creating': 'Adding Created time property',
+        'ticketing.intrinsic.created_time.details': 'Details',
+        'ticketing.intrinsic.created_time.name': 'Created time',
+        'ticketing.intrinsic.inactive': 'inactive',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
         'ticketing.phone.call': 'Call',
@@ -223,6 +240,43 @@ rs.mock('../src/api/ticketing-client', () => {
         ? success({ canEdit: true })
         : failure({ httpStatus: 403, message: 'Viewer is read-only.', ok: false });
     },
+    getTaskPropertyWorkspace: () =>
+      success({
+        collectionId,
+        effectiveTimeZone: { source: 'browser', timeZone: 'Europe/Prague' },
+        propertyDefinitions: [
+          {
+            datatype: 'created_time',
+            hidden: false,
+            mandatory: false,
+            name: 'Created time',
+            propertyDefinitionId: 'created-time-1',
+            revision: 1,
+          },
+          {
+            datatype: 'created_time',
+            hidden: true,
+            mandatory: false,
+            name: 'Hidden Created time',
+            propertyDefinitionId: 'created-time-hidden',
+            revision: 1,
+          },
+        ],
+        tasks: [
+          {
+            checkboxValues: [],
+            createdAt: aggregate.task.createdAt,
+            emailValues: [],
+            numberValues: [],
+            phoneValues: [],
+            selectValues: [],
+            taskId,
+            taskRevision: 1,
+            title: '',
+            urlValues: [],
+          },
+        ],
+      }),
     runCreateEmailPropertyDefinitionAction: (payload: {
       readonly collectionId: string;
       readonly mandatory: boolean;
@@ -240,6 +294,29 @@ rs.mock('../src/api/ticketing-client', () => {
           },
         },
       }),
+    runCreateIntrinsicPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly datatype: 'created_by' | 'created_time';
+        readonly mandatory: boolean;
+        readonly name: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.intrinsicCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          definition: {
+            datatype: payload.datatype,
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'created-time-1',
+            revision: 1,
+          },
+        },
+      });
+    },
     runCreatePhonePropertyDefinitionAction: (payload: {
       readonly collectionId: string;
       readonly mandatory: boolean;
@@ -338,6 +415,7 @@ beforeEach(() => {
   mocks.capabilityAllowed = true;
   mocks.capabilityAttempts = 0;
   mocks.collectionCalls.length = 0;
+  mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
   mocks.taskAttempts = 0;
@@ -441,6 +519,29 @@ test('retries only the governed read after both Actions succeed', async () => {
   expect(mocks.collectionCalls).toHaveLength(1);
   expect(mocks.taskCalls).toHaveLength(1);
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
+});
+
+test('creates and renders an intrinsic property through the application path', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  fireEvent.click(screen.getByRole('button', { name: 'Add Created time property' }));
+
+  await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
+  await waitFor(() => expect(document.querySelector('time')).not.toBeNull());
+  expect(document.querySelectorAll('time')).toHaveLength(2);
+  expect(mocks.intrinsicCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    datatype: 'created_time',
+    mandatory: false,
+    name: 'Created time',
+  });
+  expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T12:00:00.000Z');
+  fireEvent.click(screen.getByText('Details'));
+  expect(document.querySelector('details')?.hasAttribute('open')).toBe(true);
+  expect(document.querySelectorAll('time')[1]?.textContent).toContain(':00:00');
 });
 
 test('creates, edits, and opens a URL through the public Ticketing surface', async () => {

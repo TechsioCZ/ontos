@@ -51,6 +51,14 @@ export declare const personPropertyValueSchema: Schema.Struct<{
 }>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
+  readonly effectiveTimeZone: Schema.optional<
+    Schema.Struct<{
+      readonly source: Schema.Literals<
+        readonly ['browser_fallback', 'configured', 'system_fallback']
+      >;
+      readonly timeZone: Schema.String;
+    }>
+  >;
   readonly propertyDefinitions: Schema.$Array<
     Schema.Union<
       readonly [
@@ -64,6 +72,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
@@ -144,6 +160,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
           readonly value: Schema.Boolean;
+        }>
+      >;
+      readonly createdAt: Schema.optional<Schema.String>;
+      readonly createdBy: Schema.optional<
+        Schema.Struct<{
+          readonly displayName: Schema.String;
+          readonly inactive: Schema.Boolean;
+          readonly principalId: Schema.String;
         }>
       >;
       readonly emailValues: Schema.$Array<
@@ -288,6 +312,7 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   >;
 }>;
 export declare const getTaskPropertyWorkspacePayloadSchema: Schema.Struct<{
+  readonly browserTimeZone: Schema.optional<Schema.String>;
   readonly collectionId: Schema.String;
   readonly locale: Schema.optional<Schema.String>;
 }>;

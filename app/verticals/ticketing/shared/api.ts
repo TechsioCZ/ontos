@@ -25,6 +25,18 @@ import {
   updatePersonPropertyValueActionPayloadSchema,
 } from './actions/update-person-property-value';
 import {
+  configurePrincipalTimeZonePreferenceActionFailureSchemas,
+  configurePrincipalTimeZonePreferenceActionHeadersSchema,
+  configurePrincipalTimeZonePreferenceActionOutcomeSchema,
+  configurePrincipalTimeZonePreferenceActionPayloadSchema,
+} from './actions/configure-principal-time-zone-preference';
+import {
+  createIntrinsicPropertyDefinitionActionFailureSchemas,
+  createIntrinsicPropertyDefinitionActionHeadersSchema,
+  createIntrinsicPropertyDefinitionActionOutcomeSchema,
+  createIntrinsicPropertyDefinitionActionPayloadSchema,
+} from './actions/create-intrinsic-property-definition';
+import {
   createPhonePropertyDefinitionActionHeadersSchema,
   createPhonePropertyDefinitionActionFailureSchemas,
   createPhonePropertyDefinitionActionOutcomeSchema,
@@ -184,6 +196,10 @@ import {
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
 import { emailQueryOperationSchema, queryTaskEmailValuesResponseSchema } from './email-query';
 import {
+  queryIntrinsicTaskPropertiesPayloadSchema,
+  queryIntrinsicTaskPropertiesResponseSchema,
+} from './intrinsic-task-property-query';
+import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
@@ -198,6 +214,12 @@ import {
 } from './task-property-query';
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
+export type {
+  ConfigurePrincipalTimeZonePreferenceActionFailure,
+  ConfigurePrincipalTimeZonePreferenceActionOutcome,
+  ConfigurePrincipalTimeZonePreferenceActionPayload,
+  ConfigurePrincipalTimeZonePreferenceActionResponse,
+} from './actions/configure-principal-time-zone-preference';
 export type {
   ConfigurePersonPropertyCardinalityActionFailure,
   ConfigurePersonPropertyCardinalityActionOutcome,
@@ -216,7 +238,6 @@ export type {
   UpdatePersonPropertyValueActionPayload,
   UpdatePersonPropertyValueActionResponse,
 } from './actions/update-person-property-value';
-
 export type {
   CreateEmailPropertyDefinitionActionFailure,
   CreateEmailPropertyDefinitionActionOutcome,
@@ -277,6 +298,12 @@ export type {
   CreateCheckboxPropertyDefinitionActionPayload,
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
+export type {
+  CreateIntrinsicPropertyDefinitionActionFailure,
+  CreateIntrinsicPropertyDefinitionActionOutcome,
+  CreateIntrinsicPropertyDefinitionActionPayload,
+  CreateIntrinsicPropertyDefinitionActionResponse,
+} from './actions/create-intrinsic-property-definition';
 export type {
   CreatePhonePropertyDefinitionActionFailure,
   CreatePhonePropertyDefinitionActionOutcome,
@@ -434,6 +461,11 @@ export type {
   SearchEligiblePeoplePayload,
   SearchEligiblePeopleResponse,
 } from './person-directory-search';
+export type {
+  IntrinsicTaskPropertyQueryOperation,
+  QueryIntrinsicTaskPropertiesPayload,
+  QueryIntrinsicTaskPropertiesResponse,
+} from './intrinsic-task-property-query';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -588,8 +620,24 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           error: coreSdkOperationFailureSchemas,
           headers: operationContextHeadersSchema,
           params: { collectionId: Schema.String },
-          query: { locale: Schema.optional(Schema.String) },
+          query: {
+            browserTimeZone: Schema.optional(Schema.String),
+            locale: Schema.optional(Schema.String),
+          },
           success: taskPropertyWorkspaceSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'queryIntrinsicTaskProperties',
+        '/ticketing/task-collections/:collectionId/intrinsic-property-query',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          payload: queryIntrinsicTaskPropertiesPayloadSchema,
+          success: queryIntrinsicTaskPropertiesResponseSchema,
         },
       ),
     )
@@ -716,6 +764,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           headers: createCheckboxPropertyDefinitionActionHeadersSchema,
           payload: createCheckboxPropertyDefinitionActionPayloadSchema,
           success: createCheckboxPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createIntrinsicPropertyDefinitionAction',
+        '/ticketing/actions/create-intrinsic-property-definition',
+        {
+          error: createIntrinsicPropertyDefinitionActionFailureSchemas,
+          headers: createIntrinsicPropertyDefinitionActionHeadersSchema,
+          payload: createIntrinsicPropertyDefinitionActionPayloadSchema,
+          success: createIntrinsicPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configurePrincipalTimeZonePreferenceAction',
+        '/ticketing/actions/configure-principal-time-zone-preference',
+        {
+          error: configurePrincipalTimeZonePreferenceActionFailureSchemas,
+          headers: configurePrincipalTimeZonePreferenceActionHeadersSchema,
+          payload: configurePrincipalTimeZonePreferenceActionPayloadSchema,
+          success: configurePrincipalTimeZonePreferenceActionOutcomeSchema,
         },
       ),
     )
@@ -1026,6 +1098,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/configure-person-property-cardinality',
     source: 'generated-client',
   },
+  configurePrincipalTimeZonePreferenceAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configurePrincipalTimeZonePreferenceAction',
+    routePath: '/ticketing/actions/configure-principal-time-zone-preference',
+    source: 'generated-client',
+  },
   configureSelectOptionOrderAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureSelectOptionOrderAction',
@@ -1048,6 +1126,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createEmailPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-email-property-definition',
+    source: 'generated-client',
+  },
+  createIntrinsicPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createIntrinsicPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-intrinsic-property-definition',
     source: 'generated-client',
   },
   createNumberPropertyDefinitionAction: {
@@ -1164,6 +1248,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:list',
     routePath: '/ticketing',
+    source: 'generated-client',
+  },
+  queryIntrinsicTaskProperties: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:queryIntrinsicTaskProperties',
+    routePath: '/ticketing/task-collections/:collectionId/intrinsic-property-query',
     source: 'generated-client',
   },
   queryTaskEmailValues: {

@@ -1,5 +1,7 @@
 export {
   runConfigurePersonPropertyCardinalityAction,
+  runConfigurePrincipalTimeZonePreferenceAction,
+  runCreateIntrinsicPropertyDefinitionAction,
   runCreatePersonPropertyDefinitionAction,
   runUpdatePersonPropertyValueAction,
   runCreatePhonePropertyDefinitionAction,
@@ -38,6 +40,7 @@ export {
   getTicketingReadiness,
   getTaskPropertyWorkspace,
   getTaskPropertyEditCapability,
+  queryIntrinsicTaskProperties,
   listTicketing,
   queryTaskPersonValues,
   searchEligiblePeople,

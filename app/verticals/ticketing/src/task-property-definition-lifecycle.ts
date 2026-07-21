@@ -377,8 +377,27 @@ const urlLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const intrinsicLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: () => Promise.resolve(),
+  deleteValues: () => Promise.resolve(),
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.tasks as task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = task.collection_id
+        and schema.tenant_id = task.tenant_id
+      where schema.schema_id = ${target.schemaId}
+        and task.tenant_id = ${target.tenantId}
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const lifecycleAdapters = {
   checkbox: checkboxLifecycleAdapter,
+  created_by: intrinsicLifecycleAdapter,
+  created_time: intrinsicLifecycleAdapter,
   email: emailLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
@@ -612,6 +631,8 @@ export const duplicateTaskPropertyDefinition = async ({
     return definition;
   }
   if (
+    target.datatype === 'created_by' ||
+    target.datatype === 'created_time' ||
     target.datatype === 'email' ||
     target.datatype === 'phone' ||
     target.datatype === 'text' ||
