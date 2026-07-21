@@ -396,15 +396,9 @@ export const runTransitionTaskRetentionAction = (
 
 export const runCreateUrlPropertyDefinitionAction = (
   payload: CreateUrlPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateUrlPropertyDefinitionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -423,15 +417,9 @@ export const runCreateUrlPropertyDefinitionAction = (
 
 export const runUpdateUrlPropertyValueAction = (
   payload: UpdateUrlPropertyValueActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UpdateUrlPropertyValueActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,

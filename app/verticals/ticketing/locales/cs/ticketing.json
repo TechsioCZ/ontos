@@ -40,7 +40,19 @@
     },
     "url": {
       "copy": "Kopírovat URL",
-      "open": "Otevřít URL"
+      "definitionCreate": "Přidat URL property",
+      "definitionCreateFailedDescription": "URL property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření URL property selhalo",
+      "definitionCreating": "Přidávání URL property",
+      "definitionName": "Název URL property",
+      "invalid": "Zadejte jednu absolutní HTTP nebo HTTPS URL.",
+      "open": "Otevřít URL",
+      "save": "Uložit URL",
+      "saveFailedDescription": "URL se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení URL selhalo",
+      "saving": "Ukládání URL",
+      "staleDescription": "Vaše rozepsaná URL zůstala zachována. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "URL byla změněna jinde"
     },
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {

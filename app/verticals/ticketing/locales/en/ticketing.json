@@ -40,7 +40,19 @@
     },
     "url": {
       "copy": "Copy URL",
-      "open": "Open URL"
+      "definitionCreate": "Add URL property",
+      "definitionCreateFailedDescription": "The URL property could not be created.",
+      "definitionCreateFailedTitle": "URL property creation failed",
+      "definitionCreating": "Adding URL property",
+      "definitionName": "URL property name",
+      "invalid": "Enter one absolute HTTP or HTTPS URL.",
+      "open": "Open URL",
+      "save": "Save URL",
+      "saveFailedDescription": "The URL could not be saved.",
+      "saveFailedTitle": "URL save failed",
+      "saving": "Saving URL",
+      "staleDescription": "Your URL draft is still here. Reload before trying again.",
+      "staleTitle": "URL changed elsewhere"
     },
     "widgetBody": "Owns a vertical route surface.",
     "pages": {

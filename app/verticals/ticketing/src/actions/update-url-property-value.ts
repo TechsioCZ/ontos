@@ -25,6 +25,10 @@ interface UrlValueRow {
   readonly value: string | null;
 }
 
+interface CurrentUrlValueRow extends UrlValueRow {
+  readonly mandatory: boolean;
+}
+
 const urlPropertyValueEvidence = (
   input: UpdateUrlPropertyValueActionPayload,
   response: UpdateUrlPropertyValueActionResponse,
@@ -78,6 +82,7 @@ const updateUrlPropertyValueActionHandler: ActionHandler<
   const currentResult = await services.tx.execute(sql`
     select
       value.property_definition_id as "propertyDefinitionId",
+      definition.mandatory,
       value.revision,
       task.revision as "taskRevision",
       value.value
@@ -100,12 +105,19 @@ const updateUrlPropertyValueActionHandler: ActionHandler<
       and schema.collection_id = ${input.collectionId}
     for update of value, task
   `);
-  const current = rowsFromResult<UrlValueRow>(currentResult).at(0);
+  const current = rowsFromResult<CurrentUrlValueRow>(currentResult).at(0);
 
   if (current === undefined) {
     throw rejectAction({
       code: 'ticketing.updateUrlPropertyValue.stale_or_missing',
       message: 'The URL value changed elsewhere or is no longer available.',
+    });
+  }
+
+  if (current.mandatory && value === null) {
+    throw rejectAction({
+      code: 'ticketing.updateUrlPropertyValue.mandatory_empty',
+      message: 'A Mandatory URL cannot be Empty.',
     });
   }
 

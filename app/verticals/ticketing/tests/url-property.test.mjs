@@ -89,7 +89,7 @@ const runRegisteredAction = ({ operationContext, payload, registration }) =>
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
   });
 
-const createUrlWorkspace = async (operationContext) => {
+const createUrlWorkspace = async (operationContext, { mandatory = false } = {}) => {
   const collection = await runRegisteredAction({
     operationContext,
     payload: {},
@@ -105,7 +105,7 @@ const createUrlWorkspace = async (operationContext) => {
   assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
   const definition = await runRegisteredAction({
     operationContext,
-    payload: { collectionId, mandatory: false, name: 'Reference URL' },
+    payload: { collectionId, mandatory, name: 'Reference URL' },
     registration: createUrlPropertyDefinitionActionRegistration,
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
@@ -244,6 +244,36 @@ test('outer-whitespace-only input clears a URL once and repeated clear is a no-o
     noOp.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
     false,
   );
+});
+
+test('a Mandatory URL rejects clearing while preserving its committed value and revisions', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } = await createUrlWorkspace(operationContext, {
+    mandatory: true,
+  });
+  const update = (expectedRevision, value) =>
+    runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision,
+        propertyDefinitionId: definition.propertyDefinitionId,
+        taskId: task.taskId,
+        value,
+      },
+      registration: updateUrlPropertyValueActionRegistration,
+    });
+
+  const accepted = await update(0, 'https://example.com/required');
+  assert.equal(accepted._tag, 'OperationSucceeded', JSON.stringify(accepted));
+  const rejected = await update(1, ' \t ');
+  assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'ticketing.updateUrlPropertyValue.mandatory_empty');
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].taskRevision, 2);
+  assert.deepEqual(workspace.response.tasks[0].urlValues, [accepted.response.value]);
 });
 
 test('URL Action descriptors target collection roles and never expose the raw URL in evidence', () => {
@@ -395,6 +425,40 @@ test('URL query operations share locale-aware exact-string semantics and keep Em
     { heading: 'https://z.example/path', taskIds: [thirdTask.taskId] },
     { heading: null, taskIds: [emptyTask.taskId] },
   ]);
+});
+
+test('URL substring search delegates case equivalence to collection collation', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } = await createUrlWorkspace(operationContext);
+  const changed = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      taskId: task.taskId,
+      value: 'https://example.com/\u03BF\u03C3',
+    },
+    registration: updateUrlPropertyValueActionRegistration,
+  });
+  assert.equal(changed._tag, 'OperationSucceeded', JSON.stringify(changed));
+
+  const searched = await runDataAccess({
+    options: {
+      authorizationChecker: () => ({ _tag: 'Allowed' }),
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: {
+      collectionId,
+      operation: { kind: 'search', query: '\u039F\u03A3' },
+      propertyDefinitionId: definition.propertyDefinitionId,
+    },
+    registration: queryTaskUrlValuesDataAccessRegistration,
+    resultCount: (response) => response.taskIds.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(searched._tag, 'OperationSucceeded', JSON.stringify(searched));
+  assert.deepEqual(searched.response.taskIds, [task.taskId]);
 });
 
 test('URL definition duplication and deletion impact use independent values without editing Tasks', async () => {

@@ -28,23 +28,34 @@ interface MutableUrlValueGroup {
 const stableTaskOrder = (left: UrlValueRow, right: UrlValueRow): number =>
   left.taskId.localeCompare(right.taskId);
 
-const queryText = (value: string, locale: string): string =>
-  value.normalize('NFC').toLocaleLowerCase(locale);
+const containsByCollation = (value: string, query: string, collator: Intl.Collator): boolean => {
+  const source = [...value.normalize('NFC')];
+  const expected = [...query.normalize('NFC')];
+  if (expected.length === 0) {
+    return true;
+  }
+  for (let start = 0; start <= source.length - expected.length; start += 1) {
+    if (collator.compare(source.slice(start, start + expected.length).join(''), query) === 0) {
+      return true;
+    }
+  }
+  return false;
+};
 
 const filterRows = (
   rows: readonly UrlValueRow[],
   operation: Extract<QueryTaskUrlValuesPayload['operation'], { readonly kind: 'filter' }>,
-  locale: string,
+  collator: Intl.Collator,
 ): readonly UrlValueRow[] => {
   switch (operation.operator) {
     case 'contains': {
-      const query = queryText(operation.query, locale);
-      return rows.filter(({ value }) => value !== null && queryText(value, locale).includes(query));
+      return rows.filter(
+        ({ value }) => value !== null && containsByCollation(value, operation.query, collator),
+      );
     }
     case 'does_not_contain': {
-      const query = queryText(operation.query, locale);
       return rows.filter(
-        ({ value }) => value === null || !queryText(value, locale).includes(query),
+        ({ value }) => value === null || !containsByCollation(value, operation.query, collator),
       );
     }
     case 'is_empty': {
@@ -133,8 +144,11 @@ export const queryTaskUrlValuesDataAccessRegistration: DataAccessRegistration<
   handler: async (input, { context, db }) => {
     const localeResult = await db.execute(sql`
       select tenant.default_locale as locale
-      from core.tenants as tenant
-      where tenant.tenant_id = ${context.tenantId}
+      from ticketing.task_collections as collection
+      inner join core.tenants as tenant
+        on tenant.tenant_id = collection.tenant_id
+      where collection.collection_id = ${input.collectionId}
+        and collection.tenant_id = ${context.tenantId}
     `);
     const locale = rowsFromResult<LocaleRow>(localeResult).at(0)?.locale ?? 'en-GB';
     const result = await db.execute(sql`
@@ -162,14 +176,20 @@ export const queryTaskUrlValuesDataAccessRegistration: DataAccessRegistration<
       sensitivity: 'accent',
       usage: 'sort',
     });
+    const searchCollator = new Intl.Collator(locale, {
+      sensitivity: 'accent',
+      usage: 'search',
+    });
 
     switch (input.operation.kind) {
       case 'search': {
-        const query = queryText(input.operation.query, locale);
         return {
           groups: [],
           taskIds: rows
-            .filter(({ value }) => value !== null && queryText(value, locale).includes(query))
+            .filter(
+              ({ value }) =>
+                value !== null && containsByCollation(value, input.operation.query, searchCollator),
+            )
             .toSorted(stableTaskOrder)
             .map(({ taskId }) => taskId),
         };
@@ -177,7 +197,7 @@ export const queryTaskUrlValuesDataAccessRegistration: DataAccessRegistration<
       case 'filter': {
         return {
           groups: [],
-          taskIds: filterRows(rows, input.operation, locale)
+          taskIds: filterRows(rows, input.operation, searchCollator)
             .toSorted(stableTaskOrder)
             .map(({ taskId }) => taskId),
         };
