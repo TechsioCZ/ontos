@@ -17,6 +17,7 @@ import type {
   UpdateUrlPropertyValueActionResponse,
 } from '../../shared/actions/update-url-property-value.ts';
 import { InvalidUrlPropertyValueError, validateUrlPropertyValue } from '../url-property.ts';
+import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
 
 interface UrlValueRow {
   readonly propertyDefinitionId: string;
@@ -120,6 +121,13 @@ const updateUrlPropertyValueActionHandler: ActionHandler<
       message: 'A Mandatory URL cannot be Empty.',
     });
   }
+
+  await rejectTaskEditWithEmptyMandatoryEmail({
+    collectionId: input.collectionId,
+    db: services.tx,
+    taskId: input.taskId,
+    tenantId: services.context.tenantId,
+  });
 
   if (current.value === value) {
     services.markNoOp();

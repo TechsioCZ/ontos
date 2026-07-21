@@ -29,6 +29,7 @@ interface DefinitionFields {
 
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
+  | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent';
@@ -44,7 +45,51 @@ interface OptionRow extends SelectOption {
   readonly propertyDefinitionId: string;
 }
 
+const taskPropertyDefinitionFromRow = (
+  definition: DefinitionRow,
+  optionRows: readonly OptionRow[],
+  locale: string,
+): TaskPropertyDefinition => {
+  if (definition.datatype === 'number') {
+    return definition;
+  }
+  if (definition.datatype === 'select') {
+    const optionOrderMode = definition.optionOrderMode ?? 'manual';
+    return {
+      datatype: 'select',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      optionOrderMode,
+      options: orderSelectOptions(
+        optionRows
+          .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
+          .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),
+        optionOrderMode,
+        locale,
+      ),
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
+  }
+  return {
+    datatype: definition.datatype,
+    hidden: definition.hidden,
+    mandatory: definition.mandatory,
+    name: definition.name,
+    propertyDefinitionId: definition.propertyDefinitionId,
+    revision: definition.revision,
+  };
+};
+
 interface NumberValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly value: string | null;
+}
+
+interface EmailValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskId: string;
@@ -88,6 +133,11 @@ interface TaskRow {
     revision: number;
     value: boolean;
   }[];
+  readonly emailValues: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: string | null;
+  }[];
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
@@ -107,7 +157,7 @@ interface TaskRow {
     revision: number;
   }[];
   readonly title: string;
-  readonly urlValues: {
+  readonly urlValues?: {
     propertyDefinitionId: string;
     revision: number;
     value: string | null;
@@ -118,13 +168,101 @@ const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow
   for (const row of rows) {
     const task = tasks.get(row.taskId);
     if (task !== undefined) {
-      task.urlValues.push({
+      task.urlValues?.push({
         propertyDefinitionId: row.propertyDefinitionId,
         revision: row.revision,
         value: row.value,
       });
     }
   }
+};
+
+const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectValueRow[]): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task === undefined) {
+      continue;
+    }
+    task.selectValues ??= [];
+    task.selectValues.push({
+      ...(row.optionId === null ? {} : { optionId: row.optionId }),
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+    });
+  }
+};
+
+const taskRowsFromValues = ({
+  definitions,
+  emailValueRows,
+  numberValueRows,
+  selectValueRows,
+  textValueRows,
+  urlValueRows,
+  valueRows,
+}: {
+  readonly definitions: readonly TaskPropertyDefinition[];
+  readonly emailValueRows: readonly EmailValueRow[];
+  readonly numberValueRows: readonly NumberValueRow[];
+  readonly selectValueRows: readonly SelectValueRow[];
+  readonly textValueRows: readonly TextValueRow[];
+  readonly urlValueRows: readonly UrlValueRow[];
+  readonly valueRows: readonly ValueRow[];
+}): TaskRow[] => {
+  const tasks = new Map<string, TaskRow>();
+  const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+  const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
+  const hasUrlDefinitions = definitions.some(({ datatype }) => datatype === 'url');
+
+  for (const row of valueRows) {
+    const current = tasks.get(row.taskId) ?? {
+      checkboxValues: [],
+      emailValues: [],
+      ...(hasNumberDefinitions ? { numberValues: [] } : {}),
+      taskId: row.taskId,
+      taskRevision: row.taskRevision,
+      ...(hasTextDefinitions ? { textValues: [] } : {}),
+      title: row.title,
+      ...(hasUrlDefinitions ? { urlValues: [] } : {}),
+    };
+    if (row.propertyDefinitionId !== null) {
+      current.checkboxValues.push({
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+        value: row.value,
+      });
+    }
+    tasks.set(row.taskId, current);
+  }
+
+  for (const row of emailValueRows) {
+    tasks.get(row.taskId)?.emailValues.push({
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      value: row.value,
+    });
+  }
+
+  for (const row of textValueRows) {
+    tasks.get(row.taskId)?.textValues?.push({
+      document: row.document,
+      propertyDefinitionId: row.propertyDefinitionId,
+      readableText: row.readableText,
+      revision: row.revision,
+    });
+  }
+
+  for (const row of numberValueRows) {
+    tasks.get(row.taskId)?.numberValues?.push({
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      value: row.value === null ? null : (canonicalizeNumberValue(row.value) ?? row.value),
+    });
+  }
+
+  appendSelectValues(tasks, selectValueRows);
+  appendUrlValues(tasks, urlValueRows);
+  return [...tasks.values()];
 };
 
 export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistration<
@@ -168,7 +306,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'number', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'email', 'number', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -188,6 +326,24 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and definition.tenant_id = value.tenant_id
       where task.collection_id = ${input.collectionId}
         and task.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const emailValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        value.value
+      from ticketing.task_email_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'email'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
     const textValueResult = await db.execute(sql`
@@ -285,100 +441,19 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const locale = input.locale ?? 'en-GB';
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
       definitionResult,
-    ).map((definition) => {
-      if (definition.datatype === 'number') {
-        return definition;
-      }
-      if (definition.datatype === 'select') {
-        const optionOrderMode = definition.optionOrderMode ?? 'manual';
-        return {
-          datatype: 'select',
-          hidden: definition.hidden,
-          mandatory: definition.mandatory,
-          name: definition.name,
-          optionOrderMode,
-          options: orderSelectOptions(
-            optionRows
-              .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
-              .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),
-            optionOrderMode,
-            locale,
-          ),
-          propertyDefinitionId: definition.propertyDefinitionId,
-          revision: definition.revision,
-        };
-      }
-      return {
-        datatype: definition.datatype,
-        hidden: definition.hidden,
-        mandatory: definition.mandatory,
-        name: definition.name,
-        propertyDefinitionId: definition.propertyDefinitionId,
-        revision: definition.revision,
-      };
-    });
-    const valueRows = rowsFromResult<ValueRow>(valueResult);
-    const textValueRows = rowsFromResult<TextValueRow>(textValueResult);
-    const tasks = new Map<string, TaskRow>();
-    const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
-    const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
-
-    for (const row of valueRows) {
-      const current = tasks.get(row.taskId) ?? {
-        checkboxValues: [],
-        ...(hasNumberDefinitions ? { numberValues: [] } : {}),
-        taskId: row.taskId,
-        taskRevision: row.taskRevision,
-        ...(hasTextDefinitions ? { textValues: [] } : {}),
-        title: row.title,
-        urlValues: [],
-      };
-      if (row.propertyDefinitionId !== null) {
-        current.checkboxValues.push({
-          propertyDefinitionId: row.propertyDefinitionId,
-          revision: row.revision,
-          value: row.value,
-        });
-      }
-      tasks.set(row.taskId, current);
-    }
-
-    for (const row of textValueRows) {
-      tasks.get(row.taskId)?.textValues?.push({
-        document: row.document,
-        propertyDefinitionId: row.propertyDefinitionId,
-        readableText: row.readableText,
-        revision: row.revision,
-      });
-    }
-
-    for (const row of rowsFromResult<NumberValueRow>(numberValueResult)) {
-      tasks.get(row.taskId)?.numberValues?.push({
-        propertyDefinitionId: row.propertyDefinitionId,
-        revision: row.revision,
-        value: row.value === null ? null : (canonicalizeNumberValue(row.value) ?? row.value),
-      });
-    }
-
-    for (const row of rowsFromResult<SelectValueRow>(selectValueResult)) {
-      const task = tasks.get(row.taskId);
-      if (task === undefined) {
-        continue;
-      }
-      task.selectValues ??= [];
-      task.selectValues.push({
-        ...(row.optionId === null ? {} : { optionId: row.optionId }),
-        propertyDefinitionId: row.propertyDefinitionId,
-        revision: row.revision,
-      });
-    }
-
-    appendUrlValues(tasks, rowsFromResult<UrlValueRow>(urlValueResult));
-
+    ).map((definition) => taskPropertyDefinitionFromRow(definition, optionRows, locale));
     return {
       collectionId: input.collectionId,
       propertyDefinitions: [...definitions],
-      tasks: [...tasks.values()],
+      tasks: taskRowsFromValues({
+        definitions,
+        emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
+        numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
+        selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
+        textValueRows: rowsFromResult<TextValueRow>(textValueResult),
+        urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),
+        valueRows: rowsFromResult<ValueRow>(valueResult),
+      }),
     };
   },
 };

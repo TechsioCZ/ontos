@@ -7,8 +7,10 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import {
   Effect,
+  getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateCheckboxPropertyDefinitionAction,
+  runCreateEmailPropertyDefinitionAction,
   runCreateNumberPropertyDefinitionAction,
   runCreateTextPropertyDefinitionAction,
   runCreateTaskAction,
@@ -17,12 +19,14 @@ import {
   runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
+  runUpdateEmailPropertyValueAction,
   runUpdateNumberPropertyValueAction,
   runUpdateTextPropertyValueAction,
   runUpdateUrlPropertyValueAction,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
+import { EmailPropertyEditor } from '../components/email-property-editor';
 import { NumberPropertyEditor } from '../components/number-property-editor';
 import { TextPropertyEditor } from '../components/text-property-editor';
 import { TextPropertyDuplication } from '../components/text-property-duplication';
@@ -77,6 +81,12 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
+  const [emailDefinitionName, setEmailDefinitionName] = useState('');
+  const [emailDefinitionIdempotencyKey, setEmailDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
+  const [canEditTaskPropertyValues, setCanEditTaskPropertyValues] = useState(false);
   const [textDefinitionName, setTextDefinitionName] = useState('');
   const [textDefinitionIdempotencyKey, setTextDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
@@ -155,6 +165,8 @@ export const TicketingExperience = () => {
               setOpenedTaskCollection(taskCollection);
               setCheckboxDefinitionName('');
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
+              setEmailDefinitionName('');
+              setEmailDefinitionIdempotencyKey(crypto.randomUUID());
               setNumberDefinitionName('');
               setNumberDefinitionIdempotencyKey(crypto.randomUUID());
               setUrlDefinitionName('');
@@ -165,6 +177,7 @@ export const TicketingExperience = () => {
                 tasks: [
                   {
                     checkboxValues: [],
+                    emailValues: [],
                     numberValues: [],
                     selectValues: [],
                     taskId: taskCollection.task.taskId,
@@ -177,6 +190,11 @@ export const TicketingExperience = () => {
               setPendingTaskCollection(undefined);
               setPendingTaskCollectionReadId(undefined);
               setFormIdempotencyKey(crypto.randomUUID());
+              void runEffectRequest(
+                getTaskPropertyEditCapability(taskCollection.collection.collectionId, { headers }),
+              )
+                .then(({ canEdit }) => setCanEditTaskPropertyValues(canEdit))
+                .catch(() => setCanEditTaskPropertyValues(false));
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),
@@ -253,6 +271,50 @@ export const TicketingExperience = () => {
       });
     } finally {
       setIsCreatingCheckboxDefinition(false);
+    }
+  };
+
+  const handleCreateEmailDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || emailDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingEmailDefinition(true);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateEmailPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: emailDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: emailDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setEmailDefinitionName('');
+      setEmailDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.email.definitionCreateFailedDescription'),
+        title: t('ticketing.email.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingEmailDefinition(false);
     }
   };
 
@@ -486,6 +548,23 @@ export const TicketingExperience = () => {
               {t('ticketing.checkbox.definitionCreate')}
             </Button>
             <FormInput
+              id="email-property-name"
+              label={t('ticketing.email.definitionName')}
+              name="email-property-name"
+              onChange={(event) => setEmailDefinitionName(event.currentTarget.value)}
+              value={emailDefinitionName}
+            />
+            <Button
+              disabled={emailDefinitionName.trim().length === 0}
+              isLoading={isCreatingEmailDefinition}
+              loadingText={t('ticketing.email.definitionCreating')}
+              onClick={() => void handleCreateEmailDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.email.definitionCreate')}
+            </Button>
+            <FormInput
               id="text-property-name"
               label={t('ticketing.text.definitionName')}
               name="text-property-name"
@@ -541,10 +620,60 @@ export const TicketingExperience = () => {
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
+                if (task === undefined) {
+                  return null;
+                }
+                if (definition.datatype === 'email') {
+                  const emailValue = task.emailValues.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return (
+                    <EmailPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateEmailPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        emailValues: [
+                                          ...candidate.emailValues.filter(
+                                            ({ propertyDefinitionId }) =>
+                                              propertyDefinitionId !== draft.propertyDefinitionId,
+                                          ),
+                                          outcome.response.value,
+                                        ],
+                                        taskRevision: outcome.response.taskRevision,
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
+                      revision={emailValue?.revision ?? 0}
+                      taskId={task.taskId}
+                      value={emailValue?.value ?? null}
+                    />
+                  );
+                }
                 if (definition.datatype === 'number') {
-                  if (task === undefined) {
-                    return null;
-                  }
                   const value = (task.numberValues ?? []).find(
                     (candidate) =>
                       candidate.propertyDefinitionId === definition.propertyDefinitionId,
@@ -594,6 +723,7 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
                       revision={value.revision}
                       taskId={task.taskId}
                       value={value.value}
@@ -605,7 +735,7 @@ export const TicketingExperience = () => {
                     (candidate) =>
                       candidate.propertyDefinitionId === definition.propertyDefinitionId,
                   );
-                  return task === undefined || value === undefined ? null : (
+                  return value === undefined ? null : (
                     <div
                       className="ticketing:grid ticketing:gap-2"
                       key={definition.propertyDefinitionId}
@@ -647,6 +777,7 @@ export const TicketingExperience = () => {
                           return outcome.response;
                         }}
                         propertyDefinitionId={definition.propertyDefinitionId}
+                        readOnly={!canEditTaskPropertyValues}
                         revision={value.revision}
                         taskId={task.taskId}
                       />
@@ -697,7 +828,7 @@ export const TicketingExperience = () => {
                     (candidate) =>
                       candidate.propertyDefinitionId === definition.propertyDefinitionId,
                   );
-                  return task === undefined || value === undefined ? null : (
+                  return value === undefined ? null : (
                     <UrlPropertyEditor
                       collectionId={openedTaskPropertyWorkspace.collectionId}
                       key={definition.propertyDefinitionId}
@@ -735,6 +866,7 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
                       revision={value.revision}
                       taskId={task.taskId}
                       value={value.value}
@@ -744,7 +876,7 @@ export const TicketingExperience = () => {
                 const value = task?.checkboxValues.find(
                   (candidate) => candidate.propertyDefinitionId === definition.propertyDefinitionId,
                 );
-                return task === undefined || value === undefined ? null : (
+                return value === undefined ? null : (
                   <CheckboxPropertyEditor
                     collectionId={openedTaskPropertyWorkspace.collectionId}
                     key={definition.propertyDefinitionId}
@@ -782,6 +914,7 @@ export const TicketingExperience = () => {
                       return outcome.response;
                     }}
                     propertyDefinitionId={definition.propertyDefinitionId}
+                    readOnly={!canEditTaskPropertyValues}
                     revision={value.revision}
                     taskId={task.taskId}
                     value={value.value}

@@ -17,6 +17,7 @@ import type {
   UpdateNumberPropertyValueActionResponse,
 } from '../../shared/actions/update-number-property-value.ts';
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
+import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
 
 interface CurrentNumberValueRow {
   readonly mandatory: boolean;
@@ -120,6 +121,12 @@ const updateNumberPropertyValueActionHandler: ActionHandler<
       message: 'Mandatory Number must contain a value.',
     });
   }
+  await rejectTaskEditWithEmptyMandatoryEmail({
+    collectionId: input.collectionId,
+    db: services.tx,
+    taskId: input.taskId,
+    tenantId: services.context.tenantId,
+  });
   const currentCanonical =
     current.value === null ? null : (canonicalizeNumberValue(current.value) ?? current.value);
   if (currentCanonical === canonicalValue) {

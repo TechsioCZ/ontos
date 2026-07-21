@@ -21,6 +21,7 @@ import {
   normalizeTextDocument,
   validateTextDocumentReferences,
 } from '../text-property-document.ts';
+import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
 
 interface CurrentTextValueRow {
   readonly document: TextDocument | null;
@@ -118,6 +119,13 @@ const updateTextPropertyValueActionHandler: ActionHandler<
       message: 'Mandatory Text must contain meaningful content.',
     });
   }
+
+  await rejectTaskEditWithEmptyMandatoryEmail({
+    collectionId: input.collectionId,
+    db: services.tx,
+    taskId: input.taskId,
+    tenantId: services.context.tenantId,
+  });
 
   if (JSON.stringify(current.document) === JSON.stringify(normalized.document)) {
     services.markNoOp();

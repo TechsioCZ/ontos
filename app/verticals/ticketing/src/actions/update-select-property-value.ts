@@ -16,6 +16,7 @@ import type {
   UpdateSelectPropertyValueActionPayload,
   UpdateSelectPropertyValueActionResponse,
 } from '../../shared/actions/update-select-property-value.ts';
+import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
 
 interface CurrentValueRow {
   readonly optionId: string | null;
@@ -109,6 +110,12 @@ const handler: ActionHandler<
       });
     }
   }
+  await rejectTaskEditWithEmptyMandatoryEmail({
+    collectionId: input.collectionId,
+    db: services.tx,
+    taskId: input.taskId,
+    tenantId: services.context.tenantId,
+  });
   if (current.optionId === (input.optionId ?? null)) {
     services.markNoOp();
     return {

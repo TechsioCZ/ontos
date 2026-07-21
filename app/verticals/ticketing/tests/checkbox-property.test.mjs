@@ -11,6 +11,7 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { updateCheckboxPropertyValueActionRegistration as updateCheckboxPropertyValueDescriptorRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
+import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
 
 const createdTenantIds = [];
 
@@ -240,6 +241,7 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
           value: false,
         },
       ],
+      emailValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
@@ -297,6 +299,7 @@ test('concurrent Task and Checkbox definition creation still resolves the value 
           value: false,
         },
       ],
+      emailValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
@@ -670,4 +673,27 @@ test('collection roles separate schema management, value editing, and read acces
   assert.equal(viewerRead._tag, 'OperationSucceeded');
   assert.equal(viewerReadChecks[0].permission, 'view_task_properties');
   assert.equal(viewerReadChecks[0].resourceObjectId, resourceObjectId);
+
+  for (const role of ['User', 'Viewer']) {
+    const capabilityChecks = [];
+    // oxlint-disable-next-line no-await-in-loop -- The role responses are independently asserted.
+    const capability = await runDataAccess({
+      options: {
+        authorizationChecker: authorizationForRole(role, capabilityChecks),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: { collectionId },
+      registration: getTaskPropertyEditCapabilityDataAccessRegistration,
+      resultCount: () => 1,
+      transport: { headers: new Headers() },
+    });
+    assert.equal(
+      capability._tag,
+      role === 'Viewer' ? 'OperationAuthorizationDenied' : 'OperationSucceeded',
+    );
+    assert.equal(capabilityChecks[0].permission, 'edit_task_property_values');
+    if (capability._tag === 'OperationSucceeded') {
+      assert.deepEqual(capability.response, { canEdit: true });
+    }
+  }
 });
