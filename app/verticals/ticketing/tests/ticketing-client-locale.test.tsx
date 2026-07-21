@@ -19,7 +19,7 @@ const requestText = (request: RequestInfo | URL, init?: RequestInit): Promise<st
   return Promise.resolve(String(init?.body ?? ''));
 };
 
-test('catalog reads and order transitions use the browser preferred locale by default', async () => {
+test('catalog reads and order transitions cannot override the browser preferred locale', async () => {
   const requestBodies: unknown[] = [];
   const requestUrls: string[] = [];
   rs.stubGlobal('navigator', { language: 'en-US', languages: ['sv-SE', 'en-US'] });
@@ -39,7 +39,10 @@ test('catalog reads and order transitions use the browser preferred locale by de
   );
 
   await Effect.runPromiseExit(
-    getTaskPropertyWorkspace('collection-1', { baseUrl: 'https://ticketing.example.test' }),
+    getTaskPropertyWorkspace('collection-1', {
+      baseUrl: 'https://ticketing.example.test',
+      locale: 'forged-XX',
+    }),
   );
   await Effect.runPromiseExit(
     runConfigureSelectOptionOrderAction(
@@ -48,9 +51,8 @@ test('catalog reads and order transitions use the browser preferred locale by de
         expectedRevision: 2,
         optionOrderMode: 'manual',
         propertyDefinitionId: 'property-1',
-        viewerLocale: 'forged-XX',
       },
-      { baseUrl: 'https://ticketing.example.test' },
+      { baseUrl: 'https://ticketing.example.test', locale: 'forged-XX' },
     ),
   );
 

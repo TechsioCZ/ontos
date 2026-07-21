@@ -187,7 +187,7 @@ export const getTaskPropertyWorkspace = (
   collectionId: string,
   options: TicketingClientOptions = {},
 ): TicketingClientEffect<TaskPropertyWorkspace> => {
-  const locale = options.locale ?? resolveTicketingBrowserLocale();
+  const locale = resolveTicketingBrowserLocale();
 
   return createTicketingClient({
     ...options,
@@ -548,14 +548,14 @@ export const runCreateSelectOptionAndSelectAction = (
 export type ConfigureSelectOptionOrderClientPayload = Omit<
   ConfigureSelectOptionOrderActionPayload,
   'viewerLocale'
-> & { readonly viewerLocale?: string };
+>;
 
 export const runConfigureSelectOptionOrderAction = (
   payload: ConfigureSelectOptionOrderClientPayload,
   options: TicketingClientOptions & { idempotencyKey?: string } = {},
 ): TicketingClientEffect<ConfigureSelectOptionOrderActionOutcome> => {
   const headers = actionHeaders(options);
-  const locale = options.locale ?? resolveTicketingBrowserLocale();
+  const locale = resolveTicketingBrowserLocale();
 
   return createTicketingClient({
     ...options,
