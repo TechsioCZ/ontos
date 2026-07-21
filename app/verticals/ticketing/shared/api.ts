@@ -5,6 +5,18 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import {
+  createFilesMediaPropertyDefinitionActionFailureSchemas,
+  createFilesMediaPropertyDefinitionActionHeadersSchema,
+  createFilesMediaPropertyDefinitionActionOutcomeSchema,
+  createFilesMediaPropertyDefinitionActionPayloadSchema,
+} from './actions/create-files-media-property-definition.ts';
+import {
+  uploadFilesMediaItemActionFailureSchemas,
+  uploadFilesMediaItemActionHeadersSchema,
+  uploadFilesMediaItemActionOutcomeSchema,
+  uploadFilesMediaItemActionPayloadSchema,
+} from './actions/upload-files-media-item.ts';
 import { queryTaskPersonValuesResponseSchema } from './person-query';
 import {
   configurePersonPropertyCardinalityActionFailureSchemas,
@@ -258,6 +270,12 @@ export type {
   CreateEmailPropertyDefinitionActionResponse,
 } from './actions/create-email-property-definition';
 export type {
+  CreateFilesMediaPropertyDefinitionActionFailure,
+  CreateFilesMediaPropertyDefinitionActionOutcome,
+  CreateFilesMediaPropertyDefinitionActionPayload,
+  CreateFilesMediaPropertyDefinitionActionResponse,
+} from './actions/create-files-media-property-definition.ts';
+export type {
   CreateDatePropertyDefinitionActionFailure,
   CreateDatePropertyDefinitionActionOutcome,
   CreateDatePropertyDefinitionActionPayload,
@@ -402,6 +420,12 @@ export type {
   UpdateUrlPropertyValueActionResponse,
 } from './actions/update-url-property-value';
 export type {
+  UploadFilesMediaItemActionFailure,
+  UploadFilesMediaItemActionOutcome,
+  UploadFilesMediaItemActionPayload,
+  UploadFilesMediaItemActionResponse,
+} from './actions/upload-files-media-item.ts';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
@@ -426,6 +450,7 @@ export {
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
+  filesMediaPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   personPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
@@ -440,6 +465,7 @@ export type {
   CheckboxPropertyDefinition,
   DatePropertyDefinition,
   EmailPropertyDefinition,
+  FilesMediaPropertyDefinition,
   NumberPropertyDefinition,
   PersonPropertyDefinition,
   PhonePropertyDefinition,
@@ -1149,6 +1175,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: configurePersonPropertyCardinalityActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createFilesMediaPropertyDefinitionAction',
+        '/ticketing/actions/create-files-media-property-definition',
+        {
+          error: createFilesMediaPropertyDefinitionActionFailureSchemas,
+          headers: createFilesMediaPropertyDefinitionActionHeadersSchema,
+          payload: createFilesMediaPropertyDefinitionActionPayloadSchema,
+          success: createFilesMediaPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'uploadFilesMediaItemAction',
+        '/ticketing/actions/upload-files-media-item',
+        {
+          error: uploadFilesMediaItemActionFailureSchemas,
+          headers: uploadFilesMediaItemActionHeadersSchema,
+          payload: uploadFilesMediaItemActionPayloadSchema,
+          success: uploadFilesMediaItemActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -1199,6 +1249,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createEmailPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-email-property-definition',
+    source: 'generated-client',
+  },
+  createFilesMediaPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createFilesMediaPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-files-media-property-definition',
     source: 'generated-client',
   },
   createIntrinsicPropertyDefinitionAction: {
@@ -1438,6 +1494,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateUrlPropertyValueAction',
     routePath: '/ticketing/actions/update-url-property-value',
+    source: 'generated-client',
+  },
+  uploadFilesMediaItemAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:uploadFilesMediaItemAction',
+    routePath: '/ticketing/actions/upload-files-media-item',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

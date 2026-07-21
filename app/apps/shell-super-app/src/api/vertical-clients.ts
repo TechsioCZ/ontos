@@ -1,4 +1,6 @@
 export {
+  runCreateFilesMediaPropertyDefinitionAction,
+  runUploadFilesMediaItemAction,
   groupTaskDateValues,
   runConfigurePersonPropertyCardinalityAction,
   runCreateDatePropertyDefinitionAction,

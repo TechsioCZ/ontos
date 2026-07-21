@@ -76,6 +76,21 @@ export type {
   ResolvedPersonDirectoryEntry,
 } from './person-directory.ts';
 export {
+  commitMediaAssetUpload,
+  getAuthorizedMediaDownload,
+  getMediaAssetProjections,
+  getMediaUploadPolicy,
+  MediaUploadConfigurationError,
+} from './media.ts';
+export { MediaUploadRejectedError } from './media-upload-rejected-error.ts';
+export type {
+  AuthorizedMediaDownloadResult,
+  CommittedMediaAsset,
+  MediaAssetUploadInput,
+  MediaAssetProjection,
+  MediaUploadPolicy,
+} from './media.ts';
+export {
   createVerticalGatewayToken,
   resolveVerticalGatewayToken,
 } from './vertical-gateway-token.ts';

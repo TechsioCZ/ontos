@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  customType,
   index,
   integer,
   jsonb,
@@ -556,6 +557,18 @@ export const mediaAssets = coreSchema.table(
     ),
   ],
 );
+
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType: () => 'bytea',
+});
+
+export const mediaAssetBytes = coreSchema.table('media_asset_bytes', {
+  bytes: bytea('bytes').notNull(),
+  mediaAssetId: uuid('media_asset_id')
+    .primaryKey()
+    .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' }),
+  tenantId: tenantId(),
+});
 
 const mediaAssetId = () =>
   uuid('media_asset_id')

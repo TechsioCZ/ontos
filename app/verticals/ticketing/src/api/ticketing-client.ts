@@ -130,6 +130,12 @@ import type {
   CreateIntrinsicPropertyDefinitionActionPayload,
   QueryIntrinsicTaskPropertiesPayload,
   QueryIntrinsicTaskPropertiesResponse,
+  CreateFilesMediaPropertyDefinitionActionFailure,
+  CreateFilesMediaPropertyDefinitionActionOutcome,
+  CreateFilesMediaPropertyDefinitionActionPayload,
+  UploadFilesMediaItemActionFailure,
+  UploadFilesMediaItemActionOutcome,
+  UploadFilesMediaItemActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -144,6 +150,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UploadFilesMediaItemActionFailure
+  | CreateFilesMediaPropertyDefinitionActionFailure
   | CreateDatePropertyDefinitionActionFailure
   | UpdateDatePropertyValueActionFailure
   | ConfigurePersonPropertyCardinalityActionFailure
@@ -1180,6 +1188,46 @@ export const runConfigurePrincipalTimeZonePreferenceAction = (
         headers: headers ?? {},
         payload,
       }),
+    ),
+  );
+};
+
+export const runCreateFilesMediaPropertyDefinitionAction = (
+  payload: CreateFilesMediaPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateFilesMediaPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createFilesMediaPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createFilesMediaPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUploadFilesMediaItemAction = (
+  payload: UploadFilesMediaItemActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UploadFilesMediaItemActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.uploadFilesMediaItemAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.uploadFilesMediaItemAction({ headers: headers ?? {}, payload }),
     ),
   );
 };

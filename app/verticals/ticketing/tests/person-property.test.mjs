@@ -298,6 +298,7 @@ test('an eligible tenant member can be assigned through the Person action and pu
       checkboxValues: [],
       dateValues: [],
       emailValues: [],
+      filesMediaItems: [],
       personValues: [
         {
           people: [

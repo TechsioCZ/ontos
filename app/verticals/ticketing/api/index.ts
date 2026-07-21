@@ -13,6 +13,8 @@ import { configurePrincipalTimeZonePreferenceActionRegistration } from '../src/a
 import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { createPersonPropertyDefinitionActionRegistration } from '../src/actions/create-person-property-definition.ts';
 import { updatePersonPropertyValueActionRegistration } from '../src/actions/update-person-property-value.ts';
+import { createFilesMediaPropertyDefinitionActionRegistration } from '../src/actions/create-files-media-property-definition.ts';
+import { uploadFilesMediaItemActionRegistration } from '../src/actions/upload-files-media-item.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
 import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
@@ -963,6 +965,38 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           attributes: operationAttributes(
             ticketingOperationContexts.configurePersonPropertyCardinalityAction,
           ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createFilesMediaPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createFilesMediaPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createFilesMediaPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createFilesMediaPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('uploadFilesMediaItemAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: uploadFilesMediaItemActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.uploadFilesMediaItemAction', {
+          attributes: operationAttributes(ticketingOperationContexts.uploadFilesMediaItemAction),
           kind: 'server',
         }),
       ),

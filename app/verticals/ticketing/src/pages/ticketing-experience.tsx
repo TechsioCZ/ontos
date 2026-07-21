@@ -218,6 +218,7 @@ export const TicketingExperience = () => {
                     checkboxValues: [],
                     dateValues: [],
                     emailValues: [],
+                    filesMediaItems: [],
                     numberValues: [],
                     personValues: [],
                     phoneValues: [],

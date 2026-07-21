@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off
-import { createPersonDirectory, rowsFromResult } from '@app/core-runtime';
+import { createPersonDirectory, getMediaAssetProjections, rowsFromResult } from '@app/core-runtime';
 import type { DataAccessRegistration, ResolvedPersonDirectoryEntry } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import { resolveEffectiveTimeZone } from '@app/core-runtime/principal-time-zone-preferences';
@@ -33,6 +33,7 @@ type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'date' })
   | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
   | (DefinitionFields & { readonly datatype: 'email' })
+  | (DefinitionFields & { readonly datatype: 'files_media' })
   | (DefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent';
@@ -176,6 +177,21 @@ interface ValueRow {
   readonly value: boolean;
 }
 
+interface StoredFilesMediaItemRow {
+  readonly itemId: string;
+  readonly mediaAssetId: string;
+  readonly position: number;
+  readonly propertyDefinitionId: string;
+  readonly taskId: string;
+}
+
+interface FilesMediaItemRow extends StoredFilesMediaItemRow {
+  readonly access: 'download';
+  readonly byteSize: number;
+  readonly displayFilename: string;
+  readonly effectiveMimeType: string;
+}
+
 interface TaskRow {
   readonly checkboxValues: {
     propertyDefinitionId: string;
@@ -192,6 +208,7 @@ interface TaskRow {
     revision: number;
     value: string | null;
   }[];
+  readonly filesMediaItems: Omit<FilesMediaItemRow, 'taskId'>[];
   readonly createdAt?: string;
   readonly createdBy?: {
     displayName: string;
@@ -288,6 +305,19 @@ const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectVa
   }
 };
 
+const appendFilesMediaItems = (
+  tasks: Map<string, TaskRow>,
+  rows: readonly FilesMediaItemRow[],
+): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task !== undefined) {
+      const { taskId: _taskId, ...item } = row;
+      task.filesMediaItems.push(item);
+    }
+  }
+};
+
 const intrinsicTaskFacts = (
   row: ValueRow,
   exposesCreatedBy: boolean,
@@ -309,6 +339,7 @@ const taskRowsFromValues = ({
   dateValueRows,
   definitions,
   emailValueRows,
+  filesMediaRows,
   numberValueRows,
   personAssignmentRows,
   personValueRows,
@@ -322,6 +353,7 @@ const taskRowsFromValues = ({
   readonly dateValueRows: readonly DateValueRow[];
   readonly definitions: readonly TaskPropertyDefinition[];
   readonly emailValueRows: readonly EmailValueRow[];
+  readonly filesMediaRows: readonly FilesMediaItemRow[];
   readonly numberValueRows: readonly NumberValueRow[];
   readonly personAssignmentRows: readonly PersonAssignmentRow[];
   readonly personValueRows: readonly PersonValueRow[];
@@ -347,6 +379,7 @@ const taskRowsFromValues = ({
       dateValues: [],
       ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
       emailValues: [],
+      filesMediaItems: [],
       phoneValues: [],
       ...optionalTaskValueArrays(),
       taskId: row.taskId,
@@ -417,6 +450,7 @@ const taskRowsFromValues = ({
 
   appendSelectValues(tasks, selectValueRows);
   appendDateValues(tasks, dateValueRows);
+  appendFilesMediaItems(tasks, filesMediaRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
 };
@@ -466,7 +500,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'number', 'person', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'number', 'person', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -673,6 +707,21 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
+    const filesMediaResult = await db.execute(sql`
+      select
+        item.item_id as "itemId",
+        item.media_asset_id as "mediaAssetId",
+        item.position,
+        item.property_definition_id as "propertyDefinitionId",
+        item.task_id as "taskId"
+      from ticketing.task_files_media_items as item
+      inner join ticketing.tasks as task
+        on task.task_id = item.task_id
+        and task.tenant_id = item.tenant_id
+      where task.collection_id = ${input.collectionId}
+        and item.tenant_id = ${context.tenantId}
+      order by item.task_id, item.property_definition_id, item.position
+    `);
     const optionRows = rowsFromResult<OptionRow>(optionResult);
     const locale = input.locale ?? 'en-GB';
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
@@ -685,6 +734,22 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     }).resolveStoredPrincipalIds([
       ...new Set(personAssignmentRows.map(({ principalId }) => principalId)),
     ]);
+    const storedFilesMediaRows = rowsFromResult<StoredFilesMediaItemRow>(filesMediaResult);
+    const assetProjections = await getMediaAssetProjections(
+      {
+        mediaAssetIds: storedFilesMediaRows.map(({ mediaAssetId }) => mediaAssetId),
+        tenantId: context.tenantId,
+      },
+      { db },
+    );
+    const assetsById = new Map(assetProjections.map((asset) => [asset.mediaAssetId, asset]));
+    const filesMediaRows: FilesMediaItemRow[] = [];
+    for (const item of storedFilesMediaRows) {
+      const asset = assetsById.get(item.mediaAssetId);
+      if (asset !== undefined) {
+        filesMediaRows.push({ ...asset, ...item });
+      }
+    }
     const exposesCreatedTime = definitions.some(
       (definition) => definition.datatype === 'created_time' && !definition.hidden,
     );
@@ -703,6 +768,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
         definitions,
         emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
+        filesMediaRows,
         numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
         personAssignmentRows,
         personValueRows: rowsFromResult<PersonValueRow>(personValueResult),
