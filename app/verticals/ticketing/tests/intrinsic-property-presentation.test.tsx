@@ -3,6 +3,7 @@ import { afterEach, expect, test } from '@rstest/core';
 import {
   CreatedByPresentation,
   CreatedTimePresentation,
+  LastEditedTimePresentation,
 } from '../src/components/intrinsic-property-presentation';
 
 afterEach(cleanup);
@@ -44,4 +45,25 @@ test('Created by shows the current display name and inactive state', () => {
     />,
   );
   expect(getByText('Rear Admiral Hopper')).not.toBeNull();
+});
+
+test('Last edited time uses the same viewer-local minute and detail-second presentation', () => {
+  const instant = '2026-10-25T01:30:45.250Z';
+  const { container, rerender } = render(
+    <LastEditedTimePresentation
+      detail={false}
+      instant={instant}
+      locale="cs-CZ"
+      timeZone="Europe/Prague"
+    />,
+  );
+
+  expect(container.querySelector('time')?.textContent).toContain('2:30');
+  expect(container.querySelector('time')?.textContent).not.toContain('2:30:45');
+  expect(container.querySelector('time')?.getAttribute('datetime')).toBe(instant);
+
+  rerender(
+    <LastEditedTimePresentation detail instant={instant} locale="cs-CZ" timeZone="Europe/Prague" />,
+  );
+  expect(container.querySelector('time')?.textContent).toContain('2:30:45');
 });

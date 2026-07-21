@@ -26,13 +26,16 @@ const duplicatedDefinitionEvidence = (
   response: DuplicateTaskPropertyDefinitionActionResponse,
 ) => ({
   changedComponents:
-    response.definition.datatype === 'created_by' || response.definition.datatype === 'created_time'
+    response.definition.datatype === 'created_by' ||
+    response.definition.datatype === 'created_time' ||
+    response.definition.datatype === 'last_edited_time'
       ? ['definition']
       : ['definition', 'propertyValues'],
   collectionId: input.collectionId,
   copiedValues:
     response.definition.datatype !== 'created_by' &&
     response.definition.datatype !== 'created_time' &&
+    response.definition.datatype !== 'last_edited_time' &&
     response.definition.datatype !== 'text' &&
     (input.copyValues ?? false),
   datatype: response.definition.datatype,
@@ -97,6 +100,7 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
     copyValues:
       source.datatype !== 'created_by' &&
       source.datatype !== 'created_time' &&
+      source.datatype !== 'last_edited_time' &&
       (input.copyValues ?? false),
     source,
     tx: services.tx,

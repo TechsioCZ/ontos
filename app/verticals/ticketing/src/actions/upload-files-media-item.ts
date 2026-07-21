@@ -118,6 +118,7 @@ const handler: ActionHandler<
     throw error;
   }
 
+  const changedAt = services.clock.now().toISOString();
   const result = await services.tx.execute(sql`
     with inserted_item as (
       insert into ticketing.task_files_media_items (
@@ -138,7 +139,7 @@ const handler: ActionHandler<
     updated_task as (
       update ticketing.tasks as task
       set
-        last_edited_at = statement_timestamp(),
+        last_edited_at = ${changedAt}::timestamptz,
         last_edited_by_principal_id = ${services.context.principalId},
         revision = task.revision + 1
       from inserted_item

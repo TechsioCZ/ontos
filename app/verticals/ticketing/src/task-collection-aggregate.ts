@@ -15,6 +15,7 @@ export interface TaskCollectionCreationRow {
 }
 
 export interface TaskCreationRow {
+  readonly canvas: TaskCreation['task']['canvas'];
   readonly collectionId: string;
   readonly createdAt: string;
   readonly createdByPrincipalId: string;
@@ -51,6 +52,7 @@ export const taskCollectionCreationFromRow = (
 
 export const taskCreationFromRow = (row: TaskCreationRow): TaskCreation => ({
   task: {
+    canvas: row.canvas,
     collectionId: row.collectionId,
     createdAt: row.createdAt,
     createdByPrincipalId: row.createdByPrincipalId,

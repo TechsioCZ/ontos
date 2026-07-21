@@ -10,9 +10,12 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { configurePrincipalTimeZonePreferenceActionRegistration } from '../src/actions/configure-principal-time-zone-preference.ts';
+import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
 import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
+import { updateTaskContentActionRegistration } from '../src/actions/update-task-content.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { queryIntrinsicTaskPropertiesDataAccessRegistration } from '../src/data-access/query-intrinsic-task-properties.ts';
@@ -107,7 +110,7 @@ const authorizationForRole = (role) => (check) => {
     : { _tag: 'Denied', message: `${role} lacks ${check.permission}.` };
 };
 
-const runRegisteredAction = ({ clock, operationContext, payload, registration }) =>
+const runRegisteredAction = ({ clock, idempotencyKey, operationContext, payload, registration }) =>
   runAction({
     options: {
       authorizationChecker: allowedAuthorization,
@@ -116,7 +119,7 @@ const runRegisteredAction = ({ clock, operationContext, payload, registration })
     },
     payload,
     registration,
-    transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+    transport: { headers: new Headers({ 'Idempotency-Key': idempotencyKey ?? randomUUID() }) },
   });
 
 const configurePrincipalTimeZone = (operationContext, timeZone) =>
@@ -171,6 +174,7 @@ test('Created time definitions project the original intrinsic Task creation inst
   assert.deepEqual(workspace.response.propertyDefinitions, [definition.response.definition]);
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [],
       createdAt: task.response.task.createdAt,
       dateValues: [],
@@ -204,6 +208,241 @@ test('Created time definitions project the original intrinsic Task creation inst
   });
   assert.equal(hiddenWorkspace._tag, 'OperationSucceeded', JSON.stringify(hiddenWorkspace));
   assert.equal(hiddenWorkspace.response.tasks[0].createdAt, undefined);
+});
+
+test('Last edited time initializes to the Task creation instant through its live projection', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'last_edited_time', mandatory: false, name: 'Last edited' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.propertyDefinitions, [definition.response.definition]);
+  assert.equal(workspace.response.tasks[0].createdAt, undefined);
+  assert.equal(workspace.response.tasks[0].lastEditedAt, task.response.task.createdAt);
+});
+
+test('a successful actual property-value mutation advances Last edited time atomically', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const createdAt = new Date('2026-07-21T08:00:00.123Z');
+  const task = await runRegisteredAction({
+    clock: { now: () => createdAt },
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const checkbox = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Approved' },
+    registration: createCheckboxPropertyDefinitionActionRegistration,
+  });
+  assert.equal(checkbox._tag, 'OperationSucceeded', JSON.stringify(checkbox));
+  const lastEdited = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'last_edited_time', mandatory: false, name: 'Last edited' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(lastEdited._tag, 'OperationSucceeded', JSON.stringify(lastEdited));
+
+  const editedAt = new Date('2026-07-21T09:30:45.678Z');
+  const edited = await runRegisteredAction({
+    clock: { now: () => editedAt },
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: checkbox.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: true,
+    },
+    registration: updateCheckboxPropertyValueActionRegistration,
+  });
+  assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].lastEditedAt, editedAt.toISOString());
+  assert.equal(workspace.response.tasks[0].taskRevision, 2);
+});
+
+test('one actual Title and canvas save advances Last edited time once while a no-op does not', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    clock: { now: () => new Date('2026-07-21T08:00:00.000Z') },
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'last_edited_time', mandatory: false, name: 'Last edited' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const payload = {
+    canvas: { content: [{ text: 'Review the contract', type: 'paragraph' }], type: 'doc' },
+    collectionId,
+    expectedRevision: 1,
+    taskId: task.response.task.taskId,
+    title: 'Review contract',
+  };
+
+  const editedAt = new Date('2026-07-21T10:15:30.250Z');
+  const editIdempotencyKey = randomUUID();
+  const edited = await runRegisteredAction({
+    clock: { now: () => editedAt },
+    idempotencyKey: editIdempotencyKey,
+    operationContext,
+    payload,
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
+  assert.deepEqual(edited.response, {
+    canvas: payload.canvas,
+    taskId: payload.taskId,
+    taskRevision: 2,
+    title: payload.title,
+  });
+
+  const replayed = await runRegisteredAction({
+    clock: { now: () => new Date('2026-07-21T11:00:00.000Z') },
+    idempotencyKey: editIdempotencyKey,
+    operationContext,
+    payload,
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(replayed._tag, 'OperationIdempotencyReplayUnavailable', JSON.stringify(replayed));
+
+  const noOp = await runRegisteredAction({
+    clock: { now: () => new Date('2026-07-21T12:00:00.000Z') },
+    operationContext,
+    payload: { ...payload, expectedRevision: 2 },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(noOp._tag, 'OperationSucceeded', JSON.stringify(noOp));
+  assert.equal(noOp.response.taskRevision, 2);
+  assert.equal(
+    noOp.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
+    false,
+  );
+
+  const stale = await runRegisteredAction({
+    clock: { now: () => new Date('2026-07-21T13:00:00.000Z') },
+    operationContext,
+    payload: { ...payload, expectedRevision: 1, title: 'Stale draft' },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
+  assert.equal(stale.code, 'ticketing.updateTaskContent.stale_or_missing');
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].lastEditedAt, editedAt.toISOString());
+  assert.equal(workspace.response.tasks[0].taskRevision, 2);
+  assert.equal(workspace.response.tasks[0].title, payload.title);
+  assert.deepEqual(workspace.response.tasks[0].canvas, payload.canvas);
+});
+
+test('archive and restore advance Last edited time while soft deletion does not', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    clock: { now: () => new Date('2026-07-21T08:00:00.000Z') },
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'last_edited_time', mandatory: false, name: 'Last edited' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const transition = (clock, expectedRevision, retentionTransition) =>
+    runRegisteredAction({
+      clock: { now: () => new Date(clock) },
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision,
+        taskId: task.response.task.taskId,
+        transition: retentionTransition,
+      },
+      registration: transitionTaskRetentionActionRegistration,
+    });
+
+  const archived = await transition('2026-07-21T09:00:00.125Z', 1, 'archive');
+  assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
+  const restored = await transition('2026-07-21T10:00:00.250Z', 2, 'restore');
+  assert.equal(restored._tag, 'OperationSucceeded', JSON.stringify(restored));
+  const softDeleted = await transition('2026-07-21T11:00:00.375Z', 3, 'softDelete');
+  assert.equal(softDeleted._tag, 'OperationSucceeded', JSON.stringify(softDeleted));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].lastEditedAt, '2026-07-21T10:00:00.250Z');
+  assert.equal(workspace.response.tasks[0].taskRevision, 4);
 });
 
 test('duplicating an intrinsic definition needs no value-copy choice and projects the same facts', async () => {
@@ -273,6 +512,58 @@ test('duplicating an intrinsic definition needs no value-copy choice and project
     principalId: operationContext.principalId,
   });
   assert.equal(workspace.response.tasks[0].taskId, task.response.task.taskId);
+});
+
+test('duplicating Last edited time projects the live fact without copying values', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const source = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'last_edited_time', mandatory: true, name: 'Last edited' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(source._tag, 'OperationSucceeded', JSON.stringify(source));
+  const duplicatePayload = {
+    collectionId,
+    copyValues: true,
+    expectedRevision: 1,
+    propertyDefinitionId: source.response.definition.propertyDefinitionId,
+  };
+
+  const duplicate = await runRegisteredAction({
+    operationContext,
+    payload: duplicatePayload,
+    registration: duplicateTaskPropertyDefinitionActionRegistration,
+  });
+
+  assert.equal(duplicate._tag, 'OperationSucceeded', JSON.stringify(duplicate));
+  assert.equal(duplicate.response.definition.name, 'Last edited Copy');
+  const evidence = duplicateTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
+    duplicatePayload,
+    duplicate.response,
+  );
+  assert.deepEqual(evidence.changedComponents, ['definition']);
+  assert.equal(evidence.copiedValues, false);
+  const workspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].lastEditedAt, task.response.task.lastEditedAt);
 });
 
 test('removing and re-adding Created time preserves the intrinsic fact', async () => {
@@ -753,5 +1044,100 @@ test('Created time queries absolute milliseconds through the configured viewer z
       label: '2026-03-30',
       taskIds: [thirdTask.taskId],
     },
+  ]);
+});
+
+test('Last edited time reuses absolute temporal search, filter, sort, and local-day grouping', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const checkbox = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Approved' },
+    registration: createCheckboxPropertyDefinitionActionRegistration,
+  });
+  assert.equal(checkbox._tag, 'OperationSucceeded', JSON.stringify(checkbox));
+  const createTaskAt = async (instant) => {
+    const created = await runRegisteredAction({
+      clock: { now: () => new Date(instant) },
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+    return created.response.task;
+  };
+  const firstTask = await createTaskAt('2026-03-28T22:30:00.000Z');
+  const secondTask = await createTaskAt('2026-03-29T00:30:00.000Z');
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'last_edited_time', mandatory: false, name: 'Last edited' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const edited = await runRegisteredAction({
+    clock: { now: () => new Date('2026-03-29T22:30:00.750Z') },
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: checkbox.response.definition.propertyDefinitionId,
+      taskId: firstTask.taskId,
+      value: true,
+    },
+    registration: updateCheckboxPropertyValueActionRegistration,
+  });
+  assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
+  const preference = await configurePrincipalTimeZone(operationContext, 'Europe/Prague');
+  assert.equal(preference._tag, 'OperationSucceeded', JSON.stringify(preference));
+  const query = (operation) =>
+    runRegisteredDataAccess({
+      operationContext,
+      payload: {
+        collectionId,
+        operation,
+        propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+        viewerLocale: 'en-GB',
+      },
+      registration: queryIntrinsicTaskPropertiesDataAccessRegistration,
+      resultCount: (response) => response.tasks.length,
+    });
+
+  const searched = await query({ _tag: 'LastEditedTimeSearch', value: '30/03/2026' });
+  assert.equal(searched._tag, 'OperationSucceeded', JSON.stringify(searched));
+  assert.deepEqual(
+    searched.response.tasks.map(({ taskId }) => taskId),
+    [firstTask.taskId],
+  );
+  assert.equal(searched.response.tasks[0].lastEditedAt, '2026-03-29T22:30:00.750Z');
+
+  const exact = await query({
+    _tag: 'LastEditedTimeFilter',
+    operator: 'exact',
+    value: '2026-03-29T22:30:00Z',
+  });
+  assert.equal(exact._tag, 'OperationSucceeded', JSON.stringify(exact));
+  assert.deepEqual(
+    exact.response.tasks.map(({ taskId }) => taskId),
+    [firstTask.taskId],
+  );
+
+  const sorted = await query({ _tag: 'LastEditedTimeSort', direction: 'ascending' });
+  assert.equal(sorted._tag, 'OperationSucceeded', JSON.stringify(sorted));
+  assert.deepEqual(
+    sorted.response.tasks.map(({ taskId }) => taskId),
+    [secondTask.taskId, firstTask.taskId],
+  );
+
+  const grouped = await query({ _tag: 'LastEditedTimeGroup' });
+  assert.equal(grouped._tag, 'OperationSucceeded', JSON.stringify(grouped));
+  assert.deepEqual(grouped.response.groups, [
+    { key: '2026-03-29', label: '2026-03-29', taskIds: [secondTask.taskId] },
+    { key: '2026-03-30', label: '2026-03-30', taskIds: [firstTask.taskId] },
   ]);
 });

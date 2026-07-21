@@ -16,7 +16,7 @@ import type {
 
 interface IntrinsicDefinitionRow {
   readonly collectionLocale: string;
-  readonly datatype: 'created_by' | 'created_time';
+  readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
 }
 
 interface IntrinsicTaskRow {
@@ -24,6 +24,7 @@ interface IntrinsicTaskRow {
   readonly createdByDisplayName: string;
   readonly createdByPrincipalId: string;
   readonly createdByStatus: 'active' | 'archived' | 'disabled';
+  readonly lastEditedAt: string;
   readonly taskId: string;
 }
 
@@ -303,17 +304,27 @@ const localCalendarDay = (instant: string, timeZone: string): string => {
 const projectIntrinsicTask = (
   datatype: IntrinsicDefinitionRow['datatype'],
   row: IntrinsicTaskRow,
-) =>
-  datatype === 'created_time'
-    ? { createdAt: row.createdAt, taskId: row.taskId }
-    : {
-        createdBy: {
-          displayName: row.createdByDisplayName,
-          inactive: row.createdByStatus !== 'active',
-          principalId: row.createdByPrincipalId,
-        },
-        taskId: row.taskId,
-      };
+) => {
+  if (datatype === 'created_time') {
+    return { createdAt: row.createdAt, taskId: row.taskId };
+  }
+  if (datatype === 'last_edited_time') {
+    return { lastEditedAt: row.lastEditedAt, taskId: row.taskId };
+  }
+  return {
+    createdBy: {
+      displayName: row.createdByDisplayName,
+      inactive: row.createdByStatus !== 'active',
+      principalId: row.createdByPrincipalId,
+    },
+    taskId: row.taskId,
+  };
+};
+
+const temporalInstant = (
+  datatype: Extract<IntrinsicDefinitionRow['datatype'], 'created_time' | 'last_edited_time'>,
+  row: IntrinsicTaskRow,
+): string => (datatype === 'created_time' ? row.createdAt : row.lastEditedAt);
 
 export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegistration<
   QueryIntrinsicTaskPropertiesPayload,
@@ -355,7 +366,7 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         and definition.tenant_id = ${context.tenantId}
         and schema.collection_id = ${input.collectionId}
         and definition.hidden = false
-        and definition.datatype in ('created_time', 'created_by')
+        and definition.datatype in ('created_time', 'created_by', 'last_edited_time')
     `);
     const definition = rowsFromResult<IntrinsicDefinitionRow>(definitionResult).at(0);
     if (definition === undefined) {
@@ -370,6 +381,10 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         creator.display_name as "createdByDisplayName",
         task.created_by_principal_id as "createdByPrincipalId",
         creator.status as "createdByStatus",
+        to_char(
+          task.last_edited_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "lastEditedAt",
         task.task_id as "taskId"
       from ticketing.tasks as task
       inner join core.principals as creator
@@ -387,8 +402,9 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
       usage: 'sort',
     });
     let selectedRows = [...rows];
-    if (datatype === 'created_time') {
-      if (!input.operation._tag.startsWith('CreatedTime')) {
+    if (datatype === 'created_time' || datatype === 'last_edited_time') {
+      const operationPrefix = datatype === 'created_time' ? 'CreatedTime' : 'LastEditedTime';
+      if (!input.operation._tag.startsWith(operationPrefix)) {
         throw new Error('The requested operation does not match the intrinsic datatype.');
       }
       const effectiveTimeZone = await resolveEffectiveTimeZone({
@@ -397,20 +413,22 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         db,
       });
       switch (input.operation._tag) {
-        case 'CreatedTimeSearch': {
+        case 'CreatedTimeSearch':
+        case 'LastEditedTimeSearch': {
           const range = await instantRangeFor({
             db,
             locale: viewerLocale,
             timeZone: effectiveTimeZone.timeZone,
             value: input.operation.value,
           });
-          selectedRows = selectedRows.filter(({ createdAt }) => {
-            const instant = Date.parse(createdAt);
+          selectedRows = selectedRows.filter((row) => {
+            const instant = Date.parse(temporalInstant(datatype, row));
             return instant >= range.start && instant < range.end;
           });
           break;
         }
-        case 'CreatedTimeFilter': {
+        case 'CreatedTimeFilter':
+        case 'LastEditedTimeFilter': {
           const usesLocalBoundary = ['local_day', 'local_range'].includes(input.operation.operator);
           let range: InstantRange;
           if (usesLocalBoundary) {
@@ -435,8 +453,8 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
                   value: input.operation.endValue ?? '',
                 })
               : range;
-          selectedRows = selectedRows.filter(({ createdAt }) => {
-            const instant = Date.parse(createdAt);
+          selectedRows = selectedRows.filter((row) => {
+            const instant = Date.parse(temporalInstant(datatype, row));
             switch (input.operation.operator) {
               case 'exact':
               case 'local_day':
@@ -462,16 +480,26 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
           });
           break;
         }
-        case 'CreatedTimeSort': {
+        case 'CreatedTimeSort':
+        case 'LastEditedTimeSort': {
           const direction = input.operation.direction === 'ascending' ? 1 : -1;
           selectedRows.sort(
             (left, right) =>
-              direction * (Date.parse(left.createdAt) - Date.parse(right.createdAt)) ||
+              direction *
+                (Date.parse(temporalInstant(datatype, left)) -
+                  Date.parse(temporalInstant(datatype, right))) ||
               left.taskId.localeCompare(right.taskId),
           );
           break;
         }
-        case 'CreatedTimeGroup': {
+        case 'CreatedTimeGroup':
+        case 'LastEditedTimeGroup': {
+          selectedRows.sort(
+            (left, right) =>
+              Date.parse(temporalInstant(datatype, left)) -
+                Date.parse(temporalInstant(datatype, right)) ||
+              left.taskId.localeCompare(right.taskId),
+          );
           break;
         }
         default: {
@@ -479,9 +507,12 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         }
       }
       const groupedRows = new Map<string, IntrinsicTaskRow[]>();
-      if (input.operation._tag === 'CreatedTimeGroup') {
+      if (
+        input.operation._tag === 'CreatedTimeGroup' ||
+        input.operation._tag === 'LastEditedTimeGroup'
+      ) {
         for (const row of selectedRows) {
-          const key = localCalendarDay(row.createdAt, effectiveTimeZone.timeZone);
+          const key = localCalendarDay(temporalInstant(datatype, row), effectiveTimeZone.timeZone);
           groupedRows.set(key, [...(groupedRows.get(key) ?? []), row]);
         }
       }
@@ -495,7 +526,11 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         tasks: selectedRows.map((row) => projectIntrinsicTask(datatype, row)),
       };
     }
-    if (datatype !== 'created_by' || input.operation._tag.startsWith('CreatedTime')) {
+    if (
+      datatype !== 'created_by' ||
+      input.operation._tag.startsWith('CreatedTime') ||
+      input.operation._tag.startsWith('LastEditedTime')
+    ) {
       throw new Error('The requested operation does not match the intrinsic datatype.');
     }
     switch (input.operation._tag) {

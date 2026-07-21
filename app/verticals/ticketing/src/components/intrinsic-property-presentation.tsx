@@ -21,6 +21,9 @@ export const CreatedTimePresentation = ({
   </time>
 );
 
+// Both system-time datatypes share one absolute-instant presentation contract.
+export const LastEditedTimePresentation = CreatedTimePresentation;
+
 export interface CreatedByPresentationProps {
   readonly displayName: string;
   readonly inactive: boolean;

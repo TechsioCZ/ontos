@@ -38,6 +38,7 @@ export const createTaskAggregate = async ({
       where collection_id = ${collectionId}
         and tenant_id = ${tenantId}
       returning
+        canvas,
         collection_id,
         created_at,
         created_by_principal_id,
@@ -175,6 +176,7 @@ export const createTaskAggregate = async ({
       returning task_id
     )
     select
+      created_task.canvas,
       created_task.collection_id as "collectionId",
       to_char(
         created_task.created_at at time zone 'UTC',

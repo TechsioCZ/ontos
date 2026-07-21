@@ -32,7 +32,9 @@ interface DefinitionFields {
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
   | (DefinitionFields & { readonly datatype: 'date' })
-  | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
+  | (DefinitionFields & {
+      readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
+    })
   | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & { readonly datatype: 'files_media' })
   | (DefinitionFields & { readonly datatype: 'id'; readonly prefix: string })
@@ -167,6 +169,7 @@ interface UrlValueRow {
 }
 
 interface ValueRow {
+  readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
   readonly createdAt: string;
   readonly createdByDisplayName: string;
   readonly createdByPrincipalId: string;
@@ -174,6 +177,7 @@ interface ValueRow {
   readonly idNumber: string | null;
   readonly idPrefix: string | null;
   readonly idPropertyDefinitionId: string | null;
+  readonly lastEditedAt: string;
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -198,6 +202,7 @@ interface FilesMediaItemRow extends StoredFilesMediaItemRow {
 }
 
 interface TaskRow {
+  readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
   readonly checkboxValues: {
     propertyDefinitionId: string;
     revision: number;
@@ -221,6 +226,7 @@ interface TaskRow {
     inactive: boolean;
     principalId: string;
   };
+  readonly lastEditedAt?: string;
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
@@ -328,8 +334,10 @@ const intrinsicTaskFacts = (
   row: ValueRow,
   exposesCreatedBy: boolean,
   exposesCreatedTime: boolean,
-): Pick<TaskRow, 'createdAt' | 'createdBy'> => ({
+  exposesLastEditedTime: boolean,
+): Pick<TaskRow, 'createdAt' | 'createdBy' | 'lastEditedAt'> => ({
   ...(exposesCreatedTime ? { createdAt: row.createdAt } : {}),
+  ...(exposesLastEditedTime ? { lastEditedAt: row.lastEditedAt } : {}),
   ...(exposesCreatedBy
     ? {
         createdBy: {
@@ -389,12 +397,16 @@ const taskRowsFromValues = ({
   const exposesCreatedBy = definitions.some(
     (definition) => definition.datatype === 'created_by' && !definition.hidden,
   );
+  const exposesLastEditedTime = definitions.some(
+    (definition) => definition.datatype === 'last_edited_time' && !definition.hidden,
+  );
 
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
+      canvas: row.canvas,
       checkboxValues: [],
       dateValues: [],
-      ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
+      ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime, exposesLastEditedTime),
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
@@ -522,11 +534,12 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
       select
+        task.canvas,
         to_char(
           task.created_at at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
@@ -534,6 +547,10 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         creator.display_name as "createdByDisplayName",
         task.created_by_principal_id as "createdByPrincipalId",
         creator.status as "createdByStatus",
+        to_char(
+          task.last_edited_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "lastEditedAt",
         id_assignment.number::text as "idNumber",
         id_definition.prefix as "idPrefix",
         id_assignment.property_definition_id as "idPropertyDefinitionId",

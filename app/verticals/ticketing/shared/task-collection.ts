@@ -20,6 +20,7 @@ export const taskCollectionSchemaRecordSchema = Schema.Struct({
 });
 
 export const taskRecordSchema = Schema.Struct({
+  canvas: Schema.Json,
   collectionId: Schema.String,
   createdAt: Schema.String,
   createdByPrincipalId: Schema.String,

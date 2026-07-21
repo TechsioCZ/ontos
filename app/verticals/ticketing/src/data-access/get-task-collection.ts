@@ -34,6 +34,7 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
   handler: async (input, { context, db }) => {
     const result = await db.execute(sql`
       select
+        task.canvas,
         collection.collection_id as "collectionId",
         to_char(
           collection.created_at at time zone 'UTC',

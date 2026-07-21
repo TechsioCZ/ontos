@@ -134,6 +134,20 @@
       "when": 1784663876771,
       "tag": "0018_true_marauders",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784666566740,
+      "tag": "0019_fast_terror",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784667473289,
+      "tag": "0020_cold_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }

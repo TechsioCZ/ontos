@@ -82,6 +82,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
+      canvas: Schema.Json,
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       createdAt: Schema.optional(Schema.String),
       createdBy: Schema.optional(
@@ -95,6 +96,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       emailValues: Schema.Array(emailPropertyValueSchema),
       filesMediaItems: Schema.Array(filesMediaItemSchema),
       idAssignment: Schema.optional(idAssignmentSchema),
+      lastEditedAt: Schema.optional(Schema.String),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),

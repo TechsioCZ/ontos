@@ -14,6 +14,7 @@ export type TaskPropertyDefinitionRow =
         | 'checkbox'
         | 'created_by'
         | 'created_time'
+        | 'last_edited_time'
         | 'date'
         | 'email'
         | 'files_media'

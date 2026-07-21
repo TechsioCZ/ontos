@@ -1,4 +1,5 @@
 export {
+  runUpdateTaskContentAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,

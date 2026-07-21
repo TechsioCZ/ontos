@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  updateTaskContentActionHeadersSchema,
+  updateTaskContentActionFailureSchemas,
+  updateTaskContentActionOutcomeSchema,
+  updateTaskContentActionPayloadSchema,
+} from './actions/update-task-content';
+
+import {
   duplicateTaskActionFailureSchemas,
   duplicateTaskActionHeadersSchema,
   duplicateTaskActionOutcomeSchema,
@@ -257,6 +264,12 @@ import {
 } from './task-property-query';
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
+export type {
+  UpdateTaskContentActionFailure,
+  UpdateTaskContentActionOutcome,
+  UpdateTaskContentActionPayload,
+  UpdateTaskContentActionResponse,
+} from './actions/update-task-content';
 export type {
   ConfigureIdPropertyPrefixActionFailure,
   ConfigureIdPropertyPrefixActionOutcome,
@@ -1269,6 +1282,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: duplicateTaskActionPayloadSchema,
         success: duplicateTaskActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateTaskContentAction', '/ticketing/actions/update-task-content', {
+        error: updateTaskContentActionFailureSchemas,
+        headers: updateTaskContentActionHeadersSchema,
+        payload: updateTaskContentActionPayloadSchema,
+        success: updateTaskContentActionOutcomeSchema,
+      }),
     ),
 );
 
@@ -1570,6 +1591,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateSelectPropertyValueAction',
     routePath: '/ticketing/actions/update-select-property-value',
+    source: 'generated-client',
+  },
+  updateTaskContentAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateTaskContentAction',
+    routePath: '/ticketing/actions/update-task-content',
     source: 'generated-client',
   },
   updateTextPropertyValueAction: {
