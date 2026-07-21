@@ -17,9 +17,10 @@ import type {
   UpdatePhonePropertyValueActionResponse,
 } from '../../shared/actions/update-phone-property-value.ts';
 import { validatePhoneValue } from '../../shared/phone-value.ts';
-import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
+import { rejectTaskEditWithEmptyMandatoryProperty } from '../task-mandatory-validation.ts';
 
 interface CurrentPhoneTargetRow {
+  readonly mandatory: boolean;
   readonly propertyDefinitionId: string;
   readonly revision: number | null;
   readonly taskRevision: number;
@@ -89,6 +90,7 @@ const updatePhonePropertyValueActionHandler: ActionHandler<
 
   const currentResult = await services.tx.execute(sql`
     select
+      definition.mandatory,
       definition.property_definition_id as "propertyDefinitionId",
       value.revision,
       task.revision as "taskRevision",
@@ -116,9 +118,20 @@ const updatePhonePropertyValueActionHandler: ActionHandler<
     throw staleOrMissing();
   }
 
-  await rejectTaskEditWithEmptyMandatoryEmail({
+  if (current.mandatory && validated.value === null) {
+    throw rejectAction({
+      code: 'ticketing.updatePhonePropertyValue.mandatory_empty',
+      message: 'This Mandatory Phone must contain one control-free line.',
+    });
+  }
+
+  await rejectTaskEditWithEmptyMandatoryProperty({
     collectionId: input.collectionId,
     db: services.tx,
+    proposedValue: {
+      propertyDefinitionId: input.propertyDefinitionId,
+      value: validated.value,
+    },
     taskId: input.taskId,
     tenantId: services.context.tenantId,
   });

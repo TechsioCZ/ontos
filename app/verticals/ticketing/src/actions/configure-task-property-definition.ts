@@ -32,6 +32,16 @@ const configuredDefinition = (definition: TaskPropertyDefinition): TaskPropertyD
   if (definition.datatype === 'number' || definition.datatype === 'select') {
     return definition;
   }
+  if (definition.datatype === 'phone') {
+    return {
+      datatype: 'phone',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
+  }
   return {
     datatype: 'text',
     hidden: definition.hidden,

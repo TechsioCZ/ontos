@@ -53,10 +53,10 @@ test('a Viewer can copy exact Phone text and invoke its safely encoded tel hando
   fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
   await waitFor(() => expect(copyText).toHaveBeenCalledWith(exactValue));
   const callLink = screen.getByRole('link', { name: 'Call' });
-  expect(callLink.getAttribute('href')).toBe(`tel:${encodeURIComponent(exactValue)}`);
+  expect(callLink).toHaveAttribute('href', `tel:${encodeURIComponent(exactValue)}`);
   mocks.toastCreate.mockClear();
   fireEvent.click(callLink);
-  expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   expect(save).not.toHaveBeenCalled();
   expect(mocks.toastCreate).not.toHaveBeenCalled();
 });
@@ -84,8 +84,8 @@ test('an accepted exact draft becomes the value used by reader handoffs', async 
     />,
   );
 
-  expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
-  expect(screen.queryByRole('link', { name: 'Call' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Copy' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Call' })).not.toBeInTheDocument();
 
   fireEvent.change(screen.getByRole('textbox', { name: phoneLabel }), {
     target: { value: exactValue },
@@ -95,7 +95,8 @@ test('an accepted exact draft becomes the value used by reader handoffs', async 
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   fireEvent.click(await screen.findByRole('button', { name: 'Copy' }));
   await waitFor(() => expect(copyText).toHaveBeenCalledWith(exactValue));
-  expect(screen.getByRole('link', { name: 'Call' }).getAttribute('href')).toBe(
+  expect(screen.getByRole('link', { name: 'Call' })).toHaveAttribute(
+    'href',
     `tel:${encodeURIComponent(exactValue)}`,
   );
 });
@@ -119,10 +120,10 @@ test('a pasted line break remains an invalid draft and cannot be saved', () => {
   fireEvent.change(editor, { target: { value: invalidDraft } });
 
   expect(editor.tagName).toBe('TEXTAREA');
-  expect((editor as HTMLTextAreaElement).value).toBe(invalidDraft);
+  expect(editor).toHaveValue(invalidDraft);
   expect(screen.getByText('Enter one control-free line of at most 256 characters.')).toBeDefined();
   const saveButton = screen.getByRole('button', { name: 'Save' });
-  expect(saveButton.hasAttribute('disabled')).toBe(true);
+  expect(saveButton).toBeDisabled();
   fireEvent.click(saveButton);
   expect(save).not.toHaveBeenCalled();
 });

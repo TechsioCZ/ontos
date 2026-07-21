@@ -5,6 +5,7 @@ import { after, test } from 'node:test';
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
+import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { createPhonePropertyDefinitionActionRegistration } from '../src/actions/create-phone-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
@@ -102,7 +103,7 @@ const readWorkspace = (operationContext, collectionId) =>
     transport: { headers: new Headers() },
   });
 
-const createPhoneFixture = async () => {
+const createPhoneFixture = async ({ mandatory = false } = {}) => {
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
@@ -119,7 +120,7 @@ const createPhoneFixture = async () => {
   assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
   const definition = await runRegisteredAction({
     operationContext,
-    payload: { collectionId, mandatory: false, name: 'Direct line' },
+    payload: { collectionId, mandatory, name: 'Direct line' },
     registration: createPhonePropertyDefinitionActionRegistration,
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
@@ -296,60 +297,176 @@ test('a Phone edit is rejected while another Mandatory Email property is Empty',
   assert.equal(workspace.response.tasks[0].taskRevision, 1);
 });
 
-test('Phone Actions emit metadata evidence without Phone content', () => {
-  const createInput = { collectionId: 'collection-1', mandatory: false, name: 'Secret contact' };
-  const createResponse = {
-    definition: {
-      datatype: 'phone',
-      hidden: false,
-      mandatory: false,
-      name: 'Secret contact',
-      propertyDefinitionId: 'property-1',
-      revision: 1,
+test('a Mandatory Phone rejects clearing without changing the committed value', async () => {
+  const { collectionId, definition, operationContext, task } = await createPhoneFixture({
+    mandatory: true,
+  });
+  const {
+    response: { definition: createdDefinition },
+  } = definition;
+  const {
+    response: { task: createdTask },
+  } = task;
+  const { propertyDefinitionId } = createdDefinition;
+  const { taskId } = createdTask;
+  const populated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId,
+      taskId,
+      value: '+420 777 123 456',
     },
-  };
-  const createAudit = createPhonePropertyDefinitionActionRegistration.descriptor.auditEvent;
-  const createDomain = createPhonePropertyDefinitionActionRegistration.descriptor.domainEvent;
-  assert.deepEqual(createAudit.evidence(createInput, createResponse), {
+    registration: updatePhonePropertyValueActionRegistration,
+  });
+  assert.equal(populated._tag, 'OperationSucceeded', JSON.stringify(populated));
+
+  const rejected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: populated.response.value.revision,
+      propertyDefinitionId,
+      taskId,
+      value: '\u2003\u00A0',
+    },
+    registration: updatePhonePropertyValueActionRegistration,
+  });
+  assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'ticketing.updatePhonePropertyValue.mandatory_empty');
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].phoneValues, [populated.response.value]);
+  assert.equal(workspace.response.tasks[0].taskRevision, populated.response.taskRevision);
+});
+
+test('a Phone edit is rejected while another Mandatory Phone remains Empty', async () => {
+  const { collectionId, definition, operationContext, task } = await createPhoneFixture();
+  const required = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: true, name: 'Required direct line' },
+    registration: createPhonePropertyDefinitionActionRegistration,
+  });
+  assert.equal(required._tag, 'OperationSucceeded', JSON.stringify(required));
+
+  const rejected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: '+420 777 123 456',
+    },
+    registration: updatePhonePropertyValueActionRegistration,
+  });
+  assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'ticketing.taskEdit.mandatory_phone_empty');
+});
+
+test('shared configuration preserves the Phone datatype', async () => {
+  const { collectionId, definition, operationContext } = await createPhoneFixture();
+  const configured = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: definition.response.definition.revision,
+      hidden: true,
+      mandatory: true,
+      name: 'Emergency line',
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    },
+    registration: configureTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(configured._tag, 'OperationSucceeded', JSON.stringify(configured));
+  assert.deepEqual(configured.response.definition, {
+    datatype: 'phone',
+    hidden: true,
+    mandatory: true,
+    name: 'Emergency line',
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    revision: 2,
+  });
+});
+
+test('accepted Phone Actions persist metadata evidence without Phone content', async () => {
+  const { collectionId, definition, operationContext, task } = await createPhoneFixture();
+  const {
+    response: { definition: createdDefinition },
+  } = definition;
+  const {
+    response: { task: createdTask },
+  } = task;
+  const { propertyDefinitionId } = createdDefinition;
+  const { taskId } = createdTask;
+  const secretValue = '+420 secret content';
+  const updated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId,
+      taskId,
+      value: secretValue,
+    },
+    registration: updatePhonePropertyValueActionRegistration,
+  });
+  assert.equal(updated._tag, 'OperationSucceeded', JSON.stringify(updated));
+
+  const createInvocationId = definition.context.actionInvocation.actionInvocationId;
+  const updateInvocationId = updated.context.actionInvocation.actionInvocationId;
+  const [createAudit] = await sqlClient`
+    select audit_profile as "auditProfile", evidence_json as evidence
+    from core.audit_events
+    where action_invocation_id = ${createInvocationId}
+      and event_type = 'action.succeeded'
+  `;
+  const [createDomain] = await sqlClient`
+    select payload_json as payload
+    from core.domain_events
+    where action_invocation_id = ${createInvocationId}
+      and event_type = 'ticketing.taskPropertyDefinition.created'
+  `;
+  const [updateAudit] = await sqlClient`
+    select audit_profile as "auditProfile", evidence_json as evidence
+    from core.audit_events
+    where action_invocation_id = ${updateInvocationId}
+      and event_type = 'action.succeeded'
+  `;
+  const [updateDomain] = await sqlClient`
+    select payload_json as payload
+    from core.domain_events
+    where action_invocation_id = ${updateInvocationId}
+      and event_type = 'ticketing.taskPropertyValue.changed'
+  `;
+
+  assert.deepEqual(createAudit.evidence, {
     changedComponents: ['definition'],
-    collectionId: 'collection-1',
+    collectionId,
     datatype: 'phone',
     operation: 'created',
-    propertyDefinitionId: 'property-1',
+    propertyDefinitionId,
     revision: 1,
   });
-  assert.deepEqual(
-    createDomain.payload(createInput, createResponse),
-    createAudit.evidence(createInput, createResponse),
-  );
+  assert.deepEqual(createDomain.payload, createAudit.evidence);
+  assert.equal(createAudit.auditProfile, 'standard');
 
-  const updateInput = {
-    collectionId: 'collection-1',
-    expectedRevision: 0,
-    propertyDefinitionId: 'property-1',
-    taskId: 'task-1',
-    value: '+420 secret content',
-  };
-  const updateResponse = {
-    taskRevision: 2,
-    value: { propertyDefinitionId: 'property-1', revision: 1, value: '+420 secret content' },
-  };
-  const updateAudit = updatePhonePropertyValueActionRegistration.descriptor.auditEvent;
-  const updateDomain = updatePhonePropertyValueActionRegistration.descriptor.domainEvent;
-  const evidence = updateAudit.evidence(updateInput, updateResponse);
-  assert.deepEqual(evidence, {
+  assert.deepEqual(updateAudit.evidence, {
     changedComponents: ['phoneValue'],
-    collectionId: 'collection-1',
+    collectionId,
     datatype: 'phone',
     operation: 'changed',
-    propertyDefinitionId: 'property-1',
-    revision: 1,
-    taskId: 'task-1',
-    taskRevision: 2,
+    propertyDefinitionId,
+    revision: updated.response.value.revision,
+    taskId,
+    taskRevision: updated.response.taskRevision,
   });
-  assert.deepEqual(updateDomain.payload(updateInput, updateResponse), evidence);
-  assert.equal(JSON.stringify(evidence).includes('+420 secret content'), false);
-  assert.equal(updatePhonePropertyValueActionRegistration.descriptor.auditProfile, 'sensitive');
+  assert.deepEqual(updateDomain.payload, updateAudit.evidence);
+  assert.equal(updateAudit.auditProfile, 'sensitive');
+  assert.equal(JSON.stringify([createAudit, createDomain]).includes('Direct line'), false);
+  assert.equal(JSON.stringify([updateAudit, updateDomain]).includes(secretValue), false);
 });
 
 test('a User may edit Phone while a Viewer can read but cannot mutate it', async () => {

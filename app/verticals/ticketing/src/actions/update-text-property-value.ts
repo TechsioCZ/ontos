@@ -21,7 +21,7 @@ import {
   normalizeTextDocument,
   validateTextDocumentReferences,
 } from '../text-property-document.ts';
-import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
+import { rejectTaskEditWithEmptyMandatoryProperty } from '../task-mandatory-validation.ts';
 
 interface CurrentTextValueRow {
   readonly document: TextDocument | null;
@@ -120,7 +120,7 @@ const updateTextPropertyValueActionHandler: ActionHandler<
     });
   }
 
-  await rejectTaskEditWithEmptyMandatoryEmail({
+  await rejectTaskEditWithEmptyMandatoryProperty({
     collectionId: input.collectionId,
     db: services.tx,
     taskId: input.taskId,

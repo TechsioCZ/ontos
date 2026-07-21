@@ -491,7 +491,7 @@ test('wires a denied value-edit capability to read-only property editors', async
   fireEvent.click(screen.getByRole('button', { name: 'Create Email property' }));
 
   const email = await screen.findByRole('textbox', { name: 'Contact email' });
-  expect((email as HTMLInputElement).readOnly).toBe(true);
+  expect(email).toHaveAttribute('readonly');
 
   fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
     target: { value: 'Reference URL' },
@@ -499,7 +499,7 @@ test('wires a denied value-edit capability to read-only property editors', async
   fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
 
   const url = await screen.findByRole('textbox', { name: 'Reference URL' });
-  expect((url as HTMLInputElement).readOnly).toBe(true);
+  expect(url).toHaveAttribute('readonly');
 
   fireEvent.change(screen.getByRole('textbox', { name: 'Phone property name' }), {
     target: { value: 'Direct line' },
@@ -507,6 +507,6 @@ test('wires a denied value-edit capability to read-only property editors', async
   fireEvent.click(screen.getByRole('button', { name: 'Add Phone property' }));
 
   const phone = await screen.findByRole('textbox', { name: 'Direct line' });
-  expect((phone as HTMLTextAreaElement).readOnly).toBe(true);
-  expect(screen.queryByRole('button', { name: 'Save Phone' })).toBeNull();
+  expect(phone).toHaveAttribute('readonly');
+  expect(screen.queryByRole('button', { name: 'Save Phone' })).not.toBeInTheDocument();
 });

@@ -12,7 +12,7 @@ import {
   updateCheckboxPropertyValueActionPayloadSchema,
   updateCheckboxPropertyValueActionResponseSchema,
 } from '../../shared/actions/update-checkbox-property-value.ts';
-import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
+import { rejectTaskEditWithEmptyMandatoryProperty } from '../task-mandatory-validation.ts';
 import type {
   UpdateCheckboxPropertyValueActionPayload,
   UpdateCheckboxPropertyValueActionResponse,
@@ -97,7 +97,7 @@ const updateCheckboxPropertyValueActionHandler: ActionHandler<
     });
   }
 
-  await rejectTaskEditWithEmptyMandatoryEmail({
+  await rejectTaskEditWithEmptyMandatoryProperty({
     collectionId: input.collectionId,
     db: services.tx,
     taskId: input.taskId,
