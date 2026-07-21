@@ -92,6 +92,10 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
     supportedLanguages: ['en'],
     t: (key: string) =>
       ({
+        'ticketing.date.definitionCreate': 'Create Date property',
+        'ticketing.date.definitionCreating': 'Creating Date property',
+        'ticketing.date.definitionName': 'Date property name',
+        'ticketing.date.empty': 'Empty',
         'ticketing.email.definitionCreate': 'Create Email property',
         'ticketing.email.definitionCreating': 'Creating Email property',
         'ticketing.email.definitionName': 'Email property name',
@@ -226,6 +230,23 @@ rs.mock('../src/api/ticketing-client', () => {
         ? success({ canEdit: true })
         : failure({ httpStatus: 403, message: 'Viewer is read-only.', ok: false });
     },
+    runCreateDatePropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'date',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'date-property-1',
+            revision: 1,
+          },
+        },
+      }),
     runCreateEmailPropertyDefinitionAction: (payload: {
       readonly collectionId: string;
       readonly mandatory: boolean;
@@ -495,6 +516,14 @@ test('wires a denied value-edit capability to read-only property editors', async
 
   const email = await screen.findByRole('textbox', { name: 'Contact email' });
   expect(email).toHaveAttribute('readonly');
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Date property name' }), {
+    target: { value: 'Due date' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create Date property' }));
+
+  const date = await screen.findByRole('button', { name: 'Due date: Empty' });
+  expect(date).toBeDisabled();
 
   fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
     target: { value: 'Reference URL' },

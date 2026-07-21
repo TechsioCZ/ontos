@@ -1,5 +1,4 @@
 // @effect-diagnostics asyncFunction:off cryptoRandomUUID:off globalFetch:off
-// oxlint-disable eslint/complexity -- The integration-base datatype renderer is already above the generic threshold; Date follows the same dispatch seam.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -771,6 +770,7 @@ export const TicketingExperience = () => {
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
+              {/* oxlint-disable eslint/complexity -- The integration-base datatype renderer is already above the generic threshold; Date follows the same dispatch seam. */}
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
                 if (task === undefined) {
@@ -822,6 +822,7 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
                       revision={value?.revision ?? 0}
                       taskId={task.taskId}
                       value={value?.value ?? null}
@@ -1178,6 +1179,7 @@ export const TicketingExperience = () => {
                   />
                 );
               })}
+              {/* oxlint-enable eslint/complexity */}
             </div>
           )}
         </section>
