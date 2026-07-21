@@ -103,6 +103,18 @@ const handler: ActionHandler<
       message: 'The Status Option or definition changed or is unavailable.',
     });
   }
+  if (
+    current.color === input.color &&
+    current.group === input.group &&
+    current.name === displayName &&
+    current.position === input.position
+  ) {
+    services.markNoOp();
+    return {
+      definitionRevision: input.expectedDefinitionRevision,
+      option: current,
+    };
+  }
   const targetSiblings = options.filter(
     ({ group, optionId }) => group === input.group && optionId !== input.optionId,
   );

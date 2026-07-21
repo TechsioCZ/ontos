@@ -98,7 +98,7 @@ const taskPropertyDefinitionFromRow = (
     return statusDefinitionFromParts({
       ...definition,
       groupLabel: (group) => statusGroupLabel(group, locale),
-      groups: statusOptionRows
+      options: statusOptionRows
         .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
         .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),
     });

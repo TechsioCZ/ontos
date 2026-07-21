@@ -40,7 +40,7 @@ export const statusGroupLabel = (group: StatusGroupKey, locale: string): string 
 export const statusDefinitionFromParts = ({
   defaultOptionId,
   groupLabel,
-  groups,
+  options,
   hidden,
   mandatory,
   name,
@@ -49,7 +49,7 @@ export const statusDefinitionFromParts = ({
 }: {
   readonly defaultOptionId: string;
   readonly groupLabel: (group: StatusGroupKey) => string;
-  readonly groups: readonly StatusOption[];
+  readonly options: readonly StatusOption[];
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
@@ -61,7 +61,7 @@ export const statusDefinitionFromParts = ({
   groups: groupOrder.map((group) => ({
     group,
     label: groupLabel(group),
-    options: groups
+    options: options
       .filter((option) => option.group === group)
       .toSorted(
         (left, right) =>
@@ -133,6 +133,6 @@ export const getStatusDefinition = async ({
   return statusDefinitionFromParts({
     ...definition,
     groupLabel: (group) => statusGroupLabel(group, effectiveLocale),
-    groups: rowsFromResult<StatusOptionRow>(optionResult),
+    options: rowsFromResult<StatusOptionRow>(optionResult),
   });
 };

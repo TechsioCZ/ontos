@@ -1,5 +1,5 @@
 {
-  "id": "26739412-26e5-40ea-85b2-b298b3fc3657",
+  "id": "017b4c4f-1c97-4c27-a099-f87f96a51be2",
   "prevId": "ab448471-6429-46e1-827e-e2b44a2533dd",
   "version": "7",
   "dialect": "postgresql",
@@ -2020,6 +2020,33 @@
           "method": "btree",
           "with": {}
         },
+        "ticketing_task_property_definitions_ownership_uk": {
+          "name": "ticketing_task_property_definitions_ownership_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "schema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "property_definition_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "ticketing_task_property_definitions_schema_id_datatype_uk": {
           "name": "ticketing_task_property_definitions_schema_id_datatype_uk",
           "columns": [
@@ -2292,6 +2319,33 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "ticketing_task_schemas_tenant_collection_schema_uk": {
+          "name": "ticketing_task_schemas_tenant_collection_schema_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "collection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "schema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2480,6 +2534,12 @@
       "name": "task_status_values",
       "schema": "ticketing",
       "columns": {
+        "collection_id": {
+          "name": "collection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "option_id": {
           "name": "option_id",
           "type": "uuid",
@@ -2498,6 +2558,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 1
+        },
+        "schema_id": {
+          "name": "schema_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
         },
         "task_id": {
           "name": "task_id",
@@ -2580,6 +2646,60 @@
           ],
           "columnsTo": [
             "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "ticketing_task_status_values_task_ownership_fk": {
+          "name": "ticketing_task_status_values_task_ownership_fk",
+          "tableFrom": "task_status_values",
+          "tableTo": "tasks",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "tenant_id",
+            "collection_id",
+            "task_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "collection_id",
+            "task_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "ticketing_task_status_values_definition_ownership_fk": {
+          "name": "ticketing_task_status_values_definition_ownership_fk",
+          "tableFrom": "task_status_values",
+          "tableTo": "task_property_definitions",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "tenant_id",
+            "schema_id",
+            "property_definition_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "schema_id",
+            "property_definition_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "ticketing_task_status_values_schema_ownership_fk": {
+          "name": "ticketing_task_status_values_schema_ownership_fk",
+          "tableFrom": "task_status_values",
+          "tableTo": "task_schemas",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "tenant_id",
+            "collection_id",
+            "schema_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "collection_id",
+            "schema_id"
           ],
           "onDelete": "restrict",
           "onUpdate": "no action"
@@ -2964,6 +3084,33 @@
         }
       },
       "indexes": {
+        "ticketing_tasks_ownership_uk": {
+          "name": "ticketing_tasks_ownership_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "collection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "ticketing_tasks_collection_idx": {
           "name": "ticketing_tasks_collection_idx",
           "columns": [

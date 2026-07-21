@@ -335,6 +335,28 @@ test('Status Option presentation changes preserve identity and use group-local o
     revision: 2,
   });
 
+  const unchangedOption = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'purple',
+      expectedDefinitionRevision: updatedOption.response.definitionRevision,
+      expectedOptionRevision: updatedOption.response.option.revision,
+      group: 'todo',
+      name: 'Ready',
+      optionId,
+      position: 0,
+      propertyDefinitionId: definition.propertyDefinitionId,
+    },
+    registration: updateStatusOptionActionRegistration,
+  });
+  assert.equal(unchangedOption._tag, 'OperationSucceeded', JSON.stringify(unchangedOption));
+  assert.equal(
+    unchangedOption.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
+    false,
+  );
+  assert.deepEqual(unchangedOption.response, updatedOption.response);
+
   const workspace = await readWorkspace(operationContext, collectionId, 'cs-CZ');
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   const projectedDefinition = workspace.response.propertyDefinitions.find(

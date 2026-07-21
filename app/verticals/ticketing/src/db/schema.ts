@@ -59,6 +59,11 @@ export const taskSchemas = ticketingSchema.table(
   (table) => [
     uniqueIndex('ticketing_task_schemas_collection_uk').on(table.collectionId),
     uniqueIndex('ticketing_task_schemas_tenant_schema_uk').on(table.tenantId, table.schemaId),
+    uniqueIndex('ticketing_task_schemas_tenant_collection_schema_uk').on(
+      table.tenantId,
+      table.collectionId,
+      table.schemaId,
+    ),
   ],
 );
 
@@ -84,6 +89,11 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     uniqueIndex('ticketing_task_property_definitions_schema_name_uk').on(
       table.schemaId,
       sql`lower(${table.name})`,
+    ),
+    uniqueIndex('ticketing_task_property_definitions_ownership_uk').on(
+      table.tenantId,
+      table.schemaId,
+      table.propertyDefinitionId,
     ),
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
@@ -225,6 +235,11 @@ export const tasks = ticketingSchema.table(
     title: text('title').default('').notNull(),
   },
   (table) => [
+    uniqueIndex('ticketing_tasks_ownership_uk').on(
+      table.tenantId,
+      table.collectionId,
+      table.taskId,
+    ),
     index('ticketing_tasks_collection_idx').on(table.tenantId, table.collectionId),
     index('ticketing_tasks_created_by_idx').on(table.tenantId, table.createdByPrincipalId),
     check('ticketing_tasks_revision_ck', sql`${table.revision} >= 1`),
@@ -407,11 +422,13 @@ export const taskSelectValues = ticketingSchema.table(
 export const taskStatusValues = ticketingSchema.table(
   'task_status_values',
   {
+    collectionId: uuid('collection_id').notNull(),
     optionId: uuid('option_id'),
     propertyDefinitionId: uuid('property_definition_id')
       .notNull()
       .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
     revision: integer('revision').default(1).notNull(),
+    schemaId: uuid('schema_id').notNull(),
     taskId: uuid('task_id')
       .notNull()
       .references(() => tasks.taskId, { onDelete: 'restrict' }),
@@ -422,6 +439,25 @@ export const taskStatusValues = ticketingSchema.table(
       columns: [table.taskId, table.propertyDefinitionId],
       name: 'ticketing_task_status_values_pk',
     }),
+    foreignKey({
+      columns: [table.tenantId, table.collectionId, table.taskId],
+      foreignColumns: [tasks.tenantId, tasks.collectionId, tasks.taskId],
+      name: 'ticketing_task_status_values_task_ownership_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.schemaId, table.propertyDefinitionId],
+      foreignColumns: [
+        taskPropertyDefinitions.tenantId,
+        taskPropertyDefinitions.schemaId,
+        taskPropertyDefinitions.propertyDefinitionId,
+      ],
+      name: 'ticketing_task_status_values_definition_ownership_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.collectionId, table.schemaId],
+      foreignColumns: [taskSchemas.tenantId, taskSchemas.collectionId, taskSchemas.schemaId],
+      name: 'ticketing_task_status_values_schema_ownership_fk',
+    }).onDelete('restrict'),
     foreignKey({
       columns: [table.tenantId, table.propertyDefinitionId, table.optionId],
       foreignColumns: [

@@ -136,14 +136,18 @@ export const createTaskAggregate = async ({
     ),
     initialized_status_values as (
       insert into ticketing.task_status_values (
+        collection_id,
         option_id,
         property_definition_id,
+        schema_id,
         task_id,
         tenant_id
       )
       select
+        created_task.collection_id,
         configuration.default_option_id,
         definition.property_definition_id,
+        schema.schema_id,
         created_task.task_id,
         ${tenantId}
       from created_task

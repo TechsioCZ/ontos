@@ -160,7 +160,7 @@ const handler: ActionHandler<
     definition: statusDefinitionFromParts({
       ...definition,
       groupLabel: (group) => statusGroupLabel(group, definition.collectionLocale),
-      groups: rowsFromResult<CreatedOptionRow>(optionResult),
+      options: rowsFromResult<CreatedOptionRow>(optionResult),
     }),
   };
 };

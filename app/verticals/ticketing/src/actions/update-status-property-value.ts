@@ -21,6 +21,7 @@ import { rejectTaskEditWithEmptyMandatoryProperty } from '../task-mandatory-vali
 interface CurrentValueRow {
   readonly optionId: string | null;
   readonly revision: number | null;
+  readonly schemaId: string;
   readonly taskRevision: number;
 }
 
@@ -75,6 +76,7 @@ const handler: ActionHandler<
     select
       value.option_id as "optionId",
       value.revision,
+      schema.schema_id as "schemaId",
       task.revision as "taskRevision"
     from ticketing.tasks as task
     inner join ticketing.task_schemas as schema
@@ -140,9 +142,10 @@ const handler: ActionHandler<
   const result = await services.tx.execute(sql`
     with changed_value as (
       insert into ticketing.task_status_values (
-        option_id, property_definition_id, revision, task_id, tenant_id
+        collection_id, option_id, property_definition_id, revision, schema_id, task_id, tenant_id
       ) values (
-        ${input.optionId ?? null}, ${input.propertyDefinitionId}, 1,
+        ${input.collectionId}, ${input.optionId ?? null}, ${input.propertyDefinitionId}, 1,
+        ${current.schemaId},
         ${input.taskId}, ${services.context.tenantId}
       )
       on conflict (task_id, property_definition_id) do update
