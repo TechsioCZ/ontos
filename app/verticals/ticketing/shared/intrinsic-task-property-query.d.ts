@@ -1,3 +1,4 @@
+// oxlint-disable typescript/ban-types, typescript/no-empty-object-type -- TypeScript-generated query declaration
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
 export declare const intrinsicTaskPropertyQueryOperationSchema: Schema.Union<
