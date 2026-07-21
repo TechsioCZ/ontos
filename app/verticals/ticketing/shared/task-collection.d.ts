@@ -1,4 +1,3 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated domain declaration
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const taskPropertyDefinitionSchema: Schema.Struct<{
   readonly datatype: Schema.Literal<'title'>;

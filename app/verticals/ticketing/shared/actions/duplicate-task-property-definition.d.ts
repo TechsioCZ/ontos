@@ -1,5 +1,4 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const duplicateTaskPropertyDefinitionActionKey: 'ticketing.duplicateTaskPropertyDefinition';
 export declare const duplicateTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
@@ -12,27 +11,51 @@ export declare const duplicateTaskPropertyDefinitionActionHeadersSchema: Schema.
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
 export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Struct<{
-    readonly datatype: Schema.Literal<'checkbox'>;
-    readonly hidden: Schema.Boolean;
-    readonly mandatory: Schema.Boolean;
-    readonly name: Schema.String;
-    readonly propertyDefinitionId: Schema.String;
-    readonly revision: Schema.Finite;
-  }>;
+  readonly definition: Schema.Union<
+    readonly [
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'checkbox'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'email'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+    ]
+  >;
 }>;
 export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly definition: Schema.Struct<{
-      readonly datatype: Schema.Literal<'checkbox'>;
-      readonly hidden: Schema.Boolean;
-      readonly mandatory: Schema.Boolean;
-      readonly name: Schema.String;
-      readonly propertyDefinitionId: Schema.String;
-      readonly revision: Schema.Finite;
-    }>;
+    readonly definition: Schema.Union<
+      readonly [
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'checkbox'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'email'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+      ]
+    >;
   }>;
 }>;
 export declare const duplicateTaskPropertyDefinitionActionFailureSchemas: readonly [

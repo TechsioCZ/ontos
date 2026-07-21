@@ -9,13 +9,16 @@ import {
   Effect,
   getTaskCollection,
   runCreateCheckboxPropertyDefinitionAction,
+  runCreateEmailPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
+  runUpdateEmailPropertyValueAction,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
+import { EmailPropertyEditor } from '../components/email-property-editor';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -66,6 +69,11 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
+  const [emailDefinitionName, setEmailDefinitionName] = useState('');
+  const [emailDefinitionIdempotencyKey, setEmailDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -128,6 +136,7 @@ export const TicketingExperience = () => {
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
               setCheckboxDefinitionName('');
+              setEmailDefinitionName('');
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
@@ -135,6 +144,7 @@ export const TicketingExperience = () => {
                 tasks: [
                   {
                     checkboxValues: [],
+                    emailValues: [],
                     taskId: taskCollection.task.taskId,
                     taskRevision: taskCollection.task.revision,
                     title: taskCollection.task.title,
@@ -223,6 +233,50 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateEmailDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || emailDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingEmailDefinition(true);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateEmailPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: emailDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: emailDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setEmailDefinitionName('');
+      setEmailDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.email.definitionCreateFailedDescription'),
+        title: t('ticketing.email.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingEmailDefinition(false);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -294,15 +348,86 @@ export const TicketingExperience = () => {
             >
               {t('ticketing.checkbox.definitionCreate')}
             </Button>
+            <FormInput
+              id="email-property-name"
+              label={t('ticketing.email.definitionName')}
+              name="email-property-name"
+              onChange={(event) => setEmailDefinitionName(event.currentTarget.value)}
+              value={emailDefinitionName}
+            />
+            <Button
+              disabled={emailDefinitionName.trim().length === 0}
+              isLoading={isCreatingEmailDefinition}
+              loadingText={t('ticketing.email.definitionCreating')}
+              onClick={() => void handleCreateEmailDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.email.definitionCreate')}
+            </Button>
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
+                if (task === undefined) {
+                  return null;
+                }
+                if (definition.datatype === 'email') {
+                  const emailValue = task.emailValues.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return (
+                    <EmailPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateEmailPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        emailValues: [
+                                          ...candidate.emailValues.filter(
+                                            ({ propertyDefinitionId }) =>
+                                              propertyDefinitionId !== draft.propertyDefinitionId,
+                                          ),
+                                          ...(outcome.response.value === null
+                                            ? []
+                                            : [outcome.response.value]),
+                                        ],
+                                        taskRevision: outcome.response.taskRevision,
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      revision={emailValue?.revision ?? 0}
+                      taskId={task.taskId}
+                      value={emailValue?.value ?? null}
+                    />
+                  );
+                }
                 const value = task?.checkboxValues.find(
                   (candidate) => candidate.propertyDefinitionId === definition.propertyDefinitionId,
                 );
-                return task === undefined || value === undefined ? null : (
+                return value === undefined ? null : (
                   <CheckboxPropertyEditor
                     collectionId={openedTaskPropertyWorkspace.collectionId}
                     key={definition.propertyDefinitionId}

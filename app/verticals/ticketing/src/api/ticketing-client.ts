@@ -45,6 +45,14 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateEmailPropertyDefinitionActionFailure,
+  CreateEmailPropertyDefinitionActionOutcome,
+  CreateEmailPropertyDefinitionActionPayload,
+  UpdateEmailPropertyValueActionFailure,
+  UpdateEmailPropertyValueActionOutcome,
+  UpdateEmailPropertyValueActionPayload,
+  QueryTaskEmailValuesPayload,
+  QueryTaskEmailValuesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -59,6 +67,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UpdateEmailPropertyValueActionFailure
+  | CreateEmailPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -179,6 +189,26 @@ export const filterTaskCheckboxValues = (
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
         query: { value: value ? 'true' : 'false' },
+      }),
+    ),
+  );
+
+export const queryTaskEmailValues = (
+  payload: QueryTaskEmailValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskEmailValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskEmailValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskEmailValues({
+        headers: options.headers ?? {},
+        params: {
+          collectionId: payload.collectionId,
+          propertyDefinitionId: payload.propertyDefinitionId,
+        },
+        query: { operation: payload.operation, query: payload.query },
       }),
     ),
   );
@@ -361,6 +391,60 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateEmailPropertyDefinitionAction = (
+  payload: CreateEmailPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateEmailPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createEmailPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createEmailPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateEmailPropertyValueAction = (
+  payload: UpdateEmailPropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateEmailPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateEmailPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateEmailPropertyValueAction({
         headers: headers ?? {},
         payload,
       }),

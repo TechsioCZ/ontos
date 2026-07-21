@@ -1,4 +1,3 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import, typescript/ban-types, typescript/no-empty-object-type -- TypeScript-generated Action declaration
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import type { TaskCollectionCreation } from '../task-collection.ts';
 export declare const createTaskCollectionActionKey: 'ticketing.createTaskCollection';
@@ -106,7 +105,61 @@ export declare const createTaskCollectionActionFailureSchema: Schema.Union<
     }>,
   ]
 >;
-export declare const createTaskCollectionActionFailureSchemas: typeof createTaskCollectionActionFailureSchema.members;
+export declare const createTaskCollectionActionFailureSchemas: readonly [
+  Schema.Struct<{
+    readonly code: Schema.optional<Schema.String>;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+    readonly errorTag: Schema.Literals<
+      readonly ['OperationAuthRequired', 'OperationContextInvalid']
+    >;
+  }>,
+  Schema.Struct<{
+    readonly code: Schema.optional<Schema.String>;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+    readonly errorTag: Schema.Literals<
+      readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+    >;
+  }>,
+  Schema.Struct<{
+    readonly code: Schema.optional<Schema.String>;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+    readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+  }>,
+  Schema.Struct<{
+    readonly code: Schema.optional<Schema.String>;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+    readonly errorTag: Schema.Literals<
+      readonly [
+        'OperationDomainRejected',
+        'OperationIdempotencyConflict',
+        'OperationIdempotencyReplayUnavailable',
+        'OperationPolicyDenied',
+      ]
+    >;
+  }>,
+  Schema.Struct<{
+    readonly code: Schema.optional<Schema.String>;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+    readonly errorTag: Schema.Literals<
+      readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+    >;
+  }>,
+];
 export type CreateTaskCollectionActionPayload = typeof createTaskCollectionActionPayloadSchema.Type;
 export type CreateTaskCollectionActionResponse = TaskCollectionCreation;
 export type CreateTaskCollectionActionOutcome = typeof createTaskCollectionActionOutcomeSchema.Type;

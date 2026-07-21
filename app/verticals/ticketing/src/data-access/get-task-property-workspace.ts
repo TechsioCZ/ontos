@@ -12,12 +12,19 @@ import type {
 } from '../../shared/task-property-workspace.ts';
 
 interface DefinitionRow {
-  readonly datatype: 'checkbox';
+  readonly datatype: 'checkbox' | 'email';
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
   readonly propertyDefinitionId: string;
   readonly revision: number;
+}
+
+interface EmailValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly value: string;
 }
 
 interface ValueRow {
@@ -34,6 +41,11 @@ interface TaskRow {
     propertyDefinitionId: string;
     revision: number;
     value: boolean;
+  }[];
+  readonly emailValues: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: string;
   }[];
   readonly taskId: string;
   readonly taskRevision: number;
@@ -79,7 +91,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype = 'checkbox'
+        and definition.datatype in ('checkbox', 'email')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -101,6 +113,24 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
+    const emailValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        value.value
+      from ticketing.task_email_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'email'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
     const definitions = rowsFromResult<DefinitionRow>(definitionResult);
     const valueRows = rowsFromResult<ValueRow>(valueResult);
     const tasks = new Map<string, TaskRow>();
@@ -108,6 +138,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     for (const row of valueRows) {
       const current = tasks.get(row.taskId) ?? {
         checkboxValues: [],
+        emailValues: [],
         taskId: row.taskId,
         taskRevision: row.taskRevision,
         title: row.title,
@@ -120,6 +151,14 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         });
       }
       tasks.set(row.taskId, current);
+    }
+
+    for (const row of rowsFromResult<EmailValueRow>(emailValueResult)) {
+      tasks.get(row.taskId)?.emailValues.push({
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+        value: row.value,
+      });
     }
 
     return {

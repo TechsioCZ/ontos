@@ -6,6 +6,20 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  updateEmailPropertyValueActionHeadersSchema,
+  updateEmailPropertyValueActionFailureSchemas,
+  updateEmailPropertyValueActionOutcomeSchema,
+  updateEmailPropertyValueActionPayloadSchema,
+} from './actions/update-email-property-value';
+
+import {
+  createEmailPropertyDefinitionActionHeadersSchema,
+  createEmailPropertyDefinitionActionFailureSchemas,
+  createEmailPropertyDefinitionActionOutcomeSchema,
+  createEmailPropertyDefinitionActionPayloadSchema,
+} from './actions/create-email-property-definition';
+
+import {
   transitionTaskRetentionActionHeadersSchema,
   transitionTaskRetentionActionFailureSchemas,
   transitionTaskRetentionActionOutcomeSchema,
@@ -59,6 +73,7 @@ import {
   updateCheckboxPropertyValueActionPayloadSchema,
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
+import { queryTaskEmailValuesResponseSchema } from './email-query';
 import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
@@ -66,6 +81,19 @@ import {
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
+
+export type {
+  CreateEmailPropertyDefinitionActionFailure,
+  CreateEmailPropertyDefinitionActionOutcome,
+  CreateEmailPropertyDefinitionActionPayload,
+  CreateEmailPropertyDefinitionActionResponse,
+} from './actions/create-email-property-definition';
+export type {
+  UpdateEmailPropertyValueActionFailure,
+  UpdateEmailPropertyValueActionOutcome,
+  UpdateEmailPropertyValueActionPayload,
+  UpdateEmailPropertyValueActionResponse,
+} from './actions/update-email-property-value';
 
 export type {
   ConfigureTaskPropertyDefinitionActionFailure,
@@ -119,17 +147,22 @@ export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export {
   checkboxPropertyDefinitionSchema,
+  emailPropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  EmailPropertyDefinition,
   TaskPropertyDefinition,
 } from './task-property-definition';
+export { emailMailtoHref, parseEmailValue } from './email-value';
+export type { ParsedEmailValue } from './email-value';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
 export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
 } from './checkbox-filter';
+export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -289,6 +322,36 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.get(
+        'queryTaskEmailValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/email-query',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          query: {
+            operation: Schema.Literals([
+              'search',
+              'is',
+              'is_not',
+              'contains',
+              'does_not_contain',
+              'is_empty',
+              'is_not_empty',
+              'sort_ascending',
+              'sort_descending',
+              'group',
+            ]),
+            query: Schema.String,
+          },
+          success: queryTaskEmailValuesResponseSchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.post(
         'createTaskCollectionAction',
         '/ticketing/actions/create-task-collection',
@@ -379,6 +442,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: transitionTaskRetentionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createEmailPropertyDefinitionAction',
+        '/ticketing/actions/create-email-property-definition',
+        {
+          error: createEmailPropertyDefinitionActionFailureSchemas,
+          headers: createEmailPropertyDefinitionActionHeadersSchema,
+          payload: createEmailPropertyDefinitionActionPayloadSchema,
+          success: createEmailPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateEmailPropertyValueAction',
+        '/ticketing/actions/update-email-property-value',
+        {
+          error: updateEmailPropertyValueActionFailureSchemas,
+          headers: updateEmailPropertyValueActionHeadersSchema,
+          payload: updateEmailPropertyValueActionPayloadSchema,
+          success: updateEmailPropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -393,6 +480,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-checkbox-property-definition',
+    source: 'generated-client',
+  },
+  createEmailPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createEmailPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-email-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -457,6 +550,13 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing',
     source: 'generated-client',
   },
+  queryTaskEmailValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:queryTaskEmailValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/email-query',
+    source: 'generated-client',
+  },
   readiness: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
@@ -473,6 +573,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
     routePath: '/ticketing/actions/update-checkbox-property-value',
+    source: 'generated-client',
+  },
+  updateEmailPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateEmailPropertyValueAction',
+    routePath: '/ticketing/actions/update-email-property-value',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

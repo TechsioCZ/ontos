@@ -1,5 +1,4 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const getTaskPropertyDeletionImpactPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
   readonly propertyDefinitionId: Schema.String;

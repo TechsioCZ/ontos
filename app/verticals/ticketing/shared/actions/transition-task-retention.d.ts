@@ -1,5 +1,4 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const taskRetentionStateSchema: Schema.Literals<
   readonly ['active', 'archived', 'softDeleted']
 >;

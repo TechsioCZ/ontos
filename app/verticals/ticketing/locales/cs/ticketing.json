@@ -11,6 +11,19 @@
       "staleDescription": "Vaše rozepsaná volba zůstala zachována. Před dalším pokusem načtěte aktuální hodnotu.",
       "staleTitle": "Checkbox byl změněn jinde"
     },
+    "email": {
+      "activate": "Napsat e-mail",
+      "definitionCreate": "Přidat Email property",
+      "definitionCreateFailedDescription": "Email property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření Email property selhalo",
+      "definitionCreating": "Přidávání Email property",
+      "definitionName": "Název Email property",
+      "invalid": "Zadejte jednu platnou e-mailovou adresu.",
+      "saveFailedDescription": "E-mail se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení e-mailu selhalo",
+      "staleDescription": "Váš rozepsaný e-mail zůstal zachován. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "E-mail byl změněn jinde"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",

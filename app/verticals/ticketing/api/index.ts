@@ -6,6 +6,8 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
+import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
@@ -19,6 +21,7 @@ import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
+import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -165,6 +168,29 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
+    .handle('queryTaskEmailValues', ({ params, query, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            operation: query.operation,
+            propertyDefinitionId: params.propertyDefinitionId,
+            query: query.query,
+          },
+          registration: queryTaskEmailValuesDataAccessRegistration,
+          resultCount: (response) => response.taskIds.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.queryTaskEmailValues', {
+          attributes: operationAttributes(ticketingOperationContexts.queryTaskEmailValues),
+          kind: 'server',
+        }),
+      ),
+    )
     .handle('createTaskCollectionAction', ({ payload, request }) =>
       Effect.promise(() =>
         runCoreSdkAction({
@@ -297,6 +323,50 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
             attributes: operationAttributes(
               ticketingOperationContexts.transitionTaskRetentionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createEmailPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createEmailPropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createEmailPropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createEmailPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateEmailPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateEmailPropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateEmailPropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateEmailPropertyValueAction,
             ),
             kind: 'server',
           }),

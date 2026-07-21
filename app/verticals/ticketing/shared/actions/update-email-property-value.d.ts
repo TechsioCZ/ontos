@@ -1,5 +1,41 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
-export declare const coreSdkOperationFailureSchemas: readonly [
+export declare const updateEmailPropertyValueActionKey: 'ticketing.updateEmailPropertyValue';
+export declare const updateEmailPropertyValueActionPayloadSchema: Schema.Struct<{
+  readonly collectionId: Schema.String;
+  readonly expectedRevision: Schema.Finite;
+  readonly propertyDefinitionId: Schema.String;
+  readonly taskId: Schema.String;
+  readonly value: Schema.String;
+}>;
+export declare const updateEmailPropertyValueActionHeadersSchema: Schema.Struct<{
+  readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+  readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+}>;
+export declare const updateEmailPropertyValueActionResponseSchema: Schema.Struct<{
+  readonly taskRevision: Schema.Finite;
+  readonly value: Schema.NullOr<
+    Schema.Struct<{
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+      readonly value: Schema.String;
+    }>
+  >;
+}>;
+export declare const updateEmailPropertyValueActionOutcomeSchema: Schema.Struct<{
+  readonly actionInvocationId: Schema.optional<Schema.String>;
+  readonly ok: Schema.Literal<true>;
+  readonly response: Schema.Struct<{
+    readonly taskRevision: Schema.Finite;
+    readonly value: Schema.NullOr<
+      Schema.Struct<{
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+        readonly value: Schema.String;
+      }>
+    >;
+  }>;
+}>;
+export declare const updateEmailPropertyValueActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -54,7 +90,7 @@ export declare const coreSdkOperationFailureSchemas: readonly [
     >;
   }>,
 ];
-export declare const coreSdkOperationFailureSchema: Schema.Union<
+export declare const updateEmailPropertyValueActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -111,11 +147,12 @@ export declare const coreSdkOperationFailureSchema: Schema.Union<
     }>,
   ]
 >;
-export declare const operationContextHeadersSchema: Schema.Struct<{
-  readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
-}>;
-export declare const idempotentActionHeadersSchema: Schema.Struct<{
-  readonly 'Idempotency-Key': Schema.optional<Schema.String>;
-  readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
-}>;
-export type CoreSdkOperationFailure = typeof coreSdkOperationFailureSchema.Type;
+export type UpdateEmailPropertyValueActionPayload =
+  typeof updateEmailPropertyValueActionPayloadSchema.Type;
+export type UpdateEmailPropertyValueActionResponse =
+  typeof updateEmailPropertyValueActionResponseSchema.Type;
+export type UpdateEmailPropertyValueActionOutcome =
+  typeof updateEmailPropertyValueActionOutcomeSchema.Type;
+export type UpdateEmailPropertyValueActionFailure =
+  typeof updateEmailPropertyValueActionFailureSchema.Type;
+export declare const updateEmailPropertyValueActionTitle: 'Update Email Property Value';

@@ -1,5 +1,4 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export { checkboxPropertyDefinitionSchema } from '../task-property-definition.ts';
 export declare const createCheckboxPropertyDefinitionActionKey: 'ticketing.createCheckboxPropertyDefinition';
 export declare const createCheckboxPropertyDefinitionActionPayloadSchema: Schema.Struct<{

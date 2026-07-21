@@ -1,4 +1,7 @@
 export {
+  queryTaskEmailValues,
+  runUpdateEmailPropertyValueAction,
+  runCreateEmailPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
