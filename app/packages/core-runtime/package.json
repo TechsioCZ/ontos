@@ -20,7 +20,8 @@
     "./policies": "./src/policies/index.ts",
     "./policy": "./src/policy.ts",
     "./sdk": "./src/core-sdk.ts",
-    "./sql-result": "./src/sql-result.ts"
+    "./sql-result": "./src/sql-result.ts",
+    "./testing/evidence-observer": "./src/testing/evidence-observer.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

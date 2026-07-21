@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
-import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
+import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
+import { observeCoreActionEvidence } from '@app/core-runtime/testing/evidence-observer';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { createPersonPropertyDefinitionActionRegistration } from '../src/actions/create-person-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
@@ -937,11 +938,6 @@ test('Person writes enforce Mandatory, authorization, stale revisions, metadata 
   });
   assert.equal(viewerWrite._tag, 'OperationAuthorizationDenied', JSON.stringify(viewerWrite));
 
-  const [beforeOutbox] = await sqlClient`
-    select count(*)::integer as count
-    from core.outbox_messages
-    where tenant_id = ${operationContext.tenantId}
-  `;
   const userWrite = await runAction({
     options: {
       authorizationChecker: authorizationForRole('User'),
@@ -958,12 +954,14 @@ test('Person writes enforce Mandatory, authorization, stale revisions, metadata 
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
   });
   assert.equal(userWrite._tag, 'OperationSucceeded', JSON.stringify(userWrite));
-  const [afterOutbox] = await sqlClient`
-    select count(*)::integer as count
-    from core.outbox_messages
-    where tenant_id = ${operationContext.tenantId}
-  `;
-  assert.equal(afterOutbox.count, beforeOutbox.count);
+  const actionInvocationId = userWrite.context.actionInvocation?.actionInvocationId;
+  assert.ok(actionInvocationId);
+  const observedEvidence = await observeCoreActionEvidence({
+    actionInvocationId,
+    db,
+    tenantId: operationContext.tenantId,
+  });
+  assert.deepEqual(observedEvidence.outboxMessages, []);
 
   const stale = await updatePersonValue({
     collectionId,
@@ -996,16 +994,10 @@ test('Person writes enforce Mandatory, authorization, stale revisions, metadata 
   assert.equal(mandatoryEmpty._tag, 'OperationDomainRejected', JSON.stringify(mandatoryEmpty));
   assert.equal(mandatoryEmpty.code, 'ticketing.updatePersonPropertyValue.mandatory_empty');
 
-  const [persistedEvidence] = await sqlClient`
-    select evidence_json as evidence
-    from core.audit_events
-    where tenant_id = ${operationContext.tenantId}
-      and event_type = 'action.succeeded'
-      and target_resource_id = ${taskId}
-      and target_resource_type = 'task'
-    order by occurred_at desc, audit_event_id desc
-    limit 1
-  `;
+  const persistedEvidence = observedEvidence.auditEvents.find(
+    ({ eventType }) => eventType === 'action.succeeded',
+  );
+  assert.ok(persistedEvidence);
   const { evidence } = persistedEvidence;
   assert.deepEqual(evidence, {
     changedComponents: ['personValue'],
