@@ -16,6 +16,10 @@ import {
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
+import {
+  CreatedByPresentation,
+  CreatedTimePresentation,
+} from '../components/intrinsic-property-presentation';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -299,10 +303,39 @@ export const TicketingExperience = () => {
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
+                if (task === undefined || definition.hidden) {
+                  return null;
+                }
+                if (definition.datatype === 'created_time') {
+                  return task.createdAt === undefined ||
+                    openedTaskPropertyWorkspace.effectiveTimeZone === undefined ? null : (
+                    <div key={definition.propertyDefinitionId}>
+                      <span className="ticketing:font-bold">{definition.name}: </span>
+                      <CreatedTimePresentation
+                        detail={false}
+                        instant={task.createdAt}
+                        locale={language}
+                        timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
+                      />
+                    </div>
+                  );
+                }
+                if (definition.datatype === 'created_by') {
+                  return task.createdBy === undefined ? null : (
+                    <div key={definition.propertyDefinitionId}>
+                      <span className="ticketing:font-bold">{definition.name}: </span>
+                      <CreatedByPresentation
+                        displayName={task.createdBy.displayName}
+                        inactive={task.createdBy.inactive}
+                        inactiveLabel={t('ticketing.intrinsic.inactive')}
+                      />
+                    </div>
+                  );
+                }
                 const value = task?.checkboxValues.find(
                   (candidate) => candidate.propertyDefinitionId === definition.propertyDefinitionId,
                 );
-                return task === undefined || value === undefined ? null : (
+                return value === undefined ? null : (
                   <CheckboxPropertyEditor
                     collectionId={openedTaskPropertyWorkspace.collectionId}
                     key={definition.propertyDefinitionId}

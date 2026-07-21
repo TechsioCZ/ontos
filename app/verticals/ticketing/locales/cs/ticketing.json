@@ -16,6 +16,9 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
+    "intrinsic": {
+      "inactive": "neaktivní"
+    },
     "routes": {
       "home": "Domů"
     },

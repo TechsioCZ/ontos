@@ -154,6 +154,7 @@ export const getTaskCollection = (
 
 export const getTaskPropertyWorkspace = (
   collectionId: string,
+  browserTimeZone?: string,
   options: TicketingClientOptions = {},
 ): TicketingClientEffect<TaskPropertyWorkspace> =>
   createTicketingClient({
@@ -165,6 +166,7 @@ export const getTaskPropertyWorkspace = (
       client.ticketing.getTaskPropertyWorkspace({
         headers: options.headers ?? {},
         params: { collectionId },
+        query: browserTimeZone === undefined ? {} : { browserTimeZone },
       }),
     ),
   );

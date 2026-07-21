@@ -106,11 +106,16 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
-    .handle('getTaskPropertyWorkspace', ({ params, request }) =>
+    .handle('getTaskPropertyWorkspace', ({ params, query, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
           headers: new Headers(request.headers),
-          payload: { collectionId: params.collectionId },
+          payload: {
+            collectionId: params.collectionId,
+            ...(query.browserTimeZone === undefined
+              ? {}
+              : { browserTimeZone: query.browserTimeZone }),
+          },
           registration: getTaskPropertyWorkspaceDataAccessRegistration,
           resultCount: (response) => response.tasks.length,
         }),

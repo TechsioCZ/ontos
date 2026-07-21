@@ -57,6 +57,13 @@
       "when": 1784618282205,
       "tag": "0007_flat_molly_hayes",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784620854719,
+      "tag": "0008_real_quasimodo",
+      "breakpoints": true
     }
   ]
 }

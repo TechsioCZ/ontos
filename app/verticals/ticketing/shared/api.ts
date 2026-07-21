@@ -275,6 +275,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           error: coreSdkOperationFailureSchemas,
           headers: operationContextHeadersSchema,
           params: { collectionId: Schema.String },
+          query: { browserTimeZone: Schema.optional(Schema.String) },
           success: taskPropertyWorkspaceSchema,
         },
       ),

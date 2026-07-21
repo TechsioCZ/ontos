@@ -25,9 +25,10 @@ const duplicatedDefinitionEvidence = (
   input: DuplicateTaskPropertyDefinitionActionPayload,
   response: DuplicateTaskPropertyDefinitionActionResponse,
 ) => ({
-  changedComponents: ['definition', 'propertyValues'],
+  changedComponents:
+    response.definition.datatype === 'checkbox' ? ['definition', 'propertyValues'] : ['definition'],
   collectionId: input.collectionId,
-  copiedValues: input.copyValues ?? false,
+  copiedValues: response.definition.datatype === 'checkbox' && (input.copyValues ?? false),
   datatype: response.definition.datatype,
   operation: 'duplicated',
   propertyDefinitionId: response.definition.propertyDefinitionId,
@@ -81,7 +82,7 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
   }
 
   const definition = await duplicateTaskPropertyDefinition({
-    copyValues: input.copyValues ?? false,
+    copyValues: source.datatype === 'checkbox' && (input.copyValues ?? false),
     source,
     tx: services.tx,
   });

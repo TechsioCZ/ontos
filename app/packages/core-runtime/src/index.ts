@@ -57,10 +57,7 @@ export type {
   OutboxWorkerRetryBackoff,
 } from './outbox-worker.ts';
 export { allowPolicy, denyPolicy } from './policy.ts';
-export {
-  configurePrincipalTimeZonePreference,
-  resolveEffectiveTimeZone,
-} from './principal-time-zone-preferences.ts';
+export { resolveEffectiveTimeZone } from './principal-time-zone-preferences.ts';
 export type { EffectiveTimeZone } from './principal-time-zone-preferences.ts';
 export type {
   PolicyAllowed,

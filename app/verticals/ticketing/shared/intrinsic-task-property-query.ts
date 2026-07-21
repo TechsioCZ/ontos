@@ -32,15 +32,18 @@ export const queryIntrinsicTaskPropertiesPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
   operation: intrinsicTaskPropertyQueryOperationSchema,
   propertyDefinitionId: Schema.String,
+  viewerLocale: Schema.String,
 });
 
 export const intrinsicTaskQueryRowSchema = Schema.Struct({
-  createdAt: Schema.String,
-  createdBy: Schema.Struct({
-    displayName: Schema.String,
-    inactive: Schema.Boolean,
-    principalId: Schema.String,
-  }),
+  createdAt: Schema.optional(Schema.String),
+  createdBy: Schema.optional(
+    Schema.Struct({
+      displayName: Schema.String,
+      inactive: Schema.Boolean,
+      principalId: Schema.String,
+    }),
+  ),
   taskId: Schema.String,
 });
 

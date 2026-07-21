@@ -16,6 +16,9 @@
       "en": "English",
       "switcher": "Language"
     },
+    "intrinsic": {
+      "inactive": "inactive"
+    },
     "routes": {
       "home": "Home"
     },

@@ -4,13 +4,11 @@ import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
-import {
-  configurePrincipalTimeZonePreference,
-  resolveEffectiveTimeZone,
-} from '../../../packages/core-runtime/src/principal-time-zone-preferences.ts';
+import { resolveEffectiveTimeZone } from '../../../packages/core-runtime/src/principal-time-zone-preferences.ts';
 import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
+import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
 import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
@@ -92,6 +90,15 @@ const operationContextResolver = (operationContext) => () => ({
 
 const allowedAuthorization = () => ({ _tag: 'Allowed' });
 
+const seedPrincipalTimeZonePreference = async (operationContext, timeZone) => {
+  await sqlClient`
+    insert into core.principal_time_zone_preferences (principal_id, tenant_id, time_zone)
+    values (${operationContext.principalId}, ${operationContext.tenantId}, ${timeZone})
+    on conflict (tenant_id, principal_id) do update
+      set time_zone = excluded.time_zone
+  `;
+};
+
 const authorizationForRole = (role) => (check) => {
   const permissions = {
     Editor: ['edit_task_property_values', 'manage_property_definitions', 'view_task_properties'],
@@ -166,16 +173,33 @@ test('Created time definitions project the original intrinsic Task creation inst
     {
       checkboxValues: [],
       createdAt: task.response.task.createdAt,
-      createdBy: {
-        displayName: 'Ada Lovelace',
-        inactive: false,
-        principalId: operationContext.principalId,
-      },
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
     },
   ]);
+
+  const hidden = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      hidden: true,
+      mandatory: false,
+      name: 'Created time',
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    },
+    registration: configureTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(hidden._tag, 'OperationSucceeded', JSON.stringify(hidden));
+  const hiddenWorkspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(hiddenWorkspace._tag, 'OperationSucceeded', JSON.stringify(hiddenWorkspace));
+  assert.equal(hiddenWorkspace.response.tasks[0].createdAt, undefined);
 });
 
 test('duplicating an intrinsic definition needs no value-copy choice and projects the same facts', async () => {
@@ -200,13 +224,15 @@ test('duplicating an intrinsic definition needs no value-copy choice and project
   });
   assert.equal(source._tag, 'OperationSucceeded', JSON.stringify(source));
 
+  const duplicatePayload = {
+    collectionId,
+    copyValues: true,
+    expectedRevision: 1,
+    propertyDefinitionId: source.response.definition.propertyDefinitionId,
+  };
   const duplicate = await runRegisteredAction({
     operationContext,
-    payload: {
-      collectionId,
-      expectedRevision: 1,
-      propertyDefinitionId: source.response.definition.propertyDefinitionId,
-    },
+    payload: duplicatePayload,
     registration: duplicateTaskPropertyDefinitionActionRegistration,
   });
 
@@ -216,6 +242,20 @@ test('duplicating an intrinsic definition needs no value-copy choice and project
     name: 'Created by Copy',
     propertyDefinitionId: duplicate.response.definition.propertyDefinitionId,
   });
+  assert.deepEqual(
+    duplicateTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
+      duplicatePayload,
+      duplicate.response,
+    ).changedComponents,
+    ['definition'],
+  );
+  assert.equal(
+    duplicateTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
+      duplicatePayload,
+      duplicate.response,
+    ).copiedValues,
+    false,
+  );
   const workspace = await runRegisteredDataAccess({
     operationContext,
     payload: { collectionId },
@@ -353,11 +393,7 @@ test('Core Principal Preferences resolves configured, browser, and UTC time zone
     timeZone: 'America/New_York',
   });
 
-  await configurePrincipalTimeZonePreference({
-    context: operationContext,
-    db,
-    timeZone: 'Europe/Prague',
-  });
+  await seedPrincipalTimeZonePreference(operationContext, 'Europe/Prague');
   const configured = await resolveEffectiveTimeZone({
     browserTimeZone: 'America/New_York',
     context: operationContext,
@@ -365,20 +401,33 @@ test('Core Principal Preferences resolves configured, browser, and UTC time zone
   });
   assert.deepEqual(configured, { source: 'configured', timeZone: 'Europe/Prague' });
 
-  await assert.rejects(
-    configurePrincipalTimeZonePreference({
-      context: operationContext,
-      db,
-      timeZone: 'Not/A_Zone',
-    }),
-    /recognized IANA time zone/u,
-  );
-  const preserved = await resolveEffectiveTimeZone({ context: operationContext, db });
-  assert.deepEqual(preserved, { source: 'configured', timeZone: 'Europe/Prague' });
-
   const fallbackContext = await createOperationIdentity();
   const utcFallback = await resolveEffectiveTimeZone({ context: fallbackContext, db });
   assert.deepEqual(utcFallback, { source: 'system_fallback', timeZone: 'UTC' });
+
+  const [systemPrincipal] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${fallbackContext.tenantId}, ${'Scheduled importer'}, ${'system'}, ${'active'})
+    returning principal_id
+  `;
+  const systemFallback = await resolveEffectiveTimeZone({
+    browserTimeZone: 'America/New_York',
+    context: { ...fallbackContext, principalId: systemPrincipal.principal_id },
+    db,
+  });
+  assert.deepEqual(systemFallback, { source: 'system_fallback', timeZone: 'UTC' });
+
+  await sqlClient`
+    update core.principals
+    set status = 'disabled'
+    where principal_id = ${operationContext.principalId}
+  `;
+  const inactiveFallback = await resolveEffectiveTimeZone({
+    browserTimeZone: 'America/New_York',
+    context: operationContext,
+    db,
+  });
+  assert.deepEqual(inactiveFallback, { source: 'system_fallback', timeZone: 'UTC' });
 });
 
 test('Created by queries current Principal presentation through stable identities', async () => {
@@ -426,6 +475,7 @@ test('Created by queries current Principal presentation through stable identitie
         collectionId,
         operation,
         propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+        viewerLocale: 'en-GB',
       },
       registration: queryIntrinsicTaskPropertiesDataAccessRegistration,
       resultCount: (response) => response.tasks.length,
@@ -435,7 +485,6 @@ test('Created by queries current Principal presentation through stable identitie
   assert.equal(searched._tag, 'OperationSucceeded', JSON.stringify(searched));
   assert.deepEqual(searched.response.tasks, [
     {
-      createdAt: firstTask.response.task.createdAt,
       createdBy: {
         displayName: 'Grace Hopper',
         inactive: true,
@@ -475,6 +524,39 @@ test('Created by queries current Principal presentation through stable identitie
   ]);
 });
 
+test('an exposed intrinsic definition queries as empty before the collection has Tasks', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, datatype: 'created_time', mandatory: false, name: 'Created time' },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+
+  const result = await runRegisteredDataAccess({
+    operationContext,
+    payload: {
+      browserTimeZone: 'Europe/Prague',
+      collectionId,
+      operation: { _tag: 'CreatedTimeGroup' },
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      viewerLocale: 'cs-CZ',
+    },
+    registration: queryIntrinsicTaskPropertiesDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));
+  assert.deepEqual(result.response.tasks, []);
+  assert.deepEqual(result.response.groups, []);
+});
+
 test('Created time queries absolute milliseconds through the configured viewer zone', async () => {
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
@@ -511,11 +593,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
     registration: createIntrinsicPropertyDefinitionActionRegistration,
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
-  await configurePrincipalTimeZonePreference({
-    context: operationContext,
-    db,
-    timeZone: 'Europe/Prague',
-  });
+  await seedPrincipalTimeZonePreference(operationContext, 'Europe/Prague');
   const query = (operation) =>
     runRegisteredDataAccess({
       operationContext,
@@ -524,6 +602,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
         collectionId,
         operation,
         propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+        viewerLocale: 'en-GB',
       },
       registration: queryIntrinsicTaskPropertiesDataAccessRegistration,
       resultCount: (response) => response.tasks.length,
@@ -532,7 +611,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
   const exactSecond = await query({
     _tag: 'CreatedTimeFilter',
     operator: 'exact',
-    value: '29/03/2026 01:59:59',
+    value: '2026-03-29T00:59:59Z',
   });
   assert.equal(exactSecond._tag, 'OperationSucceeded', JSON.stringify(exactSecond));
   assert.deepEqual(exactSecond.response.effectiveTimeZone, {
@@ -543,6 +622,22 @@ test('Created time queries absolute milliseconds through the configured viewer z
     exactSecond.response.tasks.map(({ taskId }) => taskId),
     [firstTask.taskId],
   );
+  await seedPrincipalTimeZonePreference(operationContext, 'America/New_York');
+  const exactSecondInAnotherZone = await query({
+    _tag: 'CreatedTimeFilter',
+    operator: 'exact',
+    value: '2026-03-29T00:59:59Z',
+  });
+  assert.equal(
+    exactSecondInAnotherZone._tag,
+    'OperationSucceeded',
+    JSON.stringify(exactSecondInAnotherZone),
+  );
+  assert.deepEqual(
+    exactSecondInAnotherZone.response.tasks.map(({ taskId }) => taskId),
+    [firstTask.taskId],
+  );
+  await seedPrincipalTimeZonePreference(operationContext, 'Europe/Prague');
 
   const filterCases = [
     ['before', [firstTask.taskId]],
@@ -555,7 +650,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
       query({
         _tag: 'CreatedTimeFilter',
         operator,
-        value: '29/03/2026 03:00:00',
+        value: '2026-03-29T01:00:00Z',
       }),
     ),
   );

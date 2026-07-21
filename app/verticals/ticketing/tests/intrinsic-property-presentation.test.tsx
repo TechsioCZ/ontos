@@ -1,6 +1,9 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, test } from '@rstest/core';
-import { CreatedTimePresentation } from '../src/components/intrinsic-property-presentation';
+import {
+  CreatedByPresentation,
+  CreatedTimePresentation,
+} from '../src/components/intrinsic-property-presentation';
 
 afterEach(cleanup);
 
@@ -25,4 +28,20 @@ test('Created time shows minutes in standard view and seconds in detail', () => 
     <CreatedTimePresentation detail instant={instant} locale="en-GB" timeZone="Europe/Prague" />,
   );
   expect(container.querySelector('time')?.textContent).toContain('12:15:30');
+});
+
+test('Created by shows the current display name and inactive state', () => {
+  const { getByText, rerender } = render(
+    <CreatedByPresentation displayName="Grace Hopper" inactive inactiveLabel="inactive" />,
+  );
+  expect(getByText('Grace Hopper (inactive)')).not.toBeNull();
+
+  rerender(
+    <CreatedByPresentation
+      displayName="Rear Admiral Hopper"
+      inactive={false}
+      inactiveLabel="inactive"
+    />,
+  );
+  expect(getByText('Rear Admiral Hopper')).not.toBeNull();
 });

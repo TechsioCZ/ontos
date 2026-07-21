@@ -9,6 +9,12 @@ export const checkboxPropertyValueSchema = Schema.Struct({
 
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
+  effectiveTimeZone: Schema.optional(
+    Schema.Struct({
+      source: Schema.Literals(['browser_fallback', 'configured', 'system_fallback']),
+      timeZone: Schema.String,
+    }),
+  ),
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
@@ -29,6 +35,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
 });
 
 export const getTaskPropertyWorkspacePayloadSchema = Schema.Struct({
+  browserTimeZone: Schema.optional(Schema.String),
   collectionId: Schema.String,
 });
 

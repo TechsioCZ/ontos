@@ -14,13 +14,16 @@ import type {
   QueryIntrinsicTaskPropertiesResponse,
 } from '../../shared/intrinsic-task-property-query.ts';
 
-interface IntrinsicTaskRow {
+interface IntrinsicDefinitionRow {
   readonly collectionLocale: string;
+  readonly datatype: 'created_by' | 'created_time';
+}
+
+interface IntrinsicTaskRow {
   readonly createdAt: string;
   readonly createdByDisplayName: string;
   readonly createdByPrincipalId: string;
   readonly createdByStatus: 'active' | 'archived' | 'disabled';
-  readonly datatype: 'created_by' | 'created_time';
   readonly taskId: string;
 }
 
@@ -46,6 +49,18 @@ interface InstantRangeRow {
   readonly end: string;
   readonly start: string;
 }
+
+const absoluteInstantRange = (value: string): InstantRange => {
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/u.test(value.trim())) {
+    throw new TypeError('Exact Created time filters require an absolute timestamp with an offset.');
+  }
+  const instant = Date.parse(value);
+  if (!Number.isFinite(instant)) {
+    throw new TypeError('The Created time filter is not a valid absolute timestamp.');
+  }
+  const start = Math.floor(instant / 1000) * 1000;
+  return { end: start + 1000, start };
+};
 
 const validDate = ({ day, month, year }: Pick<LocalTemporal, 'day' | 'month' | 'year'>) => {
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -164,6 +179,21 @@ const localCalendarDay = (instant: string, timeZone: string): string => {
   return `${part('year')}-${part('month')}-${part('day')}`;
 };
 
+const projectIntrinsicTask = (
+  datatype: IntrinsicDefinitionRow['datatype'],
+  row: IntrinsicTaskRow,
+) =>
+  datatype === 'created_time'
+    ? { createdAt: row.createdAt, taskId: row.taskId }
+    : {
+        createdBy: {
+          displayName: row.createdByDisplayName,
+          inactive: row.createdByStatus !== 'active',
+          principalId: row.createdByPrincipalId,
+        },
+        taskId: row.taskId,
+      };
+
 export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegistration<
   QueryIntrinsicTaskPropertiesPayload,
   QueryIntrinsicTaskPropertiesResponse
@@ -189,9 +219,29 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
     transportResponseSchema: queryIntrinsicTaskPropertiesResponseSchema,
   },
   handler: async (input, { context, db }) => {
+    const definitionResult = await db.execute(sql`
+      select
+        collection.locale as "collectionLocale",
+        definition.datatype
+      from ticketing.task_property_definitions as definition
+      inner join ticketing.task_schemas as schema
+        on schema.schema_id = definition.schema_id
+        and schema.tenant_id = definition.tenant_id
+      inner join ticketing.task_collections as collection
+        on collection.collection_id = schema.collection_id
+        and collection.tenant_id = schema.tenant_id
+      where definition.property_definition_id = ${input.propertyDefinitionId}
+        and definition.tenant_id = ${context.tenantId}
+        and schema.collection_id = ${input.collectionId}
+        and definition.hidden = false
+        and definition.datatype in ('created_time', 'created_by')
+    `);
+    const definition = rowsFromResult<IntrinsicDefinitionRow>(definitionResult).at(0);
+    if (definition === undefined) {
+      throw new Error('The intrinsic Task Property Definition was not found or is hidden.');
+    }
     const result = await db.execute(sql`
       select
-        tenant.default_locale as "collectionLocale",
         to_char(
           task.created_at at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
@@ -199,33 +249,22 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         creator.display_name as "createdByDisplayName",
         task.created_by_principal_id as "createdByPrincipalId",
         creator.status as "createdByStatus",
-        definition.datatype,
         task.task_id as "taskId"
-      from ticketing.task_property_definitions as definition
-      inner join ticketing.task_schemas as schema
-        on schema.schema_id = definition.schema_id
-        and schema.tenant_id = definition.tenant_id
-      inner join ticketing.tasks as task
-        on task.collection_id = schema.collection_id
-        and task.tenant_id = schema.tenant_id
+      from ticketing.tasks as task
       inner join core.principals as creator
         on creator.principal_id = task.created_by_principal_id
         and creator.tenant_id = task.tenant_id
-      inner join core.tenants as tenant
-        on tenant.tenant_id = task.tenant_id
-      where definition.property_definition_id = ${input.propertyDefinitionId}
-        and definition.tenant_id = ${context.tenantId}
-        and schema.collection_id = ${input.collectionId}
-        and definition.datatype in ('created_time', 'created_by')
+      where task.collection_id = ${input.collectionId}
+        and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id
     `);
     const rows = rowsFromResult<IntrinsicTaskRow>(result);
-    if (rows.length === 0) {
-      throw new Error('The intrinsic Task Property Definition was not found.');
-    }
-    const datatype = rows[0]?.datatype;
-    const locale = rows[0]?.collectionLocale ?? 'en-GB';
-    const collator = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'sort' });
+    const { collectionLocale, datatype } = definition;
+    const viewerLocale = new Intl.Locale(input.viewerLocale).toString();
+    const collator = new Intl.Collator(collectionLocale, {
+      sensitivity: 'accent',
+      usage: 'sort',
+    });
     let selectedRows = [...rows];
     if (datatype === 'created_time') {
       if (!input.operation._tag.startsWith('CreatedTime')) {
@@ -240,7 +279,7 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         case 'CreatedTimeSearch': {
           const range = await instantRangeFor({
             db,
-            locale,
+            locale: viewerLocale,
             timeZone: effectiveTimeZone.timeZone,
             value: input.operation.value,
           });
@@ -251,17 +290,20 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
           break;
         }
         case 'CreatedTimeFilter': {
-          const range = await instantRangeFor({
-            db,
-            locale,
-            timeZone: effectiveTimeZone.timeZone,
-            value: input.operation.value,
-          });
+          const usesLocalBoundary = ['local_day', 'local_range'].includes(input.operation.operator);
+          const range = usesLocalBoundary
+            ? await instantRangeFor({
+                db,
+                locale: viewerLocale,
+                timeZone: effectiveTimeZone.timeZone,
+                value: input.operation.value,
+              })
+            : absoluteInstantRange(input.operation.value);
           const endRange =
             input.operation.operator === 'local_range'
               ? await instantRangeFor({
                   db,
-                  locale,
+                  locale: viewerLocale,
                   timeZone: effectiveTimeZone.timeZone,
                   value: input.operation.endValue ?? '',
                 })
@@ -323,15 +365,7 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
           label: key,
           taskIds: groupRows.map(({ taskId }) => taskId),
         })),
-        tasks: selectedRows.map((row) => ({
-          createdAt: row.createdAt,
-          createdBy: {
-            displayName: row.createdByDisplayName,
-            inactive: row.createdByStatus !== 'active',
-            principalId: row.createdByPrincipalId,
-          },
-          taskId: row.taskId,
-        })),
+        tasks: selectedRows.map((row) => projectIntrinsicTask(datatype, row)),
       };
     }
     if (datatype !== 'created_by' || input.operation._tag.startsWith('CreatedTime')) {
@@ -339,9 +373,9 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
     }
     switch (input.operation._tag) {
       case 'CreatedBySearch': {
-        const query = searchableText(input.operation.value, locale);
+        const query = searchableText(input.operation.value, collectionLocale);
         selectedRows = selectedRows.filter((row) =>
-          searchableText(row.createdByDisplayName, locale).includes(query),
+          searchableText(row.createdByDisplayName, collectionLocale).includes(query),
         );
         break;
       }
@@ -388,15 +422,7 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         : [];
     return {
       groups,
-      tasks: selectedRows.map((row) => ({
-        createdAt: row.createdAt,
-        createdBy: {
-          displayName: row.createdByDisplayName,
-          inactive: row.createdByStatus !== 'active',
-          principalId: row.createdByPrincipalId,
-        },
-        taskId: row.taskId,
-      })),
+      tasks: selectedRows.map((row) => projectIntrinsicTask(datatype, row)),
     };
   },
 };

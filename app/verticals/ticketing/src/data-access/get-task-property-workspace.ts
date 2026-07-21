@@ -2,6 +2,7 @@
 import { rowsFromResult } from '@app/core-runtime';
 import type { DataAccessRegistration } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
+import { resolveEffectiveTimeZone } from '@app/core-runtime/principal-time-zone-preferences';
 import {
   getTaskPropertyWorkspacePayloadSchema,
   taskPropertyWorkspaceSchema,
@@ -39,8 +40,8 @@ interface TaskRow {
     revision: number;
     value: boolean;
   }[];
-  readonly createdAt: string;
-  readonly createdBy: {
+  readonly createdAt?: string;
+  readonly createdBy?: {
     displayName: string;
     inactive: boolean;
     principalId: string;
@@ -124,16 +125,26 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const definitions = rowsFromResult<DefinitionRow>(definitionResult);
     const valueRows = rowsFromResult<ValueRow>(valueResult);
     const tasks = new Map<string, TaskRow>();
+    const exposesCreatedTime = definitions.some(
+      (definition) => definition.datatype === 'created_time' && !definition.hidden,
+    );
+    const exposesCreatedBy = definitions.some(
+      (definition) => definition.datatype === 'created_by' && !definition.hidden,
+    );
 
     for (const row of valueRows) {
       const current = tasks.get(row.taskId) ?? {
         checkboxValues: [],
-        createdAt: row.createdAt,
-        createdBy: {
-          displayName: row.createdByDisplayName,
-          inactive: row.createdByStatus !== 'active',
-          principalId: row.createdByPrincipalId,
-        },
+        ...(exposesCreatedTime ? { createdAt: row.createdAt } : {}),
+        ...(exposesCreatedBy
+          ? {
+              createdBy: {
+                displayName: row.createdByDisplayName,
+                inactive: row.createdByStatus !== 'active',
+                principalId: row.createdByPrincipalId,
+              },
+            }
+          : {}),
         taskId: row.taskId,
         taskRevision: row.taskRevision,
         title: row.title,
@@ -148,8 +159,16 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       tasks.set(row.taskId, current);
     }
 
+    const effectiveTimeZone = exposesCreatedTime
+      ? await resolveEffectiveTimeZone({
+          browserTimeZone: input.browserTimeZone,
+          context,
+          db,
+        })
+      : undefined;
     return {
       collectionId: input.collectionId,
+      ...(effectiveTimeZone === undefined ? {} : { effectiveTimeZone }),
       propertyDefinitions: [...definitions],
       tasks: [...tasks.values()],
     };
