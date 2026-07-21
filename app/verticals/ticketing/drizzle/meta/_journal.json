@@ -78,6 +78,13 @@
       "when": 1784620927007,
       "tag": "0010_eager_nightshade",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1784638294266,
+      "tag": "0011_last_slyde",
+      "breakpoints": true
     }
   ]
 }

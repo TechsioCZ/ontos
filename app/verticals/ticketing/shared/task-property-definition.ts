@@ -53,12 +53,22 @@ export const numberPropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const urlPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('url'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 // This shared contract is the extension point for each supported Task Property datatype.
 export const taskPropertyDefinitionSchema = Schema.Union([
   checkboxPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   selectPropertyDefinitionSchema,
   textPropertyDefinitionSchema,
+  urlPropertyDefinitionSchema,
 ]);
 
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
@@ -67,4 +77,5 @@ export type SelectOption = typeof selectOptionSchema.Type;
 export type SelectOptionOrderMode = typeof selectOptionOrderModeSchema.Type;
 export type SelectPropertyDefinition = typeof selectPropertyDefinitionSchema.Type;
 export type TextPropertyDefinition = typeof textPropertyDefinitionSchema.Type;
+export type UrlPropertyDefinition = typeof urlPropertyDefinitionSchema.Type;
 export type TaskPropertyDefinition = typeof taskPropertyDefinitionSchema.Type;

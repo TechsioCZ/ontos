@@ -128,6 +128,26 @@ const createTaskActionHandler: ActionHandler<
         and definition.tenant_id = ${services.context.tenantId}
         and definition.datatype = 'text'
       returning task_id
+    ),
+    initialized_url_values as (
+      insert into ticketing.task_url_values (
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        definition.property_definition_id,
+        created_task.task_id,
+        ${services.context.tenantId}
+      from created_task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = created_task.collection_id
+        and schema.tenant_id = ${services.context.tenantId}
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = ${services.context.tenantId}
+        and definition.datatype = 'url'
+      returning task_id
     )
     select
       created_task.collection_id as "collectionId",

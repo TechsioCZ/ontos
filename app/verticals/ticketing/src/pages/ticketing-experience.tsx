@@ -13,17 +13,20 @@ import {
   runCreateTextPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
+  runCreateUrlPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
   runUpdateNumberPropertyValueAction,
   runUpdateTextPropertyValueAction,
+  runUpdateUrlPropertyValueAction,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
 import { NumberPropertyEditor } from '../components/number-property-editor';
 import { TextPropertyEditor } from '../components/text-property-editor';
 import { TextPropertyDuplication } from '../components/text-property-duplication';
+import { UrlPropertyEditor } from '../components/url-property-editor';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -84,6 +87,11 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingNumberDefinition, setIsCreatingNumberDefinition] = useState(false);
+  const [urlDefinitionName, setUrlDefinitionName] = useState('');
+  const [urlDefinitionIdempotencyKey, setUrlDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingUrlDefinition, setIsCreatingUrlDefinition] = useState(false);
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -149,6 +157,8 @@ export const TicketingExperience = () => {
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
               setNumberDefinitionName('');
               setNumberDefinitionIdempotencyKey(crypto.randomUUID());
+              setUrlDefinitionName('');
+              setUrlDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
                 propertyDefinitions: [],
@@ -160,6 +170,7 @@ export const TicketingExperience = () => {
                     taskId: taskCollection.task.taskId,
                     taskRevision: taskCollection.task.revision,
                     title: taskCollection.task.title,
+                    urlValues: [],
                   },
                 ],
               });
@@ -347,6 +358,62 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateUrlDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || urlDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingUrlDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateUrlPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: urlDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: urlDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+              tasks: current.tasks.map((task) => ({
+                ...task,
+                urlValues: [
+                  ...(task.urlValues ?? []),
+                  {
+                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                    revision: 0,
+                    value: null,
+                  },
+                ],
+              })),
+            },
+      );
+      setUrlDefinitionName('');
+      setUrlDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.url.definitionCreateFailedDescription'),
+        title: t('ticketing.url.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingUrlDefinition(false);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -451,6 +518,23 @@ export const TicketingExperience = () => {
               variant="secondary"
             >
               {t('ticketing.number.definitionCreate')}
+            </Button>
+            <FormInput
+              id="url-property-name"
+              label={t('ticketing.url.definitionName')}
+              name="url-property-name"
+              onChange={(event) => setUrlDefinitionName(event.currentTarget.value)}
+              value={urlDefinitionName}
+            />
+            <Button
+              disabled={urlDefinitionName.trim().length === 0}
+              isLoading={isCreatingUrlDefinition}
+              loadingText={t('ticketing.url.definitionCreating')}
+              onClick={() => void handleCreateUrlDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.url.definitionCreate')}
             </Button>
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
@@ -606,6 +690,55 @@ export const TicketingExperience = () => {
                         revision={definition.revision}
                       />
                     </div>
+                  );
+                }
+                if (definition.datatype === 'url') {
+                  const value = task?.urlValues?.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return task === undefined || value === undefined ? null : (
+                    <UrlPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      mandatory={definition.mandatory}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateUrlPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        taskRevision: outcome.response.taskRevision,
+                                        urlValues: candidate.urlValues?.map((urlValue) =>
+                                          urlValue.propertyDefinitionId ===
+                                          draft.propertyDefinitionId
+                                            ? outcome.response.value
+                                            : urlValue,
+                                        ),
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      revision={value.revision}
+                      taskId={task.taskId}
+                      value={value.value}
+                    />
                   );
                 }
                 const value = task?.checkboxValues.find(

@@ -81,6 +81,22 @@
       "strikethrough": "Přeškrtnutí",
       "underline": "Podtržení"
     },
+    "url": {
+      "copy": "Kopírovat URL",
+      "definitionCreate": "Přidat vlastnost URL",
+      "definitionCreateFailedDescription": "Vlastnost URL se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření vlastnosti URL selhalo",
+      "definitionCreating": "Přidávání vlastnosti URL",
+      "definitionName": "Název vlastnosti URL",
+      "invalid": "Zadejte jednu absolutní HTTP nebo HTTPS URL.",
+      "open": "Otevřít URL",
+      "save": "Uložit URL",
+      "saveFailedDescription": "URL se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení URL selhalo",
+      "saving": "Ukládání URL",
+      "staleDescription": "Váš koncept URL zůstal zachovaný. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "URL byla změněna jinde"
+    },
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
       "ticketing": {

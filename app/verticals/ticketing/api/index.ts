@@ -6,6 +6,8 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
+import { updateUrlPropertyValueActionRegistration } from '../src/actions/update-url-property-value.ts';
 import { configureNumberPropertyFormatActionRegistration } from '../src/actions/configure-number-property-format.ts';
 import { createNumberPropertyDefinitionActionRegistration } from '../src/actions/create-number-property-definition.ts';
 import { updateNumberPropertyValueActionRegistration } from '../src/actions/update-number-property-value.ts';
@@ -31,6 +33,7 @@ import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-acce
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
+import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -191,6 +194,26 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.queryTaskPropertyValues', {
           attributes: operationAttributes(ticketingOperationContexts.queryTaskPropertyValues),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('queryTaskUrlValues', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload,
+          registration: queryTaskUrlValuesDataAccessRegistration,
+          resultCount: (response) =>
+            response.taskIds.length +
+            response.groups.reduce((count, group) => count + group.taskIds.length, 0),
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.queryTaskUrlValues', {
+          attributes: operationAttributes(ticketingOperationContexts.queryTaskUrlValues),
           kind: 'server',
         }),
       ),
@@ -509,6 +532,38 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           attributes: operationAttributes(
             ticketingOperationContexts.configureSelectOptionOrderAction,
           ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createUrlPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createUrlPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createUrlPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createUrlPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updateUrlPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateUrlPropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateUrlPropertyValueAction', {
+          attributes: operationAttributes(ticketingOperationContexts.updateUrlPropertyValueAction),
           kind: 'server',
         }),
       ),

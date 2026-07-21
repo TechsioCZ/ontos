@@ -30,6 +30,18 @@ const mocks = rs.hoisted(() => ({
   taskCalls: [] as BoundaryCall<{ readonly collectionId: string }>[],
   taskFailuresRemaining: 1,
   toastCreate: rs.fn(),
+  urlDefinitionCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly mandatory: boolean;
+    readonly name: string;
+  }>[],
+  urlUpdateCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly expectedRevision: number;
+    readonly propertyDefinitionId: string;
+    readonly taskId: string;
+    readonly value: string;
+  }>[],
 }));
 
 test('Ticketing API publishes the CoreSDK failure status classes', () => {
@@ -50,12 +62,15 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'createTaskAction',
     'createTaskCollectionAction',
     'createTextPropertyDefinitionAction',
+    'createUrlPropertyDefinitionAction',
     'filterTaskCheckboxValues',
     'getTaskCollection',
     'getTaskPropertyWorkspace',
     'queryTaskPropertyValues',
+    'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
     'updateTextPropertyValueAction',
+    'updateUrlPropertyValueAction',
   ]) {
     expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);
   }
@@ -80,6 +95,12 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.taskCollection.openedTask': 'Opened Task',
         'ticketing.taskCollection.title': 'Title',
         'ticketing.title': 'Ticketing',
+        'ticketing.url.definitionCreate': 'Add URL property',
+        'ticketing.url.definitionCreating': 'Adding URL property',
+        'ticketing.url.definitionName': 'URL property name',
+        'ticketing.url.open': 'Open URL',
+        'ticketing.url.save': 'Save URL',
+        'ticketing.url.saving': 'Saving URL',
       })[key] ?? key,
   }),
 }));
@@ -205,7 +226,51 @@ rs.mock('../src/api/ticketing-client', () => {
         response: { collection: aggregate.collection, schema: aggregate.schema },
       });
     },
+    runCreateUrlPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly mandatory: boolean;
+        readonly name: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.urlDefinitionCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          definition: {
+            datatype: 'url',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name.trim(),
+            propertyDefinitionId: 'url-property-1',
+            revision: 1,
+          },
+        },
+      });
+    },
     runEffectRequest: (current: FakeEffect<unknown>) => current.result.value,
+    runUpdateUrlPropertyValueAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly expectedRevision: number;
+        readonly propertyDefinitionId: string;
+        readonly taskId: string;
+        readonly value: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.urlUpdateCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          taskRevision: 2,
+          value: {
+            propertyDefinitionId: payload.propertyDefinitionId,
+            revision: 1,
+            value: payload.value.trim(),
+          },
+        },
+      });
+    },
   };
 });
 
@@ -217,6 +282,8 @@ beforeEach(() => {
   mocks.taskCalls.length = 0;
   mocks.taskFailuresRemaining = 1;
   mocks.toastCreate.mockClear();
+  mocks.urlDefinitionCalls.length = 0;
+  mocks.urlUpdateCalls.length = 0;
   rs.stubGlobal(
     'fetch',
     rs.fn(() =>
@@ -312,4 +379,37 @@ test('retries only the governed read after both Actions succeed', async () => {
   expect(mocks.collectionCalls).toHaveLength(1);
   expect(mocks.taskCalls).toHaveLength(1);
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
+});
+
+test('creates, edits, and opens a URL through the public Ticketing surface', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+    target: { value: 'Reference URL' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
+
+  const valueInput = await screen.findByRole('textbox', { name: 'Reference URL' });
+  const exactValue = 'HTTPS://Example.com/%7EExact?Q=One#Part';
+  fireEvent.change(valueInput, { target: { value: exactValue } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save URL' }));
+
+  const open = await screen.findByRole('link', { name: 'Open URL' });
+  expect(open.getAttribute('href')).toBe(exactValue);
+  expect(mocks.urlDefinitionCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    mandatory: false,
+    name: 'Reference URL',
+  });
+  expect(mocks.urlUpdateCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    expectedRevision: 0,
+    propertyDefinitionId: 'url-property-1',
+    taskId: 'task-1',
+    value: exactValue,
+  });
 });

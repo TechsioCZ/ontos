@@ -37,7 +37,8 @@ type DefinitionRow =
       readonly datatype: 'select';
       readonly optionOrderMode: SelectOptionOrderMode | null;
     })
-  | (DefinitionFields & { readonly datatype: 'text' });
+  | (DefinitionFields & { readonly datatype: 'text' })
+  | (DefinitionFields & { readonly datatype: 'url' });
 
 interface OptionRow extends SelectOption {
   readonly propertyDefinitionId: string;
@@ -63,6 +64,13 @@ interface SelectValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskId: string;
+}
+
+interface UrlValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly value: string | null;
 }
 
 interface ValueRow {
@@ -99,7 +107,25 @@ interface TaskRow {
     revision: number;
   }[];
   readonly title: string;
+  readonly urlValues: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: string | null;
+  }[];
 }
+
+const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow[]): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task !== undefined) {
+      task.urlValues.push({
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+        value: row.value,
+      });
+    }
+  }
+};
 
 export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistration<
   GetTaskPropertyWorkspacePayload,
@@ -142,7 +168,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'number', 'select', 'text')
+        and definition.datatype in ('checkbox', 'number', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -237,6 +263,24 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
+    const urlValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        value.value
+      from ticketing.task_url_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'url'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
     const optionRows = rowsFromResult<OptionRow>(optionResult);
     const locale = input.locale ?? 'en-GB';
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
@@ -287,6 +331,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         taskRevision: row.taskRevision,
         ...(hasTextDefinitions ? { textValues: [] } : {}),
         title: row.title,
+        urlValues: [],
       };
       if (row.propertyDefinitionId !== null) {
         current.checkboxValues.push({
@@ -327,6 +372,8 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         revision: row.revision,
       });
     }
+
+    appendUrlValues(tasks, rowsFromResult<UrlValueRow>(urlValueResult));
 
     return {
       collectionId: input.collectionId,
