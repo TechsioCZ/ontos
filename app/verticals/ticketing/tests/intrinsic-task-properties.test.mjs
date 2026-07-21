@@ -5,6 +5,7 @@ import { after, test } from 'node:test';
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { resolveEffectiveTimeZone } from '../../../packages/core-runtime/src/principal-time-zone-preferences.ts';
+import { observeCoreActionEvidence } from '@app/core-runtime/testing/evidence-observer';
 import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
@@ -343,10 +344,28 @@ test('one actual Title and canvas save advances Last edited time once while a no
   assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
   assert.deepEqual(edited.response, {
     canvas: payload.canvas,
+    changedComponents: ['title', 'canvas'],
     taskId: payload.taskId,
     taskRevision: 2,
     title: payload.title,
   });
+  const editedActionInvocationId = edited.context.actionInvocation?.actionInvocationId;
+  assert.ok(editedActionInvocationId);
+  const editedEvidence = await observeCoreActionEvidence({
+    actionInvocationId: editedActionInvocationId,
+    db,
+    tenantId: operationContext.tenantId,
+  });
+  assert.deepEqual(
+    editedEvidence.auditEvents.find(({ eventType }) => eventType === 'action.succeeded')?.evidence,
+    {
+      changedComponents: ['title', 'canvas'],
+      collectionId,
+      operation: 'content_changed',
+      taskId: payload.taskId,
+      taskRevision: 2,
+    },
+  );
 
   const replayed = await runRegisteredAction({
     clock: { now: () => new Date('2026-07-21T11:00:00.000Z') },
@@ -364,6 +383,7 @@ test('one actual Title and canvas save advances Last edited time once while a no
     registration: updateTaskContentActionRegistration,
   });
   assert.equal(noOp._tag, 'OperationSucceeded', JSON.stringify(noOp));
+  assert.deepEqual(noOp.response.changedComponents, []);
   assert.equal(noOp.response.taskRevision, 2);
   assert.equal(
     noOp.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
@@ -379,6 +399,34 @@ test('one actual Title and canvas save advances Last edited time once while a no
   assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
   assert.equal(stale.code, 'ticketing.updateTaskContent.stale_or_missing');
 
+  const titleOnlyEditedAt = new Date('2026-07-21T14:00:00.500Z');
+  const titleOnly = await runRegisteredAction({
+    clock: { now: () => titleOnlyEditedAt },
+    operationContext,
+    payload: { ...payload, expectedRevision: 2, title: 'Review the final contract' },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(titleOnly._tag, 'OperationSucceeded', JSON.stringify(titleOnly));
+  assert.deepEqual(titleOnly.response.changedComponents, ['title']);
+  const titleOnlyActionInvocationId = titleOnly.context.actionInvocation?.actionInvocationId;
+  assert.ok(titleOnlyActionInvocationId);
+  const titleOnlyEvidence = await observeCoreActionEvidence({
+    actionInvocationId: titleOnlyActionInvocationId,
+    db,
+    tenantId: operationContext.tenantId,
+  });
+  assert.deepEqual(
+    titleOnlyEvidence.auditEvents.find(({ eventType }) => eventType === 'action.succeeded')
+      ?.evidence,
+    {
+      changedComponents: ['title'],
+      collectionId,
+      operation: 'content_changed',
+      taskId: payload.taskId,
+      taskRevision: 3,
+    },
+  );
+
   const workspace = await runRegisteredDataAccess({
     operationContext,
     payload: { collectionId },
@@ -386,9 +434,9 @@ test('one actual Title and canvas save advances Last edited time once while a no
     resultCount: (response) => response.tasks.length,
   });
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
-  assert.equal(workspace.response.tasks[0].lastEditedAt, editedAt.toISOString());
-  assert.equal(workspace.response.tasks[0].taskRevision, 2);
-  assert.equal(workspace.response.tasks[0].title, payload.title);
+  assert.equal(workspace.response.tasks[0].lastEditedAt, titleOnlyEditedAt.toISOString());
+  assert.equal(workspace.response.tasks[0].taskRevision, 3);
+  assert.equal(workspace.response.tasks[0].title, titleOnly.response.title);
   assert.deepEqual(workspace.response.tasks[0].canvas, payload.canvas);
 });
 
@@ -550,10 +598,17 @@ test('duplicating Last edited time projects the live fact without copying values
 
   assert.equal(duplicate._tag, 'OperationSucceeded', JSON.stringify(duplicate));
   assert.equal(duplicate.response.definition.name, 'Last edited Copy');
-  const evidence = duplicateTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
-    duplicatePayload,
-    duplicate.response,
-  );
+  const duplicateActionInvocationId = duplicate.context.actionInvocation?.actionInvocationId;
+  assert.ok(duplicateActionInvocationId);
+  const observedEvidence = await observeCoreActionEvidence({
+    actionInvocationId: duplicateActionInvocationId,
+    db,
+    tenantId: operationContext.tenantId,
+  });
+  const evidence = observedEvidence.auditEvents.find(
+    ({ eventType }) => eventType === 'action.succeeded',
+  )?.evidence;
+  assert.ok(evidence);
   assert.deepEqual(evidence.changedComponents, ['definition']);
   assert.equal(evidence.copiedValues, false);
   const workspace = await runRegisteredDataAccess({

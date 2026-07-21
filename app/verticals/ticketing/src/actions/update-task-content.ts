@@ -1,6 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 import { rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
+  ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
   ActionHandler,
   ActionRegistration,
@@ -25,16 +26,28 @@ interface CurrentTaskContentRow {
   readonly title: string;
 }
 
+type PersistedTaskContentResponse = Omit<UpdateTaskContentActionResponse, 'changedComponents'>;
+
 const taskContentEvidence = (
   input: UpdateTaskContentActionPayload,
   response: UpdateTaskContentActionResponse,
 ) => ({
-  changedComponents: ['title', 'canvas'],
+  changedComponents: response.changedComponents,
   collectionId: input.collectionId,
   operation: 'content_changed',
   taskId: response.taskId,
   taskRevision: response.taskRevision,
 });
+
+const updateTaskContentAuditEvent = {
+  evidence: taskContentEvidence,
+  targetModuleKey: 'ticketing',
+  targetResourceId: (input) => input.taskId,
+  targetResourceType: 'task',
+} satisfies ActionAuditEventDescriptor<
+  UpdateTaskContentActionPayload,
+  UpdateTaskContentActionResponse
+>;
 
 const updateTaskContentDomainEvent = {
   eventType: 'ticketing.task.contentChanged',
@@ -81,10 +94,15 @@ const updateTaskContentActionHandler: ActionHandler<
     tenantId: services.context.tenantId,
   });
 
-  if (current.title === input.title && current.sameCanvas) {
+  const changedComponents: UpdateTaskContentActionResponse['changedComponents'] = [
+    ...(current.title === input.title ? [] : (['title'] as const)),
+    ...(current.sameCanvas ? [] : (['canvas'] as const)),
+  ];
+  if (changedComponents.length === 0) {
     services.markNoOp();
     return {
       canvas: current.canvas,
+      changedComponents,
       taskId: current.taskId,
       taskRevision: current.taskRevision,
       title: current.title,
@@ -134,14 +152,14 @@ const updateTaskContentActionHandler: ActionHandler<
     from updated_task
     inner join created_revision using (task_id)
   `);
-  const updated = rowsFromResult<UpdateTaskContentActionResponse>(result).at(0);
+  const updated = rowsFromResult<PersistedTaskContentResponse>(result).at(0);
   if (updated === undefined) {
     throw rejectAction({
       code: 'ticketing.updateTaskContent.stale_or_missing',
       message: 'The Task changed elsewhere or is no longer available.',
     });
   }
-  return updated;
+  return { ...updated, changedComponents };
 };
 
 export const updateTaskContentActionRegistration: ActionRegistration<
@@ -150,7 +168,8 @@ export const updateTaskContentActionRegistration: ActionRegistration<
 > = {
   descriptor: {
     actionKey: updateTaskContentActionKey,
-    auditProfile: 'standard',
+    auditEvent: updateTaskContentAuditEvent,
+    auditProfile: 'sensitive',
     authorization: {
       permission: 'edit_task_property_values',
       provider: 'spicedb',

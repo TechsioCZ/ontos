@@ -19,6 +19,7 @@ export const updateTaskContentActionHeadersSchema = idempotentActionHeadersSchem
 
 export const updateTaskContentActionResponseSchema = Schema.Struct({
   canvas: Schema.Json,
+  changedComponents: Schema.Array(Schema.Literal('title', 'canvas')),
   taskId: Schema.String,
   taskRevision: Schema.Finite,
   title: Schema.String,
