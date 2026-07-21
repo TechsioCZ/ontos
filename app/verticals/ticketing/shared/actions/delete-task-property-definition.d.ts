@@ -13,7 +13,6 @@ export declare const deleteTaskPropertyDefinitionActionHeadersSchema: Schema.Str
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
 export declare const deleteTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly deletedDatatype: Schema.String;
   readonly deletedPropertyDefinitionId: Schema.String;
   readonly impactCount: Schema.Finite;
 }>;
@@ -21,7 +20,6 @@ export declare const deleteTaskPropertyDefinitionActionOutcomeSchema: Schema.Str
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly deletedDatatype: Schema.String;
     readonly deletedPropertyDefinitionId: Schema.String;
     readonly impactCount: Schema.Finite;
   }>;

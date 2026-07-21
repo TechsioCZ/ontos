@@ -7,7 +7,7 @@ import type { TaskPropertyDeletionImpact } from '../shared/task-property-deletio
 
 interface TaskPropertyDefinitionLifecycleTarget {
   readonly cardinality: 'one' | 'unlimited' | null;
-  readonly datatype: string;
+  readonly datatype: TaskPropertyDefinition['datatype'];
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;

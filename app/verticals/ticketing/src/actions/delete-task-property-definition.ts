@@ -21,22 +21,31 @@ import type {
   DeleteTaskPropertyDefinitionActionPayload,
   DeleteTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/delete-task-property-definition.ts';
+import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
+
+const deletedDatatypeByResponse = new WeakMap<
+  DeleteTaskPropertyDefinitionActionResponse,
+  TaskPropertyDefinition['datatype']
+>();
 
 const deletedDefinitionEvidence = (
   input: DeleteTaskPropertyDefinitionActionPayload,
   response: DeleteTaskPropertyDefinitionActionResponse,
-) => ({
-  changedComponents:
-    response.deletedDatatype === 'id'
-      ? ['definition', 'idPrefix', 'idAssignments', 'idSequence']
-      : ['definition', 'propertyValues'],
-  collectionId: input.collectionId,
-  datatype: response.deletedDatatype,
-  impactCount: response.impactCount,
-  operation: 'deleted',
-  propertyDefinitionId: response.deletedPropertyDefinitionId,
-  revision: input.expectedRevision,
-});
+) => {
+  const deletedDatatype = deletedDatatypeByResponse.get(response);
+  return {
+    changedComponents:
+      deletedDatatype === 'id'
+        ? ['definition', 'idPrefix', 'idAssignments', 'idSequence']
+        : ['definition', 'propertyValues'],
+    collectionId: input.collectionId,
+    ...(deletedDatatype === undefined ? {} : { datatype: deletedDatatype }),
+    impactCount: response.impactCount,
+    operation: 'deleted',
+    propertyDefinitionId: response.deletedPropertyDefinitionId,
+    revision: input.expectedRevision,
+  };
+};
 
 const deleteTaskPropertyDefinitionAuditEvent = {
   evidence: deletedDefinitionEvidence,
@@ -108,11 +117,12 @@ const deleteTaskPropertyDefinitionActionHandler: ActionHandler<
     });
   }
 
-  return {
-    deletedDatatype: target.datatype,
+  const response = {
     deletedPropertyDefinitionId: input.propertyDefinitionId,
     impactCount: confirmation.impactCount,
   };
+  deletedDatatypeByResponse.set(response, target.datatype);
+  return response;
 };
 
 export const deleteTaskPropertyDefinitionActionRegistration: ActionRegistration<

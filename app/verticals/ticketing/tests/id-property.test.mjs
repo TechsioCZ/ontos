@@ -530,29 +530,21 @@ test('confirmed ID deletion removes every retained assignment and reactivation s
       }),
     ),
   );
-  assert.deepEqual(
-    retainedActivationEvidence.auditEvents.find(({ eventType }) => eventType === 'action.succeeded')
-      ?.evidence,
-    {
-      changedComponents: ['definition', 'idAssignments'],
-      collectionId,
-      datatype: 'id',
-      operation: 'created',
-      propertyDefinitionId: activation.response.definition.propertyDefinitionId,
-      revision: 1,
-    },
-  );
+  const persistedActivationEvidence = retainedActivationEvidence.auditEvents.find(
+    ({ eventType }) => eventType === 'action.succeeded',
+  )?.evidence;
+  assert.deepEqual(persistedActivationEvidence, {
+    changedComponents: ['definition', 'idAssignments'],
+    collectionId,
+    datatype: 'id',
+    operation: 'created',
+    propertyDefinitionId: activation.response.definition.propertyDefinitionId,
+    revision: 1,
+  });
   assert.deepEqual(retainedActivationEvidence.domainEvents, [
     {
       eventType: 'ticketing.taskPropertyDefinition.created',
-      payload: {
-        changedComponents: ['definition', 'idAssignments'],
-        collectionId,
-        datatype: 'id',
-        operation: 'created',
-        propertyDefinitionId: activation.response.definition.propertyDefinitionId,
-        revision: 1,
-      },
+      payload: persistedActivationEvidence,
     },
   ]);
   const persistedDeletionEvidence = deletionEvidence.auditEvents.find(
