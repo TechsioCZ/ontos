@@ -141,13 +141,14 @@ test('a Phone value preserves non-normalized text exactly through the public act
   });
   assert.equal(saved._tag, 'OperationSucceeded', JSON.stringify(saved));
   assert.equal(saved.response.value.value, exactValue);
+  const savedRevision = saved.response.value.revision;
 
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.tasks[0].phoneValues, [
     {
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
-      revision: 1,
+      revision: savedRevision,
       value: exactValue,
     },
   ]);
@@ -170,6 +171,7 @@ test('invalid Phone input is rejected atomically without truncating or replacing
     registration: updatePhonePropertyValueActionRegistration,
   });
   assert.equal(accepted._tag, 'OperationSucceeded', JSON.stringify(accepted));
+  const acceptedRevision = accepted.response.value.revision;
 
   const rejectedInputs = await Promise.all(
     [
@@ -186,7 +188,7 @@ test('invalid Phone input is rejected atomically without truncating or replacing
         operationContext,
         payload: {
           collectionId,
-          expectedRevision: 1,
+          expectedRevision: acceptedRevision,
           propertyDefinitionId,
           taskId,
           value: invalid,
@@ -202,7 +204,7 @@ test('invalid Phone input is rejected atomically without truncating or replacing
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.tasks[0].phoneValues, [
-    { propertyDefinitionId, revision: 1, value: exactLimitValue },
+    { propertyDefinitionId, revision: acceptedRevision, value: exactLimitValue },
   ]);
   assert.equal(workspace.response.tasks[0].taskRevision, 2);
 });
@@ -220,18 +222,47 @@ test('Unicode-whitespace-only clears Phone sparsely and stale writes cannot rest
 
   const populated = await update(0, '555 / 123');
   assert.equal(populated._tag, 'OperationSucceeded', JSON.stringify(populated));
-  const cleared = await update(1, '\u2003\u00A0');
+  const populatedRevision = populated.response.value.revision;
+  const cleared = await update(populatedRevision, '\u2003\u00A0');
   assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
   assert.equal(cleared.response.value, null);
   assert.equal(cleared.response.taskRevision, 3);
 
-  const stale = await update(1, 'old draft');
+  const stale = await update(populatedRevision, 'old draft');
   assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
   assert.equal(stale.code, 'ticketing.updatePhonePropertyValue.stale_or_missing');
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.tasks[0].phoneValues, []);
   assert.equal(workspace.response.tasks[0].taskRevision, 3);
+});
+
+test('a sparse clear and reinsert cannot revive an old matching Phone revision', async () => {
+  const { collectionId, definition, operationContext, task } = await createPhoneFixture();
+  const { propertyDefinitionId } = definition.response.definition;
+  const { taskId } = task.response.task;
+  const update = (expectedRevision, value) =>
+    runRegisteredAction({
+      operationContext,
+      payload: { collectionId, expectedRevision, propertyDefinitionId, taskId, value },
+      registration: updatePhonePropertyValueActionRegistration,
+    });
+
+  const original = await update(0, 'original');
+  assert.equal(original._tag, 'OperationSucceeded', JSON.stringify(original));
+  const originalRevision = original.response.value.revision;
+  const cleared = await update(originalRevision, null);
+  assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
+  const replacement = await update(0, 'replacement');
+  assert.equal(replacement._tag, 'OperationSucceeded', JSON.stringify(replacement));
+  assert.ok(replacement.response.value.revision > originalRevision);
+
+  const stale = await update(originalRevision, 'old draft');
+  assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].phoneValues[0].value, 'replacement');
 });
 
 test('Phone Actions emit metadata evidence without Phone content', () => {
@@ -358,6 +389,7 @@ test('Phone duplication optionally snapshots exact values into an independent de
     registration: updatePhonePropertyValueActionRegistration,
   });
   assert.equal(populated._tag, 'OperationSucceeded', JSON.stringify(populated));
+  const sourceRevision = populated.response.value.revision;
   const blankCopy = await runRegisteredAction({
     operationContext,
     payload: {
@@ -386,7 +418,11 @@ test('Phone duplication optionally snapshots exact values into an independent de
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.tasks[0].phoneValues, [
-    { propertyDefinitionId: sourcePropertyDefinitionId, revision: 1, value: exactValue },
+    {
+      propertyDefinitionId: sourcePropertyDefinitionId,
+      revision: sourceRevision,
+      value: exactValue,
+    },
     {
       propertyDefinitionId: valueCopy.response.definition.propertyDefinitionId,
       revision: 1,

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { HttpApi } from '@modern-js/plugin-bff/effect-client';
 import { afterEach, beforeEach, expect, rs, test } from '@rstest/core';
 import type { ReactNode } from 'react';
@@ -244,7 +244,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  cleanup();
   rs.unstubAllGlobals();
 });
 

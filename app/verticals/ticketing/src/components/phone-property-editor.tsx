@@ -2,7 +2,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { FormInput } from '@techsio/ui-kit/molecules/form-input';
+import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import { phoneTelHref, validatePhoneValue } from '../../shared/phone-value';
@@ -130,15 +130,16 @@ export const PhonePropertyEditor = ({
 
   return (
     <div>
-      <FormInput
+      <FormTextarea
         disabled={isSaving}
         helpText={validation.ok ? undefined : t('ticketing.phone.invalid')}
         id={`phone-property-${propertyDefinitionId}`}
         label={label}
         name={`phone-property-${propertyDefinitionId}`}
         onChange={(event) => setDraftValue(event.currentTarget.value)}
-        readOnly={readOnly}
-        type="text"
+        readonly={readOnly}
+        resize="none"
+        rows={1}
         validateStatus={validation.ok ? 'default' : 'error'}
         value={draftValue}
       />

@@ -145,11 +145,13 @@ const updatePhonePropertyValueActionHandler: ActionHandler<
       return services.tx.execute(sql`
             insert into ticketing.task_phone_values (
               property_definition_id,
+              revision,
               task_id,
               tenant_id,
               value
             ) values (
               ${input.propertyDefinitionId},
+              ${current.taskRevision + 1},
               ${input.taskId},
               ${services.context.tenantId},
               ${validated.value}

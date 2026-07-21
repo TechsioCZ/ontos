@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, rs, test } from '@rstest/core';
 import { PhonePropertyEditor } from '../src/components/phone-property-editor';
 
@@ -28,7 +28,6 @@ rs.mock('@techsio/ui-kit/molecules/toast', () => ({
 }));
 
 afterEach(() => {
-  cleanup();
   mocks.toastCreate.mockClear();
 });
 
@@ -99,6 +98,33 @@ test('an accepted exact draft becomes the value used by reader handoffs', async 
   expect(screen.getByRole('link', { name: 'Call' }).getAttribute('href')).toBe(
     `tel:${encodeURIComponent(exactValue)}`,
   );
+});
+
+test('a pasted line break remains an invalid draft and cannot be saved', () => {
+  const save = rs.fn();
+  render(
+    <PhonePropertyEditor
+      collectionId="collection-1"
+      label={phoneLabel}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+      value="committed"
+    />,
+  );
+
+  const editor = screen.getByRole('textbox', { name: phoneLabel });
+  const invalidDraft = '12\n34';
+  fireEvent.change(editor, { target: { value: invalidDraft } });
+
+  expect(editor.tagName).toBe('TEXTAREA');
+  expect((editor as HTMLTextAreaElement).value).toBe(invalidDraft);
+  expect(screen.getByText('Enter one control-free line of at most 256 characters.')).toBeDefined();
+  const saveButton = screen.getByRole('button', { name: 'Save' });
+  expect(saveButton.hasAttribute('disabled')).toBe(true);
+  fireEvent.click(saveButton);
+  expect(save).not.toHaveBeenCalled();
 });
 
 test('a stale Phone save keeps the exact unsaved draft and reports the conflict', async () => {
