@@ -5,8 +5,13 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Label } from '@techsio/ui-kit/atoms/label';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
+import type {
+  CoreReference,
+  CoreReferenceOpenResult,
+  CoreReferenceResolutionResult,
+} from '@app/core-runtime/core-reference';
 import type { TextDocument, TextInlineNode, TextMark } from '../../shared/text-property.ts';
 import { flattenTextPaste } from '../text-property-paste.ts';
 
@@ -36,6 +41,10 @@ export interface TextPropertyEditorProps {
     draft: TextPropertyDraft,
     idempotencyKey: string,
   ) => Promise<SavedTextPropertyValue>;
+  readonly onOpenReference?: (reference: CoreReference) => Promise<CoreReferenceOpenResult>;
+  readonly onResolveReference?: (
+    reference: CoreReference,
+  ) => Promise<CoreReferenceResolutionResult>;
   readonly propertyDefinitionId: string;
   readonly readOnly?: boolean;
   readonly revision: number;
@@ -81,7 +90,86 @@ const renderTextNode = (node: Extract<TextInlineNode, { readonly type: 'text' }>
   return <span style={markStyle(node.marks)}>{rendered}</span>;
 };
 
-const renderNode = (node: TextInlineNode, index: number): ReactNode => {
+const TextCoreReference = ({
+  onOpen,
+  onResolve,
+  reference,
+}: {
+  readonly onOpen: (reference: CoreReference) => Promise<CoreReferenceOpenResult>;
+  readonly onResolve: (reference: CoreReference) => Promise<CoreReferenceResolutionResult>;
+  readonly reference: CoreReference;
+}) => {
+  const { t } = useModernI18n();
+  const [resolution, setResolution] = useState<CoreReferenceResolutionResult>({
+    _tag: 'CoreReferenceFallback',
+    reference,
+  });
+
+  useEffect(() => {
+    let mounted = true;
+    const resolve = async () => {
+      try {
+        const nextResolution = await onResolve(reference);
+        if (mounted) {
+          setResolution(nextResolution);
+        }
+      } catch {
+        if (mounted) {
+          setResolution({ _tag: 'CoreReferenceFallback', reference });
+        }
+      }
+    };
+    void resolve();
+    return () => {
+      mounted = false;
+    };
+  }, [onResolve, reference]);
+
+  if (resolution._tag === 'CoreReferenceFallback') {
+    return (
+      <span data-core-reference-fallback={reference.token}>
+        {resolution.reference.lastResolvedLabel}
+      </span>
+    );
+  }
+
+  const open = async () => {
+    const result = await onOpen(reference).catch(
+      (): CoreReferenceOpenResult => ({ _tag: 'CoreReferenceOpenUnavailable' }),
+    );
+    if (result._tag === 'CoreReferenceOpenDenied') {
+      toaster.create({
+        description: t('ticketing.text.referenceDeniedDescription'),
+        title: t('ticketing.text.referenceDeniedTitle'),
+        type: 'warning',
+      });
+    } else if (result._tag === 'CoreReferenceOpenUnavailable') {
+      setResolution({ _tag: 'CoreReferenceFallback', reference });
+    }
+  };
+
+  return (
+    <Button
+      data-core-reference={reference.token}
+      onClick={() => void open()}
+      size="current"
+      theme="unstyled"
+      type="button"
+      variant="secondary"
+    >
+      {resolution.reference.lastResolvedLabel}
+    </Button>
+  );
+};
+
+const renderNode = (
+  node: TextInlineNode,
+  index: number,
+  referenceHandlers?: {
+    readonly onOpen: (reference: CoreReference) => Promise<CoreReferenceOpenResult>;
+    readonly onResolve: (reference: CoreReference) => Promise<CoreReferenceResolutionResult>;
+  },
+): ReactNode => {
   switch (node.type) {
     case 'text': {
       return <span key={index}>{renderTextNode(node)}</span>;
@@ -97,6 +185,16 @@ const renderNode = (node: TextInlineNode, index: number): ReactNode => {
       );
     }
     case 'reference': {
+      if (referenceHandlers !== undefined) {
+        return (
+          <TextCoreReference
+            key={node.reference.token}
+            onOpen={referenceHandlers.onOpen}
+            onResolve={referenceHandlers.onResolve}
+            reference={node.reference}
+          />
+        );
+      }
       return (
         <span data-core-reference={JSON.stringify(node.reference)} key={index}>
           {node.reference.lastResolvedLabel}
@@ -113,6 +211,8 @@ export const TextPropertyEditor = ({
   collectionId,
   document,
   label,
+  onOpenReference,
+  onResolveReference,
   onSave,
   propertyDefinitionId,
   readOnly = false,
@@ -351,7 +451,15 @@ export const TextPropertyEditor = ({
         role="textbox"
         suppressContentEditableWarning
       >
-        {draftDocument?.content.map(renderNode)}
+        {draftDocument?.content.map((node, index) =>
+          renderNode(
+            node,
+            index,
+            onOpenReference === undefined || onResolveReference === undefined
+              ? undefined
+              : { onOpen: onOpenReference, onResolve: onResolveReference },
+          ),
+        )}
       </div>
       {readOnly ? null : (
         <Button

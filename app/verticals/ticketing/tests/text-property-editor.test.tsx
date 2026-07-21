@@ -18,6 +18,9 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.text.italic': 'Italic',
         'ticketing.text.link': 'Link URL',
         'ticketing.text.linkApply': 'Apply link',
+        'ticketing.text.referenceDeniedDescription':
+          'The owning app denied access. The reference was not changed.',
+        'ticketing.text.referenceDeniedTitle': 'Reference access denied',
         'ticketing.text.save': 'Save Text',
         'ticketing.text.saveFailedDescription': 'The Text value could not be saved.',
         'ticketing.text.saveFailedTitle': 'Text save failed',
@@ -302,5 +305,54 @@ test('a pasted opaque Core Reference remains a reference node when saved', async
   expect(save.mock.calls[0]?.[0].document).toEqual({
     content: [{ reference, type: 'reference' }],
     type: 'textDocument',
+  });
+});
+
+test('a resolved reference refreshes its clickable label and authorizes every open attempt', async () => {
+  const reference = {
+    entityId: 'entity-42',
+    entityType: 'customer',
+    kind: 'mention',
+    lastResolvedLabel: '@Ada',
+    ownerModuleKey: 'crm',
+    targetTenantId: 'tenant-2',
+    token: 'opaque-reference-token',
+  } as const;
+  const resolveReference = rs.fn(() =>
+    Promise.resolve({
+      _tag: 'CoreReferenceActive' as const,
+      reference: { ...reference, lastResolvedLabel: '@Ada Lovelace' },
+    }),
+  );
+  const openReference = rs.fn(() => Promise.resolve({ _tag: 'CoreReferenceOpenDenied' as const }));
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={{ content: [{ reference, type: 'reference' }], type: 'textDocument' }}
+      label={propertyLabel}
+      onOpenReference={openReference}
+      onResolveReference={resolveReference}
+      onSave={rs.fn()}
+      propertyDefinitionId="property-1"
+      readOnly
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  const activeReference = await screen.findByRole('button', { name: '@Ada Lovelace' });
+  expect(resolveReference).toHaveBeenCalledWith(reference);
+  fireEvent.click(activeReference);
+  fireEvent.click(activeReference);
+
+  await waitFor(() => expect(openReference).toHaveBeenCalledTimes(2));
+  expect(openReference).toHaveBeenNthCalledWith(1, reference);
+  expect(openReference).toHaveBeenNthCalledWith(2, reference);
+  expect(screen.getByRole('button', { name: '@Ada Lovelace' })).toBeDefined();
+  expect(mocks.toastCreate).toHaveBeenCalledTimes(2);
+  expect(mocks.toastCreate).toHaveBeenLastCalledWith({
+    description: 'The owning app denied access. The reference was not changed.',
+    title: 'Reference access denied',
+    type: 'warning',
   });
 });

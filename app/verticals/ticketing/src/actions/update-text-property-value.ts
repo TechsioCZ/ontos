@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off
-import { rejectAction, rowsFromResult } from '@app/core-runtime';
+import { coreReferenceRegistry, rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
   ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
@@ -80,7 +80,6 @@ const updateTextPropertyValueActionHandler: ActionHandler<
       message: 'Text references require a valid opaque Core Reference envelope.',
     });
   }
-  const normalized = normalizeTextDocument(input.document);
   const currentResult = await services.tx.execute(sql`
     select
       value.document,
@@ -112,6 +111,58 @@ const updateTextPropertyValueActionHandler: ActionHandler<
       message: 'The Text value changed elsewhere or is no longer available.',
     });
   }
+
+  const currentReferences = new Map(
+    (current.document?.content ?? [])
+      .filter((node) => node.type === 'reference')
+      .map((node) => [node.reference.token, node.reference]),
+  );
+  const validatedDocument =
+    input.document === null
+      ? null
+      : {
+          ...input.document,
+          content: await Promise.all(
+            input.document.content.map(async (node) => {
+              if (node.type !== 'reference') {
+                return node;
+              }
+              const inserted = await coreReferenceRegistry.insert({
+                context: {
+                  principalId: services.context.principalId,
+                  tenantId: services.context.tenantId,
+                },
+                kind: node.reference.kind,
+                source: { type: 'opaqueToken', value: node.reference.token },
+              });
+              if (
+                inserted._tag === 'CoreReferenceInserted' &&
+                inserted.reference.entityId === node.reference.entityId &&
+                inserted.reference.entityType === node.reference.entityType &&
+                inserted.reference.ownerModuleKey === node.reference.ownerModuleKey &&
+                inserted.reference.targetTenantId === node.reference.targetTenantId
+              ) {
+                return { ...node, reference: inserted.reference };
+              }
+              const retained = currentReferences.get(node.reference.token);
+              if (
+                retained !== undefined &&
+                retained.entityId === node.reference.entityId &&
+                retained.entityType === node.reference.entityType &&
+                retained.kind === node.reference.kind &&
+                retained.ownerModuleKey === node.reference.ownerModuleKey &&
+                retained.targetTenantId === node.reference.targetTenantId
+              ) {
+                return { ...node, reference: retained };
+              }
+              throw rejectAction({
+                code: 'ticketing.updateTextPropertyValue.invalid_reference',
+                message: 'Text references require a Core-recognized opaque token.',
+              });
+            }),
+          ),
+        };
+  const normalized = normalizeTextDocument(validatedDocument);
 
   if (current.mandatory && normalized.document === null) {
     throw rejectAction({

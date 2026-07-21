@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
+import { registerCoreReferenceProvider } from '../../../packages/core-runtime/src/core-reference.ts';
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
@@ -271,6 +272,25 @@ test('whitespace is Empty while an equation or opaque Core Reference alone is no
     ],
     type: 'textDocument',
   };
+  const referenceEnvelope = referenceDocument.content[0].reference;
+  const unregisterReferenceProvider = registerCoreReferenceProvider({
+    authorizeOpen: () => true,
+    discover: () => [],
+    moduleKey: referenceEnvelope.ownerModuleKey,
+    open: () => Promise.resolve(),
+    recognize: ({ source }) =>
+      source.type === 'opaqueToken' && source.value === referenceEnvelope.token
+        ? {
+            entityId: referenceEnvelope.entityId,
+            entityType: referenceEnvelope.entityType,
+            label: referenceEnvelope.lastResolvedLabel,
+            openRequest: {},
+            targetTenantId: referenceEnvelope.targetTenantId,
+            token: referenceEnvelope.token,
+          }
+        : null,
+    resolve: () => null,
+  });
   const reference = await update(2, referenceDocument);
   assert.equal(reference._tag, 'OperationSucceeded', JSON.stringify(reference));
   assert.deepEqual(reference.response.value, {
@@ -285,6 +305,13 @@ test('whitespace is Empty while an equation or opaque Core Reference alone is no
   const rejected = await update(3, guessedRawId);
   assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
   assert.equal(rejected.code, 'ticketing.updateTextPropertyValue.invalid_reference');
+
+  const unknownOpaqueToken = structuredClone(referenceDocument);
+  unknownOpaqueToken.content[0].reference.token = 'opaque-but-unknown';
+  const unknownRejected = await update(3, unknownOpaqueToken);
+  assert.equal(unknownRejected._tag, 'OperationDomainRejected', JSON.stringify(unknownRejected));
+  assert.equal(unknownRejected.code, 'ticketing.updateTextPropertyValue.invalid_reference');
+  unregisterReferenceProvider();
 
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
@@ -325,6 +352,33 @@ test('Text search uses readable content with locale case folding and diacritic s
       registration: updateTextPropertyValueActionRegistration,
     });
 
+  const fallbackReference = {
+    entityId: 'deleted-entity',
+    entityType: 'customer',
+    kind: 'relation',
+    lastResolvedLabel: 'c\u030Caj',
+    ownerModuleKey: 'crm',
+    targetTenantId: randomUUID(),
+    token: 'opaque-deleted-reference',
+  };
+  const unregisterReferenceProvider = registerCoreReferenceProvider({
+    authorizeOpen: () => false,
+    discover: () => [],
+    moduleKey: fallbackReference.ownerModuleKey,
+    open: () => Promise.resolve(),
+    recognize: ({ source }) =>
+      source.type === 'opaqueToken' && source.value === fallbackReference.token
+        ? {
+            entityId: fallbackReference.entityId,
+            entityType: fallbackReference.entityType,
+            label: fallbackReference.lastResolvedLabel,
+            openRequest: {},
+            targetTenantId: fallbackReference.targetTenantId,
+            token: fallbackReference.token,
+          }
+        : null,
+    resolve: () => null,
+  });
   const seeded = await Promise.all([
     update(formattedTask.response.task.taskId, {
       content: [{ marks: [{ type: 'bold' }], text: 'ČAJ', type: 'text' }],
@@ -337,21 +391,14 @@ test('Text search uses readable content with locale case folding and diacritic s
     update(fallbackReferenceTask.taskId, {
       content: [
         {
-          reference: {
-            entityId: 'deleted-entity',
-            entityType: 'customer',
-            kind: 'relation',
-            lastResolvedLabel: 'c\u030Caj',
-            ownerModuleKey: 'crm',
-            targetTenantId: randomUUID(),
-            token: 'opaque-deleted-reference',
-          },
+          reference: fallbackReference,
           type: 'reference',
         },
       ],
       type: 'textDocument',
     }),
   ]);
+  unregisterReferenceProvider();
   assert.equal(
     seeded.every((result) => result._tag === 'OperationSucceeded'),
     true,

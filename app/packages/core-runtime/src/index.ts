@@ -44,6 +44,25 @@ export type {
 } from './operation-context.ts';
 export type { OutboxMessage } from './outbox-message.ts';
 export type { CoreReadonlyDbExecutor } from './db/types.ts';
+export {
+  coreReferenceRegistry,
+  createCoreReferenceRegistry,
+  registerCoreReferenceProvider,
+} from './core-reference.ts';
+export type {
+  CoreReference,
+  CoreReferenceContext,
+  CoreReferenceInsertionResult,
+  CoreReferenceKind,
+  CoreReferenceOpenResult,
+  CoreReferenceProvider,
+  CoreReferenceProviderCandidate,
+  CoreReferenceProviderTarget,
+  CoreReferenceRegistry,
+  CoreReferenceResolutionResult,
+  CoreReferenceSource,
+  DiscoveredCoreReference,
+} from './core-reference.ts';
 export { checkOutboxWorkerModuleStateAccess } from './outbox-worker.ts';
 export type {
   OutboxWorkerModuleStateAccessDecision,

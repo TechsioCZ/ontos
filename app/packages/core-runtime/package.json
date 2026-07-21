@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./auth": "./src/auth/config.ts",
+    "./core-reference": "./src/core-reference.ts",
     "./db/client": "./src/db/client.ts",
     "./db/schema": "./src/db/schema.ts",
     "./db/sql": "./src/db/sql.ts",

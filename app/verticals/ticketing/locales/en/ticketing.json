@@ -140,6 +140,8 @@
       "italic": "Italic",
       "link": "Link URL",
       "linkApply": "Apply link",
+      "referenceDeniedDescription": "The owning app denied access. The reference was not changed.",
+      "referenceDeniedTitle": "Reference access denied",
       "save": "Save Text",
       "saveFailedDescription": "The Text value could not be saved.",
       "saveFailedTitle": "Text save failed",

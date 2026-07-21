@@ -140,6 +140,8 @@
       "italic": "Kurzíva",
       "link": "URL odkazu",
       "linkApply": "Použít odkaz",
+      "referenceDeniedDescription": "Vlastnící aplikace přístup zamítla. Reference se nezměnila.",
+      "referenceDeniedTitle": "Přístup k referenci zamítnut",
       "save": "Uložit Text",
       "saveFailedDescription": "Hodnotu Text se nepodařilo uložit.",
       "saveFailedTitle": "Uložení Text selhalo",
