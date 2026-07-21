@@ -1,59 +1,42 @@
 // oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated Action declaration
 import { Schema } from '@modern-js/plugin-bff/effect-client';
-export declare const taskRetentionStateSchema: Schema.Literals<
-  readonly ['active', 'archived', 'softDeleted']
->;
-export declare const transitionTaskRetentionActionKey: 'ticketing.transitionTaskRetention';
-export declare const transitionTaskRetentionActionPayloadSchema: Schema.Struct<{
+export declare const createPersonPropertyDefinitionActionKey: 'ticketing.createPersonPropertyDefinition';
+export declare const createPersonPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly expectedRevision: Schema.Finite;
-  readonly taskId: Schema.String;
-  readonly transition: Schema.Literals<readonly ['archive', 'restore', 'softDelete', 'hardDelete']>;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
 }>;
-export declare const transitionTaskRetentionActionHeadersSchema: Schema.Struct<{
+export declare const createPersonPropertyDefinitionActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const retainedTaskTransitionResponseSchema: Schema.Struct<{
-  readonly retentionState: Schema.Literals<readonly ['active', 'archived', 'softDeleted']>;
-  readonly taskId: Schema.String;
-  readonly taskRevision: Schema.Finite;
+export declare const createPersonPropertyDefinitionActionResponseSchema: Schema.Struct<{
+  readonly definition: Schema.Struct<{
+    readonly cardinality: Schema.Literals<readonly ['one', 'unlimited']>;
+    readonly datatype: Schema.Literal<'person'>;
+    readonly hidden: Schema.Boolean;
+    readonly mandatory: Schema.Boolean;
+    readonly name: Schema.String;
+    readonly propertyDefinitionId: Schema.String;
+    readonly revision: Schema.Finite;
+  }>;
 }>;
-export declare const hardDeletedTaskTransitionResponseSchema: Schema.Struct<{
-  readonly hardDeletedTaskId: Schema.String;
-  readonly retentionState: Schema.Literal<'hardDeleted'>;
-}>;
-export declare const transitionTaskRetentionActionResponseSchema: Schema.Union<
-  readonly [
-    Schema.Struct<{
-      readonly retentionState: Schema.Literals<readonly ['active', 'archived', 'softDeleted']>;
-      readonly taskId: Schema.String;
-      readonly taskRevision: Schema.Finite;
-    }>,
-    Schema.Struct<{
-      readonly hardDeletedTaskId: Schema.String;
-      readonly retentionState: Schema.Literal<'hardDeleted'>;
-    }>,
-  ]
->;
-export declare const transitionTaskRetentionActionOutcomeSchema: Schema.Struct<{
+export declare const createPersonPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
-  readonly response: Schema.Union<
-    readonly [
-      Schema.Struct<{
-        readonly retentionState: Schema.Literals<readonly ['active', 'archived', 'softDeleted']>;
-        readonly taskId: Schema.String;
-        readonly taskRevision: Schema.Finite;
-      }>,
-      Schema.Struct<{
-        readonly hardDeletedTaskId: Schema.String;
-        readonly retentionState: Schema.Literal<'hardDeleted'>;
-      }>,
-    ]
-  >;
+  readonly response: Schema.Struct<{
+    readonly definition: Schema.Struct<{
+      readonly cardinality: Schema.Literals<readonly ['one', 'unlimited']>;
+      readonly datatype: Schema.Literal<'person'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>;
+  }>;
 }>;
-export declare const transitionTaskRetentionActionFailureSchemas: readonly [
+export declare const createPersonPropertyDefinitionActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -108,7 +91,7 @@ export declare const transitionTaskRetentionActionFailureSchemas: readonly [
     >;
   }>,
 ];
-export declare const transitionTaskRetentionActionFailureSchema: Schema.Union<
+export declare const createPersonPropertyDefinitionActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -165,13 +148,12 @@ export declare const transitionTaskRetentionActionFailureSchema: Schema.Union<
     }>,
   ]
 >;
-export type TaskRetentionState = typeof taskRetentionStateSchema.Type;
-export type TransitionTaskRetentionActionPayload =
-  typeof transitionTaskRetentionActionPayloadSchema.Type;
-export type TransitionTaskRetentionActionResponse =
-  typeof transitionTaskRetentionActionResponseSchema.Type;
-export type TransitionTaskRetentionActionOutcome =
-  typeof transitionTaskRetentionActionOutcomeSchema.Type;
-export type TransitionTaskRetentionActionFailure =
-  typeof transitionTaskRetentionActionFailureSchema.Type;
-export declare const transitionTaskRetentionActionTitle: 'Transition Task Retention';
+export type CreatePersonPropertyDefinitionActionPayload =
+  typeof createPersonPropertyDefinitionActionPayloadSchema.Type;
+export type CreatePersonPropertyDefinitionActionResponse =
+  typeof createPersonPropertyDefinitionActionResponseSchema.Type;
+export type CreatePersonPropertyDefinitionActionOutcome =
+  typeof createPersonPropertyDefinitionActionOutcomeSchema.Type;
+export type CreatePersonPropertyDefinitionActionFailure =
+  typeof createPersonPropertyDefinitionActionFailureSchema.Type;
+export declare const createPersonPropertyDefinitionActionTitle: 'Create Person Property Definition';

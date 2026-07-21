@@ -16,11 +16,13 @@
     "./operation-context": "./src/operation-context.ts",
     "./operation-context/session": "./src/operation-context-from-session.ts",
     "./outbox": "./src/outbox.ts",
+    "./person-directory": "./src/person-directory.ts",
     "./policies": "./src/policies/index.ts",
     "./policy": "./src/policy.ts",
     "./principal-time-zone-preferences": "./src/principal-time-zone-preferences.ts",
     "./sdk": "./src/core-sdk.ts",
-    "./sql-result": "./src/sql-result.ts"
+    "./sql-result": "./src/sql-result.ts",
+    "./testing/evidence-observer": "./src/testing/evidence-observer.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

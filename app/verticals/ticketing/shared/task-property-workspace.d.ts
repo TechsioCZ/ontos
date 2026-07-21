@@ -35,8 +35,35 @@ export declare const phonePropertyValueSchema: Schema.Struct<{
   readonly revision: Schema.Finite;
   readonly value: Schema.String;
 }>;
+export declare const resolvedPersonSchema: Schema.Struct<{
+  readonly displayName: Schema.String;
+  readonly eligible: Schema.Boolean;
+  readonly principalId: Schema.String;
+  readonly status: Schema.Literals<readonly ['active', 'archived', 'disabled', 'departed']>;
+}>;
+export declare const personPropertyValueSchema: Schema.Struct<{
+  readonly people: Schema.$Array<
+    Schema.Struct<{
+      readonly displayName: Schema.String;
+      readonly eligible: Schema.Boolean;
+      readonly principalId: Schema.String;
+      readonly status: Schema.Literals<readonly ['active', 'archived', 'disabled', 'departed']>;
+    }>
+  >;
+  readonly principalIds: Schema.$Array<Schema.String>;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
+  readonly effectiveTimeZone: Schema.optional<
+    Schema.Struct<{
+      readonly source: Schema.Literals<
+        readonly ['browser_fallback', 'configured', 'system_fallback']
+      >;
+      readonly timeZone: Schema.String;
+    }>
+  >;
   readonly propertyDefinitions: Schema.$Array<
     Schema.Union<
       readonly [
@@ -65,10 +92,27 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly revision: Schema.Finite;
         }>,
         Schema.Struct<{
+          readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
           readonly datatype: Schema.Literal<'number'>;
           readonly format: Schema.Literals<
             readonly ['number', 'number_with_separators', 'percent']
           >;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly cardinality: Schema.Literals<readonly ['one', 'unlimited']>;
+          readonly datatype: Schema.Literal<'person'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
@@ -131,6 +175,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly value: Schema.Boolean;
         }>
       >;
+      readonly createdAt: Schema.optional<Schema.String>;
+      readonly createdBy: Schema.optional<
+        Schema.Struct<{
+          readonly displayName: Schema.String;
+          readonly inactive: Schema.Boolean;
+          readonly principalId: Schema.String;
+        }>
+      >;
       readonly dateValues: Schema.$Array<
         Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
@@ -151,6 +203,25 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
             readonly propertyDefinitionId: Schema.String;
             readonly revision: Schema.Finite;
             readonly value: Schema.Union<readonly [Schema.String, Schema.Null]>;
+          }>
+        >
+      >;
+      readonly personValues: Schema.optional<
+        Schema.$Array<
+          Schema.Struct<{
+            readonly people: Schema.$Array<
+              Schema.Struct<{
+                readonly displayName: Schema.String;
+                readonly eligible: Schema.Boolean;
+                readonly principalId: Schema.String;
+                readonly status: Schema.Literals<
+                  readonly ['active', 'archived', 'disabled', 'departed']
+                >;
+              }>
+            >;
+            readonly principalIds: Schema.$Array<Schema.String>;
+            readonly propertyDefinitionId: Schema.String;
+            readonly revision: Schema.Finite;
           }>
         >
       >;
@@ -261,6 +332,7 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   >;
 }>;
 export declare const getTaskPropertyWorkspacePayloadSchema: Schema.Struct<{
+  readonly browserTimeZone: Schema.optional<Schema.String>;
   readonly collectionId: Schema.String;
   readonly locale: Schema.optional<Schema.String>;
 }>;

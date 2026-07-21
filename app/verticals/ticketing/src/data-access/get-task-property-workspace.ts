@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
-import { rowsFromResult } from '@app/core-runtime';
-import type { DataAccessRegistration } from '@app/core-runtime';
+import { createPersonDirectory, rowsFromResult } from '@app/core-runtime';
+import type { DataAccessRegistration, ResolvedPersonDirectoryEntry } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import { resolveEffectiveTimeZone } from '@app/core-runtime/principal-time-zone-preferences';
 import {
@@ -36,6 +36,10 @@ type DefinitionRow =
   | (DefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent';
+    })
+  | (DefinitionFields & {
+      readonly cardinality: 'one' | 'unlimited';
+      readonly datatype: 'person';
     })
   | (DefinitionFields & {
       readonly datatype: 'select';
@@ -76,6 +80,17 @@ const taskPropertyDefinitionFromRow = (
       revision: definition.revision,
     };
   }
+  if (definition.datatype === 'person') {
+    return {
+      cardinality: definition.cardinality,
+      datatype: 'person',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
+  }
   return {
     datatype: definition.datatype,
     hidden: definition.hidden,
@@ -112,6 +127,18 @@ interface PhoneValueRow {
   readonly revision: number;
   readonly taskId: string;
   readonly value: string;
+}
+
+interface PersonValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+}
+
+interface PersonAssignmentRow {
+  readonly principalId: string;
+  readonly propertyDefinitionId: string;
+  readonly taskId: string;
 }
 
 interface TextValueRow {
@@ -181,6 +208,12 @@ interface TaskRow {
     revision: number;
     value: string;
   }[];
+  personValues?: {
+    people: ResolvedPersonDirectoryEntry[];
+    principalIds: string[];
+    propertyDefinitionId: string;
+    revision: number;
+  }[];
   selectValues?: {
     optionId?: string;
     propertyDefinitionId: string;
@@ -201,6 +234,21 @@ interface TaskRow {
     value: string | null;
   }[];
 }
+
+const optionalTaskValueArraysFactory = (
+  definitions: readonly TaskPropertyDefinition[],
+): (() => Partial<Pick<TaskRow, 'numberValues' | 'personValues' | 'textValues' | 'urlValues'>>) => {
+  const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+  const hasPersonDefinitions = definitions.some(({ datatype }) => datatype === 'person');
+  const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
+  const hasUrlDefinitions = definitions.some(({ datatype }) => datatype === 'url');
+  return () => ({
+    ...(hasNumberDefinitions ? { numberValues: [] } : {}),
+    ...(hasPersonDefinitions ? { personValues: [] } : {}),
+    ...(hasTextDefinitions ? { textValues: [] } : {}),
+    ...(hasUrlDefinitions ? { urlValues: [] } : {}),
+  });
+};
 
 const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow[]): void => {
   for (const row of rows) {
@@ -262,7 +310,10 @@ const taskRowsFromValues = ({
   definitions,
   emailValueRows,
   numberValueRows,
+  personAssignmentRows,
+  personValueRows,
   phoneValueRows,
+  resolvedPeople,
   selectValueRows,
   textValueRows,
   urlValueRows,
@@ -272,22 +323,23 @@ const taskRowsFromValues = ({
   readonly definitions: readonly TaskPropertyDefinition[];
   readonly emailValueRows: readonly EmailValueRow[];
   readonly numberValueRows: readonly NumberValueRow[];
+  readonly personAssignmentRows: readonly PersonAssignmentRow[];
+  readonly personValueRows: readonly PersonValueRow[];
   readonly phoneValueRows: readonly PhoneValueRow[];
+  readonly resolvedPeople: readonly ResolvedPersonDirectoryEntry[];
   readonly selectValueRows: readonly SelectValueRow[];
   readonly textValueRows: readonly TextValueRow[];
   readonly urlValueRows: readonly UrlValueRow[];
   readonly valueRows: readonly ValueRow[];
 }): TaskRow[] => {
   const tasks = new Map<string, TaskRow>();
-  const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+  const optionalTaskValueArrays = optionalTaskValueArraysFactory(definitions);
   const exposesCreatedTime = definitions.some(
     (definition) => definition.datatype === 'created_time' && !definition.hidden,
   );
   const exposesCreatedBy = definitions.some(
     (definition) => definition.datatype === 'created_by' && !definition.hidden,
   );
-  const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
-  const hasUrlDefinitions = definitions.some(({ datatype }) => datatype === 'url');
 
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
@@ -296,12 +348,10 @@ const taskRowsFromValues = ({
       ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
       emailValues: [],
       phoneValues: [],
-      ...(hasNumberDefinitions ? { numberValues: [] } : {}),
+      ...optionalTaskValueArrays(),
       taskId: row.taskId,
       taskRevision: row.taskRevision,
-      ...(hasTextDefinitions ? { textValues: [] } : {}),
       title: row.title,
-      ...(hasUrlDefinitions ? { urlValues: [] } : {}),
     };
     if (row.propertyDefinitionId !== null) {
       current.checkboxValues.push({
@@ -346,6 +396,25 @@ const taskRowsFromValues = ({
     });
   }
 
+  const resolvedById = new Map(resolvedPeople.map((person) => [person.principalId, person]));
+  for (const row of personValueRows) {
+    const principalIds = personAssignmentRows
+      .filter(
+        (assignment) =>
+          assignment.taskId === row.taskId &&
+          assignment.propertyDefinitionId === row.propertyDefinitionId,
+      )
+      .map(({ principalId }) => principalId);
+    tasks.get(row.taskId)?.personValues?.push({
+      people: principalIds
+        .map((principalId) => resolvedById.get(principalId))
+        .filter((person) => person !== undefined),
+      principalIds,
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+    });
+  }
+
   appendSelectValues(tasks, selectValueRows);
   appendDateValues(tasks, dateValueRows);
   appendUrlValues(tasks, urlValueRows);
@@ -379,6 +448,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
   handler: async (input, { context, db }) => {
     const definitionResult = await db.execute(sql`
       select
+        configuration.cardinality,
         definition.datatype,
         definition.number_format as format,
         definition.select_option_order_mode as "optionOrderMode",
@@ -391,9 +461,12 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       inner join ticketing.task_schemas as schema
         on schema.schema_id = definition.schema_id
         and schema.tenant_id = definition.tenant_id
+      left join ticketing.task_person_property_configurations as configuration
+        on configuration.property_definition_id = definition.property_definition_id
+        and configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'number', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'number', 'person', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -478,6 +551,36 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       where task.collection_id = ${input.collectionId}
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const personValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId"
+      from ticketing.task_person_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'person'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const personAssignmentResult = await db.execute(sql`
+      select
+        assignment.principal_id as "principalId",
+        assignment.property_definition_id as "propertyDefinitionId",
+        assignment.task_id as "taskId"
+      from ticketing.task_person_assignments as assignment
+      inner join ticketing.tasks as task
+        on task.task_id = assignment.task_id
+        and task.tenant_id = assignment.tenant_id
+      where task.collection_id = ${input.collectionId}
+        and assignment.tenant_id = ${context.tenantId}
+      order by assignment.task_id, assignment.property_definition_id, assignment.principal_id
     `);
     const textValueResult = await db.execute(sql`
       select
@@ -575,6 +678,13 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
       definitionResult,
     ).map((definition) => taskPropertyDefinitionFromRow(definition, optionRows, locale));
+    const personAssignmentRows = rowsFromResult<PersonAssignmentRow>(personAssignmentResult);
+    const resolvedPeople = await createPersonDirectory({
+      db,
+      tenantId: context.tenantId,
+    }).resolveStoredPrincipalIds([
+      ...new Set(personAssignmentRows.map(({ principalId }) => principalId)),
+    ]);
     const exposesCreatedTime = definitions.some(
       (definition) => definition.datatype === 'created_time' && !definition.hidden,
     );
@@ -594,7 +704,10 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         definitions,
         emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
         numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
+        personAssignmentRows,
+        personValueRows: rowsFromResult<PersonValueRow>(personValueResult),
         phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
+        resolvedPeople,
         selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
         textValueRows: rowsFromResult<TextValueRow>(textValueResult),
         urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),

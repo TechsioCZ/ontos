@@ -5,6 +5,25 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import { queryTaskPersonValuesResponseSchema } from './person-query';
+import {
+  configurePersonPropertyCardinalityActionFailureSchemas,
+  configurePersonPropertyCardinalityActionHeadersSchema,
+  configurePersonPropertyCardinalityActionOutcomeSchema,
+  configurePersonPropertyCardinalityActionPayloadSchema,
+} from './actions/configure-person-property-cardinality';
+import {
+  createPersonPropertyDefinitionActionFailureSchemas,
+  createPersonPropertyDefinitionActionHeadersSchema,
+  createPersonPropertyDefinitionActionOutcomeSchema,
+  createPersonPropertyDefinitionActionPayloadSchema,
+} from './actions/create-person-property-definition';
+import {
+  updatePersonPropertyValueActionFailureSchemas,
+  updatePersonPropertyValueActionHeadersSchema,
+  updatePersonPropertyValueActionOutcomeSchema,
+  updatePersonPropertyValueActionPayloadSchema,
+} from './actions/update-person-property-value';
 import {
   createDatePropertyDefinitionActionFailureSchemas,
   createDatePropertyDefinitionActionHeadersSchema,
@@ -197,6 +216,7 @@ import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
+import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
@@ -213,6 +233,24 @@ export type {
   ConfigurePrincipalTimeZonePreferenceActionPayload,
   ConfigurePrincipalTimeZonePreferenceActionResponse,
 } from './actions/configure-principal-time-zone-preference';
+export type {
+  ConfigurePersonPropertyCardinalityActionFailure,
+  ConfigurePersonPropertyCardinalityActionOutcome,
+  ConfigurePersonPropertyCardinalityActionPayload,
+  ConfigurePersonPropertyCardinalityActionResponse,
+} from './actions/configure-person-property-cardinality';
+export type {
+  CreatePersonPropertyDefinitionActionFailure,
+  CreatePersonPropertyDefinitionActionOutcome,
+  CreatePersonPropertyDefinitionActionPayload,
+  CreatePersonPropertyDefinitionActionResponse,
+} from './actions/create-person-property-definition';
+export type {
+  UpdatePersonPropertyValueActionFailure,
+  UpdatePersonPropertyValueActionOutcome,
+  UpdatePersonPropertyValueActionPayload,
+  UpdatePersonPropertyValueActionResponse,
+} from './actions/update-person-property-value';
 export type {
   CreateEmailPropertyDefinitionActionFailure,
   CreateEmailPropertyDefinitionActionOutcome,
@@ -389,6 +427,7 @@ export {
   datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
+  personPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
   selectOptionOrderModeSchema,
   selectOptionSchema,
@@ -402,6 +441,7 @@ export type {
   DatePropertyDefinition,
   EmailPropertyDefinition,
   NumberPropertyDefinition,
+  PersonPropertyDefinition,
   PhonePropertyDefinition,
   SelectOption,
   SelectOptionOrderMode,
@@ -444,6 +484,11 @@ export type {
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 export type { GroupTaskDateValuesPayload, GroupTaskDateValuesResponse } from './date-grouping';
+export type { QueryTaskPersonValuesPayload, QueryTaskPersonValuesResponse } from './person-query';
+export type {
+  SearchEligiblePeoplePayload,
+  SearchEligiblePeopleResponse,
+} from './person-directory-search';
 export type {
   IntrinsicTaskPropertyQueryOperation,
   QueryIntrinsicTaskPropertiesPayload,
@@ -528,6 +573,24 @@ export interface OperationContext {
   traceId?: string;
 }
 
+const taskPersonQueryCommonFields = {
+  group: Schema.optional(Schema.Literals(['true', 'false'])),
+  search: Schema.optional(Schema.String),
+  sort: Schema.optional(Schema.Literals(['ascending', 'descending'])),
+};
+
+const taskPersonHttpQuerySchema = Schema.Union([
+  Schema.Struct({
+    ...taskPersonQueryCommonFields,
+    filter: Schema.Literals(['contains', 'doesNotContain']),
+    principalId: Schema.String,
+  }),
+  Schema.Struct({
+    ...taskPersonQueryCommonFields,
+    filter: Schema.optional(Schema.Literals(['isEmpty', 'isNotEmpty'])),
+  }),
+]);
+
 export const ticketingApi = HttpApi.make('TicketingApi').add(
   HttpApiGroup.make('ticketing')
     .add(
@@ -563,6 +626,19 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         },
         success: taskCollectionAggregateSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'searchEligiblePeople',
+        '/ticketing/task-collections/:collectionId/person-directory',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          query: { query: Schema.String },
+          success: searchEligiblePeopleResponseSchema,
+        },
+      ),
     )
     .add(
       HttpApiEndpoint.get(
@@ -653,6 +729,22 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             query: Schema.String,
           },
           success: queryTaskEmailValuesResponseSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'queryTaskPersonValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/person-query',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          query: taskPersonHttpQuerySchema,
+          success: queryTaskPersonValuesResponseSchema,
         },
       ),
     )
@@ -1012,6 +1104,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.post(
+        'createPersonPropertyDefinitionAction',
+        '/ticketing/actions/create-person-property-definition',
+        {
+          error: createPersonPropertyDefinitionActionFailureSchemas,
+          headers: createPersonPropertyDefinitionActionHeadersSchema,
+          payload: createPersonPropertyDefinitionActionPayloadSchema,
+          success: createPersonPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
         'updateDatePropertyValueAction',
         '/ticketing/actions/update-date-property-value',
         {
@@ -1019,6 +1123,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           headers: updateDatePropertyValueActionHeadersSchema,
           payload: updateDatePropertyValueActionPayloadSchema,
           success: updateDatePropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updatePersonPropertyValueAction',
+        '/ticketing/actions/update-person-property-value',
+        {
+          error: updatePersonPropertyValueActionFailureSchemas,
+          headers: updatePersonPropertyValueActionHeadersSchema,
+          payload: updatePersonPropertyValueActionPayloadSchema,
+          success: updatePersonPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configurePersonPropertyCardinalityAction',
+        '/ticketing/actions/configure-person-property-cardinality',
+        {
+          error: configurePersonPropertyCardinalityActionFailureSchemas,
+          headers: configurePersonPropertyCardinalityActionHeadersSchema,
+          payload: configurePersonPropertyCardinalityActionPayloadSchema,
+          success: configurePersonPropertyCardinalityActionOutcomeSchema,
         },
       ),
     ),
@@ -1029,6 +1157,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureNumberPropertyFormatAction',
     routePath: '/ticketing/actions/configure-number-property-format',
+    source: 'generated-client',
+  },
+  configurePersonPropertyCardinalityAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configurePersonPropertyCardinalityAction',
+    routePath: '/ticketing/actions/configure-person-property-cardinality',
     source: 'generated-client',
   },
   configurePrincipalTimeZonePreferenceAction: {
@@ -1077,6 +1211,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createNumberPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-number-property-definition',
+    source: 'generated-client',
+  },
+  createPersonPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createPersonPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-person-property-definition',
     source: 'generated-client',
   },
   createPhonePropertyDefinitionAction: {
@@ -1203,6 +1343,13 @@ export const ticketingOperationContexts = {
       '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/email-query',
     source: 'generated-client',
   },
+  queryTaskPersonValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:queryTaskPersonValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/person-query',
+    source: 'generated-client',
+  },
   queryTaskPropertyValues: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:queryTaskPropertyValues',
@@ -1219,6 +1366,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
     routePath: '/ticketing/readiness',
+    source: 'generated-client',
+  },
+  searchEligiblePeople: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:searchEligiblePeople',
+    routePath: '/ticketing/task-collections/:collectionId/person-directory',
     source: 'generated-client',
   },
   transitionTaskRetentionAction: {
@@ -1249,6 +1402,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateNumberPropertyValueAction',
     routePath: '/ticketing/actions/update-number-property-value',
+    source: 'generated-client',
+  },
+  updatePersonPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updatePersonPropertyValueAction',
+    routePath: '/ticketing/actions/update-person-property-value',
     source: 'generated-client',
   },
   updatePhonePropertyValueAction: {

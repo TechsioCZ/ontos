@@ -219,6 +219,7 @@ export const TicketingExperience = () => {
                     dateValues: [],
                     emailValues: [],
                     numberValues: [],
+                    personValues: [],
                     phoneValues: [],
                     selectValues: [],
                     taskId: taskCollection.task.taskId,

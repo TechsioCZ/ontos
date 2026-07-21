@@ -90,6 +90,61 @@ export const principals = coreSchema.table(
   ],
 );
 
+export const principalDirectoryEntries = coreSchema.table(
+  'principal_directory_entries',
+  {
+    email: text('email'),
+    login: text('login'),
+    membershipKind: text('membership_kind').notNull(),
+    membershipStatus: text('membership_status').notNull(),
+    principalId: uuid('principal_id')
+      .primaryKey()
+      .references(() => principals.principalId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    index('core_principal_directory_entries_tenant_membership_idx').on(
+      table.tenantId,
+      table.membershipStatus,
+      table.membershipKind,
+    ),
+    check(
+      'core_principal_directory_entries_membership_kind_ck',
+      sql`${table.membershipKind} in ('member', 'guest')`,
+    ),
+    check(
+      'core_principal_directory_entries_membership_status_ck',
+      sql`${table.membershipStatus} in ('active', 'departed')`,
+    ),
+  ],
+);
+
+export const principalDirectoryFieldVisibility = coreSchema.table(
+  'principal_directory_field_visibility',
+  {
+    displayNameVisible: boolean('display_name_visible').default(false).notNull(),
+    emailVisible: boolean('email_visible').default(false).notNull(),
+    loginVisible: boolean('login_visible').default(false).notNull(),
+    subjectPrincipalId: uuid('subject_principal_id')
+      .notNull()
+      .references(() => principals.principalId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    viewerPrincipalId: uuid('viewer_principal_id')
+      .notNull()
+      .references(() => principals.principalId, { onDelete: 'restrict' }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.viewerPrincipalId, table.subjectPrincipalId],
+      name: 'core_principal_directory_field_visibility_pk',
+    }),
+    index('core_principal_directory_field_visibility_tenant_idx').on(
+      table.tenantId,
+      table.viewerPrincipalId,
+    ),
+  ],
+);
+
 export const principalTimeZonePreferences = coreSchema.table(
   'principal_time_zone_preferences',
   {

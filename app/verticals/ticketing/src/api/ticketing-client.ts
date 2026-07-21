@@ -110,6 +110,18 @@ import type {
   UpdateDatePropertyValueActionFailure,
   UpdateDatePropertyValueActionOutcome,
   UpdateDatePropertyValueActionPayload,
+  ConfigurePersonPropertyCardinalityActionFailure,
+  ConfigurePersonPropertyCardinalityActionOutcome,
+  ConfigurePersonPropertyCardinalityActionPayload,
+  CreatePersonPropertyDefinitionActionFailure,
+  CreatePersonPropertyDefinitionActionOutcome,
+  CreatePersonPropertyDefinitionActionPayload,
+  QueryTaskPersonValuesPayload,
+  QueryTaskPersonValuesResponse,
+  SearchEligiblePeopleResponse,
+  UpdatePersonPropertyValueActionFailure,
+  UpdatePersonPropertyValueActionOutcome,
+  UpdatePersonPropertyValueActionPayload,
   ConfigurePrincipalTimeZonePreferenceActionFailure,
   ConfigurePrincipalTimeZonePreferenceActionOutcome,
   ConfigurePrincipalTimeZonePreferenceActionPayload,
@@ -132,8 +144,11 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
-  | UpdateDatePropertyValueActionFailure
   | CreateDatePropertyDefinitionActionFailure
+  | UpdateDatePropertyValueActionFailure
+  | ConfigurePersonPropertyCardinalityActionFailure
+  | CreatePersonPropertyDefinitionActionFailure
+  | UpdatePersonPropertyValueActionFailure
   | ConfigurePrincipalTimeZonePreferenceActionFailure
   | CreateIntrinsicPropertyDefinitionActionFailure
   | UpdatePhonePropertyValueActionFailure
@@ -378,6 +393,66 @@ export const queryTaskEmailValues = (
           propertyDefinitionId: payload.propertyDefinitionId,
         },
         query: { operation: payload.operation, query: payload.query },
+      }),
+    ),
+  );
+
+const taskPersonHttpQuery = (payload: QueryTaskPersonValuesPayload) => {
+  const common = {
+    ...(payload.group === undefined
+      ? {}
+      : { group: payload.group ? ('true' as const) : ('false' as const) }),
+    ...(payload.search === undefined ? {} : { search: payload.search }),
+    ...(payload.sort === undefined ? {} : { sort: payload.sort }),
+  };
+
+  if (payload.filter === undefined) {
+    return common;
+  }
+  if ('principalId' in payload.filter) {
+    return {
+      ...common,
+      filter: payload.filter.operator,
+      principalId: payload.filter.principalId,
+    };
+  }
+  return { ...common, filter: payload.filter.operator };
+};
+
+export const queryTaskPersonValues = (
+  payload: QueryTaskPersonValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskPersonValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskPersonValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskPersonValues({
+        headers: options.headers ?? {},
+        params: {
+          collectionId: payload.collectionId,
+          propertyDefinitionId: payload.propertyDefinitionId,
+        },
+        query: taskPersonHttpQuery(payload),
+      }),
+    ),
+  );
+
+export const searchEligiblePeople = (
+  collectionId: string,
+  query: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<SearchEligiblePeopleResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.searchEligiblePeople,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.searchEligiblePeople({
+        headers: options.headers ?? {},
+        params: { collectionId },
+        query: { query },
       }),
     ),
   );
@@ -1006,6 +1081,61 @@ export const runUpdatePhonePropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updatePhonePropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runCreatePersonPropertyDefinitionAction = (
+  payload: CreatePersonPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreatePersonPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createPersonPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createPersonPropertyDefinitionAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUpdatePersonPropertyValueAction = (
+  payload: UpdatePersonPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdatePersonPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updatePersonPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updatePersonPropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runConfigurePersonPropertyCardinalityAction = (
+  payload: ConfigurePersonPropertyCardinalityActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigurePersonPropertyCardinalityActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.configurePersonPropertyCardinalityAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configurePersonPropertyCardinalityAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };
