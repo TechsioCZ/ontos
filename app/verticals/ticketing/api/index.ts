@@ -6,6 +6,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { configurePrincipalTimeZonePreferenceActionRegistration } from '../src/actions/configure-principal-time-zone-preference.ts';
 import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
@@ -344,6 +345,28 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           Effect.withSpan('ultramodern.api.ticketing.createIntrinsicPropertyDefinitionAction', {
             attributes: operationAttributes(
               ticketingOperationContexts.createIntrinsicPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configurePrincipalTimeZonePreferenceAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configurePrincipalTimeZonePreferenceActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configurePrincipalTimeZonePreferenceAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configurePrincipalTimeZonePreferenceAction,
             ),
             kind: 'server',
           }),

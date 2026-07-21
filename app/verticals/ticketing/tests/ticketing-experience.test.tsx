@@ -24,6 +24,12 @@ interface FakeEffect<T> {
 
 const mocks = rs.hoisted(() => ({
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
+  intrinsicCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly datatype: 'created_by' | 'created_time';
+    readonly mandatory: boolean;
+    readonly name: string;
+  }>[],
   readCalls: [] as string[],
   readFailuresRemaining: 0,
   taskAttempts: 0,
@@ -46,6 +52,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
   });
 
   for (const endpoint of [
+    'configurePrincipalTimeZonePreferenceAction',
     'createCheckboxPropertyDefinitionAction',
     'createTaskAction',
     'createTaskCollectionAction',
@@ -64,6 +71,14 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
     supportedLanguages: ['en'],
     t: (key: string) =>
       ({
+        'ticketing.intrinsic.created_by.create': 'Add Created by property',
+        'ticketing.intrinsic.created_by.creating': 'Adding Created by property',
+        'ticketing.intrinsic.created_by.name': 'Created by',
+        'ticketing.intrinsic.created_time.create': 'Add Created time property',
+        'ticketing.intrinsic.created_time.creating': 'Adding Created time property',
+        'ticketing.intrinsic.created_time.details': 'Details',
+        'ticketing.intrinsic.created_time.name': 'Created time',
+        'ticketing.intrinsic.inactive': 'inactive',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
         'ticketing.role': 'Ticketing',
@@ -176,6 +191,53 @@ rs.mock('../src/api/ticketing-client', () => {
       }
       return success(aggregate);
     },
+    getTaskPropertyWorkspace: () =>
+      success({
+        collectionId,
+        effectiveTimeZone: { source: 'configured', timeZone: 'Europe/Prague' },
+        propertyDefinitions: [
+          {
+            datatype: 'created_time',
+            hidden: false,
+            mandatory: false,
+            name: 'Created time',
+            propertyDefinitionId: 'created-time-1',
+            revision: 1,
+          },
+        ],
+        tasks: [
+          {
+            checkboxValues: [],
+            createdAt: aggregate.task.createdAt,
+            taskId,
+            taskRevision: 1,
+            title: '',
+          },
+        ],
+      }),
+    runCreateIntrinsicPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly datatype: 'created_by' | 'created_time';
+        readonly mandatory: boolean;
+        readonly name: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.intrinsicCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          definition: {
+            datatype: payload.datatype,
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'created-time-1',
+            revision: 1,
+          },
+        },
+      });
+    },
     runCreateTaskAction: (
       payload: { readonly collectionId: string },
       options: { readonly idempotencyKey?: string },
@@ -208,6 +270,7 @@ rs.mock('../src/api/ticketing-client', () => {
 
 beforeEach(() => {
   mocks.collectionCalls.length = 0;
+  mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
   mocks.taskAttempts = 0;
@@ -280,6 +343,28 @@ test('uses one form-scoped idempotency key and rotates it after complete success
   );
   expect(mocks.taskCalls[2]?.idempotencyKey).toBe(mocks.collectionCalls[1]?.idempotencyKey);
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
+});
+
+test('creates and renders an intrinsic property through the application path', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add Created time property' }));
+  await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
+  await waitFor(() => expect(document.querySelector('time')).not.toBeNull());
+
+  expect(mocks.intrinsicCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    datatype: 'created_time',
+    mandatory: false,
+    name: 'Created time',
+  });
+  expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T12:00:00.000Z');
+  fireEvent.click(screen.getByText('Details'));
+  expect(document.querySelector('details')?.hasAttribute('open')).toBe(true);
+  expect(document.querySelectorAll('time')[1]?.textContent).toContain(':00:00');
 });
 
 test('retries only the governed read after both Actions succeed', async () => {

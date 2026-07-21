@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  configurePrincipalTimeZonePreferenceActionHeadersSchema,
+  configurePrincipalTimeZonePreferenceActionFailureSchemas,
+  configurePrincipalTimeZonePreferenceActionOutcomeSchema,
+  configurePrincipalTimeZonePreferenceActionPayloadSchema,
+} from './actions/configure-principal-time-zone-preference';
+
+import {
   createIntrinsicPropertyDefinitionActionHeadersSchema,
   createIntrinsicPropertyDefinitionActionFailureSchemas,
   createIntrinsicPropertyDefinitionActionOutcomeSchema,
@@ -78,6 +85,12 @@ import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 
+export type {
+  ConfigurePrincipalTimeZonePreferenceActionFailure,
+  ConfigurePrincipalTimeZonePreferenceActionOutcome,
+  ConfigurePrincipalTimeZonePreferenceActionPayload,
+  ConfigurePrincipalTimeZonePreferenceActionResponse,
+} from './actions/configure-principal-time-zone-preference';
 export type {
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
@@ -427,10 +440,28 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: createIntrinsicPropertyDefinitionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configurePrincipalTimeZonePreferenceAction',
+        '/ticketing/actions/configure-principal-time-zone-preference',
+        {
+          error: configurePrincipalTimeZonePreferenceActionFailureSchemas,
+          headers: configurePrincipalTimeZonePreferenceActionHeadersSchema,
+          payload: configurePrincipalTimeZonePreferenceActionPayloadSchema,
+          success: configurePrincipalTimeZonePreferenceActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configurePrincipalTimeZonePreferenceAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configurePrincipalTimeZonePreferenceAction',
+    routePath: '/ticketing/actions/configure-principal-time-zone-preference',
+    source: 'generated-client',
+  },
   configureTaskPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureTaskPropertyDefinitionAction',

@@ -8,7 +8,9 @@ import { useState } from 'react';
 import {
   Effect,
   getTaskCollection,
+  getTaskPropertyWorkspace,
   runCreateCheckboxPropertyDefinitionAction,
+  runCreateIntrinsicPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
   runEffectRequest,
@@ -70,6 +72,12 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
+  const [creatingIntrinsicDatatype, setCreatingIntrinsicDatatype] = useState<
+    'created_by' | 'created_time'
+  >();
+  const [intrinsicDefinitionIdempotencyKeys, setIntrinsicDefinitionIdempotencyKeys] = useState(
+    () => ({ created_by: crypto.randomUUID(), created_time: crypto.randomUUID() }),
+  );
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -227,6 +235,48 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateIntrinsicDefinition = async (datatype: 'created_by' | 'created_time') => {
+    if (openedTaskPropertyWorkspace === undefined) {
+      return;
+    }
+    setCreatingIntrinsicDatatype(datatype);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const headers = { 'x-ontos-operation-context': operationContextToken };
+      await runEffectRequest(
+        runCreateIntrinsicPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            datatype,
+            mandatory: false,
+            name: t(`ticketing.intrinsic.${datatype}.name`),
+          },
+          { headers, idempotencyKey: intrinsicDefinitionIdempotencyKeys[datatype] },
+        ),
+      );
+      const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const workspace = await runEffectRequest(
+        getTaskPropertyWorkspace(openedTaskPropertyWorkspace.collectionId, browserTimeZone, {
+          headers,
+        }),
+      );
+      setOpenedTaskPropertyWorkspace(workspace);
+      setIntrinsicDefinitionIdempotencyKeys((current) => ({
+        ...current,
+        [datatype]: crypto.randomUUID(),
+      }));
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error ? error.message : t('ticketing.intrinsic.createFailedDescription'),
+        title: t('ticketing.intrinsic.createFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setCreatingIntrinsicDatatype(undefined);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -299,6 +349,20 @@ export const TicketingExperience = () => {
               {t('ticketing.checkbox.definitionCreate')}
             </Button>
           </div>
+          <div className="ticketing:mt-4 ticketing:flex ticketing:flex-wrap ticketing:gap-3">
+            {(['created_time', 'created_by'] as const).map((datatype) => (
+              <Button
+                isLoading={creatingIntrinsicDatatype === datatype}
+                key={datatype}
+                loadingText={t(`ticketing.intrinsic.${datatype}.creating`)}
+                onClick={() => void handleCreateIntrinsicDefinition(datatype)}
+                type="button"
+                variant="secondary"
+              >
+                {t(`ticketing.intrinsic.${datatype}.create`)}
+              </Button>
+            ))}
+          </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
@@ -317,6 +381,15 @@ export const TicketingExperience = () => {
                         locale={language}
                         timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
                       />
+                      <details>
+                        <summary>{t('ticketing.intrinsic.created_time.details')}</summary>
+                        <CreatedTimePresentation
+                          detail
+                          instant={task.createdAt}
+                          locale={language}
+                          timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
+                        />
+                      </details>
                     </div>
                   );
                 }

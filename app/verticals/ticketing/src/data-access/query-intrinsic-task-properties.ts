@@ -50,14 +50,19 @@ interface InstantRangeRow {
   readonly start: string;
 }
 
-const absoluteInstantRange = (value: string): InstantRange => {
+const absoluteInstant = (value: string): number => {
   if (!/(?:Z|[+-]\d{2}:\d{2})$/u.test(value.trim())) {
-    throw new TypeError('Exact Created time filters require an absolute timestamp with an offset.');
+    throw new TypeError('Absolute Created time filters require a timestamp with an offset.');
   }
   const instant = Date.parse(value);
   if (!Number.isFinite(instant)) {
     throw new TypeError('The Created time filter is not a valid absolute timestamp.');
   }
+  return instant;
+};
+
+const exactSecondRange = (value: string): InstantRange => {
+  const instant = absoluteInstant(value);
   const start = Math.floor(instant / 1000) * 1000;
   return { end: start + 1000, start };
 };
@@ -291,14 +296,20 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
         }
         case 'CreatedTimeFilter': {
           const usesLocalBoundary = ['local_day', 'local_range'].includes(input.operation.operator);
-          const range = usesLocalBoundary
-            ? await instantRangeFor({
-                db,
-                locale: viewerLocale,
-                timeZone: effectiveTimeZone.timeZone,
-                value: input.operation.value,
-              })
-            : absoluteInstantRange(input.operation.value);
+          let range: InstantRange;
+          if (usesLocalBoundary) {
+            range = await instantRangeFor({
+              db,
+              locale: viewerLocale,
+              timeZone: effectiveTimeZone.timeZone,
+              value: input.operation.value,
+            });
+          } else if (input.operation.operator === 'exact') {
+            range = exactSecondRange(input.operation.value);
+          } else {
+            const comparisonInstant = absoluteInstant(input.operation.value);
+            range = { end: comparisonInstant, start: comparisonInstant };
+          }
           const endRange =
             input.operation.operator === 'local_range'
               ? await instantRangeFor({
@@ -320,10 +331,10 @@ export const queryIntrinsicTaskPropertiesDataAccessRegistration: DataAccessRegis
                 return instant < range.start;
               }
               case 'after': {
-                return instant >= range.end;
+                return instant > range.start;
               }
               case 'on_or_before': {
-                return instant < range.end;
+                return instant <= range.start;
               }
               case 'on_or_after': {
                 return instant >= range.start;

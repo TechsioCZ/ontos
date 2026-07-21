@@ -50,6 +50,9 @@ import type {
   CreateIntrinsicPropertyDefinitionActionPayload,
   QueryIntrinsicTaskPropertiesPayload,
   QueryIntrinsicTaskPropertiesResponse,
+  ConfigurePrincipalTimeZonePreferenceActionFailure,
+  ConfigurePrincipalTimeZonePreferenceActionOutcome,
+  ConfigurePrincipalTimeZonePreferenceActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -64,6 +67,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | ConfigurePrincipalTimeZonePreferenceActionFailure
   | CreateIntrinsicPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
@@ -415,6 +419,34 @@ export const runCreateIntrinsicPropertyDefinitionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.createIntrinsicPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigurePrincipalTimeZonePreferenceAction = (
+  payload: ConfigurePrincipalTimeZonePreferenceActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigurePrincipalTimeZonePreferenceActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.configurePrincipalTimeZonePreferenceAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configurePrincipalTimeZonePreferenceAction({
         headers: headers ?? {},
         payload,
       }),

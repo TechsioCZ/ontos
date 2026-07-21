@@ -9,6 +9,7 @@ import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/acti
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
+import { configurePrincipalTimeZonePreferenceActionRegistration } from '../src/actions/configure-principal-time-zone-preference.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
 import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
@@ -90,15 +91,6 @@ const operationContextResolver = (operationContext) => () => ({
 
 const allowedAuthorization = () => ({ _tag: 'Allowed' });
 
-const seedPrincipalTimeZonePreference = async (operationContext, timeZone) => {
-  await sqlClient`
-    insert into core.principal_time_zone_preferences (principal_id, tenant_id, time_zone)
-    values (${operationContext.principalId}, ${operationContext.tenantId}, ${timeZone})
-    on conflict (tenant_id, principal_id) do update
-      set time_zone = excluded.time_zone
-  `;
-};
-
 const authorizationForRole = (role) => (check) => {
   const permissions = {
     Editor: ['edit_task_property_values', 'manage_property_definitions', 'view_task_properties'],
@@ -124,6 +116,13 @@ const runRegisteredAction = ({ operationContext, payload, registration }) =>
     payload,
     registration,
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+  });
+
+const configurePrincipalTimeZone = (operationContext, timeZone) =>
+  runRegisteredAction({
+    operationContext,
+    payload: { timeZone },
+    registration: configurePrincipalTimeZonePreferenceActionRegistration,
   });
 
 const runRegisteredDataAccess = ({ operationContext, payload, registration, resultCount }) =>
@@ -393,13 +392,23 @@ test('Core Principal Preferences resolves configured, browser, and UTC time zone
     timeZone: 'America/New_York',
   });
 
-  await seedPrincipalTimeZonePreference(operationContext, 'Europe/Prague');
+  const preference = await configurePrincipalTimeZone(operationContext, 'Europe/Prague');
+  assert.equal(preference._tag, 'OperationSucceeded', JSON.stringify(preference));
   const configured = await resolveEffectiveTimeZone({
     browserTimeZone: 'America/New_York',
     context: operationContext,
     db,
   });
   assert.deepEqual(configured, { source: 'configured', timeZone: 'Europe/Prague' });
+
+  const invalidPreference = await configurePrincipalTimeZone(operationContext, 'Not/A_Zone');
+  assert.equal(
+    invalidPreference._tag,
+    'OperationDomainRejected',
+    JSON.stringify(invalidPreference),
+  );
+  const preserved = await resolveEffectiveTimeZone({ context: operationContext, db });
+  assert.deepEqual(preserved, { source: 'configured', timeZone: 'Europe/Prague' });
 
   const fallbackContext = await createOperationIdentity();
   const utcFallback = await resolveEffectiveTimeZone({ context: fallbackContext, db });
@@ -416,6 +425,11 @@ test('Core Principal Preferences resolves configured, browser, and UTC time zone
     db,
   });
   assert.deepEqual(systemFallback, { source: 'system_fallback', timeZone: 'UTC' });
+  const systemPreference = await configurePrincipalTimeZone(
+    { ...fallbackContext, principalId: systemPrincipal.principal_id },
+    'Europe/Prague',
+  );
+  assert.equal(systemPreference._tag, 'OperationDomainRejected', JSON.stringify(systemPreference));
 
   await sqlClient`
     update core.principals
@@ -593,7 +607,8 @@ test('Created time queries absolute milliseconds through the configured viewer z
     registration: createIntrinsicPropertyDefinitionActionRegistration,
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
-  await seedPrincipalTimeZonePreference(operationContext, 'Europe/Prague');
+  const preference = await configurePrincipalTimeZone(operationContext, 'Europe/Prague');
+  assert.equal(preference._tag, 'OperationSucceeded', JSON.stringify(preference));
   const query = (operation) =>
     runRegisteredDataAccess({
       operationContext,
@@ -622,7 +637,8 @@ test('Created time queries absolute milliseconds through the configured viewer z
     exactSecond.response.tasks.map(({ taskId }) => taskId),
     [firstTask.taskId],
   );
-  await seedPrincipalTimeZonePreference(operationContext, 'America/New_York');
+  const newYorkPreference = await configurePrincipalTimeZone(operationContext, 'America/New_York');
+  assert.equal(newYorkPreference._tag, 'OperationSucceeded', JSON.stringify(newYorkPreference));
   const exactSecondInAnotherZone = await query({
     _tag: 'CreatedTimeFilter',
     operator: 'exact',
@@ -637,12 +653,13 @@ test('Created time queries absolute milliseconds through the configured viewer z
     exactSecondInAnotherZone.response.tasks.map(({ taskId }) => taskId),
     [firstTask.taskId],
   );
-  await seedPrincipalTimeZonePreference(operationContext, 'Europe/Prague');
+  const praguePreference = await configurePrincipalTimeZone(operationContext, 'Europe/Prague');
+  assert.equal(praguePreference._tag, 'OperationSucceeded', JSON.stringify(praguePreference));
 
   const filterCases = [
     ['before', [firstTask.taskId]],
-    ['after', [thirdTask.taskId]],
-    ['on_or_before', [firstTask.taskId, secondTask.taskId]],
+    ['after', [secondTask.taskId, thirdTask.taskId]],
+    ['on_or_before', [firstTask.taskId]],
     ['on_or_after', [secondTask.taskId, thirdTask.taskId]],
   ];
   const filterResults = await Promise.all(
@@ -650,7 +667,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
       query({
         _tag: 'CreatedTimeFilter',
         operator,
-        value: '2026-03-29T01:00:00Z',
+        value: '2026-03-29T01:00:00.125Z',
       }),
     ),
   );
