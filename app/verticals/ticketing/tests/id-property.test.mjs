@@ -169,6 +169,21 @@ const activateId = (operationContext, collectionId, overrides = {}) =>
     registration: createIdPropertyDefinitionActionRegistration,
   });
 
+const transitionTasks = async (operationContext, collectionId, taskTransitions) => {
+  const results = await Promise.all(
+    taskTransitions.map(([task, transition]) =>
+      runRegisteredAction({
+        operationContext,
+        payload: { collectionId, expectedRevision: 1, taskId: task.taskId, transition },
+        registration: transitionTaskRetentionActionRegistration,
+      }),
+    ),
+  );
+  for (const result of results) {
+    assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));
+  }
+};
+
 test('activating ID backfills every retained Task in deterministic creation order', async () => {
   const operationContext = await createOperationIdentity();
   const collectionId = await createCollection(operationContext);
@@ -178,21 +193,10 @@ test('activating ID backfills every retained Task in deterministic creation orde
   const archived = await createTask(operationContext, collectionId, earlierClock);
   const softDeleted = await createTask(operationContext, collectionId, earlierClock);
 
-  const transitions = await Promise.all(
-    [
-      [archived, 'archive'],
-      [softDeleted, 'softDelete'],
-    ].map(([task, transition]) =>
-      runRegisteredAction({
-        operationContext,
-        payload: { collectionId, expectedRevision: 1, taskId: task.taskId, transition },
-        registration: transitionTaskRetentionActionRegistration,
-      }),
-    ),
-  );
-  for (const transitioned of transitions) {
-    assert.equal(transitioned._tag, 'OperationSucceeded', JSON.stringify(transitioned));
-  }
+  await transitionTasks(operationContext, collectionId, [
+    [archived, 'archive'],
+    [softDeleted, 'softDelete'],
+  ]);
 
   const activated = await runRegisteredAction({
     operationContext,
@@ -468,22 +472,11 @@ test('confirmed ID deletion removes every retained assignment and reactivation s
   const activation = await activateId(operationContext, collectionId, { prefix: 'OLD' });
   assert.equal(activation._tag, 'OperationSucceeded', JSON.stringify(activation));
 
-  const transitions = await Promise.all(
-    [
-      [archived, 'archive'],
-      [softDeleted, 'softDelete'],
-      [hardDeleted, 'hardDelete'],
-    ].map(([task, transition]) =>
-      runRegisteredAction({
-        operationContext,
-        payload: { collectionId, expectedRevision: 1, taskId: task.taskId, transition },
-        registration: transitionTaskRetentionActionRegistration,
-      }),
-    ),
-  );
-  for (const transitioned of transitions) {
-    assert.equal(transitioned._tag, 'OperationSucceeded', JSON.stringify(transitioned));
-  }
+  await transitionTasks(operationContext, collectionId, [
+    [archived, 'archive'],
+    [softDeleted, 'softDelete'],
+    [hardDeleted, 'hardDelete'],
+  ]);
 
   const impact = await runDataAccess({
     options: {
@@ -549,17 +542,37 @@ test('confirmed ID deletion removes every retained assignment and reactivation s
       revision: 1,
     },
   );
+  assert.deepEqual(retainedActivationEvidence.domainEvents, [
+    {
+      eventType: 'ticketing.taskPropertyDefinition.created',
+      payload: {
+        changedComponents: ['definition', 'idAssignments'],
+        collectionId,
+        datatype: 'id',
+        operation: 'created',
+        propertyDefinitionId: activation.response.definition.propertyDefinitionId,
+        revision: 1,
+      },
+    },
+  ]);
   const persistedDeletionEvidence = deletionEvidence.auditEvents.find(
     ({ eventType }) => eventType === 'action.succeeded',
   )?.evidence;
   assert.deepEqual(persistedDeletionEvidence, {
-    changedComponents: ['definition', 'propertyValues'],
+    changedComponents: ['definition', 'idPrefix', 'idAssignments', 'idSequence'],
     collectionId,
+    datatype: 'id',
     impactCount: 3,
     operation: 'deleted',
     propertyDefinitionId: activation.response.definition.propertyDefinitionId,
     revision: 1,
   });
+  assert.deepEqual(deletionEvidence.domainEvents, [
+    {
+      eventType: 'ticketing.taskPropertyDefinition.deleted',
+      payload: persistedDeletionEvidence,
+    },
+  ]);
   const evidenceText = JSON.stringify({ persistedDeletionEvidence, retainedActivationEvidence });
   assert.equal(evidenceText.includes('OLD'), false);
   assert.equal(evidenceText.includes(active.taskId), false);

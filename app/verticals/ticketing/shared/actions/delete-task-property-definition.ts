@@ -19,6 +19,7 @@ export const deleteTaskPropertyDefinitionActionPayloadSchema = Schema.Struct({
 export const deleteTaskPropertyDefinitionActionHeadersSchema = idempotentActionHeadersSchema;
 
 export const deleteTaskPropertyDefinitionActionResponseSchema = Schema.Struct({
+  deletedDatatype: Schema.String,
   deletedPropertyDefinitionId: Schema.String,
   impactCount: Schema.Finite,
 });

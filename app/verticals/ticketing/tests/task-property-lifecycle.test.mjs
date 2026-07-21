@@ -752,7 +752,7 @@ test('shared lifecycle evidence contains metadata but no property names or Check
         expectedRevision: 2,
         propertyDefinitionId: 'definition-2',
       },
-      { deletedPropertyDefinitionId: 'definition-2', impactCount: 7 },
+      { deletedDatatype: 'checkbox', deletedPropertyDefinitionId: 'definition-2', impactCount: 7 },
     );
   const retentionEvidence =
     transitionTaskRetentionActionRegistration.descriptor.auditEvent.evidence(
@@ -841,6 +841,7 @@ test('Checkbox deletion always confirms the current retained-Task impact and rem
   });
   assert.equal(removed._tag, 'OperationSucceeded', JSON.stringify(removed));
   assert.deepEqual(removed.response, {
+    deletedDatatype: 'checkbox',
     deletedPropertyDefinitionId: propertyDefinitionId,
     impactCount: 2,
   });

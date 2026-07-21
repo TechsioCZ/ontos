@@ -26,8 +26,12 @@ const deletedDefinitionEvidence = (
   input: DeleteTaskPropertyDefinitionActionPayload,
   response: DeleteTaskPropertyDefinitionActionResponse,
 ) => ({
-  changedComponents: ['definition', 'propertyValues'],
+  changedComponents:
+    response.deletedDatatype === 'id'
+      ? ['definition', 'idPrefix', 'idAssignments', 'idSequence']
+      : ['definition', 'propertyValues'],
   collectionId: input.collectionId,
+  datatype: response.deletedDatatype,
   impactCount: response.impactCount,
   operation: 'deleted',
   propertyDefinitionId: response.deletedPropertyDefinitionId,
@@ -105,6 +109,7 @@ const deleteTaskPropertyDefinitionActionHandler: ActionHandler<
   }
 
   return {
+    deletedDatatype: target.datatype,
     deletedPropertyDefinitionId: input.propertyDefinitionId,
     impactCount: confirmation.impactCount,
   };

@@ -2606,6 +2606,7 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly actionInvocationId: Schema.optional<Schema.String>;
             readonly ok: Schema.Literal<true>;
             readonly response: Schema.Struct<{
+              readonly deletedDatatype: Schema.String;
               readonly deletedPropertyDefinitionId: Schema.String;
               readonly impactCount: Schema.Finite;
             }>;
