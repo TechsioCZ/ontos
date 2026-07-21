@@ -38,6 +38,20 @@ export const phonePropertyValueSchema = Schema.Struct({
   value: Schema.String,
 });
 
+export const resolvedPersonSchema = Schema.Struct({
+  displayName: Schema.String,
+  eligible: Schema.Boolean,
+  principalId: Schema.String,
+  status: Schema.Literals(['active', 'archived', 'disabled', 'departed']),
+});
+
+export const personPropertyValueSchema = Schema.Struct({
+  people: Schema.Array(resolvedPersonSchema),
+  principalIds: Schema.Array(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
@@ -46,6 +60,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
+      personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
       taskId: Schema.String,

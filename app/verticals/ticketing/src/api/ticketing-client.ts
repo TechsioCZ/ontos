@@ -103,6 +103,17 @@ import type {
   UpdatePhonePropertyValueActionFailure,
   UpdatePhonePropertyValueActionOutcome,
   UpdatePhonePropertyValueActionPayload,
+  ConfigurePersonPropertyCardinalityActionFailure,
+  ConfigurePersonPropertyCardinalityActionOutcome,
+  ConfigurePersonPropertyCardinalityActionPayload,
+  CreatePersonPropertyDefinitionActionFailure,
+  CreatePersonPropertyDefinitionActionOutcome,
+  CreatePersonPropertyDefinitionActionPayload,
+  QueryTaskPersonValuesPayload,
+  QueryTaskPersonValuesResponse,
+  UpdatePersonPropertyValueActionFailure,
+  UpdatePersonPropertyValueActionOutcome,
+  UpdatePersonPropertyValueActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -117,6 +128,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | ConfigurePersonPropertyCardinalityActionFailure
+  | CreatePersonPropertyDefinitionActionFailure
+  | UpdatePersonPropertyValueActionFailure
   | UpdatePhonePropertyValueActionFailure
   | CreatePhonePropertyDefinitionActionFailure
   | UpdateEmailPropertyValueActionFailure
@@ -309,6 +323,32 @@ export const queryTaskEmailValues = (
           propertyDefinitionId: payload.propertyDefinitionId,
         },
         query: { operation: payload.operation, query: payload.query },
+      }),
+    ),
+  );
+
+export const queryTaskPersonValues = (
+  payload: QueryTaskPersonValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskPersonValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskPersonValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskPersonValues({
+        headers: options.headers ?? {},
+        params: {
+          collectionId: payload.collectionId,
+          propertyDefinitionId: payload.propertyDefinitionId,
+        },
+        query: {
+          ...(payload.filter === undefined ? {} : { filter: payload.filter }),
+          ...(payload.group === undefined ? {} : { group: payload.group ? 'true' : 'false' }),
+          ...(payload.principalId === undefined ? {} : { principalId: payload.principalId }),
+          ...(payload.search === undefined ? {} : { search: payload.search }),
+          ...(payload.sort === undefined ? {} : { sort: payload.sort }),
+        },
       }),
     ),
   );
@@ -895,6 +935,61 @@ export const runUpdatePhonePropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updatePhonePropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runCreatePersonPropertyDefinitionAction = (
+  payload: CreatePersonPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreatePersonPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createPersonPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createPersonPropertyDefinitionAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUpdatePersonPropertyValueAction = (
+  payload: UpdatePersonPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdatePersonPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updatePersonPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updatePersonPropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runConfigurePersonPropertyCardinalityAction = (
+  payload: ConfigurePersonPropertyCardinalityActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigurePersonPropertyCardinalityActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.configurePersonPropertyCardinalityAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configurePersonPropertyCardinalityAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };

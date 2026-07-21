@@ -1,4 +1,7 @@
 export {
+  runConfigurePersonPropertyCardinalityAction,
+  runCreatePersonPropertyDefinitionAction,
+  runUpdatePersonPropertyValueAction,
   runCreatePhonePropertyDefinitionAction,
   runUpdatePhonePropertyValueAction,
   queryTaskEmailValues,

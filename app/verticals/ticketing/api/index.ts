@@ -6,6 +6,9 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { configurePersonPropertyCardinalityActionRegistration } from '../src/actions/configure-person-property-cardinality.ts';
+import { createPersonPropertyDefinitionActionRegistration } from '../src/actions/create-person-property-definition.ts';
+import { updatePersonPropertyValueActionRegistration } from '../src/actions/update-person-property-value.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
 import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
@@ -38,6 +41,7 @@ import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
+import { queryTaskPersonValuesDataAccessRegistration } from '../src/data-access/query-task-person-values.ts';
 import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
@@ -202,6 +206,32 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.queryTaskEmailValues', {
           attributes: operationAttributes(ticketingOperationContexts.queryTaskEmailValues),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('queryTaskPersonValues', ({ params, query, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            ...(query.filter === undefined ? {} : { filter: query.filter }),
+            ...(query.group === undefined ? {} : { group: query.group === 'true' }),
+            ...(query.principalId === undefined ? {} : { principalId: query.principalId }),
+            propertyDefinitionId: params.propertyDefinitionId,
+            ...(query.search === undefined ? {} : { search: query.search }),
+            ...(query.sort === undefined ? {} : { sort: query.sort }),
+          },
+          registration: queryTaskPersonValuesDataAccessRegistration,
+          resultCount: (response) => response.taskIds.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.queryTaskPersonValues', {
+          attributes: operationAttributes(ticketingOperationContexts.queryTaskPersonValues),
           kind: 'server',
         }),
       ),
@@ -421,20 +451,13 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: transitionTaskRetentionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
-          ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.transitionTaskRetentionAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
+          attributes: operationAttributes(ticketingOperationContexts.transitionTaskRetentionAction),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('createTextPropertyDefinitionAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -678,6 +701,57 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.withSpan('ultramodern.api.ticketing.updatePhonePropertyValueAction', {
           attributes: operationAttributes(
             ticketingOperationContexts.updatePhonePropertyValueAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createPersonPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createPersonPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createPersonPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createPersonPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updatePersonPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updatePersonPropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updatePersonPropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updatePersonPropertyValueAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('configurePersonPropertyCardinalityAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configurePersonPropertyCardinalityActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.configurePersonPropertyCardinalityAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configurePersonPropertyCardinalityAction,
           ),
           kind: 'server',
         }),

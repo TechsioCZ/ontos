@@ -16,6 +16,7 @@
     "./operation-context": "./src/operation-context.ts",
     "./operation-context/session": "./src/operation-context-from-session.ts",
     "./outbox": "./src/outbox.ts",
+    "./person-directory": "./src/person-directory.ts",
     "./policies": "./src/policies/index.ts",
     "./policy": "./src/policy.ts",
     "./sdk": "./src/core-sdk.ts",

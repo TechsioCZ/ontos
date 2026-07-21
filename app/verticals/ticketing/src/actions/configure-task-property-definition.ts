@@ -18,7 +18,26 @@ import type {
 } from '../../shared/actions/configure-task-property-definition.ts';
 import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
 
+type StoredTaskPropertyDefinition = TaskPropertyDefinition & {
+  readonly cardinality: 'one' | 'unlimited' | null;
+};
+
+const toTaskPropertyDefinition = (
+  definition: StoredTaskPropertyDefinition,
+): TaskPropertyDefinition => {
+  if (definition.datatype === 'person') {
+    if (definition.cardinality === null) {
+      throw new Error('Person Task Property configuration is missing.');
+    }
+    return { ...definition, cardinality: definition.cardinality };
+  }
+  return definition;
+};
+
 const configuredDefinition = (definition: TaskPropertyDefinition): TaskPropertyDefinition => {
+  if (definition.datatype === 'person') {
+    return definition;
+  }
   if (definition.datatype === 'checkbox') {
     return {
       datatype: 'checkbox',
@@ -100,6 +119,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
 
   const currentResult = await services.tx.execute(sql`
     select
+      person_configuration.cardinality,
       definition.datatype,
       definition.number_format as format,
       definition.hidden,
@@ -111,6 +131,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     inner join ticketing.task_schemas as schema
       on schema.schema_id = definition.schema_id
       and schema.tenant_id = definition.tenant_id
+    left join ticketing.task_person_property_configurations as person_configuration
+      on person_configuration.property_definition_id = definition.property_definition_id
+      and person_configuration.tenant_id = definition.tenant_id
     where definition.property_definition_id = ${input.propertyDefinitionId}
       and definition.revision = ${input.expectedRevision}
       and definition.tenant_id = ${services.context.tenantId}
@@ -118,14 +141,15 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       and schema.tenant_id = ${services.context.tenantId}
     for update of definition
   `);
-  const currentDefinition = rowsFromResult<TaskPropertyDefinition>(currentResult).at(0);
-  if (currentDefinition === undefined) {
+  const currentDefinitionRow = rowsFromResult<StoredTaskPropertyDefinition>(currentResult).at(0);
+  if (currentDefinitionRow === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
       message:
         'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
     });
   }
+  const currentDefinition = toTaskPropertyDefinition(currentDefinitionRow);
   if (
     currentDefinition.hidden === input.hidden &&
     currentDefinition.mandatory === input.mandatory &&
@@ -159,6 +183,12 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
           and lower(sibling.name) = lower(${name})
       )
     returning
+      (
+        select person_configuration.cardinality
+        from ticketing.task_person_property_configurations as person_configuration
+        where person_configuration.property_definition_id = definition.property_definition_id
+          and person_configuration.tenant_id = definition.tenant_id
+      ) as cardinality,
       definition.datatype,
       definition.number_format as format,
       definition.hidden,
@@ -167,14 +197,15 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       definition.property_definition_id as "propertyDefinitionId",
       definition.revision
   `);
-  const definition = rowsFromResult<TaskPropertyDefinition>(result).at(0);
-  if (definition === undefined) {
+  const definitionRow = rowsFromResult<StoredTaskPropertyDefinition>(result).at(0);
+  if (definitionRow === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
       message:
         'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
     });
   }
+  const definition = toTaskPropertyDefinition(definitionRow);
 
   return {
     definition: configuredDefinition(definition),

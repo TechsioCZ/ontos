@@ -84,7 +84,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'email', 'number', 'phone', 'select', 'text', 'url')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'email', 'number', 'person', 'phone', 'select', 'text', 'url')`,
     ),
     check(
       'ticketing_task_property_definitions_select_order_ck',
@@ -184,7 +184,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed', 'email_value_changed', 'number_value_changed', 'phone_value_changed', 'select_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'email_value_changed', 'number_value_changed', 'person_value_changed', 'phone_value_changed', 'select_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -398,5 +398,78 @@ export const taskPhoneValues = ticketingSchema.table(
     check('ticketing_task_phone_values_length_ck', sql`char_length(${table.value}) <= 256`),
     check('ticketing_task_phone_values_not_blank_ck', sql`btrim(${table.value}) <> ''`),
     check('ticketing_task_phone_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskPersonPropertyConfigurations = ticketingSchema.table(
+  'task_person_property_configurations',
+  {
+    cardinality: text('cardinality').default('unlimited').notNull(),
+    propertyDefinitionId: uuid('property_definition_id')
+      .primaryKey()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    index('ticketing_task_person_property_configurations_tenant_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+    ),
+    check(
+      'ticketing_task_person_property_configurations_cardinality_ck',
+      sql`${table.cardinality} in ('one', 'unlimited')`,
+    ),
+  ],
+);
+
+export const taskPersonValues = ticketingSchema.table(
+  'task_person_values',
+  {
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(1).notNull(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_person_values_pk',
+    }),
+    index('ticketing_task_person_values_definition_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+    ),
+    check('ticketing_task_person_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskPersonAssignments = ticketingSchema.table(
+  'task_person_assignments',
+  {
+    principalId: uuid('principal_id')
+      .notNull()
+      .references(() => principals.principalId, { onDelete: 'restrict' }),
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId, table.principalId],
+      name: 'ticketing_task_person_assignments_pk',
+    }),
+    index('ticketing_task_person_assignments_membership_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.principalId,
+    ),
   ],
 );

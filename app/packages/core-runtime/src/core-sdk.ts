@@ -71,6 +71,7 @@ export interface OperationDomainRejected {
   readonly _tag: 'OperationDomainRejected';
   readonly code: string;
   readonly message: string;
+  readonly state?: unknown;
 }
 
 export interface OperationPolicyDenied {
@@ -275,15 +276,18 @@ export interface ActionDomainRejection {
   readonly _tag: 'ActionDomainRejection';
   readonly code: string;
   readonly message: string;
+  readonly state?: unknown;
 }
 
 export const rejectAction = (input: {
   readonly code: string;
   readonly message: string;
+  readonly state?: unknown;
 }): ActionDomainRejection => ({
   _tag: 'ActionDomainRejection',
   code: input.code,
   message: input.message,
+  ...(input.state === undefined ? {} : { state: input.state }),
 });
 
 const isActionDomainRejection = (error: unknown): error is ActionDomainRejection =>
@@ -318,6 +322,7 @@ const domainRejected = (error: ActionDomainRejection): OperationDomainRejected =
   _tag: 'OperationDomainRejected',
   code: error.code,
   message: error.message,
+  ...(error.state === undefined ? {} : { state: error.state }),
 });
 
 const policyDenied = (decision: PolicyDenied): OperationPolicyDenied => ({

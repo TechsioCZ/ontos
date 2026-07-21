@@ -36,7 +36,7 @@ const errorCode = (error: CoreSDKError): string | undefined =>
 const toJsonValue = (value: unknown): JsonValue => structuredClone(value) as JsonValue;
 
 const errorState = (error: CoreSDKError): JsonValue | undefined =>
-  error._tag === 'OperationPolicyDenied' ? toJsonValue(error.state) : undefined;
+  'state' in error ? toJsonValue(error.state) : undefined;
 
 const toCoreSdkTransportOutcome = <TPayload, TResponse>(
   result: OperationResult<TPayload, TResponse>,
@@ -78,7 +78,6 @@ export const runCoreSdkAction = async <TAction, TResponse>({
     registration,
     transport: { headers },
   });
-
   return toCoreSdkTransportOutcome(result);
 };
 
@@ -99,6 +98,5 @@ export const runCoreSdkDataAccess = async <TPayload, TResponse>({
     resultCount,
     transport: { headers },
   });
-
   return toCoreSdkTransportOutcome(result);
 };
