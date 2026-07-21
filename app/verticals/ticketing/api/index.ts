@@ -6,6 +6,12 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { createMultiSelectOptionAndSelectActionRegistration } from '../src/actions/create-multi-select-option-and-select.ts';
+import { reorderMultiSelectOptionsActionRegistration } from '../src/actions/reorder-multi-select-options.ts';
+import { updateMultiSelectOptionActionRegistration } from '../src/actions/update-multi-select-option.ts';
+import { updateMultiSelectPropertyValueActionRegistration } from '../src/actions/update-multi-select-property-value.ts';
+import { createMultiSelectOptionActionRegistration } from '../src/actions/create-multi-select-option.ts';
+import { createMultiSelectPropertyDefinitionActionRegistration } from '../src/actions/create-multi-select-property-definition.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -1052,6 +1058,138 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           kind: 'server',
         }),
       ),
+    )
+    .handle('createMultiSelectPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createMultiSelectPropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createMultiSelectPropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createMultiSelectPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createMultiSelectOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createMultiSelectOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createMultiSelectOptionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createMultiSelectOptionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateMultiSelectPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateMultiSelectPropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateMultiSelectPropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateMultiSelectPropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateMultiSelectOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateMultiSelectOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateMultiSelectOptionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateMultiSelectOptionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('reorderMultiSelectOptionsAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: reorderMultiSelectOptionsActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.reorderMultiSelectOptionsAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.reorderMultiSelectOptionsAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createMultiSelectOptionAndSelectAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createMultiSelectOptionAndSelectActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createMultiSelectOptionAndSelectAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createMultiSelectOptionAndSelectAction,
+            ),
+            kind: 'server',
+          }),
+        ),
     ),
 );
 

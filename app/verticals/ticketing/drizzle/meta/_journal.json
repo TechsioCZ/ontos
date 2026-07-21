@@ -134,6 +134,20 @@
       "when": 1784663876771,
       "tag": "0018_true_marauders",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784666668385,
+      "tag": "0019_multi-select-values",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784667015569,
+      "tag": "0020_multi-select-task-revision",
+      "breakpoints": true
     }
   ]
 }

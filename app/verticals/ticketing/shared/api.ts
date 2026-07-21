@@ -6,6 +6,42 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  createMultiSelectOptionAndSelectActionHeadersSchema,
+  createMultiSelectOptionAndSelectActionFailureSchemas,
+  createMultiSelectOptionAndSelectActionOutcomeSchema,
+  createMultiSelectOptionAndSelectActionPayloadSchema,
+} from './actions/create-multi-select-option-and-select';
+import {
+  reorderMultiSelectOptionsActionHeadersSchema,
+  reorderMultiSelectOptionsActionFailureSchemas,
+  reorderMultiSelectOptionsActionOutcomeSchema,
+  reorderMultiSelectOptionsActionPayloadSchema,
+} from './actions/reorder-multi-select-options';
+import {
+  updateMultiSelectOptionActionHeadersSchema,
+  updateMultiSelectOptionActionFailureSchemas,
+  updateMultiSelectOptionActionOutcomeSchema,
+  updateMultiSelectOptionActionPayloadSchema,
+} from './actions/update-multi-select-option';
+import {
+  updateMultiSelectPropertyValueActionHeadersSchema,
+  updateMultiSelectPropertyValueActionFailureSchemas,
+  updateMultiSelectPropertyValueActionOutcomeSchema,
+  updateMultiSelectPropertyValueActionPayloadSchema,
+} from './actions/update-multi-select-property-value';
+import {
+  createMultiSelectOptionActionHeadersSchema,
+  createMultiSelectOptionActionFailureSchemas,
+  createMultiSelectOptionActionOutcomeSchema,
+  createMultiSelectOptionActionPayloadSchema,
+} from './actions/create-multi-select-option';
+import {
+  createMultiSelectPropertyDefinitionActionHeadersSchema,
+  createMultiSelectPropertyDefinitionActionFailureSchemas,
+  createMultiSelectPropertyDefinitionActionOutcomeSchema,
+  createMultiSelectPropertyDefinitionActionPayloadSchema,
+} from './actions/create-multi-select-property-definition';
+import {
   duplicateTaskActionFailureSchemas,
   duplicateTaskActionHeadersSchema,
   duplicateTaskActionOutcomeSchema,
@@ -256,6 +292,43 @@ import {
   queryTaskPropertyValuesResponseSchema,
 } from './task-property-query';
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
+
+export type {
+  CreateMultiSelectOptionAndSelectActionFailure,
+  CreateMultiSelectOptionAndSelectActionOutcome,
+  CreateMultiSelectOptionAndSelectActionPayload,
+  CreateMultiSelectOptionAndSelectActionResponse,
+} from './actions/create-multi-select-option-and-select';
+export type {
+  CreateMultiSelectOptionActionFailure,
+  CreateMultiSelectOptionActionOutcome,
+  CreateMultiSelectOptionActionPayload,
+  CreateMultiSelectOptionActionResponse,
+} from './actions/create-multi-select-option';
+export type {
+  CreateMultiSelectPropertyDefinitionActionFailure,
+  CreateMultiSelectPropertyDefinitionActionOutcome,
+  CreateMultiSelectPropertyDefinitionActionPayload,
+  CreateMultiSelectPropertyDefinitionActionResponse,
+} from './actions/create-multi-select-property-definition';
+export type {
+  ReorderMultiSelectOptionsActionFailure,
+  ReorderMultiSelectOptionsActionOutcome,
+  ReorderMultiSelectOptionsActionPayload,
+  ReorderMultiSelectOptionsActionResponse,
+} from './actions/reorder-multi-select-options';
+export type {
+  UpdateMultiSelectOptionActionFailure,
+  UpdateMultiSelectOptionActionOutcome,
+  UpdateMultiSelectOptionActionPayload,
+  UpdateMultiSelectOptionActionResponse,
+} from './actions/update-multi-select-option';
+export type {
+  UpdateMultiSelectPropertyValueActionFailure,
+  UpdateMultiSelectPropertyValueActionOutcome,
+  UpdateMultiSelectPropertyValueActionPayload,
+  UpdateMultiSelectPropertyValueActionResponse,
+} from './actions/update-multi-select-property-value';
 
 export type {
   ConfigureIdPropertyPrefixActionFailure,
@@ -1269,6 +1342,78 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: duplicateTaskActionPayloadSchema,
         success: duplicateTaskActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createMultiSelectPropertyDefinitionAction',
+        '/ticketing/actions/create-multi-select-property-definition',
+        {
+          error: createMultiSelectPropertyDefinitionActionFailureSchemas,
+          headers: createMultiSelectPropertyDefinitionActionHeadersSchema,
+          payload: createMultiSelectPropertyDefinitionActionPayloadSchema,
+          success: createMultiSelectPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createMultiSelectOptionAction',
+        '/ticketing/actions/create-multi-select-option',
+        {
+          error: createMultiSelectOptionActionFailureSchemas,
+          headers: createMultiSelectOptionActionHeadersSchema,
+          payload: createMultiSelectOptionActionPayloadSchema,
+          success: createMultiSelectOptionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateMultiSelectPropertyValueAction',
+        '/ticketing/actions/update-multi-select-property-value',
+        {
+          error: updateMultiSelectPropertyValueActionFailureSchemas,
+          headers: updateMultiSelectPropertyValueActionHeadersSchema,
+          payload: updateMultiSelectPropertyValueActionPayloadSchema,
+          success: updateMultiSelectPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateMultiSelectOptionAction',
+        '/ticketing/actions/update-multi-select-option',
+        {
+          error: updateMultiSelectOptionActionFailureSchemas,
+          headers: updateMultiSelectOptionActionHeadersSchema,
+          payload: updateMultiSelectOptionActionPayloadSchema,
+          success: updateMultiSelectOptionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'reorderMultiSelectOptionsAction',
+        '/ticketing/actions/reorder-multi-select-options',
+        {
+          error: reorderMultiSelectOptionsActionFailureSchemas,
+          headers: reorderMultiSelectOptionsActionHeadersSchema,
+          payload: reorderMultiSelectOptionsActionPayloadSchema,
+          success: reorderMultiSelectOptionsActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createMultiSelectOptionAndSelectAction',
+        '/ticketing/actions/create-multi-select-option-and-select',
+        {
+          error: createMultiSelectOptionAndSelectActionFailureSchemas,
+          headers: createMultiSelectOptionAndSelectActionHeadersSchema,
+          payload: createMultiSelectOptionAndSelectActionPayloadSchema,
+          success: createMultiSelectOptionAndSelectActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -1343,6 +1488,24 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createIntrinsicPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-intrinsic-property-definition',
+    source: 'generated-client',
+  },
+  createMultiSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createMultiSelectOptionAction',
+    routePath: '/ticketing/actions/create-multi-select-option',
+    source: 'generated-client',
+  },
+  createMultiSelectOptionAndSelectAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createMultiSelectOptionAndSelectAction',
+    routePath: '/ticketing/actions/create-multi-select-option-and-select',
+    source: 'generated-client',
+  },
+  createMultiSelectPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createMultiSelectPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-multi-select-property-definition',
     source: 'generated-client',
   },
   createNumberPropertyDefinitionAction: {
@@ -1512,6 +1675,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/readiness',
     source: 'generated-client',
   },
+  reorderMultiSelectOptionsAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:reorderMultiSelectOptionsAction',
+    routePath: '/ticketing/actions/reorder-multi-select-options',
+    source: 'generated-client',
+  },
   searchEligiblePeople: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:searchEligiblePeople',
@@ -1540,6 +1709,18 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateEmailPropertyValueAction',
     routePath: '/ticketing/actions/update-email-property-value',
+    source: 'generated-client',
+  },
+  updateMultiSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateMultiSelectOptionAction',
+    routePath: '/ticketing/actions/update-multi-select-option',
+    source: 'generated-client',
+  },
+  updateMultiSelectPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateMultiSelectPropertyValueAction',
+    routePath: '/ticketing/actions/update-multi-select-property-value',
     source: 'generated-client',
   },
   updateNumberPropertyValueAction: {

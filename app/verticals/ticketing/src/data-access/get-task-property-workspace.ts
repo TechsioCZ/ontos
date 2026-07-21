@@ -15,6 +15,7 @@ import type {
 import type { TextDocument } from '../../shared/text-property.ts';
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
 import type {
+  MultiSelectOption,
   SelectOption,
   SelectOptionOrderMode,
   TaskPropertyDefinition,
@@ -45,6 +46,9 @@ type DefinitionRow =
       readonly datatype: 'person';
     })
   | (DefinitionFields & {
+      readonly datatype: 'multi_select';
+    })
+  | (DefinitionFields & {
       readonly datatype: 'select';
       readonly optionOrderMode: SelectOptionOrderMode | null;
     })
@@ -56,13 +60,31 @@ interface OptionRow extends SelectOption {
   readonly propertyDefinitionId: string;
 }
 
+interface MultiSelectOptionRow extends MultiSelectOption {
+  readonly propertyDefinitionId: string;
+}
+
 const taskPropertyDefinitionFromRow = (
   definition: DefinitionRow,
+  multiSelectOptionRows: readonly MultiSelectOptionRow[],
   optionRows: readonly OptionRow[],
   locale: string,
 ): TaskPropertyDefinition => {
   if (definition.datatype === 'id' || definition.datatype === 'number') {
     return definition;
+  }
+  if (definition.datatype === 'multi_select') {
+    return {
+      datatype: 'multi_select',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      options: multiSelectOptionRows
+        .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
+        .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
   }
   if (definition.datatype === 'select') {
     const optionOrderMode = definition.optionOrderMode ?? 'manual';
@@ -159,6 +181,18 @@ interface SelectValueRow {
   readonly taskId: string;
 }
 
+interface MultiSelectValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+}
+
+interface MultiSelectSelectionRow {
+  readonly optionId: string;
+  readonly propertyDefinitionId: string;
+  readonly taskId: string;
+}
+
 interface UrlValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
@@ -226,6 +260,11 @@ interface TaskRow {
     revision: number;
     value: string | null;
   }[];
+  multiSelectValues?: {
+    optionIds: string[];
+    propertyDefinitionId: string;
+    revision: number;
+  }[];
   readonly phoneValues: {
     propertyDefinitionId: string;
     revision: number;
@@ -271,6 +310,31 @@ const optionalTaskValueArraysFactory = (
     ...(hasTextDefinitions ? { textValues: [] } : {}),
     ...(hasUrlDefinitions ? { urlValues: [] } : {}),
   });
+};
+
+const appendMultiSelectValues = (
+  tasks: Map<string, TaskRow>,
+  rows: readonly MultiSelectValueRow[],
+  selections: readonly MultiSelectSelectionRow[],
+): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task === undefined) {
+      continue;
+    }
+    task.multiSelectValues ??= [];
+    task.multiSelectValues.push({
+      optionIds: selections
+        .filter(
+          (selection) =>
+            selection.taskId === row.taskId &&
+            selection.propertyDefinitionId === row.propertyDefinitionId,
+        )
+        .map(({ optionId }) => optionId),
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+    });
+  }
 };
 
 const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow[]): void => {
@@ -358,6 +422,8 @@ const taskRowsFromValues = ({
   emailValueRows,
   filesMediaRows,
   numberValueRows,
+  multiSelectSelectionRows,
+  multiSelectValueRows,
   personAssignmentRows,
   personValueRows,
   phoneValueRows,
@@ -372,6 +438,8 @@ const taskRowsFromValues = ({
   readonly emailValueRows: readonly EmailValueRow[];
   readonly filesMediaRows: readonly FilesMediaItemRow[];
   readonly numberValueRows: readonly NumberValueRow[];
+  readonly multiSelectSelectionRows: readonly MultiSelectSelectionRow[];
+  readonly multiSelectValueRows: readonly MultiSelectValueRow[];
   readonly personAssignmentRows: readonly PersonAssignmentRow[];
   readonly personValueRows: readonly PersonValueRow[];
   readonly phoneValueRows: readonly PhoneValueRow[];
@@ -470,6 +538,7 @@ const taskRowsFromValues = ({
   }
 
   appendSelectValues(tasks, selectValueRows);
+  appendMultiSelectValues(tasks, multiSelectValueRows, multiSelectSelectionRows);
   appendDateValues(tasks, dateValueRows);
   appendFilesMediaItems(tasks, filesMediaRows);
   appendUrlValues(tasks, urlValueRows);
@@ -522,7 +591,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -702,6 +771,59 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       where schema.collection_id = ${input.collectionId}
         and option.tenant_id = ${context.tenantId}
     `);
+    const multiSelectOptionResult = await db.execute(sql`
+      select
+        option.catalog_position as "catalogPosition",
+        option.color,
+        option.name,
+        option.option_id as "optionId",
+        option.property_definition_id as "propertyDefinitionId",
+        option.revision
+      from ticketing.multi_select_options as option
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = option.property_definition_id
+        and definition.tenant_id = option.tenant_id
+      inner join ticketing.task_schemas as schema
+        on schema.schema_id = definition.schema_id
+        and schema.tenant_id = definition.tenant_id
+      where schema.collection_id = ${input.collectionId}
+        and option.tenant_id = ${context.tenantId}
+      order by option.catalog_position, option.option_id
+    `);
+    const multiSelectValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId"
+      from ticketing.task_multi_select_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'multi_select'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const multiSelectSelectionResult = await db.execute(sql`
+      select
+        selection.option_id as "optionId",
+        selection.property_definition_id as "propertyDefinitionId",
+        selection.task_id as "taskId"
+      from ticketing.task_multi_select_selections as selection
+      inner join ticketing.tasks as task
+        on task.task_id = selection.task_id
+        and task.tenant_id = selection.tenant_id
+      inner join ticketing.multi_select_options as option
+        on option.option_id = selection.option_id
+        and option.property_definition_id = selection.property_definition_id
+        and option.tenant_id = selection.tenant_id
+      where task.collection_id = ${input.collectionId}
+        and selection.tenant_id = ${context.tenantId}
+      order by selection.task_id, selection.property_definition_id, option.catalog_position, option.option_id
+    `);
     const selectValueResult = await db.execute(sql`
       select
         value.option_id as "optionId",
@@ -754,10 +876,13 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       order by item.task_id, item.property_definition_id, item.position
     `);
     const optionRows = rowsFromResult<OptionRow>(optionResult);
+    const multiSelectOptionRows = rowsFromResult<MultiSelectOptionRow>(multiSelectOptionResult);
     const locale = input.locale ?? 'en-GB';
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
       definitionResult,
-    ).map((definition) => taskPropertyDefinitionFromRow(definition, optionRows, locale));
+    ).map((definition) =>
+      taskPropertyDefinitionFromRow(definition, multiSelectOptionRows, optionRows, locale),
+    );
     const personAssignmentRows = rowsFromResult<PersonAssignmentRow>(personAssignmentResult);
     const resolvedPeople = await createPersonDirectory({
       db,
@@ -796,6 +921,8 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       definitions,
       emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
       filesMediaRows,
+      multiSelectSelectionRows: rowsFromResult<MultiSelectSelectionRow>(multiSelectSelectionResult),
+      multiSelectValueRows: rowsFromResult<MultiSelectValueRow>(multiSelectValueResult),
       numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
       personAssignmentRows,
       personValueRows: rowsFromResult<PersonValueRow>(personValueResult),
