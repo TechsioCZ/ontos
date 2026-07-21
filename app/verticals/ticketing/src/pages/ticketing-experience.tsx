@@ -7,18 +7,33 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import {
   Effect,
+  getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateCheckboxPropertyDefinitionAction,
+  runCreateEmailPropertyDefinitionAction,
+  runCreateNumberPropertyDefinitionAction,
   runCreatePhonePropertyDefinitionAction,
+  runCreateTextPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
+  runCreateUrlPropertyDefinitionAction,
+  runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
+  runUpdateEmailPropertyValueAction,
+  runUpdateNumberPropertyValueAction,
   runUpdatePhonePropertyValueAction,
+  runUpdateTextPropertyValueAction,
+  runUpdateUrlPropertyValueAction,
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
+import { EmailPropertyEditor } from '../components/email-property-editor';
+import { NumberPropertyEditor } from '../components/number-property-editor';
 import { PhonePropertyEditor } from '../components/phone-property-editor';
+import { TextPropertyEditor } from '../components/text-property-editor';
+import { TextPropertyDuplication } from '../components/text-property-duplication';
+import { UrlPropertyEditor } from '../components/url-property-editor';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -69,11 +84,32 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
+  const [emailDefinitionName, setEmailDefinitionName] = useState('');
+  const [emailDefinitionIdempotencyKey, setEmailDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
+  const [canEditTaskPropertyValues, setCanEditTaskPropertyValues] = useState(false);
+  const [textDefinitionName, setTextDefinitionName] = useState('');
+  const [textDefinitionIdempotencyKey, setTextDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingTextDefinition, setIsCreatingTextDefinition] = useState(false);
+  const [numberDefinitionName, setNumberDefinitionName] = useState('');
+  const [numberDefinitionIdempotencyKey, setNumberDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingNumberDefinition, setIsCreatingNumberDefinition] = useState(false);
   const [phoneDefinitionName, setPhoneDefinitionName] = useState('');
   const [phoneDefinitionIdempotencyKey, setPhoneDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
   );
   const [isCreatingPhoneDefinition, setIsCreatingPhoneDefinition] = useState(false);
+  const [urlDefinitionName, setUrlDefinitionName] = useState('');
+  const [urlDefinitionIdempotencyKey, setUrlDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingUrlDefinition, setIsCreatingUrlDefinition] = useState(false);
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -137,24 +173,39 @@ export const TicketingExperience = () => {
               setOpenedTaskCollection(taskCollection);
               setCheckboxDefinitionName('');
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
+              setEmailDefinitionName('');
+              setEmailDefinitionIdempotencyKey(crypto.randomUUID());
+              setNumberDefinitionName('');
+              setNumberDefinitionIdempotencyKey(crypto.randomUUID());
               setPhoneDefinitionName('');
               setPhoneDefinitionIdempotencyKey(crypto.randomUUID());
+              setUrlDefinitionName('');
+              setUrlDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
                 propertyDefinitions: [],
                 tasks: [
                   {
                     checkboxValues: [],
+                    emailValues: [],
+                    numberValues: [],
                     phoneValues: [],
+                    selectValues: [],
                     taskId: taskCollection.task.taskId,
                     taskRevision: taskCollection.task.revision,
                     title: taskCollection.task.title,
+                    urlValues: [],
                   },
                 ],
               });
               setPendingTaskCollection(undefined);
               setPendingTaskCollectionReadId(undefined);
               setFormIdempotencyKey(crypto.randomUUID());
+              void runEffectRequest(
+                getTaskPropertyEditCapability(taskCollection.collection.collectionId, { headers }),
+              )
+                .then(({ canEdit }) => setCanEditTaskPropertyValues(canEdit))
+                .catch(() => setCanEditTaskPropertyValues(false));
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),
@@ -234,12 +285,213 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateEmailDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || emailDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingEmailDefinition(true);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateEmailPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: emailDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: emailDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setEmailDefinitionName('');
+      setEmailDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.email.definitionCreateFailedDescription'),
+        title: t('ticketing.email.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingEmailDefinition(false);
+    }
+  };
+
+  const handleCreateTextDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || textDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingTextDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateTextPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: textDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: textDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+              tasks: current.tasks.map((task) => ({
+                ...task,
+                textValues: [
+                  ...(task.textValues ?? []),
+                  {
+                    document: null,
+                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                    readableText: null,
+                    revision: 1,
+                  },
+                ],
+              })),
+            },
+      );
+      setTextDefinitionName('');
+      setTextDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.text.definitionCreateFailedDescription'),
+        title: t('ticketing.text.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingTextDefinition(false);
+    }
+  };
+
+  const handleCreateNumberDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || numberDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingNumberDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateNumberPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: numberDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: numberDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setNumberDefinitionName('');
+      setNumberDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.number.definitionCreateFailedDescription'),
+        title: t('ticketing.number.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingNumberDefinition(false);
+    }
+  };
+
+  const handleCreateUrlDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || urlDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingUrlDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateUrlPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: urlDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: urlDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+              tasks: current.tasks.map((task) => ({
+                ...task,
+                urlValues: [
+                  ...(task.urlValues ?? []),
+                  {
+                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                    revision: 0,
+                    value: null,
+                  },
+                ],
+              })),
+            },
+      );
+      setUrlDefinitionName('');
+      setUrlDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.url.definitionCreateFailedDescription'),
+        title: t('ticketing.url.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingUrlDefinition(false);
+    }
+  };
+
   const handleCreatePhoneDefinition = async () => {
     if (openedTaskPropertyWorkspace === undefined || phoneDefinitionName.trim().length === 0) {
       return;
     }
     setIsCreatingPhoneDefinition(true);
-
     try {
       const operationContextToken = await loadTicketingOperationContextToken();
       const outcome = await runEffectRequest(
@@ -351,6 +603,74 @@ export const TicketingExperience = () => {
               {t('ticketing.checkbox.definitionCreate')}
             </Button>
             <FormInput
+              id="email-property-name"
+              label={t('ticketing.email.definitionName')}
+              name="email-property-name"
+              onChange={(event) => setEmailDefinitionName(event.currentTarget.value)}
+              value={emailDefinitionName}
+            />
+            <Button
+              disabled={emailDefinitionName.trim().length === 0}
+              isLoading={isCreatingEmailDefinition}
+              loadingText={t('ticketing.email.definitionCreating')}
+              onClick={() => void handleCreateEmailDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.email.definitionCreate')}
+            </Button>
+            <FormInput
+              id="text-property-name"
+              label={t('ticketing.text.definitionName')}
+              name="text-property-name"
+              onChange={(event) => setTextDefinitionName(event.currentTarget.value)}
+              value={textDefinitionName}
+            />
+            <Button
+              disabled={textDefinitionName.trim().length === 0}
+              isLoading={isCreatingTextDefinition}
+              loadingText={t('ticketing.text.definitionCreating')}
+              onClick={() => void handleCreateTextDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.text.definitionCreate')}
+            </Button>
+            <FormInput
+              id="number-property-name"
+              label={t('ticketing.number.definitionName')}
+              name="number-property-name"
+              onChange={(event) => setNumberDefinitionName(event.currentTarget.value)}
+              value={numberDefinitionName}
+            />
+            <Button
+              disabled={numberDefinitionName.trim().length === 0}
+              isLoading={isCreatingNumberDefinition}
+              loadingText={t('ticketing.number.definitionCreating')}
+              onClick={() => void handleCreateNumberDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.number.definitionCreate')}
+            </Button>
+            <FormInput
+              id="url-property-name"
+              label={t('ticketing.url.definitionName')}
+              name="url-property-name"
+              onChange={(event) => setUrlDefinitionName(event.currentTarget.value)}
+              value={urlDefinitionName}
+            />
+            <Button
+              disabled={urlDefinitionName.trim().length === 0}
+              isLoading={isCreatingUrlDefinition}
+              loadingText={t('ticketing.url.definitionCreating')}
+              onClick={() => void handleCreateUrlDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.url.definitionCreate')}
+            </Button>
+            <FormInput
               id="phone-property-name"
               label={t('ticketing.phone.definitionName')}
               name="phone-property-name"
@@ -376,7 +696,7 @@ export const TicketingExperience = () => {
                   return null;
                 }
                 if (definition.datatype === 'phone') {
-                  const value = task.phoneValues.find(
+                  const phoneValue = task.phoneValues.find(
                     (candidate) =>
                       candidate.propertyDefinitionId === definition.propertyDefinitionId,
                   );
@@ -403,9 +723,8 @@ export const TicketingExperience = () => {
                                     return candidate;
                                   }
                                   const otherValues = candidate.phoneValues.filter(
-                                    (phoneValue) =>
-                                      phoneValue.propertyDefinitionId !==
-                                      draft.propertyDefinitionId,
+                                    (value) =>
+                                      value.propertyDefinitionId !== draft.propertyDefinitionId,
                                   );
                                   return {
                                     ...candidate,
@@ -421,9 +740,260 @@ export const TicketingExperience = () => {
                         return outcome.response;
                       }}
                       propertyDefinitionId={definition.propertyDefinitionId}
-                      revision={value?.revision ?? 0}
+                      readOnly={!canEditTaskPropertyValues}
+                      revision={phoneValue?.revision ?? 0}
                       taskId={task.taskId}
-                      value={value?.value ?? null}
+                      value={phoneValue?.value ?? null}
+                    />
+                  );
+                }
+                if (definition.datatype === 'email') {
+                  const emailValue = task.emailValues.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return (
+                    <EmailPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateEmailPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        emailValues: [
+                                          ...candidate.emailValues.filter(
+                                            ({ propertyDefinitionId }) =>
+                                              propertyDefinitionId !== draft.propertyDefinitionId,
+                                          ),
+                                          outcome.response.value,
+                                        ],
+                                        taskRevision: outcome.response.taskRevision,
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
+                      revision={emailValue?.revision ?? 0}
+                      taskId={task.taskId}
+                      value={emailValue?.value ?? null}
+                    />
+                  );
+                }
+                if (definition.datatype === 'number') {
+                  const value = (task.numberValues ?? []).find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  ) ?? {
+                    propertyDefinitionId: definition.propertyDefinitionId,
+                    revision: 0,
+                    value: null,
+                  };
+                  return (
+                    <NumberPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      format={definition.format}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      locale={language}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateNumberPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        numberValues: [
+                                          ...(candidate.numberValues ?? []).filter(
+                                            (numberValue) =>
+                                              numberValue.propertyDefinitionId !==
+                                              draft.propertyDefinitionId,
+                                          ),
+                                          outcome.response.value,
+                                        ],
+                                        taskRevision: outcome.response.taskRevision,
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
+                      revision={value.revision}
+                      taskId={task.taskId}
+                      value={value.value}
+                    />
+                  );
+                }
+                if (definition.datatype === 'text') {
+                  const value = task?.textValues?.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return value === undefined ? null : (
+                    <div
+                      className="ticketing:grid ticketing:gap-2"
+                      key={definition.propertyDefinitionId}
+                    >
+                      <TextPropertyEditor
+                        collectionId={openedTaskPropertyWorkspace.collectionId}
+                        document={value.document}
+                        label={definition.name}
+                        onSave={async (draft, idempotencyKey) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const outcome = await runEffectRequest(
+                            runUpdateTextPropertyValueAction(draft, {
+                              headers: { 'x-ontos-operation-context': operationContextToken },
+                              idempotencyKey,
+                            }),
+                          );
+                          setOpenedTaskPropertyWorkspace((current) =>
+                            current === undefined
+                              ? current
+                              : {
+                                  ...current,
+                                  tasks: current.tasks.map((candidate) =>
+                                    candidate.taskId === draft.taskId
+                                      ? {
+                                          ...candidate,
+                                          taskRevision: outcome.response.taskRevision,
+                                          textValues: (candidate.textValues ?? []).map(
+                                            (textValue) =>
+                                              textValue.propertyDefinitionId ===
+                                              draft.propertyDefinitionId
+                                                ? outcome.response.value
+                                                : textValue,
+                                          ),
+                                        }
+                                      : candidate,
+                                  ),
+                                },
+                          );
+                          return outcome.response;
+                        }}
+                        propertyDefinitionId={definition.propertyDefinitionId}
+                        readOnly={!canEditTaskPropertyValues}
+                        revision={value.revision}
+                        taskId={task.taskId}
+                      />
+                      <TextPropertyDuplication
+                        collectionId={openedTaskPropertyWorkspace.collectionId}
+                        label={definition.name}
+                        onConfirm={async (draft, idempotencyKey) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const outcome = await runEffectRequest(
+                            runDuplicateTaskPropertyDefinitionAction(draft, {
+                              headers: { 'x-ontos-operation-context': operationContextToken },
+                              idempotencyKey,
+                            }),
+                          );
+                          setOpenedTaskPropertyWorkspace((current) =>
+                            current === undefined
+                              ? current
+                              : {
+                                  ...current,
+                                  propertyDefinitions: [
+                                    ...current.propertyDefinitions,
+                                    outcome.response.definition,
+                                  ],
+                                  tasks: current.tasks.map((candidate) => ({
+                                    ...candidate,
+                                    textValues: [
+                                      ...(candidate.textValues ?? []),
+                                      {
+                                        document: null,
+                                        propertyDefinitionId:
+                                          outcome.response.definition.propertyDefinitionId,
+                                        readableText: null,
+                                        revision: 1,
+                                      },
+                                    ],
+                                  })),
+                                },
+                          );
+                        }}
+                        propertyDefinitionId={definition.propertyDefinitionId}
+                        revision={definition.revision}
+                      />
+                    </div>
+                  );
+                }
+                if (definition.datatype === 'url') {
+                  const value = task?.urlValues?.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return value === undefined ? null : (
+                    <UrlPropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      mandatory={definition.mandatory}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateUrlPropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) =>
+                                  candidate.taskId === draft.taskId
+                                    ? {
+                                        ...candidate,
+                                        taskRevision: outcome.response.taskRevision,
+                                        urlValues: candidate.urlValues?.map((urlValue) =>
+                                          urlValue.propertyDefinitionId ===
+                                          draft.propertyDefinitionId
+                                            ? outcome.response.value
+                                            : urlValue,
+                                        ),
+                                      }
+                                    : candidate,
+                                ),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
+                      revision={value.revision}
+                      taskId={task.taskId}
+                      value={value.value}
                     />
                   );
                 }
@@ -468,6 +1038,7 @@ export const TicketingExperience = () => {
                       return outcome.response;
                     }}
                     propertyDefinitionId={definition.propertyDefinitionId}
+                    readOnly={!canEditTaskPropertyValues}
                     revision={value.revision}
                     taskId={task.taskId}
                     value={value.value}

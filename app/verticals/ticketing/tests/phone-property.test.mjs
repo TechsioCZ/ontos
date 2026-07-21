@@ -4,6 +4,7 @@ import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
+import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { createPhonePropertyDefinitionActionRegistration } from '../src/actions/create-phone-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
@@ -18,6 +19,7 @@ after(async () => {
     createdTenantIds.map(async (tenantId) => {
       await sqlClient`delete from core.outbox_messages where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_phone_values where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_email_values where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_checkbox_values where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_revisions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.tasks where tenant_id = ${tenantId}`;
@@ -263,6 +265,35 @@ test('a sparse clear and reinsert cannot revive an old matching Phone revision',
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.equal(workspace.response.tasks[0].phoneValues[0].value, 'replacement');
+});
+
+test('a Phone edit is rejected while another Mandatory Email property is Empty', async () => {
+  const { collectionId, definition, operationContext, task } = await createPhoneFixture();
+  const mandatoryEmail = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: true, name: 'Required email' },
+    registration: createEmailPropertyDefinitionActionRegistration,
+  });
+  assert.equal(mandatoryEmail._tag, 'OperationSucceeded', JSON.stringify(mandatoryEmail));
+
+  const rejected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: '+420 777 123 456',
+    },
+    registration: updatePhonePropertyValueActionRegistration,
+  });
+  assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'ticketing.taskEdit.mandatory_email_empty');
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].phoneValues, []);
+  assert.equal(workspace.response.tasks[0].taskRevision, 1);
 });
 
 test('Phone Actions emit metadata evidence without Phone content', () => {

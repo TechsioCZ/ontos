@@ -11,6 +11,19 @@
       "staleDescription": "Vaše rozepsaná volba zůstala zachována. Před dalším pokusem načtěte aktuální hodnotu.",
       "staleTitle": "Checkbox byl změněn jinde"
     },
+    "email": {
+      "activate": "Napsat e-mail",
+      "definitionCreate": "Přidat Email property",
+      "definitionCreateFailedDescription": "Email property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření Email property selhalo",
+      "definitionCreating": "Přidávání Email property",
+      "definitionName": "Název Email property",
+      "invalid": "Zadejte jednu platnou e-mailovou adresu.",
+      "saveFailedDescription": "E-mail se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení e-mailu selhalo",
+      "staleDescription": "Váš rozepsaný e-mail zůstal zachován. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "E-mail byl změněn jinde"
+    },
     "language": {
       "cs": "Čeština",
       "en": "Angličtina",
@@ -35,6 +48,19 @@
       "staleDescription": "Váš rozepsaný telefon zůstal zachován. Před dalším pokusem načtěte aktuální hodnotu.",
       "staleTitle": "Telefon byl změněn jinde"
     },
+    "number": {
+      "definitionCreate": "Přidat číselnou property",
+      "definitionCreateFailedDescription": "Číselnou property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření číselné property selhalo",
+      "definitionCreating": "Přidávání číselné property",
+      "definitionName": "Název číselné property",
+      "invalidDescription": "Zadejte platné číslo.",
+      "invalidTitle": "Neplatné číslo",
+      "saveFailedDescription": "Číslo se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení čísla selhalo",
+      "staleDescription": "Vaše rozepsané číslo zůstalo zachováno. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "Číslo bylo změněno jinde"
+    },
     "routes": {
       "home": "Domů"
     },
@@ -56,6 +82,52 @@
       "creating": "Vytváření úkolu",
       "openedTask": "Otevřený úkol",
       "title": "Název"
+    },
+    "text": {
+      "backgroundColor": "Barva pozadí",
+      "bold": "Tučně",
+      "code": "Kód",
+      "definitionCreate": "Přidat Text property",
+      "definitionCreateFailedDescription": "Text property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření Text property selhalo",
+      "definitionCreating": "Přidávání Text property",
+      "definitionName": "Název Text property",
+      "duplicate": "Duplikovat {name}",
+      "duplicateConfirm": "Potvrdit duplikaci",
+      "duplicateDescription": "Duplikát zachová nastavení Mandatory a začne jako Empty.",
+      "duplicateFailedDescription": "Text property se nepodařilo duplikovat.",
+      "duplicateFailedTitle": "Duplikace Text selhala",
+      "duplicating": "Duplikování Text property",
+      "equation": "Rovnice",
+      "foregroundColor": "Barva textu",
+      "insertEquation": "Vložit rovnici",
+      "italic": "Kurzíva",
+      "link": "URL odkazu",
+      "linkApply": "Použít odkaz",
+      "save": "Uložit Text",
+      "saveFailedDescription": "Hodnotu Text se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení Text selhalo",
+      "saving": "Ukládání Text",
+      "staleDescription": "Váš rozepsaný formátovaný text zůstal zachován. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "Text byl změněn jinde",
+      "strikethrough": "Přeškrtnutí",
+      "underline": "Podtržení"
+    },
+    "url": {
+      "copy": "Kopírovat URL",
+      "definitionCreate": "Přidat vlastnost URL",
+      "definitionCreateFailedDescription": "Vlastnost URL se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření vlastnosti URL selhalo",
+      "definitionCreating": "Přidávání vlastnosti URL",
+      "definitionName": "Název vlastnosti URL",
+      "invalid": "Zadejte jednu absolutní HTTP nebo HTTPS URL.",
+      "open": "Otevřít URL",
+      "save": "Uložit URL",
+      "saveFailedDescription": "URL se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení URL selhalo",
+      "saving": "Ukládání URL",
+      "staleDescription": "Váš koncept URL zůstal zachovaný. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "URL byla změněna jinde"
     },
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {

@@ -17,6 +17,7 @@ import type {
   UpdatePhonePropertyValueActionResponse,
 } from '../../shared/actions/update-phone-property-value.ts';
 import { validatePhoneValue } from '../../shared/phone-value.ts';
+import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
 
 interface CurrentPhoneTargetRow {
   readonly propertyDefinitionId: string;
@@ -114,6 +115,13 @@ const updatePhonePropertyValueActionHandler: ActionHandler<
   if (current === undefined || (current.revision ?? 0) !== input.expectedRevision) {
     throw staleOrMissing();
   }
+
+  await rejectTaskEditWithEmptyMandatoryEmail({
+    collectionId: input.collectionId,
+    db: services.tx,
+    taskId: input.taskId,
+    tenantId: services.context.tenantId,
+  });
 
   if (current.value === validated.value) {
     services.markNoOp();
