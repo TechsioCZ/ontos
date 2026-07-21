@@ -79,6 +79,15 @@ export declare const phonePropertyDefinitionSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
 }>;
+export declare const personPropertyDefinitionSchema: Schema.Struct<{
+  readonly cardinality: Schema.Literals<readonly ['one', 'unlimited']>;
+  readonly datatype: Schema.Literal<'person'>;
+  readonly hidden: Schema.Boolean;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
 export declare const taskPropertyDefinitionSchema: Schema.Union<
   readonly [
     Schema.Struct<{
@@ -100,6 +109,15 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
     Schema.Struct<{
       readonly datatype: Schema.Literal<'number'>;
       readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>,
+    Schema.Struct<{
+      readonly cardinality: Schema.Literals<readonly ['one', 'unlimited']>;
+      readonly datatype: Schema.Literal<'person'>;
       readonly hidden: Schema.Boolean;
       readonly mandatory: Schema.Boolean;
       readonly name: Schema.String;
@@ -155,6 +173,7 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
+export type PersonPropertyDefinition = typeof personPropertyDefinitionSchema.Type;
 export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;
 export type SelectOptionOrderMode = typeof selectOptionOrderModeSchema.Type;
