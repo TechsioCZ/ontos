@@ -6,8 +6,15 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { configurePersonPropertyCardinalityActionRegistration } from '../src/actions/configure-person-property-cardinality.ts';
+import { createDatePropertyDefinitionActionRegistration } from '../src/actions/create-date-property-definition.ts';
+import { updateDatePropertyValueActionRegistration } from '../src/actions/update-date-property-value.ts';
 import { configurePrincipalTimeZonePreferenceActionRegistration } from '../src/actions/configure-principal-time-zone-preference.ts';
 import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
+import { createPersonPropertyDefinitionActionRegistration } from '../src/actions/create-person-property-definition.ts';
+import { updatePersonPropertyValueActionRegistration } from '../src/actions/update-person-property-value.ts';
+import { createFilesMediaPropertyDefinitionActionRegistration } from '../src/actions/create-files-media-property-definition.ts';
+import { uploadFilesMediaItemActionRegistration } from '../src/actions/upload-files-media-item.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
 import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
@@ -25,8 +32,6 @@ import { updateSelectPropertyValueActionRegistration } from '../src/actions/upda
 import { updateSelectOptionActionRegistration } from '../src/actions/update-select-option.ts';
 import { createSelectOptionActionRegistration } from '../src/actions/create-select-option.ts';
 import { createSelectPropertyDefinitionActionRegistration } from '../src/actions/create-select-property-definition.ts';
-import { createFilesMediaPropertyDefinitionActionRegistration } from '../src/actions/create-files-media-property-definition.ts';
-import { uploadFilesMediaItemActionRegistration } from '../src/actions/upload-files-media-item.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
@@ -41,11 +46,78 @@ import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-acce
 import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
+import { groupTaskDateValuesDataAccessRegistration } from '../src/data-access/group-task-date-values.ts';
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
+import { queryTaskPersonValuesDataAccessRegistration } from '../src/data-access/query-task-person-values.ts';
 import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
+import { searchEligiblePeopleDataAccessRegistration } from '../src/data-access/search-eligible-people.ts';
 import { queryIntrinsicTaskPropertiesDataAccessRegistration } from '../src/data-access/query-intrinsic-task-properties.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
+import type { ConfigurePersonPropertyCardinalityActionFailure } from '../shared/actions/configure-person-property-cardinality.ts';
+import type { TaskPersonQueryFilter } from '../shared/person-query.ts';
+import type { CoreSdkOperationTransportOutcome } from './action-runtime.ts';
+
+type CoreSdkOperationTransportFailure = Extract<
+  CoreSdkOperationTransportOutcome<unknown>,
+  { readonly ok: false }
+>;
+
+const failureFields = (failure: CoreSdkOperationTransportFailure) => ({
+  ...(failure.code === undefined ? {} : { code: failure.code }),
+  httpStatus: failure.httpStatus,
+  message: failure.message,
+  ok: false as const,
+  ...(failure.state === undefined ? {} : { state: failure.state }),
+});
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const configurePersonCardinalityFailure = (
+  failure: CoreSdkOperationTransportFailure,
+): ConfigurePersonPropertyCardinalityActionFailure => {
+  if (failure.errorTag !== 'OperationDomainRejected') {
+    return {
+      ...failureFields(failure),
+      errorTag: failure.errorTag,
+    };
+  }
+
+  if (
+    failure.code === 'ticketing.configurePersonPropertyCardinality.assignments_violate_limit' &&
+    isRecord(failure.state) &&
+    typeof failure.state['violatingTaskCount'] === 'number' &&
+    Number.isFinite(failure.state['violatingTaskCount'])
+  ) {
+    return {
+      code: failure.code,
+      errorTag: failure.errorTag,
+      httpStatus: failure.httpStatus,
+      message: failure.message,
+      ok: false,
+      state: { violatingTaskCount: failure.state['violatingTaskCount'] },
+    };
+  }
+
+  if (failure.code === 'ticketing.configurePersonPropertyCardinality.stale_or_missing') {
+    return {
+      code: failure.code,
+      errorTag: failure.errorTag,
+      httpStatus: failure.httpStatus,
+      message: failure.message,
+      ok: false,
+    };
+  }
+
+  return {
+    code: 'ticketing.configurePersonPropertyCardinality.unexpected_domain_rejection',
+    errorTag: 'OperationExecutionFailed',
+    httpStatus: 500,
+    message: 'Configure Person Property Cardinality returned an invalid domain failure.',
+    ok: false,
+  };
+};
 
 const ticketingItems = [
   {
@@ -235,6 +307,56 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
+    .handle('searchEligiblePeople', ({ params, query, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: { collectionId: params.collectionId, query: query.query },
+          registration: searchEligiblePeopleDataAccessRegistration,
+          resultCount: (response) => response.people.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.searchEligiblePeople', {
+          attributes: operationAttributes(ticketingOperationContexts.searchEligiblePeople),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('queryTaskPersonValues', ({ params, query, request }) => {
+      let filter: TaskPersonQueryFilter | undefined;
+      if (query.filter === 'contains' || query.filter === 'doesNotContain') {
+        filter = { operator: query.filter, principalId: query.principalId };
+      } else if (query.filter !== undefined) {
+        filter = { operator: query.filter };
+      }
+
+      return Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            propertyDefinitionId: params.propertyDefinitionId,
+            ...(filter === undefined ? {} : { filter }),
+            ...(query.group === undefined ? {} : { group: query.group === 'true' }),
+            ...(query.search === undefined ? {} : { search: query.search }),
+            ...(query.sort === undefined ? {} : { sort: query.sort }),
+          },
+          registration: queryTaskPersonValuesDataAccessRegistration,
+          resultCount: (response) => response.taskIds.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.queryTaskPersonValues', {
+          attributes: operationAttributes(ticketingOperationContexts.queryTaskPersonValues),
+          kind: 'server',
+        }),
+      );
+    })
     .handle('getTaskPropertyDeletionImpact', ({ params, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
@@ -252,6 +374,27 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyDeletionImpact', {
           attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyDeletionImpact),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('groupTaskDateValues', ({ params, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: {
+            collectionId: params.collectionId,
+            propertyDefinitionId: params.propertyDefinitionId,
+          },
+          registration: groupTaskDateValuesDataAccessRegistration,
+          resultCount: (response) => response.groups.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.groupTaskDateValues', {
+          attributes: operationAttributes(ticketingOperationContexts.groupTaskDateValues),
           kind: 'server',
         }),
       ),
@@ -484,20 +627,13 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           payload,
           registration: transitionTaskRetentionActionRegistration,
         }),
-      )
-        .pipe(
-          Effect.flatMap((outcome) =>
-            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
-          ),
-        )
-        .pipe(
-          Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
-            attributes: operationAttributes(
-              ticketingOperationContexts.transitionTaskRetentionAction,
-            ),
-            kind: 'server',
-          }),
-        ),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
+          attributes: operationAttributes(ticketingOperationContexts.transitionTaskRetentionAction),
+          kind: 'server',
+        }),
+      ),
     )
     .handle('createTextPropertyDefinitionAction', ({ payload, request }) =>
       Effect.promise(() =>
@@ -741,6 +877,93 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.withSpan('ultramodern.api.ticketing.updatePhonePropertyValueAction', {
           attributes: operationAttributes(
             ticketingOperationContexts.updatePhonePropertyValueAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createDatePropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createDatePropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createDatePropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createDatePropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updateDatePropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateDatePropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateDatePropertyValueAction', {
+          attributes: operationAttributes(ticketingOperationContexts.updateDatePropertyValueAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createPersonPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createPersonPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createPersonPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createPersonPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updatePersonPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updatePersonPropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updatePersonPropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updatePersonPropertyValueAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('configurePersonPropertyCardinalityAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configurePersonPropertyCardinalityActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok
+            ? Effect.succeed(outcome)
+            : Effect.fail(configurePersonCardinalityFailure(outcome)),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.configurePersonPropertyCardinalityAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configurePersonPropertyCardinalityAction,
           ),
           kind: 'server',
         }),

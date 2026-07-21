@@ -1,8 +1,14 @@
 export {
   runCreateFilesMediaPropertyDefinitionAction,
   runUploadFilesMediaItemAction,
+  groupTaskDateValues,
+  runConfigurePersonPropertyCardinalityAction,
+  runCreateDatePropertyDefinitionAction,
+  runUpdateDatePropertyValueAction,
   runConfigurePrincipalTimeZonePreferenceAction,
   runCreateIntrinsicPropertyDefinitionAction,
+  runCreatePersonPropertyDefinitionAction,
+  runUpdatePersonPropertyValueAction,
   runCreatePhonePropertyDefinitionAction,
   runUpdatePhonePropertyValueAction,
   queryTaskEmailValues,
@@ -41,5 +47,7 @@ export {
   getTaskPropertyEditCapability,
   queryIntrinsicTaskProperties,
   listTicketing,
+  queryTaskPersonValues,
+  searchEligiblePeople,
   type TicketingClientOptions,
 } from '@app/ticketing/api/client';

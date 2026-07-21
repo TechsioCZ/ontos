@@ -34,6 +34,7 @@ import type {
   UpdateCheckboxPropertyValueActionOutcome,
   UpdateCheckboxPropertyValueActionPayload,
   FilterTaskCheckboxValuesResponse,
+  GroupTaskDateValuesResponse,
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
   ConfigureTaskPropertyDefinitionActionPayload,
@@ -103,12 +104,24 @@ import type {
   UpdatePhonePropertyValueActionFailure,
   UpdatePhonePropertyValueActionOutcome,
   UpdatePhonePropertyValueActionPayload,
-  CreateFilesMediaPropertyDefinitionActionFailure,
-  CreateFilesMediaPropertyDefinitionActionOutcome,
-  CreateFilesMediaPropertyDefinitionActionPayload,
-  UploadFilesMediaItemActionFailure,
-  UploadFilesMediaItemActionOutcome,
-  UploadFilesMediaItemActionPayload,
+  CreateDatePropertyDefinitionActionFailure,
+  CreateDatePropertyDefinitionActionOutcome,
+  CreateDatePropertyDefinitionActionPayload,
+  UpdateDatePropertyValueActionFailure,
+  UpdateDatePropertyValueActionOutcome,
+  UpdateDatePropertyValueActionPayload,
+  ConfigurePersonPropertyCardinalityActionFailure,
+  ConfigurePersonPropertyCardinalityActionOutcome,
+  ConfigurePersonPropertyCardinalityActionPayload,
+  CreatePersonPropertyDefinitionActionFailure,
+  CreatePersonPropertyDefinitionActionOutcome,
+  CreatePersonPropertyDefinitionActionPayload,
+  QueryTaskPersonValuesPayload,
+  QueryTaskPersonValuesResponse,
+  SearchEligiblePeopleResponse,
+  UpdatePersonPropertyValueActionFailure,
+  UpdatePersonPropertyValueActionOutcome,
+  UpdatePersonPropertyValueActionPayload,
   ConfigurePrincipalTimeZonePreferenceActionFailure,
   ConfigurePrincipalTimeZonePreferenceActionOutcome,
   ConfigurePrincipalTimeZonePreferenceActionPayload,
@@ -117,6 +130,12 @@ import type {
   CreateIntrinsicPropertyDefinitionActionPayload,
   QueryIntrinsicTaskPropertiesPayload,
   QueryIntrinsicTaskPropertiesResponse,
+  CreateFilesMediaPropertyDefinitionActionFailure,
+  CreateFilesMediaPropertyDefinitionActionOutcome,
+  CreateFilesMediaPropertyDefinitionActionPayload,
+  UploadFilesMediaItemActionFailure,
+  UploadFilesMediaItemActionOutcome,
+  UploadFilesMediaItemActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -133,6 +152,11 @@ export type TicketingClient = HttpApiClient.Client<
 export type TicketingClientError =
   | UploadFilesMediaItemActionFailure
   | CreateFilesMediaPropertyDefinitionActionFailure
+  | CreateDatePropertyDefinitionActionFailure
+  | UpdateDatePropertyValueActionFailure
+  | ConfigurePersonPropertyCardinalityActionFailure
+  | CreatePersonPropertyDefinitionActionFailure
+  | UpdatePersonPropertyValueActionFailure
   | ConfigurePrincipalTimeZonePreferenceActionFailure
   | CreateIntrinsicPropertyDefinitionActionFailure
   | UpdatePhonePropertyValueActionFailure
@@ -344,6 +368,23 @@ export const filterTaskCheckboxValues = (
     ),
   );
 
+export const groupTaskDateValues = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<GroupTaskDateValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.groupTaskDateValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.groupTaskDateValues({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
 export const queryTaskEmailValues = (
   payload: QueryTaskEmailValuesPayload,
   options: TicketingClientOptions = {},
@@ -360,6 +401,66 @@ export const queryTaskEmailValues = (
           propertyDefinitionId: payload.propertyDefinitionId,
         },
         query: { operation: payload.operation, query: payload.query },
+      }),
+    ),
+  );
+
+const taskPersonHttpQuery = (payload: QueryTaskPersonValuesPayload) => {
+  const common = {
+    ...(payload.group === undefined
+      ? {}
+      : { group: payload.group ? ('true' as const) : ('false' as const) }),
+    ...(payload.search === undefined ? {} : { search: payload.search }),
+    ...(payload.sort === undefined ? {} : { sort: payload.sort }),
+  };
+
+  if (payload.filter === undefined) {
+    return common;
+  }
+  if ('principalId' in payload.filter) {
+    return {
+      ...common,
+      filter: payload.filter.operator,
+      principalId: payload.filter.principalId,
+    };
+  }
+  return { ...common, filter: payload.filter.operator };
+};
+
+export const queryTaskPersonValues = (
+  payload: QueryTaskPersonValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskPersonValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskPersonValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskPersonValues({
+        headers: options.headers ?? {},
+        params: {
+          collectionId: payload.collectionId,
+          propertyDefinitionId: payload.propertyDefinitionId,
+        },
+        query: taskPersonHttpQuery(payload),
+      }),
+    ),
+  );
+
+export const searchEligiblePeople = (
+  collectionId: string,
+  query: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<SearchEligiblePeopleResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.searchEligiblePeople,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.searchEligiblePeople({
+        headers: options.headers ?? {},
+        params: { collectionId },
+        query: { query },
       }),
     ),
   );
@@ -575,6 +676,48 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateDatePropertyDefinitionAction = (
+  payload: CreateDatePropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateDatePropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createDatePropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createDatePropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateDatePropertyValueAction = (
+  payload: UpdateDatePropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateDatePropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateDatePropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateDatePropertyValueAction({
         headers: headers ?? {},
         payload,
       }),
@@ -950,6 +1093,105 @@ export const runUpdatePhonePropertyValueAction = (
   );
 };
 
+export const runCreatePersonPropertyDefinitionAction = (
+  payload: CreatePersonPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreatePersonPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createPersonPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createPersonPropertyDefinitionAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUpdatePersonPropertyValueAction = (
+  payload: UpdatePersonPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdatePersonPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updatePersonPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updatePersonPropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runConfigurePersonPropertyCardinalityAction = (
+  payload: ConfigurePersonPropertyCardinalityActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigurePersonPropertyCardinalityActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.configurePersonPropertyCardinalityAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configurePersonPropertyCardinalityAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateIntrinsicPropertyDefinitionAction = (
+  payload: CreateIntrinsicPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateIntrinsicPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createIntrinsicPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createIntrinsicPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigurePrincipalTimeZonePreferenceAction = (
+  payload: ConfigurePrincipalTimeZonePreferenceActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigurePrincipalTimeZonePreferenceActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.configurePrincipalTimeZonePreferenceAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configurePrincipalTimeZonePreferenceAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
 export const runCreateFilesMediaPropertyDefinitionAction = (
   payload: CreateFilesMediaPropertyDefinitionActionPayload,
   options: TicketingActionClientOptions = {},
@@ -985,51 +1227,7 @@ export const runUploadFilesMediaItemAction = (
       options.operationContext ?? ticketingOperationContexts.uploadFilesMediaItemAction,
   }).pipe(
     Effect.flatMap((client) =>
-      client.ticketing.uploadFilesMediaItemAction({
-        headers: headers ?? {},
-        payload,
-      }),
-    ),
-  );
-};
-
-export const runCreateIntrinsicPropertyDefinitionAction = (
-  payload: CreateIntrinsicPropertyDefinitionActionPayload,
-  options: TicketingActionClientOptions = {},
-): TicketingClientEffect<CreateIntrinsicPropertyDefinitionActionOutcome> => {
-  const headers = actionHeaders(options);
-
-  return createTicketingClient({
-    ...options,
-    ...(headers === undefined ? undefined : { headers }),
-    operationContext:
-      options.operationContext ??
-      ticketingOperationContexts.createIntrinsicPropertyDefinitionAction,
-  }).pipe(
-    Effect.flatMap((client) =>
-      client.ticketing.createIntrinsicPropertyDefinitionAction({ headers: headers ?? {}, payload }),
-    ),
-  );
-};
-
-export const runConfigurePrincipalTimeZonePreferenceAction = (
-  payload: ConfigurePrincipalTimeZonePreferenceActionPayload,
-  options: TicketingActionClientOptions = {},
-): TicketingClientEffect<ConfigurePrincipalTimeZonePreferenceActionOutcome> => {
-  const headers = actionHeaders(options);
-
-  return createTicketingClient({
-    ...options,
-    ...(headers === undefined ? undefined : { headers }),
-    operationContext:
-      options.operationContext ??
-      ticketingOperationContexts.configurePrincipalTimeZonePreferenceAction,
-  }).pipe(
-    Effect.flatMap((client) =>
-      client.ticketing.configurePrincipalTimeZonePreferenceAction({
-        headers: headers ?? {},
-        payload,
-      }),
+      client.ticketing.uploadFilesMediaItemAction({ headers: headers ?? {}, payload }),
     ),
   );
 };
