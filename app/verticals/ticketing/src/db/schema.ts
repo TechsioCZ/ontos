@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -72,6 +73,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     schemaId: uuid('schema_id')
       .notNull()
       .references(() => taskSchemas.schemaId, { onDelete: 'restrict' }),
+    selectOptionOrderMode: text('select_option_order_mode'),
     tenantId: tenantId(),
   },
   (table) => [
@@ -82,13 +84,51 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'number', 'text')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'number', 'select', 'text')`,
+    ),
+    check(
+      'ticketing_task_property_definitions_select_order_ck',
+      sql`(${table.datatype} = 'select' and ${table.selectOptionOrderMode} in ('manual', 'alphabetical', 'reverse_alphabetical')) or (${table.datatype} <> 'select' and ${table.selectOptionOrderMode} is null)`,
     ),
     check(
       'ticketing_task_property_definitions_number_format_ck',
       sql`(${table.datatype} = 'number' and ${table.numberFormat} in ('number', 'number_with_separators', 'percent')) or (${table.datatype} <> 'number' and ${table.numberFormat} is null)`,
     ),
     check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const selectOptions = ticketingSchema.table(
+  'select_options',
+  {
+    color: text('color').notNull(),
+    manualPosition: integer('manual_position').notNull(),
+    name: text('name').notNull(),
+    normalizedName: text('normalized_name').notNull(),
+    optionId: uuid('option_id').defaultRandom().primaryKey(),
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(1).notNull(),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    uniqueIndex('ticketing_select_options_definition_name_uk').on(
+      table.propertyDefinitionId,
+      table.normalizedName,
+    ),
+    uniqueIndex('ticketing_select_options_ownership_uk').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.optionId,
+    ),
+    uniqueIndex('ticketing_select_options_manual_position_uk').on(
+      table.propertyDefinitionId,
+      table.manualPosition,
+    ),
+    check('ticketing_select_options_name_ck', sql`btrim(${table.name}) <> ''`),
+    check('ticketing_select_options_manual_position_ck', sql`${table.manualPosition} >= 0`),
+    check('ticketing_select_options_revision_ck', sql`${table.revision} >= 1`),
   ],
 );
 
@@ -144,7 +184,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed', 'number_value_changed', 'text_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'number_value_changed', 'select_value_changed', 'text_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -174,6 +214,42 @@ export const taskCheckboxValues = ticketingSchema.table(
       table.value,
     ),
     check('ticketing_task_checkbox_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskSelectValues = ticketingSchema.table(
+  'task_select_values',
+  {
+    optionId: uuid('option_id'),
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(1).notNull(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_select_values_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.propertyDefinitionId, table.optionId],
+      foreignColumns: [
+        selectOptions.tenantId,
+        selectOptions.propertyDefinitionId,
+        selectOptions.optionId,
+      ],
+      name: 'ticketing_task_select_values_option_fk',
+    }).onDelete('restrict'),
+    index('ticketing_task_select_values_filter_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.optionId,
+    ),
+    check('ticketing_task_select_values_revision_ck', sql`${table.revision} >= 1`),
   ],
 );
 

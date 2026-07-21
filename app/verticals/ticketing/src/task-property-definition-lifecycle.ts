@@ -339,17 +339,35 @@ export const duplicateTaskPropertyDefinition = async ({
   if (target === undefined) {
     return undefined;
   }
-  await adapter.copyValues({ copyValues, source, target, tx });
-  return target.datatype === 'number'
-    ? target
-    : {
-        datatype: target.datatype,
-        hidden: target.hidden,
-        mandatory: target.mandatory,
-        name: target.name,
-        propertyDefinitionId: target.propertyDefinitionId,
-        revision: target.revision,
-      };
+  if (target.datatype === 'number') {
+    await adapter.copyValues({ copyValues, source, target, tx });
+    return target;
+  }
+  if (target.datatype === 'select') {
+    return undefined;
+  }
+  if (target.datatype === 'checkbox') {
+    const definition: TaskPropertyDefinition = {
+      datatype: 'checkbox',
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    return definition;
+  }
+  const definition: TaskPropertyDefinition = {
+    datatype: 'text',
+    hidden: target.hidden,
+    mandatory: target.mandatory,
+    name: target.name,
+    propertyDefinitionId: target.propertyDefinitionId,
+    revision: target.revision,
+  };
+  await adapter.copyValues({ copyValues, source, target: definition, tx });
+  return definition;
 };
 
 export const deleteTaskPropertyDefinition = async ({

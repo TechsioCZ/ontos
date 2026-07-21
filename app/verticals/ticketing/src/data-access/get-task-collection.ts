@@ -64,6 +64,7 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
       inner join ticketing.task_property_definitions as definition
         on definition.schema_id = schema.schema_id
         and definition.tenant_id = collection.tenant_id
+        and definition.datatype = 'title'
       inner join ticketing.tasks as task
         on task.collection_id = collection.collection_id
         and task.tenant_id = collection.tenant_id

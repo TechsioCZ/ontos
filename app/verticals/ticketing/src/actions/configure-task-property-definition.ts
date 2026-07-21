@@ -18,6 +18,30 @@ import type {
 } from '../../shared/actions/configure-task-property-definition.ts';
 import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
 
+const configuredDefinition = (definition: TaskPropertyDefinition): TaskPropertyDefinition => {
+  if (definition.datatype === 'checkbox') {
+    return {
+      datatype: 'checkbox',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
+  }
+  if (definition.datatype === 'number' || definition.datatype === 'select') {
+    return definition;
+  }
+  return {
+    datatype: 'text',
+    hidden: definition.hidden,
+    mandatory: definition.mandatory,
+    name: definition.name,
+    propertyDefinitionId: definition.propertyDefinitionId,
+    revision: definition.revision,
+  };
+};
+
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
   response: ConfigureTaskPropertyDefinitionActionResponse,
@@ -99,17 +123,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   ) {
     services.markNoOp();
     return {
-      definition:
-        currentDefinition.datatype === 'number'
-          ? currentDefinition
-          : {
-              datatype: currentDefinition.datatype,
-              hidden: currentDefinition.hidden,
-              mandatory: currentDefinition.mandatory,
-              name: currentDefinition.name,
-              propertyDefinitionId: currentDefinition.propertyDefinitionId,
-              revision: currentDefinition.revision,
-            },
+      definition: configuredDefinition(currentDefinition),
     };
   }
 
@@ -153,17 +167,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   }
 
   return {
-    definition:
-      definition.datatype === 'number'
-        ? definition
-        : {
-            datatype: definition.datatype,
-            hidden: definition.hidden,
-            mandatory: definition.mandatory,
-            name: definition.name,
-            propertyDefinitionId: definition.propertyDefinitionId,
-            revision: definition.revision,
-          },
+    definition: configuredDefinition(definition),
   };
 };
 

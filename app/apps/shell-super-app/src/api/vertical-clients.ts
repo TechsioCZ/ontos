@@ -1,4 +1,10 @@
 export {
+  runConfigureSelectOptionOrderAction,
+  runCreateSelectOptionAndSelectAction,
+  runUpdateSelectPropertyValueAction,
+  runUpdateSelectOptionAction,
+  runCreateSelectOptionAction,
+  runCreateSelectPropertyDefinitionAction,
   queryTaskPropertyValues,
   runConfigureNumberPropertyFormatAction,
   runCreateNumberPropertyDefinitionAction,

@@ -6,6 +6,42 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  configureSelectOptionOrderActionHeadersSchema,
+  configureSelectOptionOrderActionFailureSchemas,
+  configureSelectOptionOrderActionOutcomeSchema,
+  configureSelectOptionOrderActionPayloadSchema,
+} from './actions/configure-select-option-order';
+import {
+  createSelectOptionAndSelectActionHeadersSchema,
+  createSelectOptionAndSelectActionFailureSchemas,
+  createSelectOptionAndSelectActionOutcomeSchema,
+  createSelectOptionAndSelectActionPayloadSchema,
+} from './actions/create-select-option-and-select';
+import {
+  updateSelectPropertyValueActionHeadersSchema,
+  updateSelectPropertyValueActionFailureSchemas,
+  updateSelectPropertyValueActionOutcomeSchema,
+  updateSelectPropertyValueActionPayloadSchema,
+} from './actions/update-select-property-value';
+import {
+  updateSelectOptionActionHeadersSchema,
+  updateSelectOptionActionFailureSchemas,
+  updateSelectOptionActionOutcomeSchema,
+  updateSelectOptionActionPayloadSchema,
+} from './actions/update-select-option';
+import {
+  createSelectOptionActionHeadersSchema,
+  createSelectOptionActionFailureSchemas,
+  createSelectOptionActionOutcomeSchema,
+  createSelectOptionActionPayloadSchema,
+} from './actions/create-select-option';
+import {
+  createSelectPropertyDefinitionActionHeadersSchema,
+  createSelectPropertyDefinitionActionFailureSchemas,
+  createSelectPropertyDefinitionActionOutcomeSchema,
+  createSelectPropertyDefinitionActionPayloadSchema,
+} from './actions/create-select-property-definition';
+import {
   configureNumberPropertyFormatActionHeadersSchema,
   configureNumberPropertyFormatActionFailureSchemas,
   configureNumberPropertyFormatActionOutcomeSchema,
@@ -110,6 +146,12 @@ export type {
   ConfigureNumberPropertyFormatActionResponse,
 } from './actions/configure-number-property-format';
 export type {
+  ConfigureSelectOptionOrderActionFailure,
+  ConfigureSelectOptionOrderActionOutcome,
+  ConfigureSelectOptionOrderActionPayload,
+  ConfigureSelectOptionOrderActionResponse,
+} from './actions/configure-select-option-order';
+export type {
   CreateNumberPropertyDefinitionActionFailure,
   CreateNumberPropertyDefinitionActionOutcome,
   CreateNumberPropertyDefinitionActionPayload,
@@ -146,6 +188,24 @@ export type {
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
 export type {
+  CreateSelectOptionAndSelectActionFailure,
+  CreateSelectOptionAndSelectActionOutcome,
+  CreateSelectOptionAndSelectActionPayload,
+  CreateSelectOptionAndSelectActionResponse,
+} from './actions/create-select-option-and-select';
+export type {
+  CreateSelectOptionActionFailure,
+  CreateSelectOptionActionOutcome,
+  CreateSelectOptionActionPayload,
+  CreateSelectOptionActionResponse,
+} from './actions/create-select-option';
+export type {
+  CreateSelectPropertyDefinitionActionFailure,
+  CreateSelectPropertyDefinitionActionOutcome,
+  CreateSelectPropertyDefinitionActionPayload,
+  CreateSelectPropertyDefinitionActionResponse,
+} from './actions/create-select-property-definition';
+export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
   CreateTaskActionPayload,
@@ -181,17 +241,35 @@ export type {
   TransitionTaskRetentionActionPayload,
   TransitionTaskRetentionActionResponse,
 } from './actions/transition-task-retention';
+export type {
+  UpdateSelectOptionActionFailure,
+  UpdateSelectOptionActionOutcome,
+  UpdateSelectOptionActionPayload,
+  UpdateSelectOptionActionResponse,
+} from './actions/update-select-option';
+export type {
+  UpdateSelectPropertyValueActionFailure,
+  UpdateSelectPropertyValueActionOutcome,
+  UpdateSelectPropertyValueActionPayload,
+  UpdateSelectPropertyValueActionResponse,
+} from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export {
   checkboxPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
+  selectOptionOrderModeSchema,
+  selectOptionSchema,
+  selectPropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
   textPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
   NumberPropertyDefinition,
+  SelectOption,
+  SelectOptionOrderMode,
+  SelectPropertyDefinition,
   TaskPropertyDefinition,
   TextPropertyDefinition,
 } from './task-property-definition';
@@ -345,6 +423,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           error: coreSdkOperationFailureSchemas,
           headers: operationContextHeadersSchema,
           params: { collectionId: Schema.String },
+          query: { locale: Schema.optional(Schema.String) },
           success: taskPropertyWorkspaceSchema,
         },
       ),
@@ -539,6 +618,70 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: configureNumberPropertyFormatActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createSelectPropertyDefinitionAction',
+        '/ticketing/actions/create-select-property-definition',
+        {
+          error: createSelectPropertyDefinitionActionFailureSchemas,
+          headers: createSelectPropertyDefinitionActionHeadersSchema,
+          payload: createSelectPropertyDefinitionActionPayloadSchema,
+          success: createSelectPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createSelectOptionAction', '/ticketing/actions/create-select-option', {
+        error: createSelectOptionActionFailureSchemas,
+        headers: createSelectOptionActionHeadersSchema,
+        payload: createSelectOptionActionPayloadSchema,
+        success: createSelectOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateSelectOptionAction', '/ticketing/actions/update-select-option', {
+        error: updateSelectOptionActionFailureSchemas,
+        headers: updateSelectOptionActionHeadersSchema,
+        payload: updateSelectOptionActionPayloadSchema,
+        success: updateSelectOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateSelectPropertyValueAction',
+        '/ticketing/actions/update-select-property-value',
+        {
+          error: updateSelectPropertyValueActionFailureSchemas,
+          headers: updateSelectPropertyValueActionHeadersSchema,
+          payload: updateSelectPropertyValueActionPayloadSchema,
+          success: updateSelectPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createSelectOptionAndSelectAction',
+        '/ticketing/actions/create-select-option-and-select',
+        {
+          error: createSelectOptionAndSelectActionFailureSchemas,
+          headers: createSelectOptionAndSelectActionHeadersSchema,
+          payload: createSelectOptionAndSelectActionPayloadSchema,
+          success: createSelectOptionAndSelectActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureSelectOptionOrderAction',
+        '/ticketing/actions/configure-select-option-order',
+        {
+          error: configureSelectOptionOrderActionFailureSchemas,
+          headers: configureSelectOptionOrderActionHeadersSchema,
+          payload: configureSelectOptionOrderActionPayloadSchema,
+          success: configureSelectOptionOrderActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -547,6 +690,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureNumberPropertyFormatAction',
     routePath: '/ticketing/actions/configure-number-property-format',
+    source: 'generated-client',
+  },
+  configureSelectOptionOrderAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureSelectOptionOrderAction',
+    routePath: '/ticketing/actions/configure-select-option-order',
     source: 'generated-client',
   },
   configureTaskPropertyDefinitionAction: {
@@ -565,6 +714,24 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createNumberPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-number-property-definition',
+    source: 'generated-client',
+  },
+  createSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createSelectOptionAction',
+    routePath: '/ticketing/actions/create-select-option',
+    source: 'generated-client',
+  },
+  createSelectOptionAndSelectAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createSelectOptionAndSelectAction',
+    routePath: '/ticketing/actions/create-select-option-and-select',
+    source: 'generated-client',
+  },
+  createSelectPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createSelectPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-select-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -663,6 +830,18 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateNumberPropertyValueAction',
     routePath: '/ticketing/actions/update-number-property-value',
+    source: 'generated-client',
+  },
+  updateSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateSelectOptionAction',
+    routePath: '/ticketing/actions/update-select-option',
+    source: 'generated-client',
+  },
+  updateSelectPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateSelectPropertyValueAction',
+    routePath: '/ticketing/actions/update-select-property-value',
     source: 'generated-client',
   },
   updateTextPropertyValueAction: {
