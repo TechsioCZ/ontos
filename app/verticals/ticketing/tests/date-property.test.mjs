@@ -7,6 +7,7 @@ import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createDatePropertyDefinitionActionRegistration } from '../src/actions/create-date-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { updateDatePropertyValueActionRegistration } from '../src/actions/update-date-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 
@@ -264,6 +265,12 @@ test('Date uses generic independent duplication and confirmed deletion lifecycle
     registration: createTaskActionRegistration,
   });
   assert.equal(task._tag, 'OperationSucceeded');
+  const clearedTask = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(clearedTask._tag, 'OperationSucceeded');
   const definition = await runRegisteredAction({
     operationContext,
     payload: { collectionId, mandatory: true, name: 'Review date' },
@@ -283,6 +290,30 @@ test('Date uses generic independent duplication and confirmed deletion lifecycle
     registration: updateDatePropertyValueActionRegistration,
   });
   assert.equal(updated._tag, 'OperationSucceeded');
+  const clearedUpdate = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      propertyDefinitionId: source.propertyDefinitionId,
+      taskId: clearedTask.response.task.taskId,
+      value: '2027-12-04',
+    },
+    registration: updateDatePropertyValueActionRegistration,
+  });
+  assert.equal(clearedUpdate._tag, 'OperationSucceeded');
+  const cleared = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: source.propertyDefinitionId,
+      taskId: clearedTask.response.task.taskId,
+      value: null,
+    },
+    registration: updateDatePropertyValueActionRegistration,
+  });
+  assert.equal(cleared._tag, 'OperationSucceeded');
 
   const copied = await runRegisteredAction({
     operationContext,
@@ -326,6 +357,13 @@ test('Date uses generic independent duplication and confirmed deletion lifecycle
       value: '2027-12-03',
     },
   ]);
+  assert.deepEqual(workspace.response.tasks[1].dateValues, [
+    {
+      propertyDefinitionId: source.propertyDefinitionId,
+      revision: 2,
+      value: null,
+    },
+  ]);
 
   const impact = await runDataAccess({
     options: {
@@ -360,6 +398,92 @@ test('Date uses generic independent duplication and confirmed deletion lifecycle
     ),
     false,
   );
+});
+
+test('Date deletion impact includes every retained lifecycle state and hard deletion removes values', async () => {
+  const { getTaskPropertyDeletionImpactDataAccessRegistration } =
+    await import('../src/data-access/get-task-property-deletion-impact.ts');
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded');
+  const { collectionId } = collection.response.collection;
+  const tasks = await Promise.all(
+    [0, 1, 2, 3, 4].map(() =>
+      runRegisteredAction({
+        operationContext,
+        payload: { collectionId },
+        registration: createTaskActionRegistration,
+      }),
+    ),
+  );
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Lifecycle date' },
+    registration: createDatePropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded');
+  const { propertyDefinitionId } = definition.response.definition;
+
+  const updates = await Promise.all(
+    tasks.map((task) =>
+      runRegisteredAction({
+        operationContext,
+        payload: {
+          collectionId,
+          expectedRevision: 0,
+          propertyDefinitionId,
+          taskId: task.response.task.taskId,
+          value: '2026-09-21',
+        },
+        registration: updateDatePropertyValueActionRegistration,
+      }),
+    ),
+  );
+  for (const update of updates) {
+    assert.equal(update._tag, 'OperationSucceeded', JSON.stringify(update));
+  }
+
+  const transition = (taskId, desiredTransition) =>
+    runRegisteredAction({
+      operationContext,
+      payload: { collectionId, expectedRevision: 2, taskId, transition: desiredTransition },
+      registration: transitionTaskRetentionActionRegistration,
+    });
+  const archived = await transition(tasks[1].response.task.taskId, 'archive');
+  const softDeleted = await transition(tasks[2].response.task.taskId, 'softDelete');
+  const hardDeleted = await transition(tasks[3].response.task.taskId, 'hardDelete');
+  const cleared = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId,
+      taskId: tasks[4].response.task.taskId,
+      value: null,
+    },
+    registration: updateDatePropertyValueActionRegistration,
+  });
+  assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
+  assert.equal(softDeleted._tag, 'OperationSucceeded', JSON.stringify(softDeleted));
+  assert.equal(hardDeleted._tag, 'OperationSucceeded', JSON.stringify(hardDeleted));
+  assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
+
+  const impact = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, propertyDefinitionId },
+    registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
+  assert.equal(impact.response.impactCount, 3);
 });
 
 test('invalid and stale Date writes preserve the committed value while clear makes it Empty', async () => {
@@ -411,10 +535,45 @@ test('invalid and stale Date writes preserve the committed value while clear mak
 
   const cleared = await update(1, null);
   assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
-  assert.deepEqual(cleared.response, { taskRevision: 3, value: null });
+  assert.deepEqual(cleared.response, {
+    taskRevision: 3,
+    value: { propertyDefinitionId, revision: 2, value: null },
+  });
+  const clearActionInvocationId = cleared.context.actionInvocation?.actionInvocationId;
+  assert.notEqual(clearActionInvocationId, undefined);
+  const [clearAudit] = await sqlClient`
+    select evidence_json
+    from core.audit_events
+    where action_invocation_id = ${clearActionInvocationId}
+      and event_type = 'action.succeeded'
+  `;
+  const [clearDomain] = await sqlClient`
+    select payload_json
+    from core.domain_events
+    where action_invocation_id = ${clearActionInvocationId}
+      and event_type = 'ticketing.taskPropertyValue.changed'
+  `;
+  assert.equal(clearAudit.evidence_json.operation, 'cleared');
+  assert.equal(clearAudit.evidence_json.revision, 2);
+  assert.equal(clearDomain.payload_json.revision, 2);
+  assert.equal(Object.hasOwn(clearAudit.evidence_json, 'value'), false);
+  assert.equal(Object.hasOwn(clearDomain.payload_json, 'value'), false);
   const empty = await readWorkspace(operationContext, collectionId);
   assert.equal(empty._tag, 'OperationSucceeded');
-  assert.deepEqual(empty.response.tasks[0].dateValues, []);
+  assert.deepEqual(empty.response.tasks[0].dateValues, [
+    { propertyDefinitionId, revision: 2, value: null },
+  ]);
+
+  const staleFromOriginalEmpty = await update(0, '2026-09-21');
+  assert.equal(staleFromOriginalEmpty._tag, 'OperationDomainRejected');
+  assert.equal(staleFromOriginalEmpty.code, 'ticketing.updateDatePropertyValue.stale_or_missing');
+  const replaced = await update(2, '2026-09-21');
+  assert.equal(replaced._tag, 'OperationSucceeded', JSON.stringify(replaced));
+  assert.deepEqual(replaced.response.value, {
+    propertyDefinitionId,
+    revision: 3,
+    value: '2026-09-21',
+  });
 });
 
 test('Date actions enforce schema/value roles and expose no raw value in evidence', async () => {
@@ -443,6 +602,32 @@ test('Date actions enforce schema/value roles and expose no raw value in evidenc
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
   });
   assert.equal(userCreate._tag, 'OperationAuthorizationDenied');
+  const viewerCreate = await runAction({
+    options: {
+      authorizationChecker: authorizationForRole('Viewer'),
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, mandatory: false, name: 'Viewer date' },
+    registration: createDatePropertyDefinitionActionRegistration,
+    transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+  });
+  assert.equal(viewerCreate._tag, 'OperationAuthorizationDenied');
+  const permittedCreates = await Promise.all(
+    ['Full access', 'Editor'].map((role) =>
+      runAction({
+        options: {
+          authorizationChecker: authorizationForRole(role),
+          operationContextResolver: operationContextResolver(operationContext),
+        },
+        payload: { collectionId, mandatory: false, name: `${role} date` },
+        registration: createDatePropertyDefinitionActionRegistration,
+        transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+      }),
+    ),
+  );
+  for (const permittedCreate of permittedCreates) {
+    assert.equal(permittedCreate._tag, 'OperationSucceeded', JSON.stringify(permittedCreate));
+  }
 
   const definition = await runRegisteredAction({
     operationContext,
@@ -468,21 +653,49 @@ test('Date actions enforce schema/value roles and expose no raw value in evidenc
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
   });
   assert.equal(viewerUpdate._tag, 'OperationAuthorizationDenied');
-  const userUpdate = await runAction({
-    options: {
-      authorizationChecker: authorizationForRole('User'),
-      operationContextResolver: operationContextResolver(operationContext),
-    },
-    payload: input,
-    registration: updateDatePropertyValueActionRegistration,
-    transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+  const updateAs = (role, payload) =>
+    runAction({
+      options: {
+        authorizationChecker: authorizationForRole(role),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload,
+      registration: updateDatePropertyValueActionRegistration,
+      transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+    });
+  const fullAccessUpdate = await updateAs('Full access', input);
+  assert.equal(fullAccessUpdate._tag, 'OperationSucceeded', JSON.stringify(fullAccessUpdate));
+  const editorUpdate = await updateAs('Editor', {
+    ...input,
+    expectedRevision: 1,
+    value: '2026-07-14',
+  });
+  assert.equal(editorUpdate._tag, 'OperationSucceeded', JSON.stringify(editorUpdate));
+  const userUpdate = await updateAs('User', {
+    ...input,
+    expectedRevision: 2,
+    value: '2026-07-15',
   });
   assert.equal(userUpdate._tag, 'OperationSucceeded', JSON.stringify(userUpdate));
 
-  const evidence = updateDatePropertyValueActionRegistration.descriptor.auditEvent.evidence(
-    input,
-    userUpdate.response,
-  );
-  assert.equal(Object.hasOwn(evidence, 'value'), false);
-  assert.equal(JSON.stringify(evidence).includes('2026-07-13'), false);
+  const actionInvocationId = userUpdate.context.actionInvocation?.actionInvocationId;
+  assert.notEqual(actionInvocationId, undefined);
+  const [audit] = await sqlClient`
+    select evidence_json
+    from core.audit_events
+    where action_invocation_id = ${actionInvocationId}
+      and event_type = 'action.succeeded'
+  `;
+  const [domain] = await sqlClient`
+    select payload_json
+    from core.domain_events
+    where action_invocation_id = ${actionInvocationId}
+      and event_type = 'ticketing.taskPropertyValue.changed'
+  `;
+  assert.equal(audit.evidence_json.revision, 3);
+  assert.equal(domain.payload_json.revision, 3);
+  assert.equal(Object.hasOwn(audit.evidence_json, 'value'), false);
+  assert.equal(Object.hasOwn(domain.payload_json, 'value'), false);
+  assert.equal(JSON.stringify(audit.evidence_json).includes('2026-07-15'), false);
+  assert.equal(JSON.stringify(domain.payload_json).includes('2026-07-15'), false);
 });

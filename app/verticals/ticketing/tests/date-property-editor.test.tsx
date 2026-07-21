@@ -11,6 +11,7 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
     t: (key: string) =>
       ({
         'ticketing.date.clear': 'Clear',
+        'ticketing.date.close': 'Close',
         'ticketing.date.empty': 'Empty',
         'ticketing.date.invalid': 'Enter a real calendar date.',
         'ticketing.date.nextMonth': 'Next month',
@@ -192,6 +193,11 @@ test('cs-CZ input maps to canonical storage and a stale failure preserves the lo
   });
   expect((input as HTMLInputElement).value).toBe('20. 08. 2026');
   expect(screen.getByRole('button', { name: 'Datum kontroly: 13. 07. 2026' })).toBeDefined();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Close popover' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Datum kontroly: 13. 07. 2026' }));
+  const reopenedInput = await screen.findByRole('textbox', { name: 'Datum kontroly' });
+  expect((reopenedInput as HTMLInputElement).value).toBe('20. 08. 2026');
 });
 
 test('a stored Date opens its month and an adjacent-month day selects its actual date', async () => {
@@ -236,11 +242,18 @@ test('a stored Date opens its month and an adjacent-month day selects its actual
   );
 });
 
-test('clearing removes the value revision so a replacement uses the absent-value revision', async () => {
+test('clearing advances the Empty value revision so a replacement cannot use a stale revision', async () => {
   const save = rs.fn((draft) =>
     Promise.resolve(
       draft.value === null
-        ? { taskRevision: 3, value: null }
+        ? {
+            taskRevision: 3,
+            value: {
+              propertyDefinitionId: draft.propertyDefinitionId,
+              revision: draft.expectedRevision + 1,
+              value: null,
+            },
+          }
         : {
             taskRevision: 4,
             value: {
@@ -275,7 +288,7 @@ test('clearing removes the value revision so a replacement uses the absent-value
   await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
   expect(save.mock.calls.at(1)?.at(0)).toEqual({
     collectionId: 'collection-1',
-    expectedRevision: 0,
+    expectedRevision: 8,
     propertyDefinitionId: 'property-1',
     taskId: 'task-1',
     value: '2026-07-14',

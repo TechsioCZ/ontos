@@ -8,6 +8,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Popover } from '@techsio/ui-kit/molecules/popover';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useId, useState } from 'react';
+import { canonicalCalendarDate } from '../../shared/date-value';
 
 export type DatePropertyLocale = 'cs-CZ' | 'en-GB';
 
@@ -24,7 +25,7 @@ export interface SavedDatePropertyValue {
   readonly value: {
     readonly propertyDefinitionId: string;
     readonly revision: number;
-    readonly value: string;
+    readonly value: string | null;
   } | null;
 }
 
@@ -42,30 +43,6 @@ export interface DatePropertyEditorProps {
   readonly taskId: string;
   readonly value: string | null;
 }
-
-const daysInMonth = (year: number, month: number): number => {
-  if (month === 2) {
-    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-    return leap ? 29 : 28;
-  }
-  return [4, 6, 9, 11].includes(month) ? 30 : 31;
-};
-
-const canonicalCalendarDate = (year: number, month: number, day: number): string | null => {
-  if (
-    year < 1 ||
-    year > 9999 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > daysInMonth(year, month)
-  ) {
-    return null;
-  }
-  return [year, month, day]
-    .map((part) => String(part).padStart(part === year ? 4 : 2, '0'))
-    .join('-');
-};
 
 const dateParts = (value: string): readonly [number, number, number] | null => {
   const matched = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u.exec(value);
@@ -222,13 +199,13 @@ export const DatePropertyEditor = ({
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const [invalidDraft, setInvalidDraft] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasUnsavedDraft, setHasUnsavedDraft] = useState(false);
 
   const saveValue = async (nextValue: string | null) => {
     setIsSaving(true);
     setInvalidDraft(false);
-    if (nextValue !== null) {
-      setDraftValue(formatLocalizedDate(nextValue, locale));
-    }
+    setDraftValue(formatLocalizedDate(nextValue, locale));
+    setHasUnsavedDraft(true);
 
     try {
       const saved = await onSave(
@@ -244,6 +221,7 @@ export const DatePropertyEditor = ({
       setCommittedValue(saved.value?.value ?? null);
       setCurrentRevision(saved.value?.revision ?? 0);
       setDraftValue(formatLocalizedDate(saved.value?.value ?? null, locale));
+      setHasUnsavedDraft(false);
       setIdempotencyKey(crypto.randomUUID());
     } catch (error) {
       toaster.create(
@@ -283,7 +261,9 @@ export const DatePropertyEditor = ({
       border
       onOpenChange={({ open }) => {
         if (open) {
-          setDraftValue(formatLocalizedDate(committedValue, locale));
+          if (!hasUnsavedDraft) {
+            setDraftValue(formatLocalizedDate(committedValue, locale));
+          }
           setInvalidDraft(false);
         }
       }}
@@ -316,6 +296,7 @@ export const DatePropertyEditor = ({
             disabled={isSaving}
             onChange={(event) => {
               setDraftValue(event.target.value);
+              setHasUnsavedDraft(true);
               setInvalidDraft(false);
             }}
             onKeyDown={(event) => {

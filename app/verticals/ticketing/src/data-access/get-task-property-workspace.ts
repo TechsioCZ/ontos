@@ -102,7 +102,7 @@ interface DateValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskId: string;
-  readonly value: string;
+  readonly value: string | null;
 }
 
 interface PhoneValueRow {
@@ -152,7 +152,7 @@ interface TaskRow {
   readonly dateValues: {
     propertyDefinitionId: string;
     revision: number;
-    value: string;
+    value: string | null;
   }[];
   readonly emailValues: {
     propertyDefinitionId: string;

@@ -432,7 +432,7 @@
           "name": "value",
           "type": "date",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         }
       },
       "indexes": {

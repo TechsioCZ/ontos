@@ -413,7 +413,7 @@ export const taskDateValues = ticketingSchema.table(
       .notNull()
       .references(() => tasks.taskId, { onDelete: 'restrict' }),
     tenantId: tenantId(),
-    value: date('value', { mode: 'string' }).notNull(),
+    value: date('value', { mode: 'string' }),
   },
   (table) => [
     primaryKey({

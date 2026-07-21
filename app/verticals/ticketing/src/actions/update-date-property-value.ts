@@ -12,6 +12,7 @@ import {
   updateDatePropertyValueActionPayloadSchema,
   updateDatePropertyValueActionResponseSchema,
 } from '../../shared/actions/update-date-property-value.ts';
+import { isCanonicalCalendarDate } from '../../shared/date-value.ts';
 import type {
   UpdateDatePropertyValueActionPayload,
   UpdateDatePropertyValueActionResponse,
@@ -27,32 +28,13 @@ interface CurrentDateTargetRow {
 interface PersistedDateValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
-  readonly value: string;
+  readonly value: string | null;
 }
 
 interface UpdatedTaskRow {
   readonly changedAt: string;
   readonly taskRevision: number;
 }
-
-const daysInMonth = (year: number, month: number): number => {
-  if (month === 2) {
-    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-    return leap ? 29 : 28;
-  }
-  return [4, 6, 9, 11].includes(month) ? 30 : 31;
-};
-
-const isCanonicalCalendarDate = (value: string): boolean => {
-  const matched = /^(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})$/u.exec(value);
-  if (matched?.groups === undefined) {
-    return false;
-  }
-  const year = Number(matched.groups['year']);
-  const month = Number(matched.groups['month']);
-  const day = Number(matched.groups['day']);
-  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
-};
 
 const datePropertyValueEvidence = (
   input: UpdateDatePropertyValueActionPayload,
@@ -63,7 +45,7 @@ const datePropertyValueEvidence = (
   datatype: 'date',
   operation: input.value === null ? 'cleared' : 'changed',
   propertyDefinitionId: input.propertyDefinitionId,
-  revision: response.value?.revision ?? input.expectedRevision + 1,
+  revision: response.value?.revision ?? input.expectedRevision,
   taskId: input.taskId,
   taskRevision: response.taskRevision,
 });
@@ -146,7 +128,7 @@ const updateDatePropertyValueActionHandler: ActionHandler<
     return {
       taskRevision: current.taskRevision,
       value:
-        current.currentValue === null
+        current.currentRevision === null
           ? null
           : {
               propertyDefinitionId: current.propertyDefinitionId,
@@ -159,7 +141,10 @@ const updateDatePropertyValueActionHandler: ActionHandler<
   let persistedValue: PersistedDateValueRow | null;
   if (input.value === null) {
     const result = await services.tx.execute(sql`
-      delete from ticketing.task_date_values
+      update ticketing.task_date_values
+      set
+        revision = revision + 1,
+        value = null
       where task_id = ${input.taskId}
         and property_definition_id = ${input.propertyDefinitionId}
         and revision = ${input.expectedRevision}
@@ -175,7 +160,7 @@ const updateDatePropertyValueActionHandler: ActionHandler<
         message: 'The Date value changed elsewhere or is no longer available.',
       });
     }
-    persistedValue = null;
+    persistedValue = rowsFromResult<PersistedDateValueRow>(result).at(0) ?? null;
   } else if (currentRevision === 0) {
     const result = await services.tx.execute(sql`
       insert into ticketing.task_date_values (
@@ -214,7 +199,7 @@ const updateDatePropertyValueActionHandler: ActionHandler<
     persistedValue = rowsFromResult<PersistedDateValueRow>(result).at(0) ?? null;
   }
 
-  if (input.value !== null && persistedValue === null) {
+  if (persistedValue === null) {
     throw rejectAction({
       code: 'ticketing.updateDatePropertyValue.stale_or_missing',
       message: 'The Date value changed elsewhere or is no longer available.',

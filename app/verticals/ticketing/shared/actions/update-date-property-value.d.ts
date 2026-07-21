@@ -18,7 +18,7 @@ export declare const updateDatePropertyValueActionResponseSchema: Schema.Struct<
     Schema.Struct<{
       readonly propertyDefinitionId: Schema.String;
       readonly revision: Schema.Finite;
-      readonly value: Schema.String;
+      readonly value: Schema.NullOr<Schema.String>;
     }>
   >;
 }>;
@@ -31,7 +31,7 @@ export declare const updateDatePropertyValueActionOutcomeSchema: Schema.Struct<{
       Schema.Struct<{
         readonly propertyDefinitionId: Schema.String;
         readonly revision: Schema.Finite;
-        readonly value: Schema.String;
+        readonly value: Schema.NullOr<Schema.String>;
       }>
     >;
   }>;

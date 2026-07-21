@@ -3,7 +3,7 @@ CREATE TABLE "ticketing"."task_date_values" (
 	"revision" integer DEFAULT 1 NOT NULL,
 	"task_id" uuid NOT NULL,
 	"tenant_id" uuid NOT NULL,
-	"value" date NOT NULL,
+	"value" date,
 	CONSTRAINT "ticketing_task_date_values_pk" PRIMARY KEY("task_id","property_definition_id"),
 	CONSTRAINT "ticketing_task_date_values_revision_ck" CHECK ("ticketing"."task_date_values"."revision" >= 1)
 );

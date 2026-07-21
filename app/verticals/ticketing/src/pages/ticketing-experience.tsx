@@ -785,9 +785,7 @@ export const TicketingExperience = () => {
                       collectionId={openedTaskPropertyWorkspace.collectionId}
                       key={definition.propertyDefinitionId}
                       label={definition.name}
-                      locale={
-                        datePropertyLocaleByLanguage[language] ?? defaultDatePropertyLocale
-                      }
+                      locale={datePropertyLocaleByLanguage[language] ?? defaultDatePropertyLocale}
                       onSave={async (draft, idempotencyKey) => {
                         const operationContextToken = await loadTicketingOperationContextToken();
                         const outcome = await runEffectRequest(

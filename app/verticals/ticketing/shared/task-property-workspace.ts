@@ -11,7 +11,7 @@ export const checkboxPropertyValueSchema = Schema.Struct({
 export const datePropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
-  value: Schema.String,
+  value: Schema.NullOr(Schema.String),
 });
 
 export const selectPropertyValueSchema = Schema.Struct({
