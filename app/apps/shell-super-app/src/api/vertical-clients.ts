@@ -1,4 +1,7 @@
 export {
+  groupTaskDateValues,
+  runCreateDatePropertyDefinitionAction,
+  runUpdateDatePropertyValueAction,
   runCreatePhonePropertyDefinitionAction,
   runUpdatePhonePropertyValueAction,
   queryTaskEmailValues,

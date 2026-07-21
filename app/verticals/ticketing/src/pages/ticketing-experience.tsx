@@ -9,6 +9,7 @@ import {
   Effect,
   getTaskPropertyEditCapability,
   getTaskCollection,
+  runCreateDatePropertyDefinitionAction,
   runCreateCheckboxPropertyDefinitionAction,
   runCreateEmailPropertyDefinitionAction,
   runCreateNumberPropertyDefinitionAction,
@@ -20,6 +21,7 @@ import {
   runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
+  runUpdateDatePropertyValueAction,
   runUpdateEmailPropertyValueAction,
   runUpdateNumberPropertyValueAction,
   runUpdatePhonePropertyValueAction,
@@ -28,6 +30,7 @@ import {
 } from '../api/ticketing-client';
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
+import { DatePropertyEditor } from '../components/date-property-editor';
 import { EmailPropertyEditor } from '../components/email-property-editor';
 import { NumberPropertyEditor } from '../components/number-property-editor';
 import { PhonePropertyEditor } from '../components/phone-property-editor';
@@ -38,10 +41,17 @@ import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
 import type { TaskPropertyWorkspace } from '../../shared/task-property-workspace';
+import type { DatePropertyLocale } from '../components/date-property-editor';
 
 interface ShellOperationContextResponse {
   readonly verticalGatewayTokens?: Readonly<Record<string, string>>;
 }
+
+const datePropertyLocaleByLanguage: Readonly<Record<string, DatePropertyLocale>> = {
+  cs: 'cs-CZ',
+  en: 'en-GB',
+};
+const defaultDatePropertyLocale: DatePropertyLocale = 'en-GB';
 
 const loadTicketingOperationContextToken = async (): Promise<string> => {
   const response = await fetch('/shell-super-app-api/operation-context', {
@@ -84,6 +94,11 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
+  const [dateDefinitionName, setDateDefinitionName] = useState('');
+  const [dateDefinitionIdempotencyKey, setDateDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingDateDefinition, setIsCreatingDateDefinition] = useState(false);
   const [emailDefinitionName, setEmailDefinitionName] = useState('');
   const [emailDefinitionIdempotencyKey, setEmailDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
@@ -173,6 +188,8 @@ export const TicketingExperience = () => {
               setOpenedTaskCollection(taskCollection);
               setCheckboxDefinitionName('');
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
+              setDateDefinitionName('');
+              setDateDefinitionIdempotencyKey(crypto.randomUUID());
               setEmailDefinitionName('');
               setEmailDefinitionIdempotencyKey(crypto.randomUUID());
               setNumberDefinitionName('');
@@ -187,6 +204,7 @@ export const TicketingExperience = () => {
                 tasks: [
                   {
                     checkboxValues: [],
+                    dateValues: [],
                     emailValues: [],
                     numberValues: [],
                     phoneValues: [],
@@ -531,6 +549,51 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateDateDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || dateDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingDateDefinition(true);
+
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateDatePropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: dateDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: dateDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setDateDefinitionName('');
+      setDateDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.date.definitionCreateFailedDescription'),
+        title: t('ticketing.date.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingDateDefinition(false);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -601,6 +664,23 @@ export const TicketingExperience = () => {
               variant="secondary"
             >
               {t('ticketing.checkbox.definitionCreate')}
+            </Button>
+            <FormInput
+              id="date-property-name"
+              label={t('ticketing.date.definitionName')}
+              name="date-property-name"
+              onChange={(event) => setDateDefinitionName(event.currentTarget.value)}
+              value={dateDefinitionName}
+            />
+            <Button
+              disabled={dateDefinitionName.trim().length === 0}
+              isLoading={isCreatingDateDefinition}
+              loadingText={t('ticketing.date.definitionCreating')}
+              onClick={() => void handleCreateDateDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.date.definitionCreate')}
             </Button>
             <FormInput
               id="email-property-name"
@@ -694,6 +774,60 @@ export const TicketingExperience = () => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
                 if (task === undefined) {
                   return null;
+                }
+                if (definition.datatype === 'date') {
+                  const value = task.dateValues.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return (
+                    <DatePropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      locale={
+                        datePropertyLocaleByLanguage[language] ?? defaultDatePropertyLocale
+                      }
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdateDatePropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) => {
+                                  if (candidate.taskId !== draft.taskId) {
+                                    return candidate;
+                                  }
+                                  const withoutCurrent = candidate.dateValues.filter(
+                                    (dateValue) =>
+                                      dateValue.propertyDefinitionId !== draft.propertyDefinitionId,
+                                  );
+                                  return {
+                                    ...candidate,
+                                    dateValues:
+                                      outcome.response.value === null
+                                        ? withoutCurrent
+                                        : [...withoutCurrent, outcome.response.value],
+                                    taskRevision: outcome.response.taskRevision,
+                                  };
+                                }),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      revision={value?.revision ?? 0}
+                      taskId={task.taskId}
+                      value={value?.value ?? null}
+                    />
+                  );
                 }
                 if (definition.datatype === 'phone') {
                   const phoneValue = task.phoneValues.find(

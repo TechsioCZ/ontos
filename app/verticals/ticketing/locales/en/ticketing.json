@@ -11,6 +11,26 @@
       "staleDescription": "Your checked draft is still here. Reload before trying again.",
       "staleTitle": "Checkbox changed elsewhere"
     },
+    "date": {
+      "clear": "Clear",
+      "close": "Close",
+      "definitionCreate": "Add Date property",
+      "definitionCreateFailedDescription": "The Date property could not be created.",
+      "definitionCreateFailedTitle": "Date property creation failed",
+      "definitionCreating": "Adding Date property",
+      "definitionName": "Date property name",
+      "empty": "Empty",
+      "invalid": "Enter a real calendar date.",
+      "nextMonth": "Next month",
+      "placeholder": "DD/MM/YYYY",
+      "previousMonth": "Previous month",
+      "save": "Save date",
+      "saveFailedDescription": "The Date could not be saved.",
+      "saveFailedTitle": "Date save failed",
+      "staleDescription": "Your date draft is still here. Reload before trying again.",
+      "staleTitle": "Date changed elsewhere",
+      "today": "Today"
+    },
     "email": {
       "activate": "Write email",
       "definitionCreate": "Add Email property",

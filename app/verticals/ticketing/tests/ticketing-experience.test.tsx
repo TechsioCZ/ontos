@@ -61,6 +61,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
 
   for (const endpoint of [
     'createCheckboxPropertyDefinitionAction',
+    'createDatePropertyDefinitionAction',
     'createEmailPropertyDefinitionAction',
     'createPhonePropertyDefinitionAction',
     'createTaskAction',
@@ -71,9 +72,11 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'getTaskCollection',
     'getTaskPropertyEditCapability',
     'getTaskPropertyWorkspace',
+    'groupTaskDateValues',
     'queryTaskPropertyValues',
     'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
+    'updateDatePropertyValueAction',
     'updateEmailPropertyValueAction',
     'updatePhonePropertyValueAction',
     'updateTextPropertyValueAction',
