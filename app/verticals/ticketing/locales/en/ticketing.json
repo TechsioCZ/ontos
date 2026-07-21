@@ -16,6 +16,19 @@
       "en": "English",
       "switcher": "Language"
     },
+    "number": {
+      "definitionCreate": "Add Number property",
+      "definitionCreateFailedDescription": "The Number property could not be created.",
+      "definitionCreateFailedTitle": "Number property creation failed",
+      "definitionCreating": "Adding Number property",
+      "definitionName": "Number property name",
+      "invalidDescription": "Enter a valid number.",
+      "invalidTitle": "Invalid number",
+      "saveFailedDescription": "The Number could not be saved.",
+      "saveFailedTitle": "Number save failed",
+      "staleDescription": "Your number draft is still here. Reload before trying again.",
+      "staleTitle": "Number changed elsewhere"
+    },
     "routes": {
       "home": "Home"
     },

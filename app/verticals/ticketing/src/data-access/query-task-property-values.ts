@@ -11,6 +11,12 @@ import type {
   QueryTaskPropertyValuesResponse,
   TaskPropertyQuery,
 } from '../../shared/task-property-query.ts';
+import { canonicalizeNumberValue } from '../../shared/number-value.ts';
+
+interface NumberQueryRow {
+  readonly taskId: string;
+  readonly value: string | null;
+}
 
 interface TextQueryRow {
   readonly locale: string;
@@ -24,6 +30,80 @@ interface TextCollation {
   readonly includes: (value: string, search: string) => boolean;
   readonly startsWith: (value: string, search: string) => boolean;
 }
+
+type NumberQueryOperation = Extract<
+  TaskPropertyQuery,
+  { readonly datatype: 'number' }
+>['operation'];
+
+const canonicalDecimalSql = sql`
+  case
+    when value.value is null then null
+    when value.value = 0 then '0'
+    else regexp_replace(regexp_replace(value.value::text, '0+$', ''), '\\.$', '')
+  end
+`;
+
+const numericFilterPredicate = (
+  operation: Extract<NumberQueryOperation, { readonly type: 'filter' }>,
+) => {
+  if (operation.operator === 'isEmpty') {
+    return sql`value.value is null`;
+  }
+  if (operation.operator === 'isNotEmpty') {
+    return sql`value.value is not null`;
+  }
+  if (!('value' in operation)) {
+    throw new Error('A comparison value is required for this Number filter.');
+  }
+  const canonicalValue = canonicalizeNumberValue(operation.value);
+  if (canonicalValue === undefined) {
+    throw new Error('A valid canonical decimal is required for this Number filter.');
+  }
+  switch (operation.operator) {
+    case 'equal': {
+      return sql`value.value = ${canonicalValue}::numeric`;
+    }
+    case 'notEqual': {
+      return sql`value.value is not null and value.value <> ${canonicalValue}::numeric`;
+    }
+    case 'greaterThan': {
+      return sql`value.value > ${canonicalValue}::numeric`;
+    }
+    case 'lessThan': {
+      return sql`value.value < ${canonicalValue}::numeric`;
+    }
+    case 'greaterThanOrEqual': {
+      return sql`value.value >= ${canonicalValue}::numeric`;
+    }
+    case 'lessThanOrEqual': {
+      return sql`value.value <= ${canonicalValue}::numeric`;
+    }
+    default: {
+      throw new Error('A supported Number filter operator is required.');
+    }
+  }
+};
+
+const numberQueryPredicate = (operation: NumberQueryOperation) => {
+  if (operation.type === 'filter') {
+    return numericFilterPredicate(operation);
+  }
+  if (operation.type === 'search') {
+    return sql`value.value is not null and position(${operation.query} in ${canonicalDecimalSql}) > 0`;
+  }
+  return sql`true`;
+};
+
+const numberQueryOrdering = (operation: NumberQueryOperation) => {
+  if (operation.type === 'sort' && operation.direction === 'descending') {
+    return sql`value.value desc nulls last, task.task_id`;
+  }
+  if (operation.type === 'sort' || operation.type === 'group') {
+    return sql`value.value asc nulls last, task.task_id`;
+  }
+  return sql`task.task_id`;
+};
 
 const normalizeText = (value: string) => [...value.normalize('NFC')];
 
@@ -176,6 +256,51 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
     transportResponseSchema: queryTaskPropertyValuesResponseSchema,
   },
   handler: async (input, { context, db }) => {
+    if (input.query.datatype === 'number') {
+      const { operation } = input.query;
+      const predicate = numberQueryPredicate(operation);
+      const ordering = numberQueryOrdering(operation);
+      const result = await db.execute(sql`
+        select
+          task.task_id as "taskId",
+          ${canonicalDecimalSql} as value
+        from ticketing.tasks as task
+        inner join ticketing.task_schemas as schema
+          on schema.collection_id = task.collection_id
+          and schema.tenant_id = task.tenant_id
+        inner join ticketing.task_property_definitions as definition
+          on definition.schema_id = schema.schema_id
+          and definition.property_definition_id = ${input.propertyDefinitionId}
+          and definition.datatype = 'number'
+          and definition.tenant_id = task.tenant_id
+        left join ticketing.task_number_values as value
+          on value.task_id = task.task_id
+          and value.property_definition_id = definition.property_definition_id
+          and value.tenant_id = task.tenant_id
+        where task.collection_id = ${input.collectionId}
+          and task.tenant_id = ${context.tenantId}
+          and ${predicate}
+        order by ${ordering}
+      `);
+      const rows = rowsFromResult<NumberQueryRow>(result).map((row) => ({
+        taskId: row.taskId,
+        value: row.value === null ? null : (canonicalizeNumberValue(row.value) ?? row.value),
+      }));
+      if (operation.type !== 'group') {
+        return { taskIds: rows.map(({ taskId }) => taskId) };
+      }
+      const groups = new Map<string | null, string[]>();
+      for (const row of rows) {
+        const taskIds = groups.get(row.value) ?? [];
+        taskIds.push(row.taskId);
+        groups.set(row.value, taskIds);
+      }
+      return {
+        groups: [...groups].map(([heading, taskIds]) => ({ heading, taskIds })),
+        taskIds: rows.map(({ taskId }) => taskId).toSorted(),
+      };
+    }
+
     const result = await db.execute(sql`
       select
         collection.locale,

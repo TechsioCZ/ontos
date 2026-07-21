@@ -6,6 +6,9 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { configureNumberPropertyFormatActionRegistration } from '../src/actions/configure-number-property-format.ts';
+import { createNumberPropertyDefinitionActionRegistration } from '../src/actions/create-number-property-definition.ts';
+import { updateNumberPropertyValueActionRegistration } from '../src/actions/update-number-property-value.ts';
 import { updateTextPropertyValueActionRegistration } from '../src/actions/update-text-property-value.ts';
 import { createTextPropertyDefinitionActionRegistration } from '../src/actions/create-text-property-definition.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
@@ -351,6 +354,57 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
         Effect.withSpan('ultramodern.api.ticketing.updateTextPropertyValueAction', {
           attributes: operationAttributes(ticketingOperationContexts.updateTextPropertyValueAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createNumberPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createNumberPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createNumberPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createNumberPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updateNumberPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateNumberPropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updateNumberPropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updateNumberPropertyValueAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('configureNumberPropertyFormatAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureNumberPropertyFormatActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.configureNumberPropertyFormatAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configureNumberPropertyFormatAction,
+          ),
           kind: 'server',
         }),
       ),

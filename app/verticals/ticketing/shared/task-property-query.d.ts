@@ -3,6 +3,42 @@ import type { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const taskPropertyQuerySchema: Schema.Union<
   readonly [
     Schema.Struct<{
+      readonly datatype: Schema.Literal<'number'>;
+      readonly operation: Schema.Union<
+        readonly [
+          Schema.Struct<{
+            readonly query: Schema.String;
+            readonly type: Schema.Literal<'search'>;
+          }>,
+          Schema.Struct<{
+            readonly operator: Schema.Literals<
+              readonly [
+                'equal',
+                'notEqual',
+                'greaterThan',
+                'lessThan',
+                'greaterThanOrEqual',
+                'lessThanOrEqual',
+              ]
+            >;
+            readonly type: Schema.Literal<'filter'>;
+            readonly value: Schema.String;
+          }>,
+          Schema.Struct<{
+            readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+            readonly type: Schema.Literal<'filter'>;
+          }>,
+          Schema.Struct<{
+            readonly direction: Schema.Literals<readonly ['ascending', 'descending']>;
+            readonly type: Schema.Literal<'sort'>;
+          }>,
+          Schema.Struct<{
+            readonly type: Schema.Literal<'group'>;
+          }>,
+        ]
+      >;
+    }>,
+    Schema.Struct<{
       readonly datatype: Schema.Literal<'text'>;
       readonly operation: Schema.Union<
         readonly [
@@ -45,6 +81,42 @@ export declare const queryTaskPropertyValuesPayloadSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly query: Schema.Union<
     readonly [
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'number'>;
+        readonly operation: Schema.Union<
+          readonly [
+            Schema.Struct<{
+              readonly query: Schema.String;
+              readonly type: Schema.Literal<'search'>;
+            }>,
+            Schema.Struct<{
+              readonly operator: Schema.Literals<
+                readonly [
+                  'equal',
+                  'notEqual',
+                  'greaterThan',
+                  'lessThan',
+                  'greaterThanOrEqual',
+                  'lessThanOrEqual',
+                ]
+              >;
+              readonly type: Schema.Literal<'filter'>;
+              readonly value: Schema.String;
+            }>,
+            Schema.Struct<{
+              readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+              readonly type: Schema.Literal<'filter'>;
+            }>,
+            Schema.Struct<{
+              readonly direction: Schema.Literals<readonly ['ascending', 'descending']>;
+              readonly type: Schema.Literal<'sort'>;
+            }>,
+            Schema.Struct<{
+              readonly type: Schema.Literal<'group'>;
+            }>,
+          ]
+        >;
+      }>,
       Schema.Struct<{
         readonly datatype: Schema.Literal<'text'>;
         readonly operation: Schema.Union<

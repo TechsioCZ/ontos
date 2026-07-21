@@ -53,6 +53,15 @@ import type {
   UpdateTextPropertyValueActionPayload,
   QueryTaskPropertyValuesPayload,
   QueryTaskPropertyValuesResponse,
+  ConfigureNumberPropertyFormatActionFailure,
+  ConfigureNumberPropertyFormatActionOutcome,
+  ConfigureNumberPropertyFormatActionPayload,
+  CreateNumberPropertyDefinitionActionFailure,
+  CreateNumberPropertyDefinitionActionOutcome,
+  CreateNumberPropertyDefinitionActionPayload,
+  UpdateNumberPropertyValueActionFailure,
+  UpdateNumberPropertyValueActionOutcome,
+  UpdateNumberPropertyValueActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -67,6 +76,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | ConfigureNumberPropertyFormatActionFailure
+  | UpdateNumberPropertyValueActionFailure
+  | CreateNumberPropertyDefinitionActionFailure
   | UpdateTextPropertyValueActionFailure
   | CreateTextPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
@@ -442,6 +454,69 @@ export const runUpdateTextPropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updateTextPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateNumberPropertyDefinitionAction = (
+  payload: CreateNumberPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateNumberPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createNumberPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createNumberPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateNumberPropertyValueAction = (
+  payload: UpdateNumberPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateNumberPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateNumberPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateNumberPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureNumberPropertyFormatAction = (
+  payload: ConfigureNumberPropertyFormatActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigureNumberPropertyFormatActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureNumberPropertyFormatAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureNumberPropertyFormatAction({
         headers: headers ?? {},
         payload,
       }),

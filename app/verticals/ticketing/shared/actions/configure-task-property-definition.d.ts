@@ -25,6 +25,15 @@ export declare const configureTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literal<'number'>;
+        readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literal<'text'>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
@@ -43,6 +52,17 @@ export declare const configureTaskPropertyDefinitionActionOutcomeSchema: Schema.
       readonly [
         Schema.Struct<{
           readonly datatype: Schema.Literal<'checkbox'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'number'>;
+          readonly format: Schema.Literals<
+            readonly ['number', 'number_with_separators', 'percent']
+          >;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;

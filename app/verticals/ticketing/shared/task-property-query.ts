@@ -1,7 +1,12 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { numberQueryOperationSchema } from './number-query.ts';
 import { textQueryOperationSchema } from './text-query.ts';
 
 export const taskPropertyQuerySchema = Schema.Union([
+  Schema.Struct({
+    datatype: Schema.Literal('number'),
+    operation: numberQueryOperationSchema,
+  }),
   Schema.Struct({
     datatype: Schema.Literal('text'),
     operation: textQueryOperationSchema,

@@ -5,6 +5,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgSchema,
   primaryKey,
   text,
@@ -65,6 +66,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     hidden: boolean('hidden').default(false).notNull(),
     mandatory: boolean('mandatory').default(false).notNull(),
     name: text('name').notNull(),
+    numberFormat: text('number_format'),
     propertyDefinitionId: uuid('property_definition_id').defaultRandom().primaryKey(),
     revision: integer('revision').default(1).notNull(),
     schemaId: uuid('schema_id')
@@ -80,7 +82,11 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'text')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'number', 'text')`,
+    ),
+    check(
+      'ticketing_task_property_definitions_number_format_ck',
+      sql`(${table.datatype} = 'number' and ${table.numberFormat} in ('number', 'number_with_separators', 'percent')) or (${table.datatype} <> 'number' and ${table.numberFormat} is null)`,
     ),
     check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -138,7 +144,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed', 'text_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'number_value_changed', 'text_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -200,5 +206,32 @@ export const taskTextValues = ticketingSchema.table(
       'ticketing_task_text_values_empty_ck',
       sql`(${table.document} is null) = (${table.readableText} is null)`,
     ),
+  ],
+);
+
+export const taskNumberValues = ticketingSchema.table(
+  'task_number_values',
+  {
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(1).notNull(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    value: numeric('value', { precision: 38, scale: 18 }),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_number_values_pk',
+    }),
+    index('ticketing_task_number_values_query_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.value,
+    ),
+    check('ticketing_task_number_values_revision_ck', sql`${table.revision} >= 1`),
   ],
 );

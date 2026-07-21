@@ -5,6 +5,11 @@ export declare const checkboxPropertyValueSchema: Schema.Struct<{
   readonly revision: Schema.Finite;
   readonly value: Schema.Boolean;
 }>;
+export declare const numberPropertyValueSchema: Schema.Struct<{
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly value: Schema.Union<readonly [Schema.String, Schema.Null]>;
+}>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
   readonly propertyDefinitions: Schema.$Array<
@@ -12,6 +17,17 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
       readonly [
         Schema.Struct<{
           readonly datatype: Schema.Literal<'checkbox'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'number'>;
+          readonly format: Schema.Literals<
+            readonly ['number', 'number_with_separators', 'percent']
+          >;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
@@ -37,6 +53,15 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly revision: Schema.Finite;
           readonly value: Schema.Boolean;
         }>
+      >;
+      readonly numberValues: Schema.optional<
+        Schema.$Array<
+          Schema.Struct<{
+            readonly propertyDefinitionId: Schema.String;
+            readonly revision: Schema.Finite;
+            readonly value: Schema.Union<readonly [Schema.String, Schema.Null]>;
+          }>
+        >
       >;
       readonly taskId: Schema.String;
       readonly taskRevision: Schema.Finite;

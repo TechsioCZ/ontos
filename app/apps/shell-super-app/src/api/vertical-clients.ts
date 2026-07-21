@@ -1,5 +1,8 @@
 export {
   queryTaskPropertyValues,
+  runConfigureNumberPropertyFormatAction,
+  runCreateNumberPropertyDefinitionAction,
+  runUpdateNumberPropertyValueAction,
   runUpdateTextPropertyValueAction,
   runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
