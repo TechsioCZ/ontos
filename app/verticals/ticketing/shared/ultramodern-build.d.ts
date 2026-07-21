@@ -1,5 +1,4 @@
 import ultramodernBuildArtifact from './ultramodern-build.json';
-
 export { ultramodernBuildArtifact };
 export declare const ultramodernDeliveryUnit: {
   schemaVersion: number;

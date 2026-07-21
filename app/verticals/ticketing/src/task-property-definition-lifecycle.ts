@@ -10,6 +10,7 @@ interface TaskPropertyDefinitionLifecycleTarget {
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
+  readonly numberFormat: string | null;
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly schemaId: string;
@@ -77,34 +78,26 @@ const checkboxLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
-const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
-  copyValues: async ({ copyValues, source, target, tx }) => {
-    if (!copyValues) {
-      return;
-    }
+const textLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ source, target, tx }) => {
     await tx.execute(sql`
-      insert into ticketing.task_email_values (
-        normalized_value,
+      insert into ticketing.task_text_values (
         property_definition_id,
         task_id,
-        tenant_id,
-        value
+        tenant_id
       )
       select
-        source_value.normalized_value,
         ${target.propertyDefinitionId},
         source_value.task_id,
-        source_value.tenant_id,
-        source_value.value
-      from ticketing.task_email_values as source_value
+        source_value.tenant_id
+      from ticketing.task_text_values as source_value
       where source_value.property_definition_id = ${source.propertyDefinitionId}
         and source_value.tenant_id = ${source.tenantId}
-        and source_value.value is not null
     `);
   },
   deleteValues: async ({ target, tx }) => {
     await tx.execute(sql`
-      delete from ticketing.task_email_values
+      delete from ticketing.task_text_values
       where property_definition_id = ${target.propertyDefinitionId}
         and tenant_id = ${target.tenantId}
     `);
@@ -112,7 +105,95 @@ const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   getDeletionImpactCount: async ({ db, target }) => {
     const result = await db.execute(sql`
       select count(task.task_id)::integer as "impactCount"
-      from ticketing.task_email_values as value
+      from ticketing.task_text_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.readable_text is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
+const numberLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    if (!copyValues) {
+      return;
+    }
+    await tx.execute(sql`
+      insert into ticketing.task_number_values (
+        property_definition_id,
+        task_id,
+        tenant_id,
+        value
+      )
+      select
+        ${target.propertyDefinitionId},
+        source_value.task_id,
+        source_value.tenant_id,
+        source_value.value
+      from ticketing.task_number_values as source_value
+      where source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+        and source_value.value is not null
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_number_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_number_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.value is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
+const urlLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    await tx.execute(sql`
+      insert into ticketing.task_url_values (
+        property_definition_id,
+        revision,
+        task_id,
+        tenant_id,
+        value
+      )
+      select
+        ${target.propertyDefinitionId},
+        case when ${copyValues} and source_value.value is not null then 1 else 0 end,
+        source_value.task_id,
+        source_value.tenant_id,
+        case when ${copyValues} then source_value.value else null end
+      from ticketing.task_url_values as source_value
+      where source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_url_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_url_values as value
       inner join ticketing.tasks as task
         on task.task_id = value.task_id
         and task.tenant_id = value.tenant_id
@@ -126,7 +207,9 @@ const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
 
 const lifecycleAdapters = {
   checkbox: checkboxLifecycleAdapter,
-  email: emailLifecycleAdapter,
+  number: numberLifecycleAdapter,
+  text: textLifecycleAdapter,
+  url: urlLifecycleAdapter,
 } satisfies Readonly<Record<string, TaskPropertyLifecycleAdapter>>;
 
 type SupportedTaskPropertyDatatype = keyof typeof lifecycleAdapters;
@@ -163,6 +246,7 @@ export const findTaskPropertyDefinitionLifecycleTarget = async ({
         definition.hidden,
         definition.mandatory,
         definition.name,
+        definition.number_format as "numberFormat",
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision,
         definition.schema_id as "schemaId",
@@ -195,6 +279,7 @@ export const lockTaskPropertyDefinitionLifecycleTarget = async ({
         definition.hidden,
         definition.mandatory,
         definition.name,
+        definition.number_format as "numberFormat",
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision,
         definition.schema_id as "schemaId",
@@ -272,19 +357,22 @@ export const duplicateTaskPropertyDefinition = async ({
       hidden,
       mandatory,
       name,
+      number_format,
       schema_id,
       tenant_id
     )
     select
       ${source.datatype},
-      ${source.hidden},
+      ${source.datatype === 'text' ? false : source.hidden},
       ${source.mandatory},
       available_name.name,
+      ${source.numberFormat},
       ${source.schemaId},
       ${source.tenantId}
     from available_name
     returning
       datatype,
+      number_format as format,
       hidden,
       mandatory,
       name,
@@ -295,8 +383,35 @@ export const duplicateTaskPropertyDefinition = async ({
   if (target === undefined) {
     return undefined;
   }
-  await adapter.copyValues({ copyValues, source, target, tx });
-  return target;
+  if (target.datatype === 'number') {
+    await adapter.copyValues({ copyValues, source, target, tx });
+    return target;
+  }
+  if (target.datatype === 'select') {
+    return undefined;
+  }
+  if (target.datatype === 'checkbox') {
+    const definition: TaskPropertyDefinition = {
+      datatype: 'checkbox',
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    return definition;
+  }
+  const definition: TaskPropertyDefinition = {
+    datatype: 'text',
+    hidden: target.hidden,
+    mandatory: target.mandatory,
+    name: target.name,
+    propertyDefinitionId: target.propertyDefinitionId,
+    revision: target.revision,
+  };
+  await adapter.copyValues({ copyValues, source, target: definition, tx });
+  return definition;
 };
 
 export const deleteTaskPropertyDefinition = async ({

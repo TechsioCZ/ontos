@@ -1,5 +1,4 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const updateCheckboxPropertyValueActionKey: 'ticketing.updateCheckboxPropertyValue';
 export declare const updateCheckboxPropertyValueActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;

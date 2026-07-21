@@ -3,7 +3,7 @@ import type { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const duplicateTaskPropertyDefinitionActionKey: 'ticketing.duplicateTaskPropertyDefinition';
 export declare const duplicateTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly copyValues: Schema.Boolean;
+  readonly copyValues: Schema.optional<Schema.Boolean>;
   readonly expectedRevision: Schema.Finite;
   readonly propertyDefinitionId: Schema.String;
 }>;
@@ -23,7 +23,16 @@ export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
-        readonly datatype: Schema.Literal<'email'>;
+        readonly datatype: Schema.Literal<'number'>;
+        readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'text'>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
         readonly name: Schema.String;
@@ -48,7 +57,18 @@ export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.
           readonly revision: Schema.Finite;
         }>,
         Schema.Struct<{
-          readonly datatype: Schema.Literal<'email'>;
+          readonly datatype: Schema.Literal<'number'>;
+          readonly format: Schema.Literals<
+            readonly ['number', 'number_with_separators', 'percent']
+          >;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'text'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;

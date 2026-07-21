@@ -23,8 +23,6 @@ interface FakeEffect<T> {
 }
 
 const mocks = rs.hoisted(() => ({
-  capabilityAllowed: true,
-  capabilityAttempts: 0,
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
   readCalls: [] as string[],
   readFailuresRemaining: 0,
@@ -32,6 +30,18 @@ const mocks = rs.hoisted(() => ({
   taskCalls: [] as BoundaryCall<{ readonly collectionId: string }>[],
   taskFailuresRemaining: 1,
   toastCreate: rs.fn(),
+  urlDefinitionCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly mandatory: boolean;
+    readonly name: string;
+  }>[],
+  urlUpdateCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly expectedRevision: number;
+    readonly propertyDefinitionId: string;
+    readonly taskId: string;
+    readonly value: string;
+  }>[],
 }));
 
 test('Ticketing API publishes the CoreSDK failure status classes', () => {
@@ -51,11 +61,16 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'createCheckboxPropertyDefinitionAction',
     'createTaskAction',
     'createTaskCollectionAction',
+    'createTextPropertyDefinitionAction',
+    'createUrlPropertyDefinitionAction',
     'filterTaskCheckboxValues',
     'getTaskCollection',
-    'getTaskPropertyEditCapability',
     'getTaskPropertyWorkspace',
+    'queryTaskPropertyValues',
+    'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
+    'updateTextPropertyValueAction',
+    'updateUrlPropertyValueAction',
   ]) {
     expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);
   }
@@ -67,9 +82,6 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
     supportedLanguages: ['en'],
     t: (key: string) =>
       ({
-        'ticketing.email.definitionCreate': 'Create Email property',
-        'ticketing.email.definitionCreating': 'Creating Email property',
-        'ticketing.email.definitionName': 'Email property name',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
         'ticketing.role': 'Ticketing',
@@ -83,6 +95,12 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.taskCollection.openedTask': 'Opened Task',
         'ticketing.taskCollection.title': 'Title',
         'ticketing.title': 'Ticketing',
+        'ticketing.url.definitionCreate': 'Add URL property',
+        'ticketing.url.definitionCreating': 'Adding URL property',
+        'ticketing.url.definitionName': 'URL property name',
+        'ticketing.url.open': 'Open URL',
+        'ticketing.url.save': 'Save URL',
+        'ticketing.url.saving': 'Saving URL',
       })[key] ?? key,
   }),
 }));
@@ -182,29 +200,6 @@ rs.mock('../src/api/ticketing-client', () => {
       }
       return success(aggregate);
     },
-    getTaskPropertyEditCapability: () => {
-      mocks.capabilityAttempts += 1;
-      return mocks.capabilityAllowed
-        ? success({ canEdit: true })
-        : failure({ httpStatus: 403, message: 'Viewer is read-only.', ok: false });
-    },
-    runCreateEmailPropertyDefinitionAction: (payload: {
-      readonly collectionId: string;
-      readonly mandatory: boolean;
-      readonly name: string;
-    }) =>
-      success({
-        response: {
-          definition: {
-            datatype: 'email',
-            hidden: false,
-            mandatory: payload.mandatory,
-            name: payload.name,
-            propertyDefinitionId: 'email-property-1',
-            revision: 1,
-          },
-        },
-      }),
     runCreateTaskAction: (
       payload: { readonly collectionId: string },
       options: { readonly idempotencyKey?: string },
@@ -231,16 +226,55 @@ rs.mock('../src/api/ticketing-client', () => {
         response: { collection: aggregate.collection, schema: aggregate.schema },
       });
     },
-    runEffectRequest: (current: FakeEffect<unknown>) =>
-      current.result.ok
-        ? Promise.resolve(current.result.value)
-        : Promise.reject(current.result.value),
+    runCreateUrlPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly mandatory: boolean;
+        readonly name: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.urlDefinitionCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          definition: {
+            datatype: 'url',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name.trim(),
+            propertyDefinitionId: 'url-property-1',
+            revision: 1,
+          },
+        },
+      });
+    },
+    runEffectRequest: (current: FakeEffect<unknown>) => current.result.value,
+    runUpdateUrlPropertyValueAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly expectedRevision: number;
+        readonly propertyDefinitionId: string;
+        readonly taskId: string;
+        readonly value: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.urlUpdateCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          taskRevision: 2,
+          value: {
+            propertyDefinitionId: payload.propertyDefinitionId,
+            revision: 1,
+            value: payload.value.trim(),
+          },
+        },
+      });
+    },
   };
 });
 
 beforeEach(() => {
-  mocks.capabilityAllowed = true;
-  mocks.capabilityAttempts = 0;
   mocks.collectionCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
@@ -248,6 +282,8 @@ beforeEach(() => {
   mocks.taskCalls.length = 0;
   mocks.taskFailuresRemaining = 1;
   mocks.toastCreate.mockClear();
+  mocks.urlDefinitionCalls.length = 0;
+  mocks.urlUpdateCalls.length = 0;
   rs.stubGlobal(
     'fetch',
     rs.fn(() =>
@@ -345,20 +381,35 @@ test('retries only the governed read after both Actions succeed', async () => {
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
 });
 
-test('wires a denied value-edit capability to a read-only Email editor', async () => {
-  mocks.capabilityAllowed = false;
+test('creates, edits, and opens a URL through the public Ticketing surface', async () => {
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
   fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
   await screen.findByRole('region', { name: 'Opened Task' });
-  await waitFor(() => expect(mocks.capabilityAttempts).toBe(1));
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'Email property name' }), {
-    target: { value: 'Contact email' },
+  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+    target: { value: 'Reference URL' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Create Email property' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
 
-  const email = await screen.findByRole('textbox', { name: 'Contact email' });
-  expect((email as HTMLInputElement).readOnly).toBe(true);
+  const valueInput = await screen.findByRole('textbox', { name: 'Reference URL' });
+  const exactValue = 'HTTPS://Example.com/%7EExact?Q=One#Part';
+  fireEvent.change(valueInput, { target: { value: exactValue } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save URL' }));
+
+  const open = await screen.findByRole('link', { name: 'Open URL' });
+  expect(open.getAttribute('href')).toBe(exactValue);
+  expect(mocks.urlDefinitionCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    mandatory: false,
+    name: 'Reference URL',
+  });
+  expect(mocks.urlUpdateCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    expectedRevision: 0,
+    propertyDefinitionId: 'url-property-1',
+    taskId: 'task-1',
+    value: exactValue,
+  });
 });

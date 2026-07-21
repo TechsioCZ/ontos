@@ -12,7 +12,6 @@ import {
   updateCheckboxPropertyValueActionPayloadSchema,
   updateCheckboxPropertyValueActionResponseSchema,
 } from '../../shared/actions/update-checkbox-property-value.ts';
-import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
 import type {
   UpdateCheckboxPropertyValueActionPayload,
   UpdateCheckboxPropertyValueActionResponse,
@@ -96,13 +95,6 @@ const updateCheckboxPropertyValueActionHandler: ActionHandler<
       message: 'The Checkbox value changed elsewhere or is no longer available.',
     });
   }
-
-  await rejectTaskEditWithEmptyMandatoryEmail({
-    collectionId: input.collectionId,
-    db: services.tx,
-    taskId: input.taskId,
-    tenantId: services.context.tenantId,
-  });
 
   if (current.value === input.value) {
     services.markNoOp();

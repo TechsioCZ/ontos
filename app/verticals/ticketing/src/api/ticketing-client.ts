@@ -19,7 +19,6 @@ import type {
   TicketingReadiness,
   TaskCollectionAggregate,
   TaskPropertyDeletionImpact,
-  TaskPropertyEditCapability,
   TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
   CreateTaskCollectionActionOutcome,
@@ -46,14 +45,49 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
-  CreateEmailPropertyDefinitionActionFailure,
-  CreateEmailPropertyDefinitionActionOutcome,
-  CreateEmailPropertyDefinitionActionPayload,
-  UpdateEmailPropertyValueActionFailure,
-  UpdateEmailPropertyValueActionOutcome,
-  UpdateEmailPropertyValueActionPayload,
-  QueryTaskEmailValuesPayload,
-  QueryTaskEmailValuesResponse,
+  CreateTextPropertyDefinitionActionFailure,
+  CreateTextPropertyDefinitionActionOutcome,
+  CreateTextPropertyDefinitionActionPayload,
+  UpdateTextPropertyValueActionFailure,
+  UpdateTextPropertyValueActionOutcome,
+  UpdateTextPropertyValueActionPayload,
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  ConfigureNumberPropertyFormatActionFailure,
+  ConfigureNumberPropertyFormatActionOutcome,
+  ConfigureNumberPropertyFormatActionPayload,
+  CreateNumberPropertyDefinitionActionFailure,
+  CreateNumberPropertyDefinitionActionOutcome,
+  CreateNumberPropertyDefinitionActionPayload,
+  UpdateNumberPropertyValueActionFailure,
+  UpdateNumberPropertyValueActionOutcome,
+  UpdateNumberPropertyValueActionPayload,
+  CreateSelectPropertyDefinitionActionFailure,
+  CreateSelectPropertyDefinitionActionOutcome,
+  CreateSelectPropertyDefinitionActionPayload,
+  CreateSelectOptionActionFailure,
+  CreateSelectOptionActionOutcome,
+  CreateSelectOptionActionPayload,
+  UpdateSelectOptionActionFailure,
+  UpdateSelectOptionActionOutcome,
+  UpdateSelectOptionActionPayload,
+  UpdateSelectPropertyValueActionFailure,
+  UpdateSelectPropertyValueActionOutcome,
+  UpdateSelectPropertyValueActionPayload,
+  CreateSelectOptionAndSelectActionFailure,
+  CreateSelectOptionAndSelectActionOutcome,
+  CreateSelectOptionAndSelectActionPayload,
+  ConfigureSelectOptionOrderActionFailure,
+  ConfigureSelectOptionOrderActionOutcome,
+  ConfigureSelectOptionOrderActionPayload,
+  CreateUrlPropertyDefinitionActionFailure,
+  CreateUrlPropertyDefinitionActionOutcome,
+  CreateUrlPropertyDefinitionActionPayload,
+  QueryTaskUrlValuesPayload,
+  QueryTaskUrlValuesResponse,
+  UpdateUrlPropertyValueActionFailure,
+  UpdateUrlPropertyValueActionOutcome,
+  UpdateUrlPropertyValueActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -68,8 +102,19 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
-  | UpdateEmailPropertyValueActionFailure
-  | CreateEmailPropertyDefinitionActionFailure
+  | UpdateUrlPropertyValueActionFailure
+  | CreateUrlPropertyDefinitionActionFailure
+  | ConfigureSelectOptionOrderActionFailure
+  | CreateSelectOptionAndSelectActionFailure
+  | UpdateSelectPropertyValueActionFailure
+  | UpdateSelectOptionActionFailure
+  | CreateSelectOptionActionFailure
+  | CreateSelectPropertyDefinitionActionFailure
+  | ConfigureNumberPropertyFormatActionFailure
+  | UpdateNumberPropertyValueActionFailure
+  | CreateNumberPropertyDefinitionActionFailure
+  | UpdateTextPropertyValueActionFailure
+  | CreateTextPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -93,6 +138,19 @@ export interface TicketingClientOptions {
 }
 
 type TicketingActionClientOptions = TicketingClientOptions & { idempotencyKey?: string };
+
+const browserLocaleFallback = 'en';
+
+export const resolveTicketingBrowserLocale = (): string => {
+  if (typeof navigator === 'undefined') {
+    return browserLocaleFallback;
+  }
+
+  const preferredLocale =
+    navigator.languages.find((language) => language.trim().length > 0) ?? navigator.language;
+
+  return preferredLocale.trim() || browserLocaleFallback;
+};
 
 const actionHeaders = (options: TicketingActionClientOptions): Record<string, string> | undefined =>
   options.idempotencyKey === undefined
@@ -160,9 +218,12 @@ export const getTaskCollection = (
 export const getTaskPropertyWorkspace = (
   collectionId: string,
   options: TicketingClientOptions = {},
-): TicketingClientEffect<TaskPropertyWorkspace> =>
-  createTicketingClient({
+): TicketingClientEffect<TaskPropertyWorkspace> => {
+  const locale = resolveTicketingBrowserLocale();
+
+  return createTicketingClient({
     ...options,
+    locale,
     operationContext:
       options.operationContext ?? ticketingOperationContexts.getTaskPropertyWorkspace,
   }).pipe(
@@ -170,26 +231,11 @@ export const getTaskPropertyWorkspace = (
       client.ticketing.getTaskPropertyWorkspace({
         headers: options.headers ?? {},
         params: { collectionId },
+        query: { locale },
       }),
     ),
   );
-
-export const getTaskPropertyEditCapability = (
-  collectionId: string,
-  options: TicketingClientOptions = {},
-): TicketingClientEffect<TaskPropertyEditCapability> =>
-  createTicketingClient({
-    ...options,
-    operationContext:
-      options.operationContext ?? ticketingOperationContexts.getTaskPropertyEditCapability,
-  }).pipe(
-    Effect.flatMap((client) =>
-      client.ticketing.getTaskPropertyEditCapability({
-        headers: options.headers ?? {},
-        params: { collectionId },
-      }),
-    ),
-  );
+};
 
 export const filterTaskCheckboxValues = (
   collectionId: string,
@@ -211,22 +257,18 @@ export const filterTaskCheckboxValues = (
     ),
   );
 
-export const queryTaskEmailValues = (
-  payload: QueryTaskEmailValuesPayload,
+export const queryTaskUrlValues = (
+  payload: QueryTaskUrlValuesPayload,
   options: TicketingClientOptions = {},
-): TicketingClientEffect<QueryTaskEmailValuesResponse> =>
+): TicketingClientEffect<QueryTaskUrlValuesResponse> =>
   createTicketingClient({
     ...options,
-    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskEmailValues,
+    operationContext: options.operationContext ?? ticketingOperationContexts.queryTaskUrlValues,
   }).pipe(
     Effect.flatMap((client) =>
-      client.ticketing.queryTaskEmailValues({
+      client.ticketing.queryTaskUrlValues({
         headers: options.headers ?? {},
-        params: {
-          collectionId: payload.collectionId,
-          propertyDefinitionId: payload.propertyDefinitionId,
-        },
-        query: { operation: payload.operation, query: payload.query },
+        payload,
       }),
     ),
   );
@@ -245,6 +287,23 @@ export const getTaskPropertyDeletionImpact = (
       client.ticketing.getTaskPropertyDeletionImpact({
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const queryTaskPropertyValues = (
+  payload: QueryTaskPropertyValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskPropertyValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.queryTaskPropertyValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskPropertyValues({
+        headers: options.headers ?? {},
+        payload,
       }),
     ),
   );
@@ -416,10 +475,10 @@ export const runTransitionTaskRetentionAction = (
   );
 };
 
-export const runCreateEmailPropertyDefinitionAction = (
-  payload: CreateEmailPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
-): TicketingClientEffect<CreateEmailPropertyDefinitionActionOutcome> => {
+export const runCreateTextPropertyDefinitionAction = (
+  payload: CreateTextPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateTextPropertyDefinitionActionOutcome> => {
   const headers =
     options.idempotencyKey === undefined
       ? options.headers
@@ -432,10 +491,10 @@ export const runCreateEmailPropertyDefinitionAction = (
     ...options,
     ...(headers === undefined ? undefined : { headers }),
     operationContext:
-      options.operationContext ?? ticketingOperationContexts.createEmailPropertyDefinitionAction,
+      options.operationContext ?? ticketingOperationContexts.createTextPropertyDefinitionAction,
   }).pipe(
     Effect.flatMap((client) =>
-      client.ticketing.createEmailPropertyDefinitionAction({
+      client.ticketing.createTextPropertyDefinitionAction({
         headers: headers ?? {},
         payload,
       }),
@@ -443,10 +502,10 @@ export const runCreateEmailPropertyDefinitionAction = (
   );
 };
 
-export const runUpdateEmailPropertyValueAction = (
-  payload: UpdateEmailPropertyValueActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
-): TicketingClientEffect<UpdateEmailPropertyValueActionOutcome> => {
+export const runUpdateTextPropertyValueAction = (
+  payload: UpdateTextPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateTextPropertyValueActionOutcome> => {
   const headers =
     options.idempotencyKey === undefined
       ? options.headers
@@ -459,10 +518,248 @@ export const runUpdateEmailPropertyValueAction = (
     ...options,
     ...(headers === undefined ? undefined : { headers }),
     operationContext:
-      options.operationContext ?? ticketingOperationContexts.updateEmailPropertyValueAction,
+      options.operationContext ?? ticketingOperationContexts.updateTextPropertyValueAction,
   }).pipe(
     Effect.flatMap((client) =>
-      client.ticketing.updateEmailPropertyValueAction({
+      client.ticketing.updateTextPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateNumberPropertyDefinitionAction = (
+  payload: CreateNumberPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateNumberPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createNumberPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createNumberPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateNumberPropertyValueAction = (
+  payload: UpdateNumberPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateNumberPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateNumberPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateNumberPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureNumberPropertyFormatAction = (
+  payload: ConfigureNumberPropertyFormatActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigureNumberPropertyFormatActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureNumberPropertyFormatAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureNumberPropertyFormatAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectPropertyDefinitionAction = (
+  payload: CreateSelectPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateSelectPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createSelectPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createSelectPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectOptionAction = (
+  payload: CreateSelectOptionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateSelectOptionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createSelectOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createSelectOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateSelectOptionAction = (
+  payload: UpdateSelectOptionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateSelectOptionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateSelectOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateSelectOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateSelectPropertyValueAction = (
+  payload: UpdateSelectPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateSelectPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateSelectPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateSelectPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectOptionAndSelectAction = (
+  payload: CreateSelectOptionAndSelectActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateSelectOptionAndSelectActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createSelectOptionAndSelectAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createSelectOptionAndSelectAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export type ConfigureSelectOptionOrderClientPayload = Omit<
+  ConfigureSelectOptionOrderActionPayload,
+  'viewerLocale'
+>;
+
+export const runConfigureSelectOptionOrderAction = (
+  payload: ConfigureSelectOptionOrderClientPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigureSelectOptionOrderActionOutcome> => {
+  const headers = actionHeaders(options);
+  const locale = resolveTicketingBrowserLocale();
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    locale,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureSelectOptionOrderAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureSelectOptionOrderAction({
+        headers: headers ?? {},
+        payload: { ...payload, viewerLocale: locale },
+      }),
+    ),
+  );
+};
+
+export const runCreateUrlPropertyDefinitionAction = (
+  payload: CreateUrlPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateUrlPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createUrlPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createUrlPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateUrlPropertyValueAction = (
+  payload: UpdateUrlPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateUrlPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateUrlPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateUrlPropertyValueAction({
         headers: headers ?? {},
         payload,
       }),
