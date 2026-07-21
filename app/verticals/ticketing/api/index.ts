@@ -6,6 +6,8 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { updatePhonePropertyValueActionRegistration } from '../src/actions/update-phone-property-value.ts';
+import { createPhonePropertyDefinitionActionRegistration } from '../src/actions/create-phone-property-definition.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
@@ -297,6 +299,50 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           Effect.withSpan('ultramodern.api.ticketing.transitionTaskRetentionAction', {
             attributes: operationAttributes(
               ticketingOperationContexts.transitionTaskRetentionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createPhonePropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createPhonePropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createPhonePropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createPhonePropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updatePhonePropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updatePhonePropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updatePhonePropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updatePhonePropertyValueAction,
             ),
             kind: 'server',
           }),

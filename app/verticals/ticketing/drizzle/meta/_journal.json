@@ -50,6 +50,13 @@
       "when": 1784572357349,
       "tag": "0006_fancy_james_howlett",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784618214061,
+      "tag": "0007_gifted_warbird",
+      "breakpoints": true
     }
   ]
 }

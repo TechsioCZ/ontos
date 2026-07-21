@@ -1,4 +1,6 @@
 export {
+  runUpdatePhonePropertyValueAction,
+  runCreatePhonePropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,

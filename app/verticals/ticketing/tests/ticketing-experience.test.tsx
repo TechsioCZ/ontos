@@ -47,15 +47,34 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
 
   for (const endpoint of [
     'createCheckboxPropertyDefinitionAction',
+    'createPhonePropertyDefinitionAction',
     'createTaskAction',
     'createTaskCollectionAction',
     'filterTaskCheckboxValues',
     'getTaskCollection',
     'getTaskPropertyWorkspace',
     'updateCheckboxPropertyValueAction',
+    'updatePhonePropertyValueAction',
   ]) {
     expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);
   }
+});
+
+test('the public API exposes Phone mutations and no Phone query operations', () => {
+  const phoneEndpoints: string[] = [];
+  HttpApi.reflect(ticketingApi, {
+    onEndpoint({ endpoint }) {
+      if (endpoint.name.toLowerCase().includes('phone')) {
+        phoneEndpoints.push(endpoint.name);
+      }
+    },
+    onGroup() {},
+  });
+
+  expect(phoneEndpoints.toSorted()).toEqual([
+    'createPhonePropertyDefinitionAction',
+    'updatePhonePropertyValueAction',
+  ]);
 });
 
 rs.mock('@modern-js/plugin-i18n/runtime', () => ({

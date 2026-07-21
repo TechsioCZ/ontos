@@ -18,6 +18,12 @@ export type {
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
 export type {
+  CreatePhonePropertyDefinitionActionFailure,
+  CreatePhonePropertyDefinitionActionOutcome,
+  CreatePhonePropertyDefinitionActionPayload,
+  CreatePhonePropertyDefinitionActionResponse,
+} from './actions/create-phone-property-definition';
+export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
   CreateTaskActionPayload,
@@ -48,6 +54,12 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdatePhonePropertyValueActionFailure,
+  UpdatePhonePropertyValueActionOutcome,
+  UpdatePhonePropertyValueActionPayload,
+  UpdatePhonePropertyValueActionResponse,
+} from './actions/update-phone-property-value';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
@@ -57,12 +69,16 @@ export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export {
   checkboxPropertyDefinitionSchema,
+  phonePropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  PhonePropertyDefinition,
   TaskPropertyDefinition,
 } from './task-property-definition';
+export { phoneTelHref, validatePhoneValue } from './phone-value';
+export type { PhoneValueValidationFailure, PhoneValueValidationResult } from './phone-value';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
 export type {
   FilterTaskCheckboxValuesPayload,
@@ -141,14 +157,26 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly actionInvocationId: Schema.optional<Schema.String>;
             readonly ok: Schema.Literal<true>;
             readonly response: Schema.Struct<{
-              readonly definition: Schema.Struct<{
-                readonly datatype: Schema.Literal<'checkbox'>;
-                readonly hidden: Schema.Boolean;
-                readonly mandatory: Schema.Boolean;
-                readonly name: Schema.String;
-                readonly propertyDefinitionId: Schema.String;
-                readonly revision: Schema.Finite;
-              }>;
+              readonly definition: Schema.Union<
+                readonly [
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'checkbox'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'phone'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                ]
+              >;
             }>;
           }>
         >,
@@ -236,6 +264,99 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly response: Schema.Struct<{
               readonly definition: Schema.Struct<{
                 readonly datatype: Schema.Literal<'checkbox'>;
+                readonly hidden: Schema.Boolean;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'createPhonePropertyDefinitionAction',
+        'POST',
+        '/ticketing/actions/create-phone-property-definition',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly mandatory: Schema.Boolean;
+            readonly name: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly definition: Schema.Struct<{
+                readonly datatype: Schema.Literal<'phone'>;
                 readonly hidden: Schema.Boolean;
                 readonly mandatory: Schema.Boolean;
                 readonly name: Schema.String;
@@ -606,14 +727,26 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly actionInvocationId: Schema.optional<Schema.String>;
             readonly ok: Schema.Literal<true>;
             readonly response: Schema.Struct<{
-              readonly definition: Schema.Struct<{
-                readonly datatype: Schema.Literal<'checkbox'>;
-                readonly hidden: Schema.Boolean;
-                readonly mandatory: Schema.Boolean;
-                readonly name: Schema.String;
-                readonly propertyDefinitionId: Schema.String;
-                readonly revision: Schema.Finite;
-              }>;
+              readonly definition: Schema.Union<
+                readonly [
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'checkbox'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'phone'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                ]
+              >;
             }>;
           }>
         >,
@@ -983,14 +1116,26 @@ export declare const ticketingApi: HttpApi.HttpApi<
           Schema.Struct<{
             readonly collectionId: Schema.String;
             readonly propertyDefinitions: Schema.$Array<
-              Schema.Struct<{
-                readonly datatype: Schema.Literal<'checkbox'>;
-                readonly hidden: Schema.Boolean;
-                readonly mandatory: Schema.Boolean;
-                readonly name: Schema.String;
-                readonly propertyDefinitionId: Schema.String;
-                readonly revision: Schema.Finite;
-              }>
+              Schema.Union<
+                readonly [
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'checkbox'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'phone'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                ]
+              >
             >;
             readonly tasks: Schema.$Array<
               Schema.Struct<{
@@ -999,6 +1144,13 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly propertyDefinitionId: Schema.String;
                     readonly revision: Schema.Finite;
                     readonly value: Schema.Boolean;
+                  }>
+                >;
+                readonly phoneValues: Schema.$Array<
+                  Schema.Struct<{
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly value: Schema.String;
                   }>
                 >;
                 readonly taskId: Schema.String;
@@ -1293,6 +1445,101 @@ export declare const ticketingApi: HttpApi.HttpApi<
         >,
         never,
         never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'updatePhonePropertyValueAction',
+        'POST',
+        '/ticketing/actions/update-phone-property-value',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly expectedRevision: Schema.Finite;
+            readonly propertyDefinitionId: Schema.String;
+            readonly taskId: Schema.String;
+            readonly value: Schema.NullOr<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly taskRevision: Schema.Finite;
+              readonly value: Schema.NullOr<
+                Schema.Struct<{
+                  readonly propertyDefinitionId: Schema.String;
+                  readonly revision: Schema.Finite;
+                  readonly value: Schema.String;
+                }>
+              >;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
       >,
     false
   >
@@ -1305,6 +1552,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   createCheckboxPropertyDefinitionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  createPhonePropertyDefinitionAction: {
     method: string;
     operationId: string;
     routePath: string;
@@ -1383,6 +1636,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   updateCheckboxPropertyValueAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  updatePhonePropertyValueAction: {
     method: string;
     operationId: string;
     routePath: string;

@@ -1,0 +1,903 @@
+{
+  "id": "5f87fc89-720a-4878-9cfe-ba160467e692",
+  "prevId": "776ee2e5-cbf4-45b2-a553-d0f5839dab08",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "ticketing.task_checkbox_values": {
+      "name": "task_checkbox_values",
+      "schema": "ticketing",
+      "columns": {
+        "property_definition_id": {
+          "name": "property_definition_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {
+        "ticketing_task_checkbox_values_filter_idx": {
+          "name": "ticketing_task_checkbox_values_filter_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "property_definition_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "value",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "task_checkbox_values_property_definition_id_task_property_definitions_property_definition_id_fk": {
+          "name": "task_checkbox_values_property_definition_id_task_property_definitions_property_definition_id_fk",
+          "tableFrom": "task_checkbox_values",
+          "tableTo": "task_property_definitions",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "property_definition_id"
+          ],
+          "columnsTo": [
+            "property_definition_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_checkbox_values_task_id_tasks_task_id_fk": {
+          "name": "task_checkbox_values_task_id_tasks_task_id_fk",
+          "tableFrom": "task_checkbox_values",
+          "tableTo": "tasks",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "task_id"
+          ],
+          "columnsTo": [
+            "task_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_checkbox_values_tenant_id_tenants_tenant_id_fk": {
+          "name": "task_checkbox_values_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "task_checkbox_values",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "ticketing_task_checkbox_values_pk": {
+          "name": "ticketing_task_checkbox_values_pk",
+          "columns": [
+            "task_id",
+            "property_definition_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ticketing_task_checkbox_values_revision_ck": {
+          "name": "ticketing_task_checkbox_values_revision_ck",
+          "value": "\"ticketing\".\"task_checkbox_values\".\"revision\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "ticketing.task_collections": {
+      "name": "task_collections",
+      "schema": "ticketing",
+      "columns": {
+        "collection_id": {
+          "name": "collection_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "ticketing_task_collections_tenant_collection_uk": {
+          "name": "ticketing_task_collections_tenant_collection_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "collection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ticketing_task_collections_tenant_idx": {
+          "name": "ticketing_task_collections_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "task_collections_tenant_id_tenants_tenant_id_fk": {
+          "name": "task_collections_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "task_collections",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "ticketing.task_phone_values": {
+      "name": "task_phone_values",
+      "schema": "ticketing",
+      "columns": {
+        "property_definition_id": {
+          "name": "property_definition_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "task_phone_values_property_definition_id_task_property_definitions_property_definition_id_fk": {
+          "name": "task_phone_values_property_definition_id_task_property_definitions_property_definition_id_fk",
+          "tableFrom": "task_phone_values",
+          "tableTo": "task_property_definitions",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "property_definition_id"
+          ],
+          "columnsTo": [
+            "property_definition_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_phone_values_task_id_tasks_task_id_fk": {
+          "name": "task_phone_values_task_id_tasks_task_id_fk",
+          "tableFrom": "task_phone_values",
+          "tableTo": "tasks",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "task_id"
+          ],
+          "columnsTo": [
+            "task_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_phone_values_tenant_id_tenants_tenant_id_fk": {
+          "name": "task_phone_values_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "task_phone_values",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "ticketing_task_phone_values_pk": {
+          "name": "ticketing_task_phone_values_pk",
+          "columns": [
+            "task_id",
+            "property_definition_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ticketing_task_phone_values_length_ck": {
+          "name": "ticketing_task_phone_values_length_ck",
+          "value": "char_length(\"ticketing\".\"task_phone_values\".\"value\") <= 256"
+        },
+        "ticketing_task_phone_values_not_blank_ck": {
+          "name": "ticketing_task_phone_values_not_blank_ck",
+          "value": "btrim(\"ticketing\".\"task_phone_values\".\"value\") <> ''"
+        },
+        "ticketing_task_phone_values_revision_ck": {
+          "name": "ticketing_task_phone_values_revision_ck",
+          "value": "\"ticketing\".\"task_phone_values\".\"revision\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "ticketing.task_property_definitions": {
+      "name": "task_property_definitions",
+      "schema": "ticketing",
+      "columns": {
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "datatype": {
+          "name": "datatype",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hidden": {
+          "name": "hidden",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "mandatory": {
+          "name": "mandatory",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "property_definition_id": {
+          "name": "property_definition_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "schema_id": {
+          "name": "schema_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "ticketing_task_property_definitions_schema_name_uk": {
+          "name": "ticketing_task_property_definitions_schema_name_uk",
+          "columns": [
+            {
+              "expression": "schema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lower(\"name\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "task_property_definitions_schema_id_task_schemas_schema_id_fk": {
+          "name": "task_property_definitions_schema_id_task_schemas_schema_id_fk",
+          "tableFrom": "task_property_definitions",
+          "tableTo": "task_schemas",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "schema_id"
+          ],
+          "columnsTo": [
+            "schema_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_property_definitions_tenant_id_tenants_tenant_id_fk": {
+          "name": "task_property_definitions_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "task_property_definitions",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ticketing_task_property_definitions_name_ck": {
+          "name": "ticketing_task_property_definitions_name_ck",
+          "value": "btrim(\"ticketing\".\"task_property_definitions\".\"name\") <> ''"
+        },
+        "ticketing_task_property_definitions_datatype_ck": {
+          "name": "ticketing_task_property_definitions_datatype_ck",
+          "value": "\"ticketing\".\"task_property_definitions\".\"datatype\" in ('title', 'checkbox', 'phone')"
+        },
+        "ticketing_task_property_definitions_revision_ck": {
+          "name": "ticketing_task_property_definitions_revision_ck",
+          "value": "\"ticketing\".\"task_property_definitions\".\"revision\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "ticketing.task_revisions": {
+      "name": "task_revisions",
+      "schema": "ticketing",
+      "columns": {
+        "changed_at": {
+          "name": "changed_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "changed_by_principal_id": {
+          "name": "changed_by_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "ticketing_task_revisions_tenant_idx": {
+          "name": "ticketing_task_revisions_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "task_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "task_revisions_changed_by_principal_id_principals_principal_id_fk": {
+          "name": "task_revisions_changed_by_principal_id_principals_principal_id_fk",
+          "tableFrom": "task_revisions",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "changed_by_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_revisions_task_id_tasks_task_id_fk": {
+          "name": "task_revisions_task_id_tasks_task_id_fk",
+          "tableFrom": "task_revisions",
+          "tableTo": "tasks",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "task_id"
+          ],
+          "columnsTo": [
+            "task_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_revisions_tenant_id_tenants_tenant_id_fk": {
+          "name": "task_revisions_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "task_revisions",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "ticketing_task_revisions_pk": {
+          "name": "ticketing_task_revisions_pk",
+          "columns": [
+            "task_id",
+            "revision"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ticketing_task_revisions_reason_ck": {
+          "name": "ticketing_task_revisions_reason_ck",
+          "value": "\"ticketing\".\"task_revisions\".\"reason\" in ('created', 'checkbox_value_changed', 'phone_value_changed', 'archived', 'restored', 'soft_deleted')"
+        },
+        "ticketing_task_revisions_revision_ck": {
+          "name": "ticketing_task_revisions_revision_ck",
+          "value": "\"ticketing\".\"task_revisions\".\"revision\" >= 1"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "ticketing.task_schemas": {
+      "name": "task_schemas",
+      "schema": "ticketing",
+      "columns": {
+        "collection_id": {
+          "name": "collection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "schema_id": {
+          "name": "schema_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "ticketing_task_schemas_collection_uk": {
+          "name": "ticketing_task_schemas_collection_uk",
+          "columns": [
+            {
+              "expression": "collection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ticketing_task_schemas_tenant_schema_uk": {
+          "name": "ticketing_task_schemas_tenant_schema_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "schema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "task_schemas_collection_id_task_collections_collection_id_fk": {
+          "name": "task_schemas_collection_id_task_collections_collection_id_fk",
+          "tableFrom": "task_schemas",
+          "tableTo": "task_collections",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "collection_id"
+          ],
+          "columnsTo": [
+            "collection_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "task_schemas_tenant_id_tenants_tenant_id_fk": {
+          "name": "task_schemas_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "task_schemas",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "ticketing.tasks": {
+      "name": "tasks",
+      "schema": "ticketing",
+      "columns": {
+        "collection_id": {
+          "name": "collection_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by_principal_id": {
+          "name": "created_by_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_edited_at": {
+          "name": "last_edited_at",
+          "type": "timestamp (3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_edited_by_principal_id": {
+          "name": "last_edited_by_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "retention_state": {
+          "name": "retention_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "task_id": {
+          "name": "task_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        }
+      },
+      "indexes": {
+        "ticketing_tasks_collection_idx": {
+          "name": "ticketing_tasks_collection_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "collection_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ticketing_tasks_created_by_idx": {
+          "name": "ticketing_tasks_created_by_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_by_principal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "tasks_collection_id_task_collections_collection_id_fk": {
+          "name": "tasks_collection_id_task_collections_collection_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "task_collections",
+          "schemaTo": "ticketing",
+          "columnsFrom": [
+            "collection_id"
+          ],
+          "columnsTo": [
+            "collection_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "tasks_created_by_principal_id_principals_principal_id_fk": {
+          "name": "tasks_created_by_principal_id_principals_principal_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "created_by_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "tasks_last_edited_by_principal_id_principals_principal_id_fk": {
+          "name": "tasks_last_edited_by_principal_id_principals_principal_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "principals",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "last_edited_by_principal_id"
+          ],
+          "columnsTo": [
+            "principal_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "tasks_tenant_id_tenants_tenant_id_fk": {
+          "name": "tasks_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "tasks",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ticketing_tasks_revision_ck": {
+          "name": "ticketing_tasks_revision_ck",
+          "value": "\"ticketing\".\"tasks\".\"revision\" >= 1"
+        },
+        "ticketing_tasks_retention_state_ck": {
+          "name": "ticketing_tasks_retention_state_ck",
+          "value": "\"ticketing\".\"tasks\".\"retention_state\" in ('active', 'archived', 'soft_deleted')"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "ticketing": "ticketing"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

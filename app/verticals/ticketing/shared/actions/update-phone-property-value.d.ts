@@ -1,65 +1,42 @@
 import type { Schema } from '@modern-js/plugin-bff/effect-client';
 
-export declare const duplicateTaskPropertyDefinitionActionKey: 'ticketing.duplicateTaskPropertyDefinition';
-export declare const duplicateTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
+export declare const updatePhonePropertyValueActionKey: 'ticketing.updatePhonePropertyValue';
+export declare const updatePhonePropertyValueActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly copyValues: Schema.Boolean;
   readonly expectedRevision: Schema.Finite;
   readonly propertyDefinitionId: Schema.String;
+  readonly taskId: Schema.String;
+  readonly value: Schema.NullOr<Schema.String>;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionHeadersSchema: Schema.Struct<{
+export declare const updatePhonePropertyValueActionHeadersSchema: Schema.Struct<{
   readonly 'Idempotency-Key': Schema.optional<Schema.String>;
   readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema.Struct<{
-  readonly definition: Schema.Union<
-    readonly [
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'checkbox'>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-      Schema.Struct<{
-        readonly datatype: Schema.Literal<'phone'>;
-        readonly hidden: Schema.Boolean;
-        readonly mandatory: Schema.Boolean;
-        readonly name: Schema.String;
-        readonly propertyDefinitionId: Schema.String;
-        readonly revision: Schema.Finite;
-      }>,
-    ]
+export declare const updatePhonePropertyValueActionResponseSchema: Schema.Struct<{
+  readonly taskRevision: Schema.Finite;
+  readonly value: Schema.NullOr<
+    Schema.Struct<{
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+      readonly value: Schema.String;
+    }>
   >;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.Struct<{
+export declare const updatePhonePropertyValueActionOutcomeSchema: Schema.Struct<{
   readonly actionInvocationId: Schema.optional<Schema.String>;
   readonly ok: Schema.Literal<true>;
   readonly response: Schema.Struct<{
-    readonly definition: Schema.Union<
-      readonly [
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'checkbox'>;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-        Schema.Struct<{
-          readonly datatype: Schema.Literal<'phone'>;
-          readonly hidden: Schema.Boolean;
-          readonly mandatory: Schema.Boolean;
-          readonly name: Schema.String;
-          readonly propertyDefinitionId: Schema.String;
-          readonly revision: Schema.Finite;
-        }>,
-      ]
+    readonly taskRevision: Schema.Finite;
+    readonly value: Schema.NullOr<
+      Schema.Struct<{
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+        readonly value: Schema.String;
+      }>
     >;
   }>;
 }>;
-export declare const duplicateTaskPropertyDefinitionActionFailureSchemas: readonly [
+export declare const updatePhonePropertyValueActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
     readonly httpStatus: Schema.Finite;
@@ -114,7 +91,7 @@ export declare const duplicateTaskPropertyDefinitionActionFailureSchemas: readon
     >;
   }>,
 ];
-export declare const duplicateTaskPropertyDefinitionActionFailureSchema: Schema.Union<
+export declare const updatePhonePropertyValueActionFailureSchema: Schema.Union<
   readonly [
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;
@@ -171,12 +148,12 @@ export declare const duplicateTaskPropertyDefinitionActionFailureSchema: Schema.
     }>,
   ]
 >;
-export type DuplicateTaskPropertyDefinitionActionPayload =
-  typeof duplicateTaskPropertyDefinitionActionPayloadSchema.Type;
-export type DuplicateTaskPropertyDefinitionActionResponse =
-  typeof duplicateTaskPropertyDefinitionActionResponseSchema.Type;
-export type DuplicateTaskPropertyDefinitionActionOutcome =
-  typeof duplicateTaskPropertyDefinitionActionOutcomeSchema.Type;
-export type DuplicateTaskPropertyDefinitionActionFailure =
-  typeof duplicateTaskPropertyDefinitionActionFailureSchema.Type;
-export declare const duplicateTaskPropertyDefinitionActionTitle: 'Duplicate Task Property Definition';
+export type UpdatePhonePropertyValueActionPayload =
+  typeof updatePhonePropertyValueActionPayloadSchema.Type;
+export type UpdatePhonePropertyValueActionResponse =
+  typeof updatePhonePropertyValueActionResponseSchema.Type;
+export type UpdatePhonePropertyValueActionOutcome =
+  typeof updatePhonePropertyValueActionOutcomeSchema.Type;
+export type UpdatePhonePropertyValueActionFailure =
+  typeof updatePhonePropertyValueActionFailureSchema.Type;
+export declare const updatePhonePropertyValueActionTitle: 'Update Phone Property Value';

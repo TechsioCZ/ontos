@@ -6,6 +6,18 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  updatePhonePropertyValueActionHeadersSchema,
+  updatePhonePropertyValueActionFailureSchemas,
+  updatePhonePropertyValueActionOutcomeSchema,
+  updatePhonePropertyValueActionPayloadSchema,
+} from './actions/update-phone-property-value';
+import {
+  createPhonePropertyDefinitionActionHeadersSchema,
+  createPhonePropertyDefinitionActionFailureSchemas,
+  createPhonePropertyDefinitionActionOutcomeSchema,
+  createPhonePropertyDefinitionActionPayloadSchema,
+} from './actions/create-phone-property-definition';
+import {
   transitionTaskRetentionActionHeadersSchema,
   transitionTaskRetentionActionFailureSchemas,
   transitionTaskRetentionActionOutcomeSchema,
@@ -80,6 +92,12 @@ export type {
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
 export type {
+  CreatePhonePropertyDefinitionActionFailure,
+  CreatePhonePropertyDefinitionActionOutcome,
+  CreatePhonePropertyDefinitionActionPayload,
+  CreatePhonePropertyDefinitionActionResponse,
+} from './actions/create-phone-property-definition';
+export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
   CreateTaskActionPayload,
@@ -110,6 +128,12 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdatePhonePropertyValueActionFailure,
+  UpdatePhonePropertyValueActionOutcome,
+  UpdatePhonePropertyValueActionPayload,
+  UpdatePhonePropertyValueActionResponse,
+} from './actions/update-phone-property-value';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
@@ -119,12 +143,16 @@ export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export {
   checkboxPropertyDefinitionSchema,
+  phonePropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  PhonePropertyDefinition,
   TaskPropertyDefinition,
 } from './task-property-definition';
+export { phoneTelHref, validatePhoneValue } from './phone-value';
+export type { PhoneValueValidationFailure, PhoneValueValidationResult } from './phone-value';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
 export type {
   FilterTaskCheckboxValuesPayload,
@@ -379,6 +407,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: transitionTaskRetentionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createPhonePropertyDefinitionAction',
+        '/ticketing/actions/create-phone-property-definition',
+        {
+          error: createPhonePropertyDefinitionActionFailureSchemas,
+          headers: createPhonePropertyDefinitionActionHeadersSchema,
+          payload: createPhonePropertyDefinitionActionPayloadSchema,
+          success: createPhonePropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updatePhonePropertyValueAction',
+        '/ticketing/actions/update-phone-property-value',
+        {
+          error: updatePhonePropertyValueActionFailureSchemas,
+          headers: updatePhonePropertyValueActionHeadersSchema,
+          payload: updatePhonePropertyValueActionPayloadSchema,
+          success: updatePhonePropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -393,6 +445,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-checkbox-property-definition',
+    source: 'generated-client',
+  },
+  createPhonePropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createPhonePropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-phone-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -473,6 +531,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
     routePath: '/ticketing/actions/update-checkbox-property-value',
+    source: 'generated-client',
+  },
+  updatePhonePropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updatePhonePropertyValueAction',
+    routePath: '/ticketing/actions/update-phone-property-value',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;
