@@ -26,12 +26,19 @@ export const urlPropertyValueSchema = Schema.Struct({
   value: Schema.NullOr(Schema.String),
 });
 
+export const emailPropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.NullOr(Schema.String),
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
+      emailValues: Schema.Array(emailPropertyValueSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
       taskId: Schema.String,

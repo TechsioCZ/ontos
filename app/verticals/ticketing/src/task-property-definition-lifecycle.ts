@@ -78,6 +78,53 @@ const checkboxLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    if (!copyValues) {
+      return;
+    }
+    await tx.execute(sql`
+      insert into ticketing.task_email_values (
+        normalized_value,
+        property_definition_id,
+        task_id,
+        tenant_id,
+        value
+      )
+      select
+        source_value.normalized_value,
+        ${target.propertyDefinitionId},
+        source_value.task_id,
+        source_value.tenant_id,
+        source_value.value
+      from ticketing.task_email_values as source_value
+      where source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+        and source_value.value is not null
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_email_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_email_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.value is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const textLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ source, target, tx }) => {
     await tx.execute(sql`
@@ -207,6 +254,7 @@ const urlLifecycleAdapter: TaskPropertyLifecycleAdapter = {
 
 const lifecycleAdapters = {
   checkbox: checkboxLifecycleAdapter,
+  email: emailLifecycleAdapter,
   number: numberLifecycleAdapter,
   text: textLifecycleAdapter,
   url: urlLifecycleAdapter,
@@ -402,16 +450,19 @@ export const duplicateTaskPropertyDefinition = async ({
     await adapter.copyValues({ copyValues, source, target: definition, tx });
     return definition;
   }
-  const definition: TaskPropertyDefinition = {
-    datatype: 'text',
-    hidden: target.hidden,
-    mandatory: target.mandatory,
-    name: target.name,
-    propertyDefinitionId: target.propertyDefinitionId,
-    revision: target.revision,
-  };
-  await adapter.copyValues({ copyValues, source, target: definition, tx });
-  return definition;
+  if (target.datatype === 'email' || target.datatype === 'text' || target.datatype === 'url') {
+    const definition: TaskPropertyDefinition = {
+      datatype: target.datatype,
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    return definition;
+  }
+  return undefined;
 };
 
 export const deleteTaskPropertyDefinition = async ({

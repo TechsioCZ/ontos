@@ -1,5 +1,8 @@
 export {
+  queryTaskEmailValues,
   queryTaskUrlValues,
+  runUpdateEmailPropertyValueAction,
+  runCreateEmailPropertyDefinitionAction,
   runUpdateUrlPropertyValueAction,
   runCreateUrlPropertyDefinitionAction,
   runConfigureSelectOptionOrderAction,
@@ -29,6 +32,7 @@ export {
   getTicketing,
   getTicketingReadiness,
   getTaskPropertyWorkspace,
+  getTaskPropertyEditCapability,
   listTicketing,
   type TicketingClientOptions,
 } from '@app/ticketing/api/client';

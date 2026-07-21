@@ -11,6 +11,19 @@
       "staleDescription": "Your checked draft is still here. Reload before trying again.",
       "staleTitle": "Checkbox changed elsewhere"
     },
+    "email": {
+      "activate": "Write email",
+      "definitionCreate": "Add Email property",
+      "definitionCreateFailedDescription": "The Email property could not be created.",
+      "definitionCreateFailedTitle": "Email property creation failed",
+      "definitionCreating": "Adding Email property",
+      "definitionName": "Email property name",
+      "invalid": "Enter one valid email address.",
+      "saveFailedDescription": "The Email could not be saved.",
+      "saveFailedTitle": "Email save failed",
+      "staleDescription": "Your Email draft is still here. Reload before trying again.",
+      "staleTitle": "Email changed elsewhere"
+    },
     "language": {
       "cs": "Czech",
       "en": "English",

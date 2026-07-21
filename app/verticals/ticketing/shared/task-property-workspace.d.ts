@@ -15,6 +15,16 @@ export declare const numberPropertyValueSchema: Schema.Struct<{
   readonly revision: Schema.Finite;
   readonly value: Schema.Union<readonly [Schema.String, Schema.Null]>;
 }>;
+export declare const urlPropertyValueSchema: Schema.Struct<{
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly value: Schema.NullOr<Schema.String>;
+}>;
+export declare const emailPropertyValueSchema: Schema.Struct<{
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly value: Schema.NullOr<Schema.String>;
+}>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
   readonly propertyDefinitions: Schema.$Array<
@@ -22,6 +32,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
       readonly [
         Schema.Struct<{
           readonly datatype: Schema.Literal<'checkbox'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'email'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
@@ -67,6 +85,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
         }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'url'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
       ]
     >
   >;
@@ -77,6 +103,13 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
           readonly value: Schema.Boolean;
+        }>
+      >;
+      readonly emailValues: Schema.$Array<
+        Schema.Struct<{
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly value: Schema.NullOr<Schema.String>;
         }>
       >;
       readonly numberValues: Schema.optional<
@@ -175,6 +208,15 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
         >
       >;
       readonly title: Schema.String;
+      readonly urlValues: Schema.optional<
+        Schema.$Array<
+          Schema.Struct<{
+            readonly propertyDefinitionId: Schema.String;
+            readonly revision: Schema.Finite;
+            readonly value: Schema.NullOr<Schema.String>;
+          }>
+        >
+      >;
     }>
   >;
 }>;
@@ -183,4 +225,6 @@ export declare const getTaskPropertyWorkspacePayloadSchema: Schema.Struct<{
   readonly locale: Schema.optional<Schema.String>;
 }>;
 export type GetTaskPropertyWorkspacePayload = typeof getTaskPropertyWorkspacePayloadSchema.Type;
+export type CheckboxPropertyValue = typeof checkboxPropertyValueSchema.Type;
 export type TaskPropertyWorkspace = typeof taskPropertyWorkspaceSchema.Type;
+export type UrlPropertyValue = typeof urlPropertyValueSchema.Type;
