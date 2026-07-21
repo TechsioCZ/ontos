@@ -1,7 +1,14 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const checkboxPropertyDefinitionSchema: Schema.Struct<{
   readonly datatype: Schema.Literal<'checkbox'>;
+  readonly hidden: Schema.Boolean;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
+export declare const filesMediaPropertyDefinitionSchema: Schema.Struct<{
+  readonly datatype: Schema.Literal<'files_media'>;
   readonly hidden: Schema.Boolean;
   readonly mandatory: Schema.Boolean;
   readonly name: Schema.String;
@@ -98,6 +105,14 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
       readonly revision: Schema.Finite;
     }>,
     Schema.Struct<{
+      readonly datatype: Schema.Literal<'files_media'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>,
+    Schema.Struct<{
       readonly datatype: Schema.Literal<'number'>;
       readonly format: Schema.Literals<readonly ['number', 'number_with_separators', 'percent']>;
       readonly hidden: Schema.Boolean;
@@ -154,6 +169,7 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
 >;
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
+export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
 export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;

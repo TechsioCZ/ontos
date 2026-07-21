@@ -1,5 +1,4 @@
-import type { Schema } from '@modern-js/plugin-bff/effect-client';
-
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 export declare const checkboxPropertyValueSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
@@ -45,6 +44,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'files_media'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
@@ -123,6 +130,18 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
           readonly value: Schema.NullOr<Schema.String>;
+        }>
+      >;
+      readonly filesMediaItems: Schema.$Array<
+        Schema.Struct<{
+          readonly access: Schema.Literal<'download'>;
+          readonly byteSize: Schema.Finite;
+          readonly displayFilename: Schema.String;
+          readonly effectiveMimeType: Schema.String;
+          readonly itemId: Schema.String;
+          readonly mediaAssetId: Schema.String;
+          readonly position: Schema.Finite;
+          readonly propertyDefinitionId: Schema.String;
         }>
       >;
       readonly numberValues: Schema.optional<

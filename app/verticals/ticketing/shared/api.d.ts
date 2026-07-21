@@ -1,17 +1,21 @@
-// oxlint-disable typescript/ban-types, typescript/no-empty-object-type -- TypeScript-generated API declaration
-import type {
+import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-
 export type {
   CreateEmailPropertyDefinitionActionFailure,
   CreateEmailPropertyDefinitionActionOutcome,
   CreateEmailPropertyDefinitionActionPayload,
   CreateEmailPropertyDefinitionActionResponse,
 } from './actions/create-email-property-definition';
+export type {
+  CreateFilesMediaPropertyDefinitionActionFailure,
+  CreateFilesMediaPropertyDefinitionActionOutcome,
+  CreateFilesMediaPropertyDefinitionActionPayload,
+  CreateFilesMediaPropertyDefinitionActionResponse,
+} from './actions/create-files-media-property-definition.ts';
 export type {
   UpdateEmailPropertyValueActionFailure,
   UpdateEmailPropertyValueActionOutcome,
@@ -139,6 +143,12 @@ export type {
   UpdateUrlPropertyValueActionResponse,
 } from './actions/update-url-property-value';
 export type {
+  UploadFilesMediaItemActionFailure,
+  UploadFilesMediaItemActionOutcome,
+  UploadFilesMediaItemActionPayload,
+  UploadFilesMediaItemActionResponse,
+} from './actions/upload-files-media-item.ts';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
@@ -162,6 +172,7 @@ export type { TaskPropertyEditCapability } from './task-property-edit-capability
 export {
   checkboxPropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
+  filesMediaPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
   selectOptionOrderModeSchema,
@@ -174,6 +185,7 @@ export {
 export type {
   CheckboxPropertyDefinition,
   EmailPropertyDefinition,
+  FilesMediaPropertyDefinition,
   NumberPropertyDefinition,
   PhonePropertyDefinition,
   SelectOption,
@@ -517,6 +529,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'files_media'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'number'>;
                     readonly format: Schema.Literals<
                       readonly ['number', 'number_with_separators', 'percent']
@@ -753,6 +773,99 @@ export declare const ticketingApi: HttpApi.HttpApi<
             readonly response: Schema.Struct<{
               readonly definition: Schema.Struct<{
                 readonly datatype: Schema.Literal<'email'>;
+                readonly hidden: Schema.Boolean;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'createFilesMediaPropertyDefinitionAction',
+        'POST',
+        '/ticketing/actions/create-files-media-property-definition',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly mandatory: Schema.Boolean;
+            readonly name: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly definition: Schema.Struct<{
+                readonly datatype: Schema.Literal<'files_media'>;
                 readonly hidden: Schema.Boolean;
                 readonly mandatory: Schema.Boolean;
                 readonly name: Schema.String;
@@ -1820,6 +1933,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'files_media'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'number'>;
                     readonly format: Schema.Literals<
                       readonly ['number', 'number_with_separators', 'percent']
@@ -2347,6 +2468,14 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'files_media'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'number'>;
                     readonly format: Schema.Literals<
                       readonly ['number', 'number_with_separators', 'percent']
@@ -2418,6 +2547,18 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly propertyDefinitionId: Schema.String;
                     readonly revision: Schema.Finite;
                     readonly value: Schema.NullOr<Schema.String>;
+                  }>
+                >;
+                readonly filesMediaItems: Schema.$Array<
+                  Schema.Struct<{
+                    readonly access: Schema.Literal<'download'>;
+                    readonly byteSize: Schema.Finite;
+                    readonly displayFilename: Schema.String;
+                    readonly effectiveMimeType: Schema.String;
+                    readonly itemId: Schema.String;
+                    readonly mediaAssetId: Schema.String;
+                    readonly position: Schema.Finite;
+                    readonly propertyDefinitionId: Schema.String;
                   }>
                 >;
                 readonly numberValues: Schema.optional<
@@ -3989,6 +4130,105 @@ export declare const ticketingApi: HttpApi.HttpApi<
         >,
         never,
         never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'uploadFilesMediaItemAction',
+        'POST',
+        '/ticketing/actions/upload-files-media-item',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly bytesBase64: Schema.String;
+            readonly clientMimeType: Schema.optional<Schema.String>;
+            readonly collectionId: Schema.String;
+            readonly filename: Schema.String;
+            readonly propertyDefinitionId: Schema.String;
+            readonly taskId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly item: Schema.Struct<{
+                readonly access: Schema.Literal<'download'>;
+                readonly byteSize: Schema.Finite;
+                readonly displayFilename: Schema.String;
+                readonly effectiveMimeType: Schema.String;
+                readonly itemId: Schema.String;
+                readonly mediaAssetId: Schema.String;
+                readonly position: Schema.Finite;
+                readonly propertyDefinitionId: Schema.String;
+              }>;
+              readonly taskRevision: Schema.Finite;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
       >,
     false
   >
@@ -4019,6 +4259,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   createEmailPropertyDefinitionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  createFilesMediaPropertyDefinitionAction: {
     method: string;
     operationId: string;
     routePath: string;
@@ -4205,6 +4451,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   updateUrlPropertyValueAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  uploadFilesMediaItemAction: {
     method: string;
     operationId: string;
     routePath: string;
