@@ -1,5 +1,6 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
+import { textPropertyValueSchema } from './text-property.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
@@ -13,15 +14,23 @@ export const selectPropertyValueSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const numberPropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.Union([Schema.String, Schema.Null]),
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
+      numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
+      textValues: Schema.optional(Schema.Array(textPropertyValueSchema)),
       title: Schema.String,
     }),
   ),

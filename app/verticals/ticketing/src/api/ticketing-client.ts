@@ -45,6 +45,23 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateTextPropertyDefinitionActionFailure,
+  CreateTextPropertyDefinitionActionOutcome,
+  CreateTextPropertyDefinitionActionPayload,
+  UpdateTextPropertyValueActionFailure,
+  UpdateTextPropertyValueActionOutcome,
+  UpdateTextPropertyValueActionPayload,
+  QueryTaskPropertyValuesPayload,
+  QueryTaskPropertyValuesResponse,
+  ConfigureNumberPropertyFormatActionFailure,
+  ConfigureNumberPropertyFormatActionOutcome,
+  ConfigureNumberPropertyFormatActionPayload,
+  CreateNumberPropertyDefinitionActionFailure,
+  CreateNumberPropertyDefinitionActionOutcome,
+  CreateNumberPropertyDefinitionActionPayload,
+  UpdateNumberPropertyValueActionFailure,
+  UpdateNumberPropertyValueActionOutcome,
+  UpdateNumberPropertyValueActionPayload,
   CreateSelectPropertyDefinitionActionFailure,
   CreateSelectPropertyDefinitionActionOutcome,
   CreateSelectPropertyDefinitionActionPayload,
@@ -83,6 +100,11 @@ export type TicketingClientError =
   | UpdateSelectOptionActionFailure
   | CreateSelectOptionActionFailure
   | CreateSelectPropertyDefinitionActionFailure
+  | ConfigureNumberPropertyFormatActionFailure
+  | UpdateNumberPropertyValueActionFailure
+  | CreateNumberPropertyDefinitionActionFailure
+  | UpdateTextPropertyValueActionFailure
+  | CreateTextPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -239,6 +261,23 @@ export const getTaskPropertyDeletionImpact = (
       client.ticketing.getTaskPropertyDeletionImpact({
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const queryTaskPropertyValues = (
+  payload: QueryTaskPropertyValuesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryTaskPropertyValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.queryTaskPropertyValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryTaskPropertyValues({
+        headers: options.headers ?? {},
+        payload,
       }),
     ),
   );
@@ -410,10 +449,10 @@ export const runTransitionTaskRetentionAction = (
   );
 };
 
-export const runCreateSelectPropertyDefinitionAction = (
-  payload: CreateSelectPropertyDefinitionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
-): TicketingClientEffect<CreateSelectPropertyDefinitionActionOutcome> => {
+export const runCreateTextPropertyDefinitionAction = (
+  payload: CreateTextPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateTextPropertyDefinitionActionOutcome> => {
   const headers =
     options.idempotencyKey === undefined
       ? options.headers
@@ -421,6 +460,117 @@ export const runCreateSelectPropertyDefinitionAction = (
           ...options.headers,
           'Idempotency-Key': options.idempotencyKey,
         };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createTextPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createTextPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateTextPropertyValueAction = (
+  payload: UpdateTextPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateTextPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateTextPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateTextPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateNumberPropertyDefinitionAction = (
+  payload: CreateNumberPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateNumberPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createNumberPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createNumberPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateNumberPropertyValueAction = (
+  payload: UpdateNumberPropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdateNumberPropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateNumberPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateNumberPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureNumberPropertyFormatAction = (
+  payload: ConfigureNumberPropertyFormatActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigureNumberPropertyFormatActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureNumberPropertyFormatAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureNumberPropertyFormatAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateSelectPropertyDefinitionAction = (
+  payload: CreateSelectPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateSelectPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -439,15 +589,9 @@ export const runCreateSelectPropertyDefinitionAction = (
 
 export const runCreateSelectOptionAction = (
   payload: CreateSelectOptionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateSelectOptionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -466,15 +610,9 @@ export const runCreateSelectOptionAction = (
 
 export const runUpdateSelectOptionAction = (
   payload: UpdateSelectOptionActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UpdateSelectOptionActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -493,15 +631,9 @@ export const runUpdateSelectOptionAction = (
 
 export const runUpdateSelectPropertyValueAction = (
   payload: UpdateSelectPropertyValueActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<UpdateSelectPropertyValueActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -520,15 +652,9 @@ export const runUpdateSelectPropertyValueAction = (
 
 export const runCreateSelectOptionAndSelectAction = (
   payload: CreateSelectOptionAndSelectActionPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<CreateSelectOptionAndSelectActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
 
   return createTicketingClient({
     ...options,
@@ -552,7 +678,7 @@ export type ConfigureSelectOptionOrderClientPayload = Omit<
 
 export const runConfigureSelectOptionOrderAction = (
   payload: ConfigureSelectOptionOrderClientPayload,
-  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+  options: TicketingActionClientOptions = {},
 ): TicketingClientEffect<ConfigureSelectOptionOrderActionOutcome> => {
   const headers = actionHeaders(options);
   const locale = resolveTicketingBrowserLocale();
