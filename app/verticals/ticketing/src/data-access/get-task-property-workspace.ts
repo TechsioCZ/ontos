@@ -2,6 +2,7 @@
 import { rowsFromResult } from '@app/core-runtime';
 import type { DataAccessRegistration } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
+import { resolveEffectiveTimeZone } from '@app/core-runtime/principal-time-zone-preferences';
 import {
   getTaskPropertyWorkspacePayloadSchema,
   taskPropertyWorkspaceSchema,
@@ -30,6 +31,7 @@ interface DefinitionFields {
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
   | (DefinitionFields & { readonly datatype: 'date' })
+  | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
   | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & {
       readonly datatype: 'number';
@@ -135,6 +137,10 @@ interface UrlValueRow {
 }
 
 interface ValueRow {
+  readonly createdAt: string;
+  readonly createdByDisplayName: string;
+  readonly createdByPrincipalId: string;
+  readonly createdByStatus: 'active' | 'archived' | 'disabled';
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -159,6 +165,12 @@ interface TaskRow {
     revision: number;
     value: string | null;
   }[];
+  readonly createdAt?: string;
+  readonly createdBy?: {
+    displayName: string;
+    inactive: boolean;
+    principalId: string;
+  };
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
@@ -228,6 +240,23 @@ const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectVa
   }
 };
 
+const intrinsicTaskFacts = (
+  row: ValueRow,
+  exposesCreatedBy: boolean,
+  exposesCreatedTime: boolean,
+): Pick<TaskRow, 'createdAt' | 'createdBy'> => ({
+  ...(exposesCreatedTime ? { createdAt: row.createdAt } : {}),
+  ...(exposesCreatedBy
+    ? {
+        createdBy: {
+          displayName: row.createdByDisplayName,
+          inactive: row.createdByStatus !== 'active',
+          principalId: row.createdByPrincipalId,
+        },
+      }
+    : {}),
+});
+
 const taskRowsFromValues = ({
   dateValueRows,
   definitions,
@@ -251,6 +280,12 @@ const taskRowsFromValues = ({
 }): TaskRow[] => {
   const tasks = new Map<string, TaskRow>();
   const hasNumberDefinitions = definitions.some(({ datatype }) => datatype === 'number');
+  const exposesCreatedTime = definitions.some(
+    (definition) => definition.datatype === 'created_time' && !definition.hidden,
+  );
+  const exposesCreatedBy = definitions.some(
+    (definition) => definition.datatype === 'created_by' && !definition.hidden,
+  );
   const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
   const hasUrlDefinitions = definitions.some(({ datatype }) => datatype === 'url');
 
@@ -258,6 +293,7 @@ const taskRowsFromValues = ({
     const current = tasks.get(row.taskId) ?? {
       checkboxValues: [],
       dateValues: [],
+      ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
       emailValues: [],
       phoneValues: [],
       ...(hasNumberDefinitions ? { numberValues: [] } : {}),
@@ -357,11 +393,18 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'date', 'email', 'number', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'number', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
       select
+        to_char(
+          task.created_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "createdAt",
+        creator.display_name as "createdByDisplayName",
+        task.created_by_principal_id as "createdByPrincipalId",
+        creator.status as "createdByStatus",
         value.property_definition_id as "propertyDefinitionId",
         value.revision,
         task.task_id as "taskId",
@@ -369,6 +412,9 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         task.title,
         value.value
       from ticketing.tasks as task
+      inner join core.principals as creator
+        on creator.principal_id = task.created_by_principal_id
+        and creator.tenant_id = task.tenant_id
       left join ticketing.task_checkbox_values as value
         on value.task_id = task.task_id
         and value.tenant_id = task.tenant_id
@@ -529,8 +575,19 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
       definitionResult,
     ).map((definition) => taskPropertyDefinitionFromRow(definition, optionRows, locale));
+    const exposesCreatedTime = definitions.some(
+      (definition) => definition.datatype === 'created_time' && !definition.hidden,
+    );
+    const effectiveTimeZone = exposesCreatedTime
+      ? await resolveEffectiveTimeZone({
+          browserTimeZone: input.browserTimeZone,
+          context,
+          db,
+        })
+      : undefined;
     return {
       collectionId: input.collectionId,
+      ...(effectiveTimeZone === undefined ? {} : { effectiveTimeZone }),
       propertyDefinitions: [...definitions],
       tasks: taskRowsFromValues({
         dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),

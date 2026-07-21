@@ -110,6 +110,14 @@ import type {
   UpdateDatePropertyValueActionFailure,
   UpdateDatePropertyValueActionOutcome,
   UpdateDatePropertyValueActionPayload,
+  ConfigurePrincipalTimeZonePreferenceActionFailure,
+  ConfigurePrincipalTimeZonePreferenceActionOutcome,
+  ConfigurePrincipalTimeZonePreferenceActionPayload,
+  CreateIntrinsicPropertyDefinitionActionFailure,
+  CreateIntrinsicPropertyDefinitionActionOutcome,
+  CreateIntrinsicPropertyDefinitionActionPayload,
+  QueryIntrinsicTaskPropertiesPayload,
+  QueryIntrinsicTaskPropertiesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -126,6 +134,8 @@ export type TicketingClient = HttpApiClient.Client<
 export type TicketingClientError =
   | UpdateDatePropertyValueActionFailure
   | CreateDatePropertyDefinitionActionFailure
+  | ConfigurePrincipalTimeZonePreferenceActionFailure
+  | CreateIntrinsicPropertyDefinitionActionFailure
   | UpdatePhonePropertyValueActionFailure
   | CreatePhonePropertyDefinitionActionFailure
   | UpdateEmailPropertyValueActionFailure
@@ -160,6 +170,7 @@ export type TicketingClientEffect<Success> = Effect.Effect<Success, TicketingCli
 export interface TicketingClientOptions {
   headers?: Record<string, string>;
   baseUrl?: string | URL;
+  browserTimeZone?: string;
   locale?: string;
   operationContext?: OperationContext;
   traceparent?: string;
@@ -259,7 +270,39 @@ export const getTaskPropertyWorkspace = (
       client.ticketing.getTaskPropertyWorkspace({
         headers: options.headers ?? {},
         params: { collectionId },
-        query: { locale },
+        query: {
+          ...(options.browserTimeZone === undefined
+            ? {}
+            : { browserTimeZone: options.browserTimeZone }),
+          locale,
+        },
+      }),
+    ),
+  );
+};
+
+export type QueryIntrinsicTaskPropertiesClientPayload = Omit<
+  QueryIntrinsicTaskPropertiesPayload,
+  'viewerLocale'
+>;
+
+export const queryIntrinsicTaskProperties = (
+  payload: QueryIntrinsicTaskPropertiesClientPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryIntrinsicTaskPropertiesResponse> => {
+  const locale = resolveTicketingBrowserLocale();
+
+  return createTicketingClient({
+    ...options,
+    locale,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.queryIntrinsicTaskProperties,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryIntrinsicTaskProperties({
+        headers: options.headers ?? {},
+        params: { collectionId: payload.collectionId },
+        payload: { ...payload, viewerLocale: locale },
       }),
     ),
   );
@@ -963,6 +1006,50 @@ export const runUpdatePhonePropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updatePhonePropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runCreateIntrinsicPropertyDefinitionAction = (
+  payload: CreateIntrinsicPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateIntrinsicPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createIntrinsicPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createIntrinsicPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigurePrincipalTimeZonePreferenceAction = (
+  payload: ConfigurePrincipalTimeZonePreferenceActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigurePrincipalTimeZonePreferenceActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.configurePrincipalTimeZonePreferenceAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configurePrincipalTimeZonePreferenceAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };

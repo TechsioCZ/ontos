@@ -10,10 +10,12 @@ import {
   getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateDatePropertyDefinitionAction,
+  getTaskPropertyWorkspace,
   runCreateCheckboxPropertyDefinitionAction,
   runCreateEmailPropertyDefinitionAction,
   runCreateNumberPropertyDefinitionAction,
   runCreatePhonePropertyDefinitionAction,
+  runCreateIntrinsicPropertyDefinitionAction,
   runCreateTextPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
@@ -34,6 +36,10 @@ import { DatePropertyEditor } from '../components/date-property-editor';
 import { EmailPropertyEditor } from '../components/email-property-editor';
 import { NumberPropertyEditor } from '../components/number-property-editor';
 import { PhonePropertyEditor } from '../components/phone-property-editor';
+import {
+  CreatedByPresentation,
+  CreatedTimePresentation,
+} from '../components/intrinsic-property-presentation';
 import { TextPropertyEditor } from '../components/text-property-editor';
 import { TextPropertyDuplication } from '../components/text-property-duplication';
 import { UrlPropertyEditor } from '../components/url-property-editor';
@@ -125,6 +131,12 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingUrlDefinition, setIsCreatingUrlDefinition] = useState(false);
+  const [creatingIntrinsicDatatype, setCreatingIntrinsicDatatype] = useState<
+    'created_by' | 'created_time'
+  >();
+  const [intrinsicDefinitionIdempotencyKeys, setIntrinsicDefinitionIdempotencyKeys] = useState(
+    () => ({ created_by: crypto.randomUUID(), created_time: crypto.randomUUID() }),
+  );
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -594,6 +606,49 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateIntrinsicDefinition = async (datatype: 'created_by' | 'created_time') => {
+    if (openedTaskPropertyWorkspace === undefined) {
+      return;
+    }
+
+    setCreatingIntrinsicDatatype(datatype);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const headers = { 'x-ontos-operation-context': operationContextToken };
+      await runEffectRequest(
+        runCreateIntrinsicPropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            datatype,
+            mandatory: false,
+            name: t(`ticketing.intrinsic.${datatype}.name`),
+          },
+          { headers, idempotencyKey: intrinsicDefinitionIdempotencyKeys[datatype] },
+        ),
+      );
+      const workspace = await runEffectRequest(
+        getTaskPropertyWorkspace(openedTaskPropertyWorkspace.collectionId, {
+          browserTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          headers,
+        }),
+      );
+      setOpenedTaskPropertyWorkspace(workspace);
+      setIntrinsicDefinitionIdempotencyKeys((current) => ({
+        ...current,
+        [datatype]: crypto.randomUUID(),
+      }));
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error ? error.message : t('ticketing.intrinsic.createFailedDescription'),
+        title: t('ticketing.intrinsic.createFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setCreatingIntrinsicDatatype(undefined);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -768,10 +823,27 @@ export const TicketingExperience = () => {
               {t('ticketing.phone.definitionCreate')}
             </Button>
           </div>
+          <div className="ticketing:mt-4 ticketing:flex ticketing:flex-wrap ticketing:gap-3">
+            {(['created_time', 'created_by'] as const).map((datatype) => (
+              <Button
+                isLoading={creatingIntrinsicDatatype === datatype}
+                key={datatype}
+                loadingText={t(`ticketing.intrinsic.${datatype}.creating`)}
+                onClick={() => void handleCreateIntrinsicDefinition(datatype)}
+                type="button"
+                variant="secondary"
+              >
+                {t(`ticketing.intrinsic.${datatype}.create`)}
+              </Button>
+            ))}
+          </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {/* oxlint-disable eslint/complexity -- The integration-base datatype renderer is already above the generic threshold; Date follows the same dispatch seam. */}
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
+                if (definition.hidden) {
+                  return null;
+                }
                 const [task] = openedTaskPropertyWorkspace.tasks;
                 if (task === undefined) {
                   return null;
@@ -827,6 +899,41 @@ export const TicketingExperience = () => {
                       taskId={task.taskId}
                       value={value?.value ?? null}
                     />
+                  );
+                }
+                if (definition.datatype === 'created_time') {
+                  return task.createdAt === undefined ||
+                    openedTaskPropertyWorkspace.effectiveTimeZone === undefined ? null : (
+                    <div key={definition.propertyDefinitionId}>
+                      <span className="ticketing:font-bold">{definition.name}: </span>
+                      <CreatedTimePresentation
+                        detail={false}
+                        instant={task.createdAt}
+                        locale={language}
+                        timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
+                      />
+                      <details>
+                        <summary>{t('ticketing.intrinsic.created_time.details')}</summary>
+                        <CreatedTimePresentation
+                          detail
+                          instant={task.createdAt}
+                          locale={language}
+                          timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
+                        />
+                      </details>
+                    </div>
+                  );
+                }
+                if (definition.datatype === 'created_by') {
+                  return task.createdBy === undefined ? null : (
+                    <div key={definition.propertyDefinitionId}>
+                      <span className="ticketing:font-bold">{definition.name}: </span>
+                      <CreatedByPresentation
+                        displayName={task.createdBy.displayName}
+                        inactive={task.createdBy.inactive}
+                        inactiveLabel={t('ticketing.intrinsic.inactive')}
+                      />
+                    </div>
                   );
                 }
                 if (definition.datatype === 'phone') {
