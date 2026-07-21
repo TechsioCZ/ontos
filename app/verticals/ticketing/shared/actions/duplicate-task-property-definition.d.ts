@@ -31,6 +31,15 @@ export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literal<'date_range'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+        readonly timeEnabled: Schema.Boolean;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literal<'email'>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
@@ -149,6 +158,15 @@ export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.
           readonly name: Schema.String;
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'date_range'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly timeEnabled: Schema.Boolean;
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;

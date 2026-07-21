@@ -2,6 +2,7 @@ import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
 import { filesMediaItemSchema } from './actions/upload-files-media-item.ts';
 import { textPropertyValueSchema } from './text-property.ts';
+import { dateRangeValueSchema } from './date-range-value.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
@@ -13,6 +14,12 @@ export const datePropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
   value: Schema.NullOr(Schema.String),
+});
+
+export const dateRangePropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.NullOr(dateRangeValueSchema),
 });
 
 export const idAssignmentSchema = Schema.Struct({
@@ -91,6 +98,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
           principalId: Schema.String,
         }),
       ),
+      dateRangeValues: Schema.Array(dateRangePropertyValueSchema),
       dateValues: Schema.Array(datePropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       filesMediaItems: Schema.Array(filesMediaItemSchema),

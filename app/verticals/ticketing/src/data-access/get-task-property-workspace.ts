@@ -32,6 +32,7 @@ interface DefinitionFields {
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
   | (DefinitionFields & { readonly datatype: 'date' })
+  | (DefinitionFields & { readonly datatype: 'date_range'; readonly timeEnabled: boolean })
   | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
   | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & { readonly datatype: 'files_media' })
@@ -94,6 +95,17 @@ const taskPropertyDefinitionFromRow = (
       revision: definition.revision,
     };
   }
+  if (definition.datatype === 'date_range') {
+    return {
+      datatype: 'date_range',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+      timeEnabled: definition.timeEnabled,
+    };
+  }
   return {
     datatype: definition.datatype,
     hidden: definition.hidden,
@@ -123,6 +135,16 @@ interface DateValueRow {
   readonly revision: number;
   readonly taskId: string;
   readonly value: string | null;
+}
+
+interface DateRangeValueRow {
+  readonly endDate: string | null;
+  readonly endTime: string | null;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly startDate: string | null;
+  readonly startTime: string | null;
+  readonly taskId: string;
 }
 
 interface PhoneValueRow {
@@ -207,6 +229,16 @@ interface TaskRow {
     propertyDefinitionId: string;
     revision: number;
     value: string | null;
+  }[];
+  readonly dateRangeValues: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: {
+      endDate: string;
+      endTime: string | null;
+      startDate: string;
+      startTime: string | null;
+    } | null;
   }[];
   readonly emailValues: {
     propertyDefinitionId: string;
@@ -296,6 +328,27 @@ const appendDateValues = (tasks: Map<string, TaskRow>, rows: readonly DateValueR
   }
 };
 
+const appendDateRangeValues = (
+  tasks: Map<string, TaskRow>,
+  rows: readonly DateRangeValueRow[],
+): void => {
+  for (const row of rows) {
+    tasks.get(row.taskId)?.dateRangeValues.push({
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      value:
+        row.startDate === null || row.endDate === null
+          ? null
+          : {
+              endDate: row.endDate,
+              endTime: row.endTime,
+              startDate: row.startDate,
+              startTime: row.startTime,
+            },
+    });
+  }
+};
+
 const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectValueRow[]): void => {
   for (const row of rows) {
     const task = tasks.get(row.taskId);
@@ -354,6 +407,7 @@ const idAssignmentFromValueRow = (row: ValueRow): IdAssignment | undefined => {
 
 const taskRowsFromValues = ({
   dateValueRows,
+  dateRangeValueRows,
   definitions,
   emailValueRows,
   filesMediaRows,
@@ -368,6 +422,7 @@ const taskRowsFromValues = ({
   valueRows,
 }: {
   readonly dateValueRows: readonly DateValueRow[];
+  readonly dateRangeValueRows: readonly DateRangeValueRow[];
   readonly definitions: readonly TaskPropertyDefinition[];
   readonly emailValueRows: readonly EmailValueRow[];
   readonly filesMediaRows: readonly FilesMediaItemRow[];
@@ -393,6 +448,7 @@ const taskRowsFromValues = ({
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
       checkboxValues: [],
+      dateRangeValues: [],
       dateValues: [],
       ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
       emailValues: [],
@@ -471,6 +527,7 @@ const taskRowsFromValues = ({
 
   appendSelectValues(tasks, selectValueRows);
   appendDateValues(tasks, dateValueRows);
+  appendDateRangeValues(tasks, dateRangeValueRows);
   appendFilesMediaItems(tasks, filesMediaRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
@@ -505,6 +562,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       select
         configuration.cardinality,
         definition.datatype,
+        definition.date_range_time_enabled as "timeEnabled",
         definition.number_format as format,
         definition.select_option_order_mode as "optionOrderMode",
         definition.hidden,
@@ -522,7 +580,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'date_range', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -595,6 +653,26 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
         and definition.datatype = 'date'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const dateRangeValueResult = await db.execute(sql`
+      select
+        value.end_date::text as "endDate",
+        to_char(value.end_time, 'HH24:MI') as "endTime",
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.start_date::text as "startDate",
+        to_char(value.start_time, 'HH24:MI') as "startTime",
+        value.task_id as "taskId"
+      from ticketing.task_date_range_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'date_range'
       where task.collection_id = ${input.collectionId}
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
@@ -792,6 +870,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         })
       : undefined;
     const tasks = taskRowsFromValues({
+      dateRangeValueRows: rowsFromResult<DateRangeValueRow>(dateRangeValueResult),
       dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
       definitions,
       emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),

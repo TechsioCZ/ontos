@@ -23,6 +23,10 @@ export type TaskPropertyDefinitionRow =
     })
   | (TaskPropertyDefinitionFields & { readonly datatype: 'id'; readonly prefix: string })
   | (TaskPropertyDefinitionFields & {
+      readonly datatype: 'date_range';
+      readonly timeEnabled: boolean;
+    })
+  | (TaskPropertyDefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent' | null;
     })
@@ -54,6 +58,17 @@ export const taskPropertyDefinitionFromRow = (
       name: row.name,
       propertyDefinitionId: row.propertyDefinitionId,
       revision: row.revision,
+    };
+  }
+  if (row.datatype === 'date_range') {
+    return {
+      datatype: row.datatype,
+      hidden: row.hidden,
+      mandatory: row.mandatory,
+      name: row.name,
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      timeEnabled: row.timeEnabled,
     };
   }
   if (row.datatype === 'person') {

@@ -13,6 +13,7 @@ import {
   pgSchema,
   primaryKey,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -67,6 +68,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
   {
     createdAt: createdAt(),
     datatype: text('datatype').notNull(),
+    dateRangeTimeEnabled: boolean('date_range_time_enabled'),
     hidden: boolean('hidden').default(false).notNull(),
     mandatory: boolean('mandatory').default(false).notNull(),
     name: text('name').notNull(),
@@ -88,7 +90,11 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by', 'date', 'date_range', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')`,
+    ),
+    check(
+      'ticketing_task_property_definitions_date_range_time_ck',
+      sql`(${table.datatype} = 'date_range' and ${table.dateRangeTimeEnabled} is not null) or (${table.datatype} <> 'date_range' and ${table.dateRangeTimeEnabled} is null)`,
     ),
     check(
       'ticketing_task_property_definitions_select_order_ck',
@@ -235,7 +241,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed', 'date_value_changed', 'email_value_changed', 'files_media_value_changed', 'number_value_changed', 'person_value_changed', 'phone_value_changed', 'select_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'date_value_changed', 'date_range_value_changed', 'email_value_changed', 'files_media_value_changed', 'number_value_changed', 'person_value_changed', 'phone_value_changed', 'select_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -476,6 +482,48 @@ export const taskDateValues = ticketingSchema.table(
       table.value,
     ),
     check('ticketing_task_date_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskDateRangeValues = ticketingSchema.table(
+  'task_date_range_values',
+  {
+    endDate: date('end_date', { mode: 'string' }),
+    endTime: time('end_time', { precision: 0 }),
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    revision: integer('revision').default(1).notNull(),
+    startDate: date('start_date', { mode: 'string' }),
+    startTime: time('start_time', { precision: 0 }),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_date_range_values_pk',
+    }),
+    index('ticketing_task_date_range_values_group_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.startDate,
+      table.endDate,
+      table.startTime,
+      table.endTime,
+    ),
+    check('ticketing_task_date_range_values_revision_ck', sql`${table.revision} >= 1`),
+    check(
+      'ticketing_task_date_range_values_shape_ck',
+      sql`(
+        ${table.startDate} is null and ${table.endDate} is null and ${table.startTime} is null and ${table.endTime} is null
+      ) or (
+        ${table.startDate} is not null and ${table.endDate} is not null and ${table.startDate} < ${table.endDate}
+        and ((${table.startTime} is null and ${table.endTime} is null) or (${table.startTime} is not null and ${table.endTime} is not null))
+      )`,
+    ),
   ],
 );
 

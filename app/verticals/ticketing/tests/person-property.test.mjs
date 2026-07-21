@@ -296,6 +296,7 @@ test('an eligible tenant member can be assigned through the Person action and pu
   assert.deepEqual(workspace.response.tasks, [
     {
       checkboxValues: [],
+      dateRangeValues: [],
       dateValues: [],
       emailValues: [],
       filesMediaItems: [],

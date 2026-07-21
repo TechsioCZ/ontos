@@ -1,4 +1,7 @@
 export {
+  runConfigureDateRangeTimeSupportAction,
+  runUpdateDateRangePropertyValueAction,
+  runCreateDateRangePropertyDefinitionAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,

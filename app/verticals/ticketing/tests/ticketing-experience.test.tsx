@@ -273,6 +273,7 @@ rs.mock('../src/api/ticketing-client', () => {
           {
             checkboxValues: [],
             createdAt: aggregate.task.createdAt,
+            dateRangeValues: [],
             dateValues: [],
             emailValues: [],
             numberValues: [],

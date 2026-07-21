@@ -35,6 +35,7 @@ import type {
   UpdateCheckboxPropertyValueActionPayload,
   FilterTaskCheckboxValuesResponse,
   GroupTaskDateValuesResponse,
+  GroupTaskDateRangeValuesResponse,
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
   ConfigureTaskPropertyDefinitionActionPayload,
@@ -145,6 +146,15 @@ import type {
   DuplicateTaskActionFailure,
   DuplicateTaskActionOutcome,
   DuplicateTaskActionPayload,
+  CreateDateRangePropertyDefinitionActionFailure,
+  CreateDateRangePropertyDefinitionActionOutcome,
+  CreateDateRangePropertyDefinitionActionPayload,
+  UpdateDateRangePropertyValueActionFailure,
+  UpdateDateRangePropertyValueActionOutcome,
+  UpdateDateRangePropertyValueActionPayload,
+  ConfigureDateRangeTimeSupportActionFailure,
+  ConfigureDateRangeTimeSupportActionOutcome,
+  ConfigureDateRangeTimeSupportActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -159,6 +169,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | ConfigureDateRangeTimeSupportActionFailure
+  | UpdateDateRangePropertyValueActionFailure
+  | CreateDateRangePropertyDefinitionActionFailure
   | DuplicateTaskActionFailure
   | ConfigureIdPropertyPrefixActionFailure
   | CreateIdPropertyDefinitionActionFailure
@@ -391,6 +404,24 @@ export const groupTaskDateValues = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.groupTaskDateValues({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const groupTaskDateRangeValues = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<GroupTaskDateRangeValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.groupTaskDateRangeValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.groupTaskDateRangeValues({
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
       }),
@@ -1290,6 +1321,88 @@ export const runDuplicateTaskAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.duplicateTaskAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runCreateDateRangePropertyDefinitionAction = (
+  payload: CreateDateRangePropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateDateRangePropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createDateRangePropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createDateRangePropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateDateRangePropertyValueAction = (
+  payload: UpdateDateRangePropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateDateRangePropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateDateRangePropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateDateRangePropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureDateRangeTimeSupportAction = (
+  payload: ConfigureDateRangeTimeSupportActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureDateRangeTimeSupportActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureDateRangeTimeSupportAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureDateRangeTimeSupportAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };
