@@ -4,6 +4,8 @@ import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
+import { allowPolicy } from '../../../packages/core-runtime/src/policy.ts';
+import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
@@ -13,6 +15,7 @@ import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/d
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
 import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
+import { updateCheckboxPropertyValueActionRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 
@@ -29,6 +32,7 @@ after(async () => {
       await sqlClient`delete from core.tenant_module_states where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_id_assignments where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_id_sequences where tenant_id = ${tenantId}`;
+      await sqlClient`delete from ticketing.task_checkbox_values where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_revisions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.tasks where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_property_definitions where tenant_id = ${tenantId}`;
@@ -90,14 +94,15 @@ const operationContextResolver = (operationContext) => () => ({
 
 const allowedAuthorization = () => ({ _tag: 'Allowed' });
 
-const runRegisteredAction = ({ operationContext, payload, registration }) =>
+const runRegisteredAction = ({ clock, operationContext, payload, policyChecks, registration }) =>
   runAction({
     options: {
       authorizationChecker: allowedAuthorization,
+      ...(clock === undefined ? {} : { clock }),
       operationContextResolver: operationContextResolver(operationContext),
     },
     payload,
-    registration,
+    registration: policyChecks === undefined ? registration : { ...registration, policyChecks },
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
   });
 
@@ -111,14 +116,31 @@ const createCollection = async (operationContext) => {
   return result.response.collection.collectionId;
 };
 
-const createTask = async (operationContext, collectionId) => {
+const createTask = async (operationContext, collectionId, clock) => {
   const result = await runRegisteredAction({
+    clock,
     operationContext,
     payload: { collectionId },
     registration: createTaskActionRegistration,
   });
   assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));
   return result.response.task;
+};
+
+const synchronizedPolicyGate = (participantCount) => {
+  const release = Promise.withResolvers();
+  let arrived = 0;
+  return async () => {
+    arrived += 1;
+    if (arrived === participantCount) {
+      release.resolve();
+    }
+    await release.promise;
+    return allowPolicy({
+      policyKey: 'ticketing.test.concurrent-id-activation',
+      reason: 'Release ID activation and Task creation at the same public Action boundary.',
+    });
+  };
 };
 
 const readWorkspace = (operationContext, collectionId) =>
@@ -149,9 +171,11 @@ const activateId = (operationContext, collectionId, overrides = {}) =>
 test('activating ID backfills every retained Task in deterministic creation order', async () => {
   const operationContext = await createOperationIdentity();
   const collectionId = await createCollection(operationContext);
-  const oldest = await createTask(operationContext, collectionId);
-  const archived = await createTask(operationContext, collectionId);
-  const softDeleted = await createTask(operationContext, collectionId);
+  const laterClock = { now: () => new Date('2026-07-21T10:00:00.000Z') };
+  const earlierClock = { now: () => new Date('2026-07-21T09:00:00.000Z') };
+  const createdFirstAtLaterTime = await createTask(operationContext, collectionId, laterClock);
+  const archived = await createTask(operationContext, collectionId, earlierClock);
+  const softDeleted = await createTask(operationContext, collectionId, earlierClock);
 
   const transitions = await Promise.all(
     [
@@ -199,7 +223,7 @@ test('activating ID backfills every retained Task in deterministic creation orde
         number: '1',
         propertyDefinitionId: activated.response.definition.propertyDefinitionId,
       },
-      taskId: oldest.taskId,
+      taskId: archived.taskId,
     },
     {
       idAssignment: {
@@ -207,7 +231,7 @@ test('activating ID backfills every retained Task in deterministic creation orde
         number: '2',
         propertyDefinitionId: activated.response.definition.propertyDefinitionId,
       },
-      taskId: archived.taskId,
+      taskId: softDeleted.taskId,
     },
     {
       idAssignment: {
@@ -215,7 +239,7 @@ test('activating ID backfills every retained Task in deterministic creation orde
         number: '3',
         propertyDefinitionId: activated.response.definition.propertyDefinitionId,
       },
-      taskId: softDeleted.taskId,
+      taskId: createdFirstAtLaterTime.taskId,
     },
   ]);
   assert.deepEqual(
@@ -224,6 +248,32 @@ test('activating ID backfills every retained Task in deterministic creation orde
       number: idAssignment.number,
       taskIds: [taskId],
     })),
+  );
+
+  const checkbox = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Done' },
+    registration: createCheckboxPropertyDefinitionActionRegistration,
+  });
+  assert.equal(checkbox._tag, 'OperationSucceeded', JSON.stringify(checkbox));
+  const edited = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: checkbox.response.definition.propertyDefinitionId,
+      taskId: archived.taskId,
+      value: true,
+    },
+    registration: updateCheckboxPropertyValueActionRegistration,
+  });
+  assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
+  const afterOrdinaryEdit = await readWorkspace(operationContext, collectionId);
+  assert.equal(afterOrdinaryEdit._tag, 'OperationSucceeded', JSON.stringify(afterOrdinaryEdit));
+  assert.equal(
+    afterOrdinaryEdit.response.tasks.find(({ taskId }) => taskId === archived.taskId).idAssignment
+      .number,
+    '1',
   );
 });
 
@@ -255,6 +305,41 @@ test('concurrent Task creation allocates unique consecutive IDs isolated by coll
   );
   assert.equal(secondWorkspace.response.tasks[0].taskId, secondCollectionTask.taskId);
   assert.equal(secondWorkspace.response.tasks[0].idAssignment.number, '1');
+});
+
+test('ID activation serializes with concurrent Task creation without gaps', async () => {
+  const operationContext = await createOperationIdentity();
+  const collectionId = await createCollection(operationContext);
+  const taskCount = 4;
+  const gate = synchronizedPolicyGate(taskCount + 1);
+  const activation = runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'ID', prefix: '' },
+    policyChecks: [gate],
+    registration: createIdPropertyDefinitionActionRegistration,
+  });
+  const creations = Array.from({ length: taskCount }, () =>
+    runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      policyChecks: [gate],
+      registration: createTaskActionRegistration,
+    }),
+  );
+  const [activationResult, ...creationResults] = await Promise.all([activation, ...creations]);
+
+  assert.equal(activationResult._tag, 'OperationSucceeded', JSON.stringify(activationResult));
+  assert.equal(
+    creationResults.every((result) => result._tag === 'OperationSucceeded'),
+    true,
+    JSON.stringify(creationResults),
+  );
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(
+    workspace.response.tasks.map(({ idAssignment }) => idAssignment.number),
+    ['1', '2', '3', '4'],
+  );
 });
 
 test('a rolled-back Task creation does not consume an ID number', async () => {
@@ -363,7 +448,6 @@ test('ID is a singleton definition and rejects definition duplication', async ()
     operationContext,
     payload: {
       collectionId,
-      copyValues: false,
       expectedRevision: 1,
       propertyDefinitionId: activation.response.definition.propertyDefinitionId,
     },

@@ -20,6 +20,7 @@ import type {
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
+import { taskPropertyDefinitionFromRow as projectTaskPropertyDefinition } from '../task-property-definition-projection.ts';
 
 interface DefinitionFields {
   readonly hidden: boolean;
@@ -55,9 +56,6 @@ const taskPropertyDefinitionFromRow = (
   optionRows: readonly OptionRow[],
   locale: string,
 ): TaskPropertyDefinition => {
-  if (definition.datatype === 'id' || definition.datatype === 'number') {
-    return definition;
-  }
   if (definition.datatype === 'select') {
     const optionOrderMode = definition.optionOrderMode ?? 'manual';
     return {
@@ -77,14 +75,7 @@ const taskPropertyDefinitionFromRow = (
       revision: definition.revision,
     };
   }
-  return {
-    datatype: definition.datatype,
-    hidden: definition.hidden,
-    mandatory: definition.mandatory,
-    name: definition.name,
-    propertyDefinitionId: definition.propertyDefinitionId,
-    revision: definition.revision,
-  };
+  return projectTaskPropertyDefinition(definition);
 };
 
 interface NumberValueRow {
