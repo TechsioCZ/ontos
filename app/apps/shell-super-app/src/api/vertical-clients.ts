@@ -1,4 +1,5 @@
 export {
+  runUploadFilesMediaItemsAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,

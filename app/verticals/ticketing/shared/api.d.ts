@@ -4,6 +4,12 @@ import type {
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import type {
+  uploadFilesMediaItemsActionFailureSchema,
+  uploadFilesMediaItemsActionHeadersSchema,
+  uploadFilesMediaItemsActionOutcomeSchema,
+  uploadFilesMediaItemsActionPayloadSchema,
+} from './actions/upload-files-media-items.ts';
 
 export type {
   ConfigureIdPropertyPrefixActionFailure,
@@ -209,6 +215,12 @@ export type {
   UploadFilesMediaItemActionPayload,
   UploadFilesMediaItemActionResponse,
 } from './actions/upload-files-media-item.ts';
+export type {
+  UploadFilesMediaItemsActionFailure,
+  UploadFilesMediaItemsActionOutcome,
+  UploadFilesMediaItemsActionPayload,
+  UploadFilesMediaItemsActionResponse,
+} from './actions/upload-files-media-items.ts';
 export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
@@ -5879,6 +5891,19 @@ export declare const ticketingApi: HttpApi.HttpApi<
         >,
         never,
         never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'uploadFilesMediaItemsAction',
+        'POST',
+        '/ticketing/actions/upload-files-media-items',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<typeof uploadFilesMediaItemsActionPayloadSchema>,
+        HttpApiEndpoint.StringTree<typeof uploadFilesMediaItemsActionHeadersSchema>,
+        HttpApiEndpoint.Json<typeof uploadFilesMediaItemsActionOutcomeSchema>,
+        HttpApiEndpoint.Json<typeof uploadFilesMediaItemsActionFailureSchema>,
+        never,
+        never
       >,
     false
   >
@@ -6191,6 +6216,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   uploadFilesMediaItemAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  uploadFilesMediaItemsAction: {
     method: string;
     operationId: string;
     routePath: string;

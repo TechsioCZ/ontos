@@ -145,6 +145,9 @@ import type {
   DuplicateTaskActionFailure,
   DuplicateTaskActionOutcome,
   DuplicateTaskActionPayload,
+  UploadFilesMediaItemsActionFailure,
+  UploadFilesMediaItemsActionOutcome,
+  UploadFilesMediaItemsActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -159,6 +162,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UploadFilesMediaItemsActionFailure
   | DuplicateTaskActionFailure
   | ConfigureIdPropertyPrefixActionFailure
   | CreateIdPropertyDefinitionActionFailure
@@ -1240,6 +1244,27 @@ export const runUploadFilesMediaItemAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.uploadFilesMediaItemAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUploadFilesMediaItemsAction = (
+  payload: UploadFilesMediaItemsActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UploadFilesMediaItemsActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.uploadFilesMediaItemsAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.uploadFilesMediaItemsAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };

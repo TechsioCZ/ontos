@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  uploadFilesMediaItemsActionHeadersSchema,
+  uploadFilesMediaItemsActionFailureSchemas,
+  uploadFilesMediaItemsActionOutcomeSchema,
+  uploadFilesMediaItemsActionPayloadSchema,
+} from './actions/upload-files-media-items.ts';
+
+import {
   duplicateTaskActionFailureSchemas,
   duplicateTaskActionHeadersSchema,
   duplicateTaskActionOutcomeSchema,
@@ -461,6 +468,12 @@ export type {
   UploadFilesMediaItemActionPayload,
   UploadFilesMediaItemActionResponse,
 } from './actions/upload-files-media-item.ts';
+export type {
+  UploadFilesMediaItemsActionFailure,
+  UploadFilesMediaItemsActionOutcome,
+  UploadFilesMediaItemsActionPayload,
+  UploadFilesMediaItemsActionResponse,
+} from './actions/upload-files-media-items.ts';
 export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
@@ -1269,6 +1282,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: duplicateTaskActionPayloadSchema,
         success: duplicateTaskActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'uploadFilesMediaItemsAction',
+        '/ticketing/actions/upload-files-media-items',
+        {
+          error: uploadFilesMediaItemsActionFailureSchemas,
+          headers: uploadFilesMediaItemsActionHeadersSchema,
+          payload: uploadFilesMediaItemsActionPayloadSchema,
+          success: uploadFilesMediaItemsActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -1588,6 +1613,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:uploadFilesMediaItemAction',
     routePath: '/ticketing/actions/upload-files-media-item',
+    source: 'generated-client',
+  },
+  uploadFilesMediaItemsAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:uploadFilesMediaItemsAction',
+    routePath: '/ticketing/actions/upload-files-media-items',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;
