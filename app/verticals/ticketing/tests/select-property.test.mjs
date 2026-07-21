@@ -7,6 +7,7 @@ import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createSelectOptionActionRegistration } from '../src/actions/create-select-option.ts';
 import { createSelectOptionAndSelectActionRegistration } from '../src/actions/create-select-option-and-select.ts';
 import { configureSelectOptionOrderActionRegistration } from '../src/actions/configure-select-option-order.ts';
+import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { createSelectPropertyDefinitionActionRegistration } from '../src/actions/create-select-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
@@ -196,6 +197,54 @@ test('Select values keep a stable option identity when its presentation changes'
   assert.deepEqual(workspace.response.tasks[0].selectValues, [
     { optionId, propertyDefinitionId, revision: 1 },
   ]);
+});
+
+test('generic Select configuration returns the complete ordered public definition', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId } = await createCollectionAndTask(operationContext);
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Priority' },
+    registration: createSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const { propertyDefinitionId } = definition.response.definition;
+  const option = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'red',
+      expectedDefinitionRevision: 1,
+      name: 'High',
+      propertyDefinitionId,
+    },
+    registration: createSelectOptionActionRegistration,
+  });
+  assert.equal(option._tag, 'OperationSucceeded', JSON.stringify(option));
+
+  const configured = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: option.response.definitionRevision,
+      hidden: true,
+      mandatory: false,
+      name: 'Renamed priority',
+      propertyDefinitionId,
+    },
+    registration: configureTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(configured._tag, 'OperationSucceeded', JSON.stringify(configured));
+  assert.deepEqual(configured.response.definition, {
+    datatype: 'select',
+    hidden: true,
+    mandatory: false,
+    name: 'Renamed priority',
+    optionOrderMode: 'manual',
+    options: [option.response.option],
+    propertyDefinitionId,
+    revision: option.response.definitionRevision + 1,
+  });
 });
 
 test('inline option creation and selection is atomic and limited to schema editors', async () => {

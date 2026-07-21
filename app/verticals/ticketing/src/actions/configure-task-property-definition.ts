@@ -16,68 +16,27 @@ import type {
   ConfigureTaskPropertyDefinitionActionPayload,
   ConfigureTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/configure-task-property-definition.ts';
-import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
+import type {
+  SelectOption,
+  SelectOptionOrderMode,
+  TaskPropertyDefinition,
+} from '../../shared/task-property-definition.ts';
+import { orderSelectOptions } from '../select-option-order.ts';
+import { taskPropertyDefinitionFromRow } from '../task-property-definition-projection.ts';
+import type { TaskPropertyDefinitionRow } from '../task-property-definition-projection.ts';
 
-type StoredTaskPropertyDefinition = TaskPropertyDefinition & {
-  readonly cardinality: 'one' | 'unlimited' | null;
-};
+interface SelectDefinitionRow {
+  readonly collectionLocale: string;
+  readonly datatype: 'select';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly optionOrderMode: SelectOptionOrderMode | null;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
 
-const toTaskPropertyDefinition = (
-  definition: StoredTaskPropertyDefinition,
-): TaskPropertyDefinition => {
-  if (definition.datatype === 'person') {
-    if (definition.cardinality === null) {
-      throw new Error('Person Task Property configuration is missing.');
-    }
-    return {
-      cardinality: definition.cardinality,
-      datatype: 'person',
-      hidden: definition.hidden,
-      mandatory: definition.mandatory,
-      name: definition.name,
-      propertyDefinitionId: definition.propertyDefinitionId,
-      revision: definition.revision,
-    };
-  }
-  return definition;
-};
-
-const configuredDefinition = (definition: TaskPropertyDefinition): TaskPropertyDefinition => {
-  if (definition.datatype === 'person') {
-    return definition;
-  }
-  if (definition.datatype === 'checkbox') {
-    return {
-      datatype: 'checkbox',
-      hidden: definition.hidden,
-      mandatory: definition.mandatory,
-      name: definition.name,
-      propertyDefinitionId: definition.propertyDefinitionId,
-      revision: definition.revision,
-    };
-  }
-  if (definition.datatype === 'number' || definition.datatype === 'select') {
-    return definition;
-  }
-  if (definition.datatype === 'phone') {
-    return {
-      datatype: 'phone',
-      hidden: definition.hidden,
-      mandatory: definition.mandatory,
-      name: definition.name,
-      propertyDefinitionId: definition.propertyDefinitionId,
-      revision: definition.revision,
-    };
-  }
-  return {
-    datatype: 'text',
-    hidden: definition.hidden,
-    mandatory: definition.mandatory,
-    name: definition.name,
-    propertyDefinitionId: definition.propertyDefinitionId,
-    revision: definition.revision,
-  };
-};
+type ConfigurableDefinitionRow = SelectDefinitionRow | TaskPropertyDefinitionRow;
 
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
@@ -117,6 +76,39 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   ConfigureTaskPropertyDefinitionActionPayload,
   ConfigureTaskPropertyDefinitionActionResponse
 > = async (input, services) => {
+  const projectDefinition = async (
+    row: ConfigurableDefinitionRow,
+  ): Promise<TaskPropertyDefinition> => {
+    if (row.datatype !== 'select') {
+      return taskPropertyDefinitionFromRow(row);
+    }
+    const optionResult = await services.tx.execute(sql`
+      select
+        option.color,
+        option.manual_position as "manualPosition",
+        option.name,
+        option.option_id as "optionId",
+        option.revision
+      from ticketing.select_options as option
+      where option.property_definition_id = ${row.propertyDefinitionId}
+        and option.tenant_id = ${services.context.tenantId}
+    `);
+    const optionOrderMode = row.optionOrderMode ?? 'manual';
+    return {
+      datatype: row.datatype,
+      hidden: row.hidden,
+      mandatory: row.mandatory,
+      name: row.name,
+      optionOrderMode,
+      options: orderSelectOptions(
+        rowsFromResult<SelectOption>(optionResult),
+        optionOrderMode,
+        row.collectionLocale,
+      ),
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+    };
+  };
   const name = input.name.trim();
   if (name.length === 0) {
     throw rejectAction({
@@ -127,18 +119,24 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
 
   const currentResult = await services.tx.execute(sql`
     select
+      collection.locale as "collectionLocale",
       person_configuration.cardinality,
       definition.datatype,
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,
       definition.name,
+      definition.prefix,
+      definition.select_option_order_mode as "optionOrderMode",
       definition.property_definition_id as "propertyDefinitionId",
       definition.revision
     from ticketing.task_property_definitions as definition
     inner join ticketing.task_schemas as schema
       on schema.schema_id = definition.schema_id
       and schema.tenant_id = definition.tenant_id
+    inner join ticketing.task_collections as collection
+      on collection.collection_id = schema.collection_id
+      and collection.tenant_id = schema.tenant_id
     left join ticketing.task_person_property_configurations as person_configuration
       on person_configuration.property_definition_id = definition.property_definition_id
       and person_configuration.tenant_id = definition.tenant_id
@@ -149,15 +147,15 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       and schema.tenant_id = ${services.context.tenantId}
     for update of definition
   `);
-  const currentDefinitionRow = rowsFromResult<StoredTaskPropertyDefinition>(currentResult).at(0);
-  if (currentDefinitionRow === undefined) {
+  const currentRow = rowsFromResult<ConfigurableDefinitionRow>(currentResult).at(0);
+  if (currentRow === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
       message:
         'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
     });
   }
-  const currentDefinition = toTaskPropertyDefinition(currentDefinitionRow);
+  const currentDefinition = await projectDefinition(currentRow);
   if (
     currentDefinition.hidden === input.hidden &&
     currentDefinition.mandatory === input.mandatory &&
@@ -165,7 +163,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   ) {
     services.markNoOp();
     return {
-      definition: configuredDefinition(currentDefinition),
+      definition: currentDefinition,
     };
   }
 
@@ -177,6 +175,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       name = ${name},
       revision = definition.revision + 1
     from ticketing.task_schemas as schema
+    inner join ticketing.task_collections as collection
+      on collection.collection_id = schema.collection_id
+      and collection.tenant_id = schema.tenant_id
     where definition.property_definition_id = ${input.propertyDefinitionId}
       and definition.revision = ${input.expectedRevision}
       and definition.schema_id = schema.schema_id
@@ -191,6 +192,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
           and lower(sibling.name) = lower(${name})
       )
     returning
+      collection.locale as "collectionLocale",
       (
         select person_configuration.cardinality
         from ticketing.task_person_property_configurations as person_configuration
@@ -202,10 +204,12 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       definition.hidden,
       definition.mandatory,
       definition.name,
+      definition.prefix,
+      definition.select_option_order_mode as "optionOrderMode",
       definition.property_definition_id as "propertyDefinitionId",
       definition.revision
   `);
-  const definitionRow = rowsFromResult<StoredTaskPropertyDefinition>(result).at(0);
+  const definitionRow = rowsFromResult<ConfigurableDefinitionRow>(result).at(0);
   if (definitionRow === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
@@ -213,10 +217,10 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
         'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
     });
   }
-  const definition = toTaskPropertyDefinition(definitionRow);
+  const definition = await projectDefinition(definitionRow);
 
   return {
-    definition: configuredDefinition(definition),
+    definition,
   };
 };
 

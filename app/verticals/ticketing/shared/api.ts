@@ -6,6 +6,24 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  duplicateTaskActionFailureSchemas,
+  duplicateTaskActionHeadersSchema,
+  duplicateTaskActionOutcomeSchema,
+  duplicateTaskActionPayloadSchema,
+} from './actions/duplicate-task';
+import {
+  configureIdPropertyPrefixActionFailureSchemas,
+  configureIdPropertyPrefixActionHeadersSchema,
+  configureIdPropertyPrefixActionOutcomeSchema,
+  configureIdPropertyPrefixActionPayloadSchema,
+} from './actions/configure-id-property-prefix';
+import {
+  createIdPropertyDefinitionActionFailureSchemas,
+  createIdPropertyDefinitionActionHeadersSchema,
+  createIdPropertyDefinitionActionOutcomeSchema,
+  createIdPropertyDefinitionActionPayloadSchema,
+} from './actions/create-id-property-definition';
+import {
   createFilesMediaPropertyDefinitionActionFailureSchemas,
   createFilesMediaPropertyDefinitionActionHeadersSchema,
   createFilesMediaPropertyDefinitionActionOutcomeSchema,
@@ -240,6 +258,12 @@ import {
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
 export type {
+  ConfigureIdPropertyPrefixActionFailure,
+  ConfigureIdPropertyPrefixActionOutcome,
+  ConfigureIdPropertyPrefixActionPayload,
+  ConfigureIdPropertyPrefixActionResponse,
+} from './actions/configure-id-property-prefix';
+export type {
   ConfigurePrincipalTimeZonePreferenceActionFailure,
   ConfigurePrincipalTimeZonePreferenceActionOutcome,
   ConfigurePrincipalTimeZonePreferenceActionPayload,
@@ -342,6 +366,12 @@ export type {
   CreateIntrinsicPropertyDefinitionActionResponse,
 } from './actions/create-intrinsic-property-definition';
 export type {
+  CreateIdPropertyDefinitionActionFailure,
+  CreateIdPropertyDefinitionActionOutcome,
+  CreateIdPropertyDefinitionActionPayload,
+  CreateIdPropertyDefinitionActionResponse,
+} from './actions/create-id-property-definition';
+export type {
   CreatePhonePropertyDefinitionActionFailure,
   CreatePhonePropertyDefinitionActionOutcome,
   CreatePhonePropertyDefinitionActionPayload,
@@ -395,6 +425,12 @@ export type {
   DuplicateTaskPropertyDefinitionActionPayload,
   DuplicateTaskPropertyDefinitionActionResponse,
 } from './actions/duplicate-task-property-definition';
+export type {
+  DuplicateTaskActionFailure,
+  DuplicateTaskActionOutcome,
+  DuplicateTaskActionPayload,
+  DuplicateTaskActionResponse,
+} from './actions/duplicate-task';
 export type {
   UpdateCheckboxPropertyValueActionFailure,
   UpdateCheckboxPropertyValueActionOutcome,
@@ -451,6 +487,7 @@ export {
   datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   filesMediaPropertyDefinitionSchema,
+  idPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   personPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
@@ -466,6 +503,7 @@ export type {
   DatePropertyDefinition,
   EmailPropertyDefinition,
   FilesMediaPropertyDefinition,
+  IdPropertyDefinition,
   NumberPropertyDefinition,
   PersonPropertyDefinition,
   PhonePropertyDefinition,
@@ -1199,10 +1237,48 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: uploadFilesMediaItemActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createIdPropertyDefinitionAction',
+        '/ticketing/actions/create-id-property-definition',
+        {
+          error: createIdPropertyDefinitionActionFailureSchemas,
+          headers: createIdPropertyDefinitionActionHeadersSchema,
+          payload: createIdPropertyDefinitionActionPayloadSchema,
+          success: createIdPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureIdPropertyPrefixAction',
+        '/ticketing/actions/configure-id-property-prefix',
+        {
+          error: configureIdPropertyPrefixActionFailureSchemas,
+          headers: configureIdPropertyPrefixActionHeadersSchema,
+          payload: configureIdPropertyPrefixActionPayloadSchema,
+          success: configureIdPropertyPrefixActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('duplicateTaskAction', '/ticketing/actions/duplicate-task', {
+        error: duplicateTaskActionFailureSchemas,
+        headers: duplicateTaskActionHeadersSchema,
+        payload: duplicateTaskActionPayloadSchema,
+        success: duplicateTaskActionOutcomeSchema,
+      }),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configureIdPropertyPrefixAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureIdPropertyPrefixAction',
+    routePath: '/ticketing/actions/configure-id-property-prefix',
+    source: 'generated-client',
+  },
   configureNumberPropertyFormatAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureNumberPropertyFormatAction',
@@ -1255,6 +1331,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createFilesMediaPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-files-media-property-definition',
+    source: 'generated-client',
+  },
+  createIdPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createIdPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-id-property-definition',
     source: 'generated-client',
   },
   createIntrinsicPropertyDefinitionAction: {
@@ -1327,6 +1409,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:deleteTaskPropertyDefinitionAction',
     routePath: '/ticketing/actions/delete-task-property-definition',
+    source: 'generated-client',
+  },
+  duplicateTaskAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:duplicateTaskAction',
+    routePath: '/ticketing/actions/duplicate-task',
     source: 'generated-client',
   },
   duplicateTaskPropertyDefinitionAction: {

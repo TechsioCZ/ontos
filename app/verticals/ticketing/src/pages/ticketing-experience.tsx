@@ -212,6 +212,7 @@ export const TicketingExperience = () => {
               setUrlDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
+                idGroups: [],
                 propertyDefinitions: [],
                 tasks: [
                   {

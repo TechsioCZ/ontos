@@ -15,6 +15,12 @@ export const datePropertyValueSchema = Schema.Struct({
   value: Schema.NullOr(Schema.String),
 });
 
+export const idAssignmentSchema = Schema.Struct({
+  displayValue: Schema.String,
+  number: Schema.String,
+  propertyDefinitionId: Schema.String,
+});
+
 export const selectPropertyValueSchema = Schema.Struct({
   optionId: Schema.optional(Schema.String),
   propertyDefinitionId: Schema.String,
@@ -67,6 +73,12 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       timeZone: Schema.String,
     }),
   ),
+  idGroups: Schema.Array(
+    Schema.Struct({
+      number: Schema.String,
+      taskIds: Schema.Array(Schema.String),
+    }),
+  ),
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
@@ -82,6 +94,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       dateValues: Schema.Array(datePropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       filesMediaItems: Schema.Array(filesMediaItemSchema),
+      idAssignment: Schema.optional(idAssignmentSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),
@@ -103,6 +116,7 @@ export const getTaskPropertyWorkspacePayloadSchema = Schema.Struct({
 
 export type GetTaskPropertyWorkspacePayload = typeof getTaskPropertyWorkspacePayloadSchema.Type;
 export type CheckboxPropertyValue = typeof checkboxPropertyValueSchema.Type;
+export type IdAssignment = typeof idAssignmentSchema.Type;
 export type PhonePropertyValue = typeof phonePropertyValueSchema.Type;
 export type TaskPropertyWorkspace = typeof taskPropertyWorkspaceSchema.Type;
 export type UrlPropertyValue = typeof urlPropertyValueSchema.Type;

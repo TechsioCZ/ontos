@@ -79,6 +79,34 @@ const checkboxLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const idLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: () => Promise.reject(new Error('ID Task Property Definitions cannot be duplicated.')),
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_id_assignments
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+    await tx.execute(sql`
+      delete from ticketing.task_id_sequences
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_id_assignments as assignment
+      inner join ticketing.tasks as task
+        on task.task_id = assignment.task_id
+        and task.tenant_id = assignment.tenant_id
+      where assignment.property_definition_id = ${target.propertyDefinitionId}
+        and assignment.tenant_id = ${target.tenantId}
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const personLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     if (source.cardinality === null) {
@@ -445,6 +473,7 @@ const lifecycleAdapters = {
   created_time: intrinsicLifecycleAdapter,
   date: dateLifecycleAdapter,
   email: emailLifecycleAdapter,
+  id: idLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
   phone: phoneLifecycleAdapter,

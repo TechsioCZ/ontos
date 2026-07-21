@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const checkboxPropertyDefinitionSchema: Schema.Struct<{
   readonly datatype: Schema.Literal<'checkbox'>;
   readonly hidden: Schema.Boolean;
@@ -12,6 +13,15 @@ export declare const filesMediaPropertyDefinitionSchema: Schema.Struct<{
   readonly hidden: Schema.Boolean;
   readonly mandatory: Schema.Boolean;
   readonly name: Schema.String;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
+export declare const idPropertyDefinitionSchema: Schema.Struct<{
+  readonly datatype: Schema.Literal<'id'>;
+  readonly hidden: Schema.Boolean;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
+  readonly prefix: Schema.String;
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
 }>;
@@ -146,6 +156,15 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
       readonly revision: Schema.Finite;
     }>,
     Schema.Struct<{
+      readonly datatype: Schema.Literal<'id'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly prefix: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>,
+    Schema.Struct<{
       readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
       readonly hidden: Schema.Boolean;
       readonly mandatory: Schema.Boolean;
@@ -221,6 +240,7 @@ export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema
 export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSchema.Type;
+export type IdPropertyDefinition = typeof idPropertyDefinitionSchema.Type;
 export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
 export type PersonPropertyDefinition = typeof personPropertyDefinitionSchema.Type;

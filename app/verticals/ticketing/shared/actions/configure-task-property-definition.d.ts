@@ -41,6 +41,23 @@ export declare const configureTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literal<'files_media'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'id'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly prefix: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
@@ -140,6 +157,23 @@ export declare const configureTaskPropertyDefinitionActionOutcomeSchema: Schema.
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'files_media'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'id'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly prefix: Schema.String;
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
         }>,

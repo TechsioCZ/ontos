@@ -18,6 +18,16 @@ export const filesMediaPropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const idPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('id'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  prefix: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const datePropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literal('date'),
   hidden: Schema.Boolean,
@@ -123,6 +133,7 @@ export const taskPropertyDefinitionSchema = Schema.Union([
   datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   filesMediaPropertyDefinitionSchema,
+  idPropertyDefinitionSchema,
   intrinsicPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   personPropertyDefinitionSchema,
@@ -136,6 +147,7 @@ export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema
 export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSchema.Type;
+export type IdPropertyDefinition = typeof idPropertyDefinitionSchema.Type;
 export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
 export type PersonPropertyDefinition = typeof personPropertyDefinitionSchema.Type;

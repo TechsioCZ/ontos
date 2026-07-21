@@ -173,7 +173,9 @@ test('Created time definitions project the original intrinsic Task creation inst
     {
       checkboxValues: [],
       createdAt: task.response.task.createdAt,
+      dateValues: [],
       emailValues: [],
+      filesMediaItems: [],
       phoneValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,

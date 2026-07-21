@@ -1,5 +1,5 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated Action declaration
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const deleteTaskPropertyDefinitionActionKey: 'ticketing.deleteTaskPropertyDefinition';
 export declare const deleteTaskPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;

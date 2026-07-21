@@ -9,6 +9,7 @@ import {
 } from '../../shared/task-property-workspace.ts';
 import type {
   GetTaskPropertyWorkspacePayload,
+  IdAssignment,
   TaskPropertyWorkspace,
 } from '../../shared/task-property-workspace.ts';
 import type { TextDocument } from '../../shared/text-property.ts';
@@ -34,6 +35,7 @@ type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
   | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & { readonly datatype: 'files_media' })
+  | (DefinitionFields & { readonly datatype: 'id'; readonly prefix: string })
   | (DefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent';
@@ -59,7 +61,7 @@ const taskPropertyDefinitionFromRow = (
   optionRows: readonly OptionRow[],
   locale: string,
 ): TaskPropertyDefinition => {
-  if (definition.datatype === 'number') {
+  if (definition.datatype === 'id' || definition.datatype === 'number') {
     return definition;
   }
   if (definition.datatype === 'select') {
@@ -169,6 +171,9 @@ interface ValueRow {
   readonly createdByDisplayName: string;
   readonly createdByPrincipalId: string;
   readonly createdByStatus: 'active' | 'archived' | 'disabled';
+  readonly idNumber: string | null;
+  readonly idPrefix: string | null;
+  readonly idPropertyDefinitionId: string | null;
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -209,6 +214,7 @@ interface TaskRow {
     value: string | null;
   }[];
   readonly filesMediaItems: Omit<FilesMediaItemRow, 'taskId'>[];
+  idAssignment?: IdAssignment;
   readonly createdAt?: string;
   readonly createdBy?: {
     displayName: string;
@@ -335,6 +341,17 @@ const intrinsicTaskFacts = (
     : {}),
 });
 
+const idAssignmentFromValueRow = (row: ValueRow): IdAssignment | undefined => {
+  if (row.idNumber === null || row.idPrefix === null || row.idPropertyDefinitionId === null) {
+    return undefined;
+  }
+  return {
+    displayValue: row.idPrefix.length === 0 ? row.idNumber : `${row.idPrefix}-${row.idNumber}`,
+    number: row.idNumber,
+    propertyDefinitionId: row.idPropertyDefinitionId,
+  };
+};
+
 const taskRowsFromValues = ({
   dateValueRows,
   definitions,
@@ -392,6 +409,10 @@ const taskRowsFromValues = ({
         revision: row.revision,
         value: row.value,
       });
+    }
+    const idAssignment = idAssignmentFromValueRow(row);
+    if (idAssignment !== undefined) {
+      current.idAssignment = idAssignment;
     }
     tasks.set(row.taskId, current);
   }
@@ -489,6 +510,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         definition.hidden,
         definition.mandatory,
         definition.name,
+        definition.prefix,
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision
       from ticketing.task_property_definitions as definition
@@ -500,7 +522,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'number', 'person', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -512,6 +534,9 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         creator.display_name as "createdByDisplayName",
         task.created_by_principal_id as "createdByPrincipalId",
         creator.status as "createdByStatus",
+        id_assignment.number::text as "idNumber",
+        id_definition.prefix as "idPrefix",
+        id_assignment.property_definition_id as "idPropertyDefinitionId",
         value.property_definition_id as "propertyDefinitionId",
         value.revision,
         task.task_id as "taskId",
@@ -528,9 +553,15 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       left join ticketing.task_property_definitions as definition
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
+      left join ticketing.task_id_assignments as id_assignment
+        on id_assignment.task_id = task.task_id
+        and id_assignment.tenant_id = task.tenant_id
+      left join ticketing.task_property_definitions as id_definition
+        on id_definition.property_definition_id = id_assignment.property_definition_id
+        and id_definition.tenant_id = id_assignment.tenant_id
       where task.collection_id = ${input.collectionId}
         and task.tenant_id = ${context.tenantId}
-      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+      order by task.created_at, task.creation_ordinal, definition.created_at, value.property_definition_id
     `);
     const emailValueResult = await db.execute(sql`
       select
@@ -760,25 +791,36 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
           db,
         })
       : undefined;
+    const tasks = taskRowsFromValues({
+      dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
+      definitions,
+      emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
+      filesMediaRows,
+      numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
+      personAssignmentRows,
+      personValueRows: rowsFromResult<PersonValueRow>(personValueResult),
+      phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
+      resolvedPeople,
+      selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
+      textValueRows: rowsFromResult<TextValueRow>(textValueResult),
+      urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),
+      valueRows: rowsFromResult<ValueRow>(valueResult),
+    });
+    const idGroups = tasks
+      .filter(
+        (task): task is TaskRow & { readonly idAssignment: IdAssignment } =>
+          task.idAssignment !== undefined,
+      )
+      .map(({ idAssignment, taskId }) => ({
+        number: idAssignment.number,
+        taskIds: [taskId],
+      }));
     return {
       collectionId: input.collectionId,
       ...(effectiveTimeZone === undefined ? {} : { effectiveTimeZone }),
+      idGroups,
       propertyDefinitions: [...definitions],
-      tasks: taskRowsFromValues({
-        dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
-        definitions,
-        emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
-        filesMediaRows,
-        numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
-        personAssignmentRows,
-        personValueRows: rowsFromResult<PersonValueRow>(personValueResult),
-        phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
-        resolvedPeople,
-        selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
-        textValueRows: rowsFromResult<TextValueRow>(textValueResult),
-        urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),
-        valueRows: rowsFromResult<ValueRow>(valueResult),
-      }),
+      tasks,
     };
   },
 };

@@ -187,10 +187,10 @@ const transitionTaskRetentionActionHandler: ActionHandler<
       taskRevision: current.taskRevision,
     };
   }
-  if (current.retentionState === 'soft_deleted' && input.transition !== 'softDelete') {
+  if (current.retentionState === 'soft_deleted' && input.transition === 'archive') {
     throw rejectAction({
       code: 'ticketing.transitionTaskRetention.invalid_transition',
-      message: 'A soft-deleted Task cannot be archived or restored.',
+      message: 'A soft-deleted Task cannot be archived before it is restored.',
     });
   }
 

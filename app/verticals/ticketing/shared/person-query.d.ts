@@ -1,5 +1,5 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated query declaration
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const taskPersonQueryFilterSchema: Schema.Union<
   readonly [
     Schema.Struct<{

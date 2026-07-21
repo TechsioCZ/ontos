@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const createFilesMediaPropertyDefinitionActionKey: 'ticketing.createFilesMediaPropertyDefinition';
 export declare const createFilesMediaPropertyDefinitionActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;

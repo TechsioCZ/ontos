@@ -136,6 +136,15 @@ import type {
   UploadFilesMediaItemActionFailure,
   UploadFilesMediaItemActionOutcome,
   UploadFilesMediaItemActionPayload,
+  ConfigureIdPropertyPrefixActionFailure,
+  ConfigureIdPropertyPrefixActionOutcome,
+  ConfigureIdPropertyPrefixActionPayload,
+  CreateIdPropertyDefinitionActionFailure,
+  CreateIdPropertyDefinitionActionOutcome,
+  CreateIdPropertyDefinitionActionPayload,
+  DuplicateTaskActionFailure,
+  DuplicateTaskActionOutcome,
+  DuplicateTaskActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -150,6 +159,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | DuplicateTaskActionFailure
+  | ConfigureIdPropertyPrefixActionFailure
+  | CreateIdPropertyDefinitionActionFailure
   | UploadFilesMediaItemActionFailure
   | CreateFilesMediaPropertyDefinitionActionFailure
   | CreateDatePropertyDefinitionActionFailure
@@ -1228,6 +1240,56 @@ export const runUploadFilesMediaItemAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.uploadFilesMediaItemAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runCreateIdPropertyDefinitionAction = (
+  payload: CreateIdPropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreateIdPropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createIdPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createIdPropertyDefinitionAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runConfigureIdPropertyPrefixAction = (
+  payload: ConfigureIdPropertyPrefixActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<ConfigureIdPropertyPrefixActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureIdPropertyPrefixAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureIdPropertyPrefixAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runDuplicateTaskAction = (
+  payload: DuplicateTaskActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<DuplicateTaskActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext: options.operationContext ?? ticketingOperationContexts.duplicateTaskAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.duplicateTaskAction({ headers: headers ?? {}, payload }),
     ),
   );
 };

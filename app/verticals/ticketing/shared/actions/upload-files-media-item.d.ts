@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const uploadFilesMediaItemActionKey: 'ticketing.uploadFilesMediaItem';
 export declare const uploadFilesMediaItemActionPayloadSchema: Schema.Struct<{
   readonly bytesBase64: Schema.String;

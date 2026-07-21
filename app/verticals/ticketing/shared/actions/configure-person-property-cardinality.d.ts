@@ -1,5 +1,5 @@
-// oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated Action declaration
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const configurePersonPropertyCardinalityActionKey: 'ticketing.configurePersonPropertyCardinality';
 export declare const configurePersonPropertyCardinalityActionPayloadSchema: Schema.Struct<{
   readonly cardinality: Schema.Literals<readonly ['one', 'unlimited']>;

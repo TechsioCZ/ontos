@@ -1,4 +1,7 @@
 export {
+  runConfigureIdPropertyPrefixAction,
+  runCreateIdPropertyDefinitionAction,
+  runDuplicateTaskAction,
   runCreateFilesMediaPropertyDefinitionAction,
   runUploadFilesMediaItemAction,
   groupTaskDateValues,
