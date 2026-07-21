@@ -13,6 +13,14 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
+      createdAt: Schema.optional(Schema.String),
+      createdBy: Schema.optional(
+        Schema.Struct({
+          displayName: Schema.String,
+          inactive: Schema.Boolean,
+          principalId: Schema.String,
+        }),
+      ),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
       title: Schema.String,

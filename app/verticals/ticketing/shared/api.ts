@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  createIntrinsicPropertyDefinitionActionHeadersSchema,
+  createIntrinsicPropertyDefinitionActionFailureSchemas,
+  createIntrinsicPropertyDefinitionActionOutcomeSchema,
+  createIntrinsicPropertyDefinitionActionPayloadSchema,
+} from './actions/create-intrinsic-property-definition';
+
+import {
   transitionTaskRetentionActionHeadersSchema,
   transitionTaskRetentionActionFailureSchemas,
   transitionTaskRetentionActionOutcomeSchema,
@@ -60,6 +67,10 @@ import {
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
 import {
+  queryIntrinsicTaskPropertiesPayloadSchema,
+  queryIntrinsicTaskPropertiesResponseSchema,
+} from './intrinsic-task-property-query';
+import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
@@ -79,6 +90,12 @@ export type {
   CreateCheckboxPropertyDefinitionActionPayload,
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
+export type {
+  CreateIntrinsicPropertyDefinitionActionFailure,
+  CreateIntrinsicPropertyDefinitionActionOutcome,
+  CreateIntrinsicPropertyDefinitionActionPayload,
+  CreateIntrinsicPropertyDefinitionActionResponse,
+} from './actions/create-intrinsic-property-definition';
 export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
@@ -130,6 +147,11 @@ export type {
   FilterTaskCheckboxValuesPayload,
   FilterTaskCheckboxValuesResponse,
 } from './checkbox-filter';
+export type {
+  IntrinsicTaskPropertyQueryOperation,
+  QueryIntrinsicTaskPropertiesPayload,
+  QueryIntrinsicTaskPropertiesResponse,
+} from './intrinsic-task-property-query';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -258,6 +280,19 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.post(
+        'queryIntrinsicTaskProperties',
+        '/ticketing/task-collections/:collectionId/intrinsic-property-query',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          payload: queryIntrinsicTaskPropertiesPayloadSchema,
+          success: queryIntrinsicTaskPropertiesResponseSchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.get(
         'filterTaskCheckboxValues',
         '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/checkbox-filter',
@@ -379,6 +414,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: transitionTaskRetentionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createIntrinsicPropertyDefinitionAction',
+        '/ticketing/actions/create-intrinsic-property-definition',
+        {
+          error: createIntrinsicPropertyDefinitionActionFailureSchemas,
+          headers: createIntrinsicPropertyDefinitionActionHeadersSchema,
+          payload: createIntrinsicPropertyDefinitionActionPayloadSchema,
+          success: createIntrinsicPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -393,6 +440,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-checkbox-property-definition',
+    source: 'generated-client',
+  },
+  createIntrinsicPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createIntrinsicPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-intrinsic-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -455,6 +508,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:list',
     routePath: '/ticketing',
+    source: 'generated-client',
+  },
+  queryIntrinsicTaskProperties: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:queryIntrinsicTaskProperties',
+    routePath: '/ticketing/task-collections/:collectionId/intrinsic-property-query',
     source: 'generated-client',
   },
   readiness: {

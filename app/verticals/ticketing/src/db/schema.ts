@@ -78,7 +78,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by')`,
     ),
     check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
   ],

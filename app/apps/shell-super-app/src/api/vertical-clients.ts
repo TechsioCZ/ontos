@@ -1,4 +1,5 @@
 export {
+  runCreateIntrinsicPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
@@ -14,6 +15,7 @@ export {
   getTicketing,
   getTicketingReadiness,
   getTaskPropertyWorkspace,
+  queryIntrinsicTaskProperties,
   listTicketing,
   type TicketingClientOptions,
 } from '@app/ticketing/api/client';

@@ -45,6 +45,11 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateIntrinsicPropertyDefinitionActionFailure,
+  CreateIntrinsicPropertyDefinitionActionOutcome,
+  CreateIntrinsicPropertyDefinitionActionPayload,
+  QueryIntrinsicTaskPropertiesPayload,
+  QueryIntrinsicTaskPropertiesResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -59,6 +64,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | CreateIntrinsicPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -179,6 +185,24 @@ export const filterTaskCheckboxValues = (
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
         query: { value: value ? 'true' : 'false' },
+      }),
+    ),
+  );
+
+export const queryIntrinsicTaskProperties = (
+  payload: QueryIntrinsicTaskPropertiesPayload,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<QueryIntrinsicTaskPropertiesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.queryIntrinsicTaskProperties,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.queryIntrinsicTaskProperties({
+        headers: options.headers ?? {},
+        params: { collectionId: payload.collectionId },
+        payload,
       }),
     ),
   );
@@ -361,6 +385,34 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateIntrinsicPropertyDefinitionAction = (
+  payload: CreateIntrinsicPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateIntrinsicPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createIntrinsicPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createIntrinsicPropertyDefinitionAction({
         headers: headers ?? {},
         payload,
       }),

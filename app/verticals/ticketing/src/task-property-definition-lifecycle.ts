@@ -77,8 +77,27 @@ const checkboxLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const intrinsicLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: () => Promise.resolve(),
+  deleteValues: () => Promise.resolve(),
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.tasks as task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = task.collection_id
+        and schema.tenant_id = task.tenant_id
+      where schema.schema_id = ${target.schemaId}
+        and task.tenant_id = ${target.tenantId}
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const lifecycleAdapters = {
   checkbox: checkboxLifecycleAdapter,
+  created_by: intrinsicLifecycleAdapter,
+  created_time: intrinsicLifecycleAdapter,
 } satisfies Readonly<Record<string, TaskPropertyLifecycleAdapter>>;
 
 type SupportedTaskPropertyDatatype = keyof typeof lifecycleAdapters;

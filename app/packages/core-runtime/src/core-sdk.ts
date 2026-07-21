@@ -1127,7 +1127,7 @@ const persistDataAccessEvent = async <TPayload, TResponse>({
   resultCount,
 }: {
   readonly context: OperationContext<TPayload>;
-  readonly descriptor: DataAccessDescriptor;
+  readonly descriptor: DataAccessDescriptor<TPayload>;
   readonly payload: TPayload;
   readonly response: TResponse;
   readonly resultCount: (response: TResponse) => number;
@@ -1359,18 +1359,26 @@ export const runAction = async <TAction, TResponse>({
           response,
         } satisfies OperationSucceeded<TAction, TResponse>;
       }
+      const { auditEvent } = descriptor;
+      const auditTargetResourceId = auditEvent?.targetResourceId(payload, response);
       const auditedContext = await writeAuditEvent({
         auditProfile: descriptor.auditProfile,
         context: completedContext,
         eventType: 'action.succeeded',
-        evidenceJson: descriptor.auditEvent?.evidence(payload, response),
+        ...(auditEvent === undefined
+          ? {}
+          : { evidenceJson: auditEvent.evidence(payload, response) }),
         executor: tx,
         outcome: 'succeeded',
         outcomeCode: 'action_succeeded',
         outcomeStage: 'execution',
-        targetModuleKey: descriptor.auditEvent?.targetModuleKey,
-        targetResourceId: descriptor.auditEvent?.targetResourceId(payload, response),
-        targetResourceType: descriptor.auditEvent?.targetResourceType,
+        ...(auditEvent?.targetModuleKey === undefined
+          ? {}
+          : { targetModuleKey: auditEvent.targetModuleKey }),
+        ...(auditTargetResourceId === undefined ? {} : { targetResourceId: auditTargetResourceId }),
+        ...(auditEvent?.targetResourceType === undefined
+          ? {}
+          : { targetResourceType: auditEvent.targetResourceType }),
       });
 
       if ('_tag' in auditedContext) {
