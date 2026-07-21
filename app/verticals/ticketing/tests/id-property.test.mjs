@@ -265,9 +265,14 @@ test('a rolled-back Task creation does not consume an ID number', async () => {
 
   const rolledBackRegistration = {
     ...createTaskActionRegistration,
-    handler: async (...arguments_) => {
-      await createTaskActionRegistration.handler(...arguments_);
-      throw new Error('force rollback after allocation');
+    descriptor: {
+      ...createTaskActionRegistration.descriptor,
+      domainEvent: {
+        ...createTaskActionRegistration.descriptor.domainEvent,
+        payload: () => {
+          throw new Error('force rollback after allocation');
+        },
+      },
     },
   };
   const rolledBack = await runRegisteredAction({
@@ -423,24 +428,24 @@ test('confirmed ID deletion removes its namespace and reactivation deterministic
   assert.equal(afterReactivation.response.tasks[2].taskId, nextTask.taskId);
 });
 
-test('archive and restore retain an assignment while Task duplication allocates a fresh one', async () => {
+test('soft delete and restore retain an assignment while Task duplication allocates a fresh one', async () => {
   const operationContext = await createOperationIdentity();
   const collectionId = await createCollection(operationContext);
   const activation = await activateId(operationContext, collectionId);
   assert.equal(activation._tag, 'OperationSucceeded', JSON.stringify(activation));
   const source = await createTask(operationContext, collectionId);
 
-  const archived = await runRegisteredAction({
+  const softDeleted = await runRegisteredAction({
     operationContext,
     payload: {
       collectionId,
       expectedRevision: 1,
       taskId: source.taskId,
-      transition: 'archive',
+      transition: 'softDelete',
     },
     registration: transitionTaskRetentionActionRegistration,
   });
-  assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
+  assert.equal(softDeleted._tag, 'OperationSucceeded', JSON.stringify(softDeleted));
   const restored = await runRegisteredAction({
     operationContext,
     payload: {

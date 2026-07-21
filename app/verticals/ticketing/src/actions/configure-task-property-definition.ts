@@ -16,29 +16,8 @@ import type {
   ConfigureTaskPropertyDefinitionActionPayload,
   ConfigureTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/configure-task-property-definition.ts';
-import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
-
-interface TaskPropertyDefinitionRow {
-  readonly datatype: 'checkbox' | 'id';
-  readonly hidden: boolean;
-  readonly mandatory: boolean;
-  readonly name: string;
-  readonly prefix: string;
-  readonly propertyDefinitionId: string;
-  readonly revision: number;
-}
-
-const taskPropertyDefinitionFromRow = (row: TaskPropertyDefinitionRow): TaskPropertyDefinition =>
-  row.datatype === 'id'
-    ? row
-    : {
-        datatype: row.datatype,
-        hidden: row.hidden,
-        mandatory: row.mandatory,
-        name: row.name,
-        propertyDefinitionId: row.propertyDefinitionId,
-        revision: row.revision,
-      };
+import { taskPropertyDefinitionFromRow } from '../task-property-definition-projection.ts';
+import type { TaskPropertyDefinitionRow } from '../task-property-definition-projection.ts';
 
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,

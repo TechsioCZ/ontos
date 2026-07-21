@@ -313,20 +313,6 @@
           "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "task_id_assignments_task_id_tasks_task_id_fk": {
-          "name": "task_id_assignments_task_id_tasks_task_id_fk",
-          "tableFrom": "task_id_assignments",
-          "tableTo": "tasks",
-          "schemaTo": "ticketing",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "task_id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
         "task_id_assignments_tenant_id_tenants_tenant_id_fk": {
           "name": "task_id_assignments_tenant_id_tenants_tenant_id_fk",
           "tableFrom": "task_id_assignments",

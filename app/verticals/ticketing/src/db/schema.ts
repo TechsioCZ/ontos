@@ -150,9 +150,8 @@ export const taskIdAssignments = ticketingSchema.table(
     propertyDefinitionId: uuid('property_definition_id')
       .notNull()
       .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
-    taskId: uuid('task_id')
-      .primaryKey()
-      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    // The immutable assignment ledger intentionally outlives a hard-deleted Task.
+    taskId: uuid('task_id').primaryKey(),
     tenantId: tenantId(),
   },
   (table) => [

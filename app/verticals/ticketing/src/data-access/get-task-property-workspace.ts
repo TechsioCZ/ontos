@@ -10,16 +10,8 @@ import type {
   GetTaskPropertyWorkspacePayload,
   TaskPropertyWorkspace,
 } from '../../shared/task-property-workspace.ts';
-
-interface DefinitionRow {
-  readonly datatype: 'checkbox' | 'id';
-  readonly hidden: boolean;
-  readonly mandatory: boolean;
-  readonly name: string;
-  readonly prefix: string;
-  readonly propertyDefinitionId: string;
-  readonly revision: number;
-}
+import { taskPropertyDefinitionFromRow } from '../task-property-definition-projection.ts';
+import type { TaskPropertyDefinitionRow } from '../task-property-definition-projection.ts';
 
 interface ValueRow {
   readonly idNumber: string | null;
@@ -120,7 +112,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.creation_ordinal, definition.created_at, value.property_definition_id
     `);
-    const definitions = rowsFromResult<DefinitionRow>(definitionResult);
+    const definitions = rowsFromResult<TaskPropertyDefinitionRow>(definitionResult);
     const valueRows = rowsFromResult<ValueRow>(valueResult);
     const tasks = new Map<string, TaskRow>();
 
@@ -149,18 +141,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       tasks.set(row.taskId, current);
     }
 
-    const propertyDefinitions = definitions.map((definition) =>
-      definition.datatype === 'id'
-        ? definition
-        : {
-            datatype: definition.datatype,
-            hidden: definition.hidden,
-            mandatory: definition.mandatory,
-            name: definition.name,
-            propertyDefinitionId: definition.propertyDefinitionId,
-            revision: definition.revision,
-          },
-    );
+    const propertyDefinitions = definitions.map(taskPropertyDefinitionFromRow);
     const idGroups = [...tasks.values()]
       .filter(
         (task): task is TaskRow & { readonly idAssignment: NonNullable<TaskRow['idAssignment']> } =>
