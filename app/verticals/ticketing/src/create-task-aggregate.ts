@@ -114,6 +114,26 @@ export const createTaskAggregate = async ({
         and definition.datatype = 'checkbox'
       returning task_id
     ),
+    initialized_person_values as (
+      insert into ticketing.task_person_values (
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        definition.property_definition_id,
+        created_task.task_id,
+        ${tenantId}
+      from created_task
+      inner join ticketing.task_schemas as schema
+        on schema.collection_id = created_task.collection_id
+        and schema.tenant_id = ${tenantId}
+      inner join ticketing.task_property_definitions as definition
+        on definition.schema_id = schema.schema_id
+        and definition.tenant_id = ${tenantId}
+        and definition.datatype = 'person'
+      returning task_id
+    ),
     initialized_text_values as (
       insert into ticketing.task_text_values (
         property_definition_id,

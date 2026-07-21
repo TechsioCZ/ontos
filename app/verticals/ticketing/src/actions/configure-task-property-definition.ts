@@ -120,6 +120,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const currentResult = await services.tx.execute(sql`
     select
       collection.locale as "collectionLocale",
+      person_configuration.cardinality,
       definition.datatype,
       definition.number_format as format,
       definition.hidden,
@@ -136,6 +137,9 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
     inner join ticketing.task_collections as collection
       on collection.collection_id = schema.collection_id
       and collection.tenant_id = schema.tenant_id
+    left join ticketing.task_person_property_configurations as person_configuration
+      on person_configuration.property_definition_id = definition.property_definition_id
+      and person_configuration.tenant_id = definition.tenant_id
     where definition.property_definition_id = ${input.propertyDefinitionId}
       and definition.revision = ${input.expectedRevision}
       and definition.tenant_id = ${services.context.tenantId}
@@ -189,6 +193,12 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       )
     returning
       collection.locale as "collectionLocale",
+      (
+        select person_configuration.cardinality
+        from ticketing.task_person_property_configurations as person_configuration
+        where person_configuration.property_definition_id = definition.property_definition_id
+          and person_configuration.tenant_id = definition.tenant_id
+      ) as cardinality,
       definition.datatype,
       definition.number_format as format,
       definition.hidden,

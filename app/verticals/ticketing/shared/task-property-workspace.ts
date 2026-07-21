@@ -1,11 +1,18 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
+import { filesMediaItemSchema } from './actions/upload-files-media-item.ts';
 import { textPropertyValueSchema } from './text-property.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
   value: Schema.Boolean,
+});
+
+export const datePropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.NullOr(Schema.String),
 });
 
 export const idAssignmentSchema = Schema.Struct({
@@ -44,6 +51,20 @@ export const phonePropertyValueSchema = Schema.Struct({
   value: Schema.String,
 });
 
+export const resolvedPersonSchema = Schema.Struct({
+  displayName: Schema.String,
+  eligible: Schema.Boolean,
+  principalId: Schema.String,
+  status: Schema.Literals(['active', 'archived', 'disabled', 'departed']),
+});
+
+export const personPropertyValueSchema = Schema.Struct({
+  people: Schema.Array(resolvedPersonSchema),
+  principalIds: Schema.Array(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   effectiveTimeZone: Schema.optional(
@@ -70,9 +91,12 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
           principalId: Schema.String,
         }),
       ),
+      dateValues: Schema.Array(datePropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
+      filesMediaItems: Schema.Array(filesMediaItemSchema),
       idAssignment: Schema.optional(idAssignmentSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
+      personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
       taskId: Schema.String,

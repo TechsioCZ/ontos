@@ -27,11 +27,9 @@ CREATE UNIQUE INDEX "ticketing_task_id_assignments_definition_number_uk" ON "tic
 CREATE INDEX "ticketing_task_id_assignments_tenant_definition_idx" ON "ticketing"."task_id_assignments" USING btree ("tenant_id","property_definition_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "ticketing_task_id_sequences_collection_uk" ON "ticketing"."task_id_sequences" USING btree ("collection_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "ticketing_task_property_definitions_schema_id_datatype_uk" ON "ticketing"."task_property_definitions" USING btree ("schema_id") WHERE "ticketing"."task_property_definitions"."datatype" = 'id';--> statement-breakpoint
-ALTER TABLE "ticketing"."task_property_definitions" ADD CONSTRAINT "ticketing_task_property_definitions_datatype_ck" CHECK ("ticketing"."task_property_definitions"."datatype" in ('title', 'checkbox', 'created_time', 'created_by', 'email', 'id', 'number', 'phone', 'select', 'text', 'url'));--> statement-breakpoint
+ALTER TABLE "ticketing"."task_property_definitions" ADD CONSTRAINT "ticketing_task_property_definitions_datatype_ck" CHECK ("ticketing"."task_property_definitions"."datatype" in ('title', 'checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url'));--> statement-breakpoint
 CREATE FUNCTION "ticketing"."reject_task_id_assignment_update"()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
+RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
 	RAISE EXCEPTION 'Task ID assignments are immutable';
 END;

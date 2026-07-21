@@ -11,6 +11,26 @@
       "staleDescription": "Vaše rozepsaná volba zůstala zachována. Před dalším pokusem načtěte aktuální hodnotu.",
       "staleTitle": "Checkbox byl změněn jinde"
     },
+    "date": {
+      "clear": "Vymazat",
+      "close": "Zavřít",
+      "definitionCreate": "Přidat Date property",
+      "definitionCreateFailedDescription": "Date property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření Date property selhalo",
+      "definitionCreating": "Přidávání Date property",
+      "definitionName": "Název Date property",
+      "empty": "Prázdné",
+      "invalid": "Zadejte skutečné kalendářní datum.",
+      "nextMonth": "Další měsíc",
+      "placeholder": "DD. MM. RRRR",
+      "previousMonth": "Předchozí měsíc",
+      "save": "Uložit datum",
+      "saveFailedDescription": "Datum se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení data selhalo",
+      "staleDescription": "Vaše rozepsané datum zůstalo zachováno. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "Datum bylo změněno jinde",
+      "today": "Dnes"
+    },
     "email": {
       "activate": "Napsat e-mail",
       "definitionCreate": "Přidat Email property",

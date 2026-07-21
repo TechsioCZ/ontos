@@ -14,7 +14,9 @@ export type TaskPropertyDefinitionRow =
         | 'checkbox'
         | 'created_by'
         | 'created_time'
+        | 'date'
         | 'email'
+        | 'files_media'
         | 'phone'
         | 'text'
         | 'url';
@@ -23,6 +25,10 @@ export type TaskPropertyDefinitionRow =
   | (TaskPropertyDefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent' | null;
+    })
+  | (TaskPropertyDefinitionFields & {
+      readonly cardinality: 'one' | 'unlimited';
+      readonly datatype: 'person';
     });
 
 export const taskPropertyDefinitionFromRow = (
@@ -43,6 +49,17 @@ export const taskPropertyDefinitionFromRow = (
     return {
       datatype: row.datatype,
       format: row.format ?? 'number',
+      hidden: row.hidden,
+      mandatory: row.mandatory,
+      name: row.name,
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+    };
+  }
+  if (row.datatype === 'person') {
+    return {
+      cardinality: row.cardinality,
+      datatype: row.datatype,
       hidden: row.hidden,
       mandatory: row.mandatory,
       name: row.name,

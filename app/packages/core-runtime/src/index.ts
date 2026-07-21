@@ -69,6 +69,27 @@ export type {
 } from './policy.ts';
 export { corePolicies } from './policies/index.ts';
 export { rowsFromResult } from './sql-result.ts';
+export { createPersonDirectory, searchEligiblePeople } from './person-directory.ts';
+export type {
+  EligiblePersonDirectoryEntry,
+  PersonDirectory,
+  ResolvedPersonDirectoryEntry,
+} from './person-directory.ts';
+export {
+  commitMediaAssetUpload,
+  getAuthorizedMediaDownload,
+  getMediaAssetProjections,
+  getMediaUploadPolicy,
+  MediaUploadConfigurationError,
+} from './media.ts';
+export { MediaUploadRejectedError } from './media-upload-rejected-error.ts';
+export type {
+  AuthorizedMediaDownloadResult,
+  CommittedMediaAsset,
+  MediaAssetUploadInput,
+  MediaAssetProjection,
+  MediaUploadPolicy,
+} from './media.ts';
 export {
   createVerticalGatewayToken,
   resolveVerticalGatewayToken,
