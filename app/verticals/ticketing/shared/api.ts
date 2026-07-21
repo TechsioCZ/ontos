@@ -6,6 +6,18 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  createDatePropertyDefinitionActionFailureSchemas,
+  createDatePropertyDefinitionActionHeadersSchema,
+  createDatePropertyDefinitionActionOutcomeSchema,
+  createDatePropertyDefinitionActionPayloadSchema,
+} from './actions/create-date-property-definition';
+import {
+  updateDatePropertyValueActionFailureSchemas,
+  updateDatePropertyValueActionHeadersSchema,
+  updateDatePropertyValueActionOutcomeSchema,
+  updateDatePropertyValueActionPayloadSchema,
+} from './actions/update-date-property-value';
+import {
   configurePrincipalTimeZonePreferenceActionFailureSchemas,
   configurePrincipalTimeZonePreferenceActionHeadersSchema,
   configurePrincipalTimeZonePreferenceActionOutcomeSchema,
@@ -175,6 +187,7 @@ import {
   updateCheckboxPropertyValueActionPayloadSchema,
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
+import { groupTaskDateValuesResponseSchema } from './date-grouping';
 import { emailQueryOperationSchema, queryTaskEmailValuesResponseSchema } from './email-query';
 import {
   queryIntrinsicTaskPropertiesPayloadSchema,
@@ -206,6 +219,12 @@ export type {
   CreateEmailPropertyDefinitionActionPayload,
   CreateEmailPropertyDefinitionActionResponse,
 } from './actions/create-email-property-definition';
+export type {
+  CreateDatePropertyDefinitionActionFailure,
+  CreateDatePropertyDefinitionActionOutcome,
+  CreateDatePropertyDefinitionActionPayload,
+  CreateDatePropertyDefinitionActionResponse,
+} from './actions/create-date-property-definition';
 export type {
   UpdateEmailPropertyValueActionFailure,
   UpdateEmailPropertyValueActionOutcome,
@@ -327,6 +346,12 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdateDatePropertyValueActionFailure,
+  UpdateDatePropertyValueActionOutcome,
+  UpdateDatePropertyValueActionPayload,
+  UpdateDatePropertyValueActionResponse,
+} from './actions/update-date-property-value';
+export type {
   UpdatePhonePropertyValueActionFailure,
   UpdatePhonePropertyValueActionOutcome,
   UpdatePhonePropertyValueActionPayload,
@@ -361,6 +386,7 @@ export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact
 export type { TaskPropertyEditCapability } from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
+  datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
@@ -373,6 +399,7 @@ export {
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  DatePropertyDefinition,
   EmailPropertyDefinition,
   NumberPropertyDefinition,
   PhonePropertyDefinition,
@@ -416,6 +443,7 @@ export type {
 } from './checkbox-filter';
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
+export type { GroupTaskDateValuesPayload, GroupTaskDateValuesResponse } from './date-grouping';
 export type {
   IntrinsicTaskPropertyQueryOperation,
   QueryIntrinsicTaskPropertiesPayload,
@@ -640,6 +668,21 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: taskPropertyDeletionImpactSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'groupTaskDateValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-groups',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: groupTaskDateValuesResponseSchema,
         },
       ),
     )
@@ -954,6 +997,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: updatePhonePropertyValueActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createDatePropertyDefinitionAction',
+        '/ticketing/actions/create-date-property-definition',
+        {
+          error: createDatePropertyDefinitionActionFailureSchemas,
+          headers: createDatePropertyDefinitionActionHeadersSchema,
+          payload: createDatePropertyDefinitionActionPayloadSchema,
+          success: createDatePropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateDatePropertyValueAction',
+        '/ticketing/actions/update-date-property-value',
+        {
+          error: updateDatePropertyValueActionFailureSchemas,
+          headers: updateDatePropertyValueActionHeadersSchema,
+          payload: updateDatePropertyValueActionPayloadSchema,
+          success: updateDatePropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -986,6 +1053,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-checkbox-property-definition',
+    source: 'generated-client',
+  },
+  createDatePropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createDatePropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-date-property-definition',
     source: 'generated-client',
   },
   createEmailPropertyDefinitionAction: {
@@ -1104,6 +1177,13 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/task-collections/:collectionId/properties',
     source: 'generated-client',
   },
+  groupTaskDateValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:groupTaskDateValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-groups',
+    source: 'generated-client',
+  },
   list: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:list',
@@ -1151,6 +1231,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateCheckboxPropertyValueAction',
     routePath: '/ticketing/actions/update-checkbox-property-value',
+    source: 'generated-client',
+  },
+  updateDatePropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateDatePropertyValueAction',
+    routePath: '/ticketing/actions/update-date-property-value',
     source: 'generated-client',
   },
   updateEmailPropertyValueAction: {

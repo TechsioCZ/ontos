@@ -9,6 +9,15 @@ export const checkboxPropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const datePropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('date'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const intrinsicPropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literals(['created_time', 'created_by']),
   hidden: Schema.Boolean,
@@ -92,6 +101,7 @@ export const phonePropertyDefinitionSchema = Schema.Struct({
 // This shared contract is the extension point for each supported Task Property datatype.
 export const taskPropertyDefinitionSchema = Schema.Union([
   checkboxPropertyDefinitionSchema,
+  datePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   intrinsicPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
@@ -102,6 +112,7 @@ export const taskPropertyDefinitionSchema = Schema.Union([
 ]);
 
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
+export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;

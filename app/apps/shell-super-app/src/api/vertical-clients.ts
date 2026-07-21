@@ -1,4 +1,7 @@
 export {
+  groupTaskDateValues,
+  runCreateDatePropertyDefinitionAction,
+  runUpdateDatePropertyValueAction,
   runConfigurePrincipalTimeZonePreferenceAction,
   runCreateIntrinsicPropertyDefinitionAction,
   runCreatePhonePropertyDefinitionAction,

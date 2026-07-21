@@ -30,6 +30,7 @@ interface DefinitionFields {
 
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
+  | (DefinitionFields & { readonly datatype: 'date' })
   | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
   | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & {
@@ -99,6 +100,13 @@ interface EmailValueRow {
   readonly value: string | null;
 }
 
+interface DateValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly value: string | null;
+}
+
 interface PhoneValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
@@ -146,6 +154,11 @@ interface TaskRow {
     propertyDefinitionId: string;
     revision: number;
     value: boolean;
+  }[];
+  readonly dateValues: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: string | null;
   }[];
   readonly emailValues: {
     propertyDefinitionId: string;
@@ -202,6 +215,16 @@ const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow
   }
 };
 
+const appendDateValues = (tasks: Map<string, TaskRow>, rows: readonly DateValueRow[]): void => {
+  for (const row of rows) {
+    tasks.get(row.taskId)?.dateValues.push({
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      value: row.value,
+    });
+  }
+};
+
 const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectValueRow[]): void => {
   for (const row of rows) {
     const task = tasks.get(row.taskId);
@@ -235,6 +258,7 @@ const intrinsicTaskFacts = (
 });
 
 const taskRowsFromValues = ({
+  dateValueRows,
   definitions,
   emailValueRows,
   numberValueRows,
@@ -244,6 +268,7 @@ const taskRowsFromValues = ({
   urlValueRows,
   valueRows,
 }: {
+  readonly dateValueRows: readonly DateValueRow[];
   readonly definitions: readonly TaskPropertyDefinition[];
   readonly emailValueRows: readonly EmailValueRow[];
   readonly numberValueRows: readonly NumberValueRow[];
@@ -267,6 +292,7 @@ const taskRowsFromValues = ({
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
       checkboxValues: [],
+      dateValues: [],
       ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
       emailValues: [],
       phoneValues: [],
@@ -321,6 +347,7 @@ const taskRowsFromValues = ({
   }
 
   appendSelectValues(tasks, selectValueRows);
+  appendDateValues(tasks, dateValueRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
 };
@@ -366,7 +393,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'email', 'number', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'number', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -412,6 +439,24 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
         and definition.datatype = 'email'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const dateValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        value.value::text as value
+      from ticketing.task_date_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'date'
       where task.collection_id = ${input.collectionId}
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
@@ -545,6 +590,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       ...(effectiveTimeZone === undefined ? {} : { effectiveTimeZone }),
       propertyDefinitions: [...definitions],
       tasks: taskRowsFromValues({
+        dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
         definitions,
         emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
         numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
