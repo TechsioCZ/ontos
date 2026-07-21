@@ -1,10 +1,11 @@
 // oxlint-disable typescript/ban-types, typescript/no-empty-object-type -- TypeScript-generated API declaration
-import {
+import type {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+
 export type {
   CreateEmailPropertyDefinitionActionFailure,
   CreateEmailPropertyDefinitionActionOutcome,

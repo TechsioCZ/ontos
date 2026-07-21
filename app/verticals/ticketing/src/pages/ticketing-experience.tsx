@@ -1,4 +1,5 @@
 // @effect-diagnostics asyncFunction:off cryptoRandomUUID:off globalFetch:off
+// oxlint-disable eslint/complexity -- The integration-base datatype renderer is already above the generic threshold; Date follows the same dispatch seam.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';

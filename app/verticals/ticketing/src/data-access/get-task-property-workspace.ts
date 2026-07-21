@@ -203,6 +203,16 @@ const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow
   }
 };
 
+const appendDateValues = (tasks: Map<string, TaskRow>, rows: readonly DateValueRow[]): void => {
+  for (const row of rows) {
+    tasks.get(row.taskId)?.dateValues.push({
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      value: row.value,
+    });
+  }
+};
+
 const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectValueRow[]): void => {
   for (const row of rows) {
     const task = tasks.get(row.taskId);
@@ -275,14 +285,6 @@ const taskRowsFromValues = ({
     });
   }
 
-  for (const row of dateValueRows) {
-    tasks.get(row.taskId)?.dateValues.push({
-      propertyDefinitionId: row.propertyDefinitionId,
-      revision: row.revision,
-      value: row.value,
-    });
-  }
-
   for (const row of textValueRows) {
     tasks.get(row.taskId)?.textValues?.push({
       document: row.document,
@@ -309,6 +311,7 @@ const taskRowsFromValues = ({
   }
 
   appendSelectValues(tasks, selectValueRows);
+  appendDateValues(tasks, dateValueRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
 };

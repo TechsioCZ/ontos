@@ -1,4 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import type { Schema } from '@modern-js/plugin-bff/effect-client';
+
 export declare const checkboxPropertyDefinitionSchema: Schema.Struct<{
   readonly datatype: Schema.Literal<'checkbox'>;
   readonly hidden: Schema.Boolean;
