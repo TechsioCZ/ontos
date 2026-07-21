@@ -1,6 +1,8 @@
 export {
   runCreateFilesMediaPropertyDefinitionAction,
   runUploadFilesMediaItemAction,
+  runConfigurePrincipalTimeZonePreferenceAction,
+  runCreateIntrinsicPropertyDefinitionAction,
   runCreatePhonePropertyDefinitionAction,
   runUpdatePhonePropertyValueAction,
   queryTaskEmailValues,
@@ -37,6 +39,7 @@ export {
   getTicketingReadiness,
   getTaskPropertyWorkspace,
   getTaskPropertyEditCapability,
+  queryIntrinsicTaskProperties,
   listTicketing,
   type TicketingClientOptions,
 } from '@app/ticketing/api/client';

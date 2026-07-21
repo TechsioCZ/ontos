@@ -29,6 +29,22 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
+    "intrinsic": {
+      "createFailedDescription": "Intrinzickou vlastnost se nepodařilo vytvořit.",
+      "createFailedTitle": "Vytvoření intrinzické vlastnosti selhalo",
+      "created_by": {
+        "create": "Přidat vlastnost Vytvořil(a)",
+        "creating": "Přidávání vlastnosti Vytvořil(a)",
+        "name": "Vytvořil(a)"
+      },
+      "created_time": {
+        "create": "Přidat vlastnost Čas vytvoření",
+        "creating": "Přidávání vlastnosti Čas vytvoření",
+        "details": "Podrobnosti",
+        "name": "Čas vytvoření"
+      },
+      "inactive": "neaktivní"
+    },
     "phone": {
       "call": "Volat",
       "copy": "Kopírovat",

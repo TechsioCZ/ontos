@@ -41,10 +41,24 @@ export const phonePropertyValueSchema = Schema.Struct({
 
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
+  effectiveTimeZone: Schema.optional(
+    Schema.Struct({
+      source: Schema.Literals(['browser_fallback', 'configured', 'system_fallback']),
+      timeZone: Schema.String,
+    }),
+  ),
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
+      createdAt: Schema.optional(Schema.String),
+      createdBy: Schema.optional(
+        Schema.Struct({
+          displayName: Schema.String,
+          inactive: Schema.Boolean,
+          principalId: Schema.String,
+        }),
+      ),
       emailValues: Schema.Array(emailPropertyValueSchema),
       filesMediaItems: Schema.Array(filesMediaItemSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
@@ -60,6 +74,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
 });
 
 export const getTaskPropertyWorkspacePayloadSchema = Schema.Struct({
+  browserTimeZone: Schema.optional(Schema.String),
   collectionId: Schema.String,
   locale: Schema.optional(Schema.String),
 });

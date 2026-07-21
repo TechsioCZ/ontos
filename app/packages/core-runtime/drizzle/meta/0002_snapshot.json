@@ -1,6 +1,6 @@
 {
-  "id": "bcb8c8f5-9cb8-4f3b-81ae-b07659d09ead",
-  "prevId": "010d0fba-013b-49c0-964c-3c6f2079490b",
+  "id": "ab715578-5d74-4218-8838-d4e7c13ec9b7",
+  "prevId": "bcb8c8f5-9cb8-4f3b-81ae-b07659d09ead",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -1515,6 +1515,66 @@
           "value": "\"core\".\"legal_entities\".\"status\" in ('active', 'suspended', 'archived')"
         }
       },
+      "isRLSEnabled": false
+    },
+    "core.media_asset_bytes": {
+      "name": "media_asset_bytes",
+      "schema": "core",
+      "columns": {
+        "bytes": {
+          "name": "bytes",
+          "type": "bytea",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "media_asset_id": {
+          "name": "media_asset_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "media_asset_bytes_media_asset_id_media_assets_media_asset_id_fk": {
+          "name": "media_asset_bytes_media_asset_id_media_assets_media_asset_id_fk",
+          "tableFrom": "media_asset_bytes",
+          "tableTo": "media_assets",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "media_asset_id"
+          ],
+          "columnsTo": [
+            "media_asset_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "media_asset_bytes_tenant_id_tenants_tenant_id_fk": {
+          "name": "media_asset_bytes_tenant_id_tenants_tenant_id_fk",
+          "tableFrom": "media_asset_bytes",
+          "tableTo": "tenants",
+          "schemaTo": "core",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "tenant_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "core.media_assets": {

@@ -201,6 +201,7 @@ export interface ActionAuthorizationRequirement<TInput = unknown> {
 }
 
 export interface ActionExecutionServices<TAction> {
+  readonly clock: OperationClock;
   readonly context: OperationContext<TAction>;
   readonly markNoOp: () => void;
   readonly tx: CoreTransaction;
@@ -260,6 +261,10 @@ export interface OperationLogger {
   readonly warn: (entry: OperationLogEntry) => void;
 }
 
+export interface OperationClock {
+  readonly now: () => Date;
+}
+
 export type OperationContextResolver = (input: {
   readonly audience: string;
   readonly token: string | null | undefined;
@@ -267,6 +272,7 @@ export type OperationContextResolver = (input: {
 
 export interface RunActionOptions {
   readonly authorizationChecker?: SpiceDbAuthorizationChecker;
+  readonly clock?: OperationClock;
   readonly logger?: OperationLogger;
   readonly operationContextResolver?: OperationContextResolver;
 }
@@ -1127,7 +1133,7 @@ const persistDataAccessEvent = async <TPayload, TResponse>({
   resultCount,
 }: {
   readonly context: OperationContext<TPayload>;
-  readonly descriptor: DataAccessDescriptor;
+  readonly descriptor: DataAccessDescriptor<TPayload>;
   readonly payload: TPayload;
   readonly response: TResponse;
   readonly resultCount: (response: TResponse) => number;
@@ -1320,6 +1326,7 @@ export const runAction = async <TAction, TResponse>({
       let actionWasNoOp = false;
       const handlerOutboxMessages: OutboxMessage<string, unknown>[] = [];
       const response = await handler(payload, {
+        clock: options.clock ?? { now: () => new Date() },
         context: {
           ...policyCheckedContext,
           addOutboxMessage: (message) => {
@@ -1359,18 +1366,26 @@ export const runAction = async <TAction, TResponse>({
           response,
         } satisfies OperationSucceeded<TAction, TResponse>;
       }
+      const { auditEvent } = descriptor;
+      const auditTargetResourceId = auditEvent?.targetResourceId(payload, response);
       const auditedContext = await writeAuditEvent({
         auditProfile: descriptor.auditProfile,
         context: completedContext,
         eventType: 'action.succeeded',
-        evidenceJson: descriptor.auditEvent?.evidence(payload, response),
+        ...(auditEvent === undefined
+          ? {}
+          : { evidenceJson: auditEvent.evidence(payload, response) }),
         executor: tx,
         outcome: 'succeeded',
         outcomeCode: 'action_succeeded',
         outcomeStage: 'execution',
-        targetModuleKey: descriptor.auditEvent?.targetModuleKey,
-        targetResourceId: descriptor.auditEvent?.targetResourceId(payload, response),
-        targetResourceType: descriptor.auditEvent?.targetResourceType,
+        ...(auditEvent?.targetModuleKey === undefined
+          ? {}
+          : { targetModuleKey: auditEvent.targetModuleKey }),
+        ...(auditTargetResourceId === undefined ? {} : { targetResourceId: auditTargetResourceId }),
+        ...(auditEvent?.targetResourceType === undefined
+          ? {}
+          : { targetResourceType: auditEvent.targetResourceType }),
       });
 
       if ('_tag' in auditedContext) {
