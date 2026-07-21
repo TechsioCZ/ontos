@@ -61,12 +61,15 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'createCheckboxPropertyDefinitionAction',
     'createTaskAction',
     'createTaskCollectionAction',
+    'createTextPropertyDefinitionAction',
     'createUrlPropertyDefinitionAction',
     'filterTaskCheckboxValues',
     'getTaskCollection',
     'getTaskPropertyWorkspace',
+    'queryTaskPropertyValues',
     'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
+    'updateTextPropertyValueAction',
     'updateUrlPropertyValueAction',
   ]) {
     expect(errorsByEndpoint.get(endpoint)).toEqual([401, 403, 409, 428, 500]);

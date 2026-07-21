@@ -143,10 +143,8 @@ export const queryTaskUrlValuesDataAccessRegistration: DataAccessRegistration<
   },
   handler: async (input, { context, db }) => {
     const localeResult = await db.execute(sql`
-      select tenant.default_locale as locale
+      select collection.locale
       from ticketing.task_collections as collection
-      inner join core.tenants as tenant
-        on tenant.tenant_id = collection.tenant_id
       where collection.collection_id = ${input.collectionId}
         and collection.tenant_id = ${context.tenantId}
     `);
