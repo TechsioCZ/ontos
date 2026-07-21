@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
+  bigserial,
   boolean,
   check,
   index,
@@ -63,6 +65,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     hidden: boolean('hidden').default(false).notNull(),
     mandatory: boolean('mandatory').default(false).notNull(),
     name: text('name').notNull(),
+    prefix: text('prefix').default('').notNull(),
     propertyDefinitionId: uuid('property_definition_id').defaultRandom().primaryKey(),
     revision: integer('revision').default(1).notNull(),
     schemaId: uuid('schema_id')
@@ -78,8 +81,11 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'id')`,
     ),
+    uniqueIndex('ticketing_task_property_definitions_schema_id_datatype_uk')
+      .on(table.schemaId)
+      .where(sql`${table.datatype} = 'id'`),
     check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
   ],
 );
@@ -94,6 +100,7 @@ export const tasks = ticketingSchema.table(
     createdByPrincipalId: uuid('created_by_principal_id')
       .notNull()
       .references(() => principals.principalId, { onDelete: 'restrict' }),
+    creationOrdinal: bigserial('creation_ordinal', { mode: 'bigint' }).notNull(),
     lastEditedAt: timestamp('last_edited_at', { precision: 3, withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -114,6 +121,50 @@ export const tasks = ticketingSchema.table(
       'ticketing_tasks_retention_state_ck',
       sql`${table.retentionState} in ('active', 'archived', 'soft_deleted')`,
     ),
+  ],
+);
+
+export const taskIdSequences = ticketingSchema.table(
+  'task_id_sequences',
+  {
+    collectionId: uuid('collection_id')
+      .notNull()
+      .references(() => taskCollections.collectionId, { onDelete: 'restrict' }),
+    nextNumber: bigint('next_number', { mode: 'bigint' }).notNull(),
+    propertyDefinitionId: uuid('property_definition_id')
+      .primaryKey()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    uniqueIndex('ticketing_task_id_sequences_collection_uk').on(table.collectionId),
+    check('ticketing_task_id_sequences_next_number_ck', sql`${table.nextNumber} >= 1`),
+  ],
+);
+
+export const taskIdAssignments = ticketingSchema.table(
+  'task_id_assignments',
+  {
+    assignedAt: createdAt(),
+    number: bigint('number', { mode: 'bigint' }).notNull(),
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    taskId: uuid('task_id')
+      .primaryKey()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    uniqueIndex('ticketing_task_id_assignments_definition_number_uk').on(
+      table.propertyDefinitionId,
+      table.number,
+    ),
+    index('ticketing_task_id_assignments_tenant_definition_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+    ),
+    check('ticketing_task_id_assignments_number_ck', sql`${table.number} >= 1`),
   ],
 );
 

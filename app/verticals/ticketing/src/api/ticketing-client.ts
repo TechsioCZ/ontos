@@ -45,6 +45,15 @@ import type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
+  CreateIdPropertyDefinitionActionFailure,
+  CreateIdPropertyDefinitionActionOutcome,
+  CreateIdPropertyDefinitionActionPayload,
+  ConfigureIdPropertyPrefixActionFailure,
+  ConfigureIdPropertyPrefixActionOutcome,
+  ConfigureIdPropertyPrefixActionPayload,
+  DuplicateTaskActionFailure,
+  DuplicateTaskActionOutcome,
+  DuplicateTaskActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -59,6 +68,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | DuplicateTaskActionFailure
+  | ConfigureIdPropertyPrefixActionFailure
+  | CreateIdPropertyDefinitionActionFailure
   | TransitionTaskRetentionActionFailure
   | DeleteTaskPropertyDefinitionActionFailure
   | DuplicateTaskPropertyDefinitionActionFailure
@@ -361,6 +373,86 @@ export const runTransitionTaskRetentionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.transitionTaskRetentionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateIdPropertyDefinitionAction = (
+  payload: CreateIdPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateIdPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createIdPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createIdPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureIdPropertyPrefixAction = (
+  payload: ConfigureIdPropertyPrefixActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureIdPropertyPrefixActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureIdPropertyPrefixAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureIdPropertyPrefixAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDuplicateTaskAction = (
+  payload: DuplicateTaskActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<DuplicateTaskActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext: options.operationContext ?? ticketingOperationContexts.duplicateTaskAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.duplicateTaskAction({
         headers: headers ?? {},
         payload,
       }),

@@ -7,34 +7,35 @@ import type {
 } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import {
-  createTaskActionKey,
-  createTaskActionPayloadSchema,
-  createTaskActionResponseSchema,
-} from '../../shared/actions/create-task.ts';
+  duplicateTaskActionKey,
+  duplicateTaskActionPayloadSchema,
+  duplicateTaskActionResponseSchema,
+} from '../../shared/actions/duplicate-task.ts';
 import type {
-  CreateTaskActionPayload,
-  CreateTaskActionResponse,
-} from '../../shared/actions/create-task.ts';
+  DuplicateTaskActionPayload,
+  DuplicateTaskActionResponse,
+} from '../../shared/actions/duplicate-task.ts';
 import { lockTaskCollectionForPropertyInitialization } from '../task-collection-property-initialization-lock.ts';
 import { taskCreationFromRow } from '../task-collection-aggregate.ts';
 import type { TaskCreationRow } from '../task-collection-aggregate.ts';
 
-const createTaskDomainEvent = {
-  eventType: 'ticketing.task.created',
-  payload: (_input, response) => ({
+const duplicateTaskDomainEvent = {
+  eventType: 'ticketing.task.duplicated',
+  payload: (input, response) => ({
     collectionId: response.task.collectionId,
     revision: response.task.revision,
+    sourceTaskId: input.sourceTaskId,
     taskId: response.task.taskId,
   }),
   producerModuleKey: 'ticketing',
   subjectModuleKey: 'ticketing',
   subjectResourceId: (_input, response) => response.task.taskId,
   subjectResourceType: 'task',
-} satisfies ActionDomainEventDescriptor<CreateTaskActionPayload, CreateTaskActionResponse>;
+} satisfies ActionDomainEventDescriptor<DuplicateTaskActionPayload, DuplicateTaskActionResponse>;
 
-const createTaskActionHandler: ActionHandler<
-  CreateTaskActionPayload,
-  CreateTaskActionResponse
+const duplicateTaskActionHandler: ActionHandler<
+  DuplicateTaskActionPayload,
+  DuplicateTaskActionResponse
 > = async (input, services) => {
   await lockTaskCollectionForPropertyInitialization({
     collectionId: input.collectionId,
@@ -42,22 +43,29 @@ const createTaskActionHandler: ActionHandler<
     tx: services.tx,
   });
 
-  const creationResult = await services.tx.execute(sql`
-    with created_task as (
+  const result = await services.tx.execute(sql`
+    with source_task as (
+      select task.collection_id, task.task_id, task.title
+      from ticketing.tasks as task
+      where task.task_id = ${input.sourceTaskId}
+        and task.collection_id = ${input.collectionId}
+        and task.tenant_id = ${services.context.tenantId}
+    ),
+    created_task as (
       insert into ticketing.tasks (
         collection_id,
         created_by_principal_id,
         last_edited_by_principal_id,
-        tenant_id
+        tenant_id,
+        title
       )
       select
-        collection_id,
+        source_task.collection_id,
         ${services.context.principalId},
         ${services.context.principalId},
-        ${services.context.tenantId}
-      from ticketing.task_collections
-      where collection_id = ${input.collectionId}
-        and tenant_id = ${services.context.tenantId}
+        ${services.context.tenantId},
+        source_task.title
+      from source_task
       returning
         collection_id,
         created_at,
@@ -113,7 +121,7 @@ const createTaskActionHandler: ActionHandler<
       inner join allocated_id on true
       returning task_id
     ),
-    initialized_checkbox_values as (
+    copied_checkbox_values as (
       insert into ticketing.task_checkbox_values (
         property_definition_id,
         task_id,
@@ -121,18 +129,15 @@ const createTaskActionHandler: ActionHandler<
         value
       )
       select
-        definition.property_definition_id,
+        source_value.property_definition_id,
         created_task.task_id,
         ${services.context.tenantId},
-        false
-      from created_task
-      inner join ticketing.task_schemas as schema
-        on schema.collection_id = created_task.collection_id
-        and schema.tenant_id = ${services.context.tenantId}
-      inner join ticketing.task_property_definitions as definition
-        on definition.schema_id = schema.schema_id
-        and definition.tenant_id = ${services.context.tenantId}
-        and definition.datatype = 'checkbox'
+        source_value.value
+      from source_task
+      inner join created_task on true
+      inner join ticketing.task_checkbox_values as source_value
+        on source_value.task_id = source_task.task_id
+        and source_value.tenant_id = ${services.context.tenantId}
       returning task_id
     )
     select
@@ -153,42 +158,46 @@ const createTaskActionHandler: ActionHandler<
     from created_task
     inner join created_revision using (task_id)
   `);
-  const created = rowsFromResult<TaskCreationRow>(creationResult).at(0);
-
+  const created = rowsFromResult<TaskCreationRow>(result).at(0);
   if (created === undefined) {
     throw rejectAction({
-      code: 'ticketing.createTask.collection_not_found',
-      message: 'The Task Collection does not exist in the operation tenant.',
+      code: 'ticketing.duplicateTask.source_not_found',
+      message: 'The source Task does not exist in this Task Collection.',
     });
   }
 
   services.context.addOutboxMessage?.({
     payload: {
       actionInvocationId: services.context.actionInvocation?.actionInvocationId,
-      actionKey: createTaskActionKey,
+      actionKey: duplicateTaskActionKey,
       collectionId: created.collectionId,
-      revision: created.revision,
+      sourceTaskId: input.sourceTaskId,
       taskId: created.taskId,
     },
-    topic: 'ticketing.task.created',
+    topic: 'ticketing.task.duplicated',
   });
-
   return taskCreationFromRow(created);
 };
 
-export const createTaskActionRegistration: ActionRegistration<
-  CreateTaskActionPayload,
-  CreateTaskActionResponse
+export const duplicateTaskActionRegistration: ActionRegistration<
+  DuplicateTaskActionPayload,
+  DuplicateTaskActionResponse
 > = {
   descriptor: {
-    actionKey: createTaskActionKey,
+    actionKey: duplicateTaskActionKey,
     auditProfile: 'standard',
-    domainEvent: createTaskDomainEvent,
+    authorization: {
+      permission: 'edit_task_property_values',
+      provider: 'spicedb',
+      resourceObjectId: (input) => input.collectionId,
+      resourceObjectType: 'task_collection',
+    },
+    domainEvent: duplicateTaskDomainEvent,
     gatewayAudience: 'ticketing',
     idempotency: 'required',
     moduleStateAccess: 'mutate',
-    transportRequestSchema: createTaskActionPayloadSchema,
-    transportResponseSchema: createTaskActionResponseSchema,
+    transportRequestSchema: duplicateTaskActionPayloadSchema,
+    transportResponseSchema: duplicateTaskActionResponseSchema,
   },
-  handler: createTaskActionHandler,
+  handler: duplicateTaskActionHandler,
 };

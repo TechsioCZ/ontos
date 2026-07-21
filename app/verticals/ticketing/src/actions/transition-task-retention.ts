@@ -95,6 +95,12 @@ const transitionTaskRetentionActionHandler: ActionHandler<
           and tenant_id = ${services.context.tenantId}
         returning task_id
       ),
+      deleted_id_assignment as (
+        delete from ticketing.task_id_assignments
+        where task_id = ${input.taskId}
+          and tenant_id = ${services.context.tenantId}
+        returning task_id
+      ),
       deleted_revisions as (
         delete from ticketing.task_revisions
         where task_id = ${input.taskId}
@@ -106,6 +112,7 @@ const transitionTaskRetentionActionHandler: ActionHandler<
         and task.revision = ${input.expectedRevision}
         and task.collection_id = ${input.collectionId}
         and task.tenant_id = ${services.context.tenantId}
+        and (select count(*) from deleted_id_assignment) >= 0
       returning task.task_id as "hardDeletedTaskId"
     `);
     const hardDeleted = rowsFromResult<{ readonly hardDeletedTaskId: string }>(

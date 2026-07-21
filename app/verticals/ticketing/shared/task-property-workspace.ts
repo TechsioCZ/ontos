@@ -7,12 +7,25 @@ export const checkboxPropertyValueSchema = Schema.Struct({
   value: Schema.Boolean,
 });
 
+export const idAssignmentSchema = Schema.Struct({
+  displayValue: Schema.String,
+  number: Schema.String,
+  propertyDefinitionId: Schema.String,
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
+  idGroups: Schema.Array(
+    Schema.Struct({
+      number: Schema.String,
+      taskIds: Schema.Array(Schema.String),
+    }),
+  ),
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
+      idAssignment: Schema.optional(idAssignmentSchema),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
       title: Schema.String,

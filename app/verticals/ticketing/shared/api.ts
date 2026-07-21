@@ -6,6 +6,24 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  duplicateTaskActionHeadersSchema,
+  duplicateTaskActionFailureSchemas,
+  duplicateTaskActionOutcomeSchema,
+  duplicateTaskActionPayloadSchema,
+} from './actions/duplicate-task';
+import {
+  configureIdPropertyPrefixActionHeadersSchema,
+  configureIdPropertyPrefixActionFailureSchemas,
+  configureIdPropertyPrefixActionOutcomeSchema,
+  configureIdPropertyPrefixActionPayloadSchema,
+} from './actions/configure-id-property-prefix';
+import {
+  createIdPropertyDefinitionActionHeadersSchema,
+  createIdPropertyDefinitionActionFailureSchemas,
+  createIdPropertyDefinitionActionOutcomeSchema,
+  createIdPropertyDefinitionActionPayloadSchema,
+} from './actions/create-id-property-definition';
+import {
   transitionTaskRetentionActionHeadersSchema,
   transitionTaskRetentionActionFailureSchemas,
   transitionTaskRetentionActionOutcomeSchema,
@@ -68,6 +86,12 @@ import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impac
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 
 export type {
+  ConfigureIdPropertyPrefixActionFailure,
+  ConfigureIdPropertyPrefixActionOutcome,
+  ConfigureIdPropertyPrefixActionPayload,
+  ConfigureIdPropertyPrefixActionResponse,
+} from './actions/configure-id-property-prefix';
+export type {
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
   ConfigureTaskPropertyDefinitionActionPayload,
@@ -79,6 +103,12 @@ export type {
   CreateCheckboxPropertyDefinitionActionPayload,
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
+export type {
+  CreateIdPropertyDefinitionActionFailure,
+  CreateIdPropertyDefinitionActionOutcome,
+  CreateIdPropertyDefinitionActionPayload,
+  CreateIdPropertyDefinitionActionResponse,
+} from './actions/create-id-property-definition';
 export type {
   CreateTaskActionFailure,
   CreateTaskActionOutcome,
@@ -104,6 +134,12 @@ export type {
   DuplicateTaskPropertyDefinitionActionResponse,
 } from './actions/duplicate-task-property-definition';
 export type {
+  DuplicateTaskActionFailure,
+  DuplicateTaskActionOutcome,
+  DuplicateTaskActionPayload,
+  DuplicateTaskActionResponse,
+} from './actions/duplicate-task';
+export type {
   UpdateCheckboxPropertyValueActionFailure,
   UpdateCheckboxPropertyValueActionOutcome,
   UpdateCheckboxPropertyValueActionPayload,
@@ -119,10 +155,12 @@ export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export {
   checkboxPropertyDefinitionSchema,
+  idPropertyDefinitionSchema,
   taskPropertyDefinitionSchema,
 } from './task-property-definition';
 export type {
   CheckboxPropertyDefinition,
+  IdPropertyDefinition,
   TaskPropertyDefinition,
 } from './task-property-definition';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
@@ -379,10 +417,48 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: transitionTaskRetentionActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createIdPropertyDefinitionAction',
+        '/ticketing/actions/create-id-property-definition',
+        {
+          error: createIdPropertyDefinitionActionFailureSchemas,
+          headers: createIdPropertyDefinitionActionHeadersSchema,
+          payload: createIdPropertyDefinitionActionPayloadSchema,
+          success: createIdPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureIdPropertyPrefixAction',
+        '/ticketing/actions/configure-id-property-prefix',
+        {
+          error: configureIdPropertyPrefixActionFailureSchemas,
+          headers: configureIdPropertyPrefixActionHeadersSchema,
+          payload: configureIdPropertyPrefixActionPayloadSchema,
+          success: configureIdPropertyPrefixActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('duplicateTaskAction', '/ticketing/actions/duplicate-task', {
+        error: duplicateTaskActionFailureSchemas,
+        headers: duplicateTaskActionHeadersSchema,
+        payload: duplicateTaskActionPayloadSchema,
+        success: duplicateTaskActionOutcomeSchema,
+      }),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configureIdPropertyPrefixAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureIdPropertyPrefixAction',
+    routePath: '/ticketing/actions/configure-id-property-prefix',
+    source: 'generated-client',
+  },
   configureTaskPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureTaskPropertyDefinitionAction',
@@ -393,6 +469,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createCheckboxPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-checkbox-property-definition',
+    source: 'generated-client',
+  },
+  createIdPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createIdPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-id-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -411,6 +493,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:deleteTaskPropertyDefinitionAction',
     routePath: '/ticketing/actions/delete-task-property-definition',
+    source: 'generated-client',
+  },
+  duplicateTaskAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:duplicateTaskAction',
+    routePath: '/ticketing/actions/duplicate-task',
     source: 'generated-client',
   },
   duplicateTaskPropertyDefinitionAction: {

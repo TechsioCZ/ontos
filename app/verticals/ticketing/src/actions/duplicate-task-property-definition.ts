@@ -79,6 +79,12 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
       message: 'The Task Property Definition changed elsewhere or is no longer available.',
     });
   }
+  if (source.datatype === 'id') {
+    throw rejectAction({
+      code: 'ticketing.duplicateTaskPropertyDefinition.id_not_duplicable',
+      message: 'ID Task Property Definitions cannot be duplicated.',
+    });
+  }
 
   const definition = await duplicateTaskPropertyDefinition({
     copyValues: input.copyValues,

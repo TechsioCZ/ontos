@@ -131,6 +131,7 @@ export const TicketingExperience = () => {
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
+                idGroups: [],
                 propertyDefinitions: [],
                 tasks: [
                   {

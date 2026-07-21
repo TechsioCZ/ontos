@@ -1,4 +1,7 @@
 export {
+  runDuplicateTaskAction,
+  runConfigureIdPropertyPrefixAction,
+  runCreateIdPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,

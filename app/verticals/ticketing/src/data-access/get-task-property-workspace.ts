@@ -12,15 +12,19 @@ import type {
 } from '../../shared/task-property-workspace.ts';
 
 interface DefinitionRow {
-  readonly datatype: 'checkbox';
+  readonly datatype: 'checkbox' | 'id';
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
+  readonly prefix: string;
   readonly propertyDefinitionId: string;
   readonly revision: number;
 }
 
 interface ValueRow {
+  readonly idNumber: string | null;
+  readonly idPrefix: string | null;
+  readonly idPropertyDefinitionId: string | null;
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -35,6 +39,11 @@ interface TaskRow {
     revision: number;
     value: boolean;
   }[];
+  idAssignment?: {
+    displayValue: string;
+    number: string;
+    propertyDefinitionId: string;
+  };
   readonly taskId: string;
   readonly taskRevision: number;
   readonly title: string;
@@ -71,6 +80,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         definition.hidden,
         definition.mandatory,
         definition.name,
+        definition.prefix,
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision
       from ticketing.task_property_definitions as definition
@@ -79,12 +89,15 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype = 'checkbox'
+        and definition.datatype in ('checkbox', 'id')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
       select
         value.property_definition_id as "propertyDefinitionId",
+        id_assignment.number::text as "idNumber",
+        id_definition.prefix as "idPrefix",
+        id_assignment.property_definition_id as "idPropertyDefinitionId",
         value.revision,
         task.task_id as "taskId",
         task.revision as "taskRevision",
@@ -97,16 +110,22 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       left join ticketing.task_property_definitions as definition
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
+      left join ticketing.task_id_assignments as id_assignment
+        on id_assignment.task_id = task.task_id
+        and id_assignment.tenant_id = task.tenant_id
+      left join ticketing.task_property_definitions as id_definition
+        on id_definition.property_definition_id = id_assignment.property_definition_id
+        and id_definition.tenant_id = id_assignment.tenant_id
       where task.collection_id = ${input.collectionId}
         and task.tenant_id = ${context.tenantId}
-      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+      order by task.created_at, task.creation_ordinal, definition.created_at, value.property_definition_id
     `);
     const definitions = rowsFromResult<DefinitionRow>(definitionResult);
     const valueRows = rowsFromResult<ValueRow>(valueResult);
     const tasks = new Map<string, TaskRow>();
 
     for (const row of valueRows) {
-      const current = tasks.get(row.taskId) ?? {
+      const current: TaskRow = tasks.get(row.taskId) ?? {
         checkboxValues: [],
         taskId: row.taskId,
         taskRevision: row.taskRevision,
@@ -119,12 +138,40 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
           value: row.value,
         });
       }
+      if (row.idNumber !== null && row.idPrefix !== null && row.idPropertyDefinitionId !== null) {
+        current.idAssignment = {
+          displayValue:
+            row.idPrefix.length === 0 ? row.idNumber : `${row.idPrefix}-${row.idNumber}`,
+          number: row.idNumber,
+          propertyDefinitionId: row.idPropertyDefinitionId,
+        };
+      }
       tasks.set(row.taskId, current);
     }
 
+    const propertyDefinitions = definitions.map((definition) =>
+      definition.datatype === 'id'
+        ? definition
+        : {
+            datatype: definition.datatype,
+            hidden: definition.hidden,
+            mandatory: definition.mandatory,
+            name: definition.name,
+            propertyDefinitionId: definition.propertyDefinitionId,
+            revision: definition.revision,
+          },
+    );
+    const idGroups = [...tasks.values()]
+      .filter(
+        (task): task is TaskRow & { readonly idAssignment: NonNullable<TaskRow['idAssignment']> } =>
+          task.idAssignment !== undefined,
+      )
+      .map((task) => ({ number: task.idAssignment.number, taskIds: [task.taskId] }));
+
     return {
       collectionId: input.collectionId,
-      propertyDefinitions: [...definitions],
+      idGroups,
+      propertyDefinitions,
       tasks: [...tasks.values()],
     };
   },

@@ -18,6 +18,28 @@ import type {
 } from '../../shared/actions/configure-task-property-definition.ts';
 import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
 
+interface TaskPropertyDefinitionRow {
+  readonly datatype: 'checkbox' | 'id';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly prefix: string;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
+
+const taskPropertyDefinitionFromRow = (row: TaskPropertyDefinitionRow): TaskPropertyDefinition =>
+  row.datatype === 'id'
+    ? row
+    : {
+        datatype: row.datatype,
+        hidden: row.hidden,
+        mandatory: row.mandatory,
+        name: row.name,
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+      };
+
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
   response: ConfigureTaskPropertyDefinitionActionResponse,
@@ -70,6 +92,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       definition.hidden,
       definition.mandatory,
       definition.name,
+      definition.prefix,
       definition.property_definition_id as "propertyDefinitionId",
       definition.revision
     from ticketing.task_property_definitions as definition
@@ -83,14 +106,15 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       and schema.tenant_id = ${services.context.tenantId}
     for update of definition
   `);
-  const currentDefinition = rowsFromResult<TaskPropertyDefinition>(currentResult).at(0);
-  if (currentDefinition === undefined) {
+  const currentRow = rowsFromResult<TaskPropertyDefinitionRow>(currentResult).at(0);
+  if (currentRow === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
       message:
         'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
     });
   }
+  const currentDefinition = taskPropertyDefinitionFromRow(currentRow);
   if (
     currentDefinition.hidden === input.hidden &&
     currentDefinition.mandatory === input.mandatory &&
@@ -126,17 +150,19 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       definition.hidden,
       definition.mandatory,
       definition.name,
+      definition.prefix,
       definition.property_definition_id as "propertyDefinitionId",
       definition.revision
   `);
-  const definition = rowsFromResult<TaskPropertyDefinition>(result).at(0);
-  if (definition === undefined) {
+  const definitionRow = rowsFromResult<TaskPropertyDefinitionRow>(result).at(0);
+  if (definitionRow === undefined) {
     throw rejectAction({
       code: 'ticketing.configureTaskPropertyDefinition.stale_missing_or_name_conflict',
       message:
         'The Task Property Definition changed elsewhere, was removed, or the name is already in use.',
     });
   }
+  const definition = taskPropertyDefinitionFromRow(definitionRow);
 
   return { definition };
 };
