@@ -1,5 +1,6 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
+import { filesMediaItemSchema } from './actions/upload-files-media-item.ts';
 import { textPropertyValueSchema } from './text-property.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
@@ -45,6 +46,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
     Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
+      filesMediaItems: Schema.Array(filesMediaItemSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),

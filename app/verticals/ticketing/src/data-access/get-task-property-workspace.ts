@@ -30,6 +30,7 @@ interface DefinitionFields {
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
   | (DefinitionFields & { readonly datatype: 'email' })
+  | (DefinitionFields & { readonly datatype: 'files_media' })
   | (DefinitionFields & {
       readonly datatype: 'number';
       readonly format: 'number' | 'number_with_separators' | 'percent';
@@ -135,6 +136,18 @@ interface ValueRow {
   readonly value: boolean;
 }
 
+interface FilesMediaItemRow {
+  readonly access: 'download';
+  readonly byteSize: number;
+  readonly displayFilename: string;
+  readonly effectiveMimeType: string;
+  readonly itemId: string;
+  readonly mediaAssetId: string;
+  readonly position: number;
+  readonly propertyDefinitionId: string;
+  readonly taskId: string;
+}
+
 interface TaskRow {
   readonly checkboxValues: {
     propertyDefinitionId: string;
@@ -146,6 +159,7 @@ interface TaskRow {
     revision: number;
     value: string | null;
   }[];
+  readonly filesMediaItems: Omit<FilesMediaItemRow, 'taskId'>[];
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
@@ -208,6 +222,7 @@ const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectVa
 const taskRowsFromValues = ({
   definitions,
   emailValueRows,
+  filesMediaRows,
   numberValueRows,
   phoneValueRows,
   selectValueRows,
@@ -217,6 +232,7 @@ const taskRowsFromValues = ({
 }: {
   readonly definitions: readonly TaskPropertyDefinition[];
   readonly emailValueRows: readonly EmailValueRow[];
+  readonly filesMediaRows: readonly FilesMediaItemRow[];
   readonly numberValueRows: readonly NumberValueRow[];
   readonly phoneValueRows: readonly PhoneValueRow[];
   readonly selectValueRows: readonly SelectValueRow[];
@@ -233,6 +249,7 @@ const taskRowsFromValues = ({
     const current = tasks.get(row.taskId) ?? {
       checkboxValues: [],
       emailValues: [],
+      filesMediaItems: [],
       phoneValues: [],
       ...(hasNumberDefinitions ? { numberValues: [] } : {}),
       taskId: row.taskId,
@@ -284,6 +301,14 @@ const taskRowsFromValues = ({
     });
   }
 
+  for (const row of filesMediaRows) {
+    const task = tasks.get(row.taskId);
+    if (task !== undefined) {
+      const { taskId: _taskId, ...item } = row;
+      task.filesMediaItems.push(item);
+    }
+  }
+
   appendSelectValues(tasks, selectValueRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
@@ -330,7 +355,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'email', 'number', 'phone', 'select', 'text', 'url')
+        and definition.datatype in ('checkbox', 'email', 'files_media', 'number', 'phone', 'select', 'text', 'url')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -479,6 +504,28 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
+    const filesMediaResult = await db.execute(sql`
+      select
+        'download' as access,
+        asset.byte_size::double precision as "byteSize",
+        asset.display_filename as "displayFilename",
+        asset.mime_type as "effectiveMimeType",
+        item.item_id as "itemId",
+        item.media_asset_id as "mediaAssetId",
+        item.position,
+        item.property_definition_id as "propertyDefinitionId",
+        item.task_id as "taskId"
+      from ticketing.task_files_media_items as item
+      inner join core.media_assets as asset
+        on asset.media_asset_id = item.media_asset_id
+        and asset.tenant_id = item.tenant_id
+      inner join ticketing.tasks as task
+        on task.task_id = item.task_id
+        and task.tenant_id = item.tenant_id
+      where task.collection_id = ${input.collectionId}
+        and item.tenant_id = ${context.tenantId}
+      order by item.task_id, item.property_definition_id, item.position
+    `);
     const optionRows = rowsFromResult<OptionRow>(optionResult);
     const locale = input.locale ?? 'en-GB';
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
@@ -490,6 +537,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       tasks: taskRowsFromValues({
         definitions,
         emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
+        filesMediaRows: rowsFromResult<FilesMediaItemRow>(filesMediaResult),
         numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
         phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
         selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),

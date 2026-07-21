@@ -12,6 +12,7 @@
     "./db/sql": "./src/db/sql.ts",
     "./db/types": "./src/db/types.ts",
     "./gateway-token": "./src/vertical-gateway-token.ts",
+    "./media": "./src/media.ts",
     "./module-state": "./src/module-state.ts",
     "./operation-context": "./src/operation-context.ts",
     "./operation-context/session": "./src/operation-context-from-session.ts",

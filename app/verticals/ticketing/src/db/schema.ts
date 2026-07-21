@@ -14,7 +14,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { principals, tenants } from '@app/core-runtime/db/schema';
+import { mediaAssets, principals, tenants } from '@app/core-runtime/db/schema';
 
 export const ticketingSchema = pgSchema('ticketing');
 
@@ -84,7 +84,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'email', 'number', 'phone', 'select', 'text', 'url')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'email', 'files_media', 'number', 'phone', 'select', 'text', 'url')`,
     ),
     check(
       'ticketing_task_property_definitions_select_order_ck',
@@ -184,7 +184,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'checkbox_value_changed', 'email_value_changed', 'number_value_changed', 'phone_value_changed', 'select_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'checkbox_value_changed', 'email_value_changed', 'files_media_value_changed', 'number_value_changed', 'phone_value_changed', 'select_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -398,5 +398,37 @@ export const taskPhoneValues = ticketingSchema.table(
     check('ticketing_task_phone_values_length_ck', sql`char_length(${table.value}) <= 256`),
     check('ticketing_task_phone_values_not_blank_ck', sql`btrim(${table.value}) <> ''`),
     check('ticketing_task_phone_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskFilesMediaItems = ticketingSchema.table(
+  'task_files_media_items',
+  {
+    createdAt: createdAt(),
+    itemId: uuid('item_id').defaultRandom().primaryKey(),
+    mediaAssetId: uuid('media_asset_id')
+      .notNull()
+      .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' }),
+    position: integer('position').notNull(),
+    propertyDefinitionId: uuid('property_definition_id')
+      .notNull()
+      .references(() => taskPropertyDefinitions.propertyDefinitionId, { onDelete: 'restrict' }),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.taskId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    uniqueIndex('ticketing_task_files_media_items_position_uk').on(
+      table.taskId,
+      table.propertyDefinitionId,
+      table.position,
+    ),
+    index('ticketing_task_files_media_items_value_idx').on(
+      table.tenantId,
+      table.taskId,
+      table.propertyDefinitionId,
+    ),
+    check('ticketing_task_files_media_items_position_ck', sql`${table.position} >= 0`),
   ],
 );

@@ -103,6 +103,12 @@ import type {
   UpdatePhonePropertyValueActionFailure,
   UpdatePhonePropertyValueActionOutcome,
   UpdatePhonePropertyValueActionPayload,
+  CreateFilesMediaPropertyDefinitionActionFailure,
+  CreateFilesMediaPropertyDefinitionActionOutcome,
+  CreateFilesMediaPropertyDefinitionActionPayload,
+  UploadFilesMediaItemActionFailure,
+  UploadFilesMediaItemActionOutcome,
+  UploadFilesMediaItemActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -117,6 +123,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UploadFilesMediaItemActionFailure
+  | CreateFilesMediaPropertyDefinitionActionFailure
   | UpdatePhonePropertyValueActionFailure
   | CreatePhonePropertyDefinitionActionFailure
   | UpdateEmailPropertyValueActionFailure
@@ -895,6 +903,61 @@ export const runUpdatePhonePropertyValueAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updatePhonePropertyValueAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runCreateFilesMediaPropertyDefinitionAction = (
+  payload: CreateFilesMediaPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateFilesMediaPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createFilesMediaPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createFilesMediaPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUploadFilesMediaItemAction = (
+  payload: UploadFilesMediaItemActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UploadFilesMediaItemActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.uploadFilesMediaItemAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.uploadFilesMediaItemAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };

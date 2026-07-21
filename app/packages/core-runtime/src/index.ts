@@ -67,6 +67,19 @@ export type {
 export { corePolicies } from './policies/index.ts';
 export { rowsFromResult } from './sql-result.ts';
 export {
+  commitMediaAssetUpload,
+  getAuthorizedMediaDownload,
+  getMediaUploadPolicy,
+  MediaUploadConfigurationError,
+} from './media.ts';
+export { MediaUploadRejectedError } from './media-upload-rejected-error.ts';
+export type {
+  AuthorizedMediaDownloadResult,
+  CommittedMediaAsset,
+  MediaAssetUploadInput,
+  MediaUploadPolicy,
+} from './media.ts';
+export {
   createVerticalGatewayToken,
   resolveVerticalGatewayToken,
 } from './vertical-gateway-token.ts';
