@@ -29,6 +29,22 @@
       "en": "English",
       "switcher": "Language"
     },
+    "intrinsic": {
+      "createFailedDescription": "The intrinsic property could not be created.",
+      "createFailedTitle": "Intrinsic property creation failed",
+      "created_by": {
+        "create": "Add Created by property",
+        "creating": "Adding Created by property",
+        "name": "Created by"
+      },
+      "created_time": {
+        "create": "Add Created time property",
+        "creating": "Adding Created time property",
+        "details": "Details",
+        "name": "Created time"
+      },
+      "inactive": "inactive"
+    },
     "phone": {
       "call": "Call",
       "copy": "Copy",

@@ -18,6 +18,7 @@
     "./outbox": "./src/outbox.ts",
     "./policies": "./src/policies/index.ts",
     "./policy": "./src/policy.ts",
+    "./principal-time-zone-preferences": "./src/principal-time-zone-preferences.ts",
     "./sdk": "./src/core-sdk.ts",
     "./sql-result": "./src/sql-result.ts"
   },

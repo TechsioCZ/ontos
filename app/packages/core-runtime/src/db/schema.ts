@@ -90,6 +90,24 @@ export const principals = coreSchema.table(
   ],
 );
 
+export const principalTimeZonePreferences = coreSchema.table(
+  'principal_time_zone_preferences',
+  {
+    principalId: uuid('principal_id')
+      .notNull()
+      .references(() => principals.principalId, { onDelete: 'restrict' }),
+    tenantId: tenantId(),
+    timeZone: text('time_zone').notNull(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.tenantId, table.principalId],
+      name: 'core_principal_time_zone_preferences_pk',
+    }),
+  ],
+);
+
 const principalId = (columnName = 'principal_id') =>
   uuid(columnName)
     .notNull()

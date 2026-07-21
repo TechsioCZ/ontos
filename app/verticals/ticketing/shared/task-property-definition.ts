@@ -9,6 +9,15 @@ export const checkboxPropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const intrinsicPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literals(['created_time', 'created_by']),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const selectOptionOrderModeSchema = Schema.Literals([
   'manual',
   'alphabetical',
@@ -84,6 +93,7 @@ export const phonePropertyDefinitionSchema = Schema.Struct({
 export const taskPropertyDefinitionSchema = Schema.Union([
   checkboxPropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
+  intrinsicPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
   selectPropertyDefinitionSchema,
@@ -93,6 +103,7 @@ export const taskPropertyDefinitionSchema = Schema.Union([
 
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
+export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
 export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;

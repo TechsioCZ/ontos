@@ -6,6 +6,8 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { configurePrincipalTimeZonePreferenceActionRegistration } from '../src/actions/configure-principal-time-zone-preference.ts';
+import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/create-email-property-definition.ts';
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
 import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
@@ -40,6 +42,7 @@ import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-acce
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
 import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
+import { queryIntrinsicTaskPropertiesDataAccessRegistration } from '../src/data-access/query-intrinsic-task-properties.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 
 const ticketingItems = [
@@ -125,11 +128,17 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
-    .handle('getTaskPropertyWorkspace', ({ params, request }) =>
+    .handle('getTaskPropertyWorkspace', ({ params, query, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
           headers: new Headers(request.headers),
-          payload: { collectionId: params.collectionId },
+          payload: {
+            collectionId: params.collectionId,
+            ...(query.browserTimeZone === undefined
+              ? {}
+              : { browserTimeZone: query.browserTimeZone }),
+            ...(query.locale === undefined ? {} : { locale: query.locale }),
+          },
           registration: getTaskPropertyWorkspaceDataAccessRegistration,
           resultCount: (response) => response.tasks.length,
         }),
@@ -139,6 +148,24 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyWorkspace', {
           attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyWorkspace),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('queryIntrinsicTaskProperties', ({ params, payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: { ...payload, collectionId: params.collectionId },
+          registration: queryIntrinsicTaskPropertiesDataAccessRegistration,
+          resultCount: (response) => response.tasks.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.queryIntrinsicTaskProperties', {
+          attributes: operationAttributes(ticketingOperationContexts.queryIntrinsicTaskProperties),
           kind: 'server',
         }),
       ),
@@ -307,6 +334,40 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.withSpan('ultramodern.api.ticketing.createCheckboxPropertyDefinitionAction', {
           attributes: operationAttributes(
             ticketingOperationContexts.createCheckboxPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createIntrinsicPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createIntrinsicPropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createIntrinsicPropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createIntrinsicPropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('configurePrincipalTimeZonePreferenceAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configurePrincipalTimeZonePreferenceActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.configurePrincipalTimeZonePreferenceAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.configurePrincipalTimeZonePreferenceAction,
           ),
           kind: 'server',
         }),
