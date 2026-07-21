@@ -253,6 +253,14 @@ rs.mock('../src/api/ticketing-client', () => {
             propertyDefinitionId: 'created-time-1',
             revision: 1,
           },
+          {
+            datatype: 'created_time',
+            hidden: true,
+            mandatory: false,
+            name: 'Hidden Created time',
+            propertyDefinitionId: 'created-time-hidden',
+            revision: 1,
+          },
         ],
         tasks: [
           {
@@ -523,6 +531,7 @@ test('creates and renders an intrinsic property through the application path', a
 
   await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
   await waitFor(() => expect(document.querySelector('time')).not.toBeNull());
+  expect(document.querySelectorAll('time')).toHaveLength(2);
   expect(mocks.intrinsicCalls[0]?.payload).toEqual({
     collectionId: 'collection-1',
     datatype: 'created_time',

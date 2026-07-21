@@ -201,6 +201,7 @@ export interface ActionAuthorizationRequirement<TInput = unknown> {
 }
 
 export interface ActionExecutionServices<TAction> {
+  readonly clock: OperationClock;
   readonly context: OperationContext<TAction>;
   readonly markNoOp: () => void;
   readonly tx: CoreTransaction;
@@ -260,6 +261,10 @@ export interface OperationLogger {
   readonly warn: (entry: OperationLogEntry) => void;
 }
 
+export interface OperationClock {
+  readonly now: () => Date;
+}
+
 export type OperationContextResolver = (input: {
   readonly audience: string;
   readonly token: string | null | undefined;
@@ -267,6 +272,7 @@ export type OperationContextResolver = (input: {
 
 export interface RunActionOptions {
   readonly authorizationChecker?: SpiceDbAuthorizationChecker;
+  readonly clock?: OperationClock;
   readonly logger?: OperationLogger;
   readonly operationContextResolver?: OperationContextResolver;
 }
@@ -1320,6 +1326,7 @@ export const runAction = async <TAction, TResponse>({
       let actionWasNoOp = false;
       const handlerOutboxMessages: OutboxMessage<string, unknown>[] = [];
       const response = await handler(payload, {
+        clock: options.clock ?? { now: () => new Date() },
         context: {
           ...policyCheckedContext,
           addOutboxMessage: (message) => {

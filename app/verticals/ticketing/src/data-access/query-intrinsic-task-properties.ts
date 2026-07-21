@@ -74,7 +74,7 @@ const validDate = ({ day, month, year }: Pick<LocalTemporal, 'day' | 'month' | '
   );
 };
 
-const parseLocalTemporal = (value: string, locale: string): LocalTemporal | undefined => {
+const parseNumericLocalTemporal = (value: string, locale: string): LocalTemporal | undefined => {
   const normalized = value.trim();
   const match = normalized.match(
     /^(?:(?<isoYear>\d{4})-(?<isoMonth>\d{1,2})-(?<isoDay>\d{1,2})|(?<localDay>\d{1,2})[./](?<localMonth>\d{1,2})[./](?<localYear>\d{4}))(?:[ T](?<hour>\d{1,2}):(?<minute>\d{2})(?::(?<second>\d{2}))?)?$/u,
@@ -109,6 +109,122 @@ const parseLocalTemporal = (value: string, locale: string): LocalTemporal | unde
   };
   return validDate(parsed) && hour <= 23 && minute <= 59 && seconds <= 59 ? parsed : undefined;
 };
+
+const normalizedLocaleText = (value: string, locale: string): string =>
+  value
+    .normalize('NFC')
+    .replaceAll(/\p{Cf}/gu, '')
+    .replaceAll(/\s+/gu, ' ')
+    .toLocaleLowerCase(locale);
+
+const normalizedLocaleToken = (value: string, locale: string): string =>
+  normalizedLocaleText(value, locale).trim();
+
+const escapedPattern = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+
+const intlTemporalFormatter = (
+  locale: string,
+  precision: LocalTemporal['precision'],
+): Intl.DateTimeFormat =>
+  new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    ...(precision === 'day' ? {} : { timeStyle: precision === 'minute' ? 'short' : 'medium' }),
+    timeZone: 'UTC',
+  });
+
+const parseDisplayedLocalTemporal = (
+  value: string,
+  locale: string,
+  precision: LocalTemporal['precision'],
+): LocalTemporal | undefined => {
+  const formatter = intlTemporalFormatter(locale, precision);
+  const sample = new Date(Date.UTC(2026, 2, 29, 13, 14, 15));
+  const monthByToken = new Map<string, number>();
+  for (let month = 0; month < 12; month += 1) {
+    const monthToken = formatter
+      .formatToParts(new Date(Date.UTC(2026, month, 15, 13, 14, 15)))
+      .find(({ type }) => type === 'month')?.value;
+    if (monthToken !== undefined) {
+      monthByToken.set(normalizedLocaleToken(monthToken, locale), month + 1);
+    }
+  }
+  const dayPeriodByToken = new Map<string, 'am' | 'pm'>();
+  for (const [hour, period] of [
+    [1, 'am'],
+    [13, 'pm'],
+  ] as const) {
+    const dayPeriod = formatter
+      .formatToParts(new Date(Date.UTC(2026, 2, 29, hour, 14, 15)))
+      .find(({ type }) => type === 'dayPeriod')?.value;
+    if (dayPeriod !== undefined) {
+      dayPeriodByToken.set(normalizedLocaleToken(dayPeriod, locale), period);
+    }
+  }
+  const alternatives = (values: Iterable<string>) =>
+    [...values]
+      .toSorted((left, right) => right.length - left.length)
+      .map(escapedPattern)
+      .join('|');
+  const pattern = formatter
+    .formatToParts(sample)
+    .map(({ type, value: partValue }) => {
+      switch (type) {
+        case 'day':
+        case 'hour':
+        case 'minute':
+        case 'second':
+        case 'year': {
+          return `(?<${type}>\\d{1,6})`;
+        }
+        case 'month': {
+          return `(?<month>${alternatives(monthByToken.keys())})`;
+        }
+        case 'dayPeriod': {
+          return `(?<dayPeriod>${alternatives(dayPeriodByToken.keys())})`;
+        }
+        case 'literal': {
+          return escapedPattern(normalizedLocaleText(partValue, locale));
+        }
+        default: {
+          return escapedPattern(normalizedLocaleToken(partValue, locale));
+        }
+      }
+    })
+    .join('');
+  const normalized = normalizedLocaleText(value, locale).trim();
+  const groups = new RegExp(`^${pattern}$`, 'iu').exec(normalized)?.groups;
+  if (groups === undefined) {
+    return undefined;
+  }
+  const dayPeriod =
+    groups['dayPeriod'] === undefined
+      ? undefined
+      : dayPeriodByToken.get(normalizedLocaleToken(groups['dayPeriod'], locale));
+  let hour = Number(groups['hour'] ?? 0);
+  if (dayPeriod === 'am' && hour === 12) {
+    hour = 0;
+  } else if (dayPeriod === 'pm' && hour < 12) {
+    hour += 12;
+  }
+  const parsed: LocalTemporal = {
+    day: Number(groups['day']),
+    hour,
+    minute: Number(groups['minute'] ?? 0),
+    month: monthByToken.get(normalizedLocaleToken(groups['month'] ?? '', locale)) ?? 0,
+    precision,
+    second: Number(groups['second'] ?? 0),
+    year: Number(groups['year']),
+  };
+  return validDate(parsed) && hour <= 23 && parsed.minute <= 59 && parsed.second <= 59
+    ? parsed
+    : undefined;
+};
+
+const parseLocalTemporal = (value: string, locale: string): LocalTemporal | undefined =>
+  parseNumericLocalTemporal(value, locale) ??
+  parseDisplayedLocalTemporal(value, locale, 'second') ??
+  parseDisplayedLocalTemporal(value, locale, 'minute') ??
+  parseDisplayedLocalTemporal(value, locale, 'day');
 
 const nextLocalTemporal = (value: LocalTemporal): LocalTemporal => {
   let addedMilliseconds = 1000;

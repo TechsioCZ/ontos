@@ -272,12 +272,20 @@ export const getTaskPropertyWorkspace = (
   );
 };
 
+export type QueryIntrinsicTaskPropertiesClientPayload = Omit<
+  QueryIntrinsicTaskPropertiesPayload,
+  'viewerLocale'
+>;
+
 export const queryIntrinsicTaskProperties = (
-  payload: QueryIntrinsicTaskPropertiesPayload,
+  payload: QueryIntrinsicTaskPropertiesClientPayload,
   options: TicketingClientOptions = {},
-): TicketingClientEffect<QueryIntrinsicTaskPropertiesResponse> =>
-  createTicketingClient({
+): TicketingClientEffect<QueryIntrinsicTaskPropertiesResponse> => {
+  const locale = resolveTicketingBrowserLocale();
+
+  return createTicketingClient({
     ...options,
+    locale,
     operationContext:
       options.operationContext ?? ticketingOperationContexts.queryIntrinsicTaskProperties,
   }).pipe(
@@ -285,10 +293,11 @@ export const queryIntrinsicTaskProperties = (
       client.ticketing.queryIntrinsicTaskProperties({
         headers: options.headers ?? {},
         params: { collectionId: payload.collectionId },
-        payload,
+        payload: { ...payload, viewerLocale: locale },
       }),
     ),
   );
+};
 
 export const getTaskPropertyEditCapability = (
   collectionId: string,

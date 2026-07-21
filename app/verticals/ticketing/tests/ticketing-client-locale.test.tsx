@@ -2,6 +2,7 @@ import { afterEach, expect, rs, test } from '@rstest/core';
 import {
   Effect,
   getTaskPropertyWorkspace,
+  queryIntrinsicTaskProperties,
   runConfigureSelectOptionOrderAction,
 } from '../src/api/ticketing-client';
 
@@ -45,6 +46,16 @@ test('catalog reads and order transitions cannot override the browser preferred 
     }),
   );
   await Effect.runPromiseExit(
+    queryIntrinsicTaskProperties(
+      {
+        collectionId: 'collection-1',
+        operation: { _tag: 'CreatedTimeSearch', value: '29 Mar 2026' },
+        propertyDefinitionId: 'property-1',
+      },
+      { baseUrl: 'https://ticketing.example.test', locale: 'forged-XX' },
+    ),
+  );
+  await Effect.runPromiseExit(
     runConfigureSelectOptionOrderAction(
       {
         collectionId: 'collection-1',
@@ -56,9 +67,13 @@ test('catalog reads and order transitions cannot override the browser preferred 
     ),
   );
 
-  expect(requestUrls).toHaveLength(2);
+  expect(requestUrls).toHaveLength(3);
   expect(new URL(requestUrls[0], 'https://ticketing.example.test').searchParams.get('locale')).toBe(
     'sv-SE',
   );
-  expect(requestBodies).toContainEqual(expect.objectContaining({ viewerLocale: 'sv-SE' }));
+  expect(requestBodies).toHaveLength(2);
+  expect(requestBodies).toEqual([
+    expect.objectContaining({ viewerLocale: 'sv-SE' }),
+    expect.objectContaining({ viewerLocale: 'sv-SE' }),
+  ]);
 });

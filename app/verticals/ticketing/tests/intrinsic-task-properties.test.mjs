@@ -107,10 +107,11 @@ const authorizationForRole = (role) => (check) => {
     : { _tag: 'Denied', message: `${role} lacks ${check.permission}.` };
 };
 
-const runRegisteredAction = ({ operationContext, payload, registration }) =>
+const runRegisteredAction = ({ clock, operationContext, payload, registration }) =>
   runAction({
     options: {
       authorizationChecker: allowedAuthorization,
+      ...(clock === undefined ? {} : { clock }),
       operationContextResolver: operationContextResolver(operationContext),
     },
     payload,
@@ -582,8 +583,17 @@ test('Created time queries absolute milliseconds through the configured viewer z
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
   const { collectionId } = collection.response.collection;
+  const taskCreationInstants = [
+    '2026-03-29T00:59:59.750Z',
+    '2026-03-29T01:00:00.250Z',
+    '2026-03-29T22:00:00.000Z',
+  ];
+  const clock = {
+    now: () => new Date(taskCreationInstants.shift()),
+  };
   const createTask = async () => {
     const task = await runRegisteredAction({
+      clock,
       operationContext,
       payload: { collectionId },
       registration: createTaskActionRegistration,
@@ -594,15 +604,6 @@ test('Created time queries absolute milliseconds through the configured viewer z
   const firstTask = await createTask();
   const secondTask = await createTask();
   const thirdTask = await createTask();
-  await sqlClient`
-    update ticketing.tasks
-    set created_at = case task_id
-      when ${firstTask.taskId} then ${'2026-03-29T00:59:59.750Z'}::timestamptz
-      when ${secondTask.taskId} then ${'2026-03-29T01:00:00.250Z'}::timestamptz
-      when ${thirdTask.taskId} then ${'2026-03-29T22:00:00.000Z'}::timestamptz
-    end
-    where task_id in (${firstTask.taskId}, ${secondTask.taskId}, ${thirdTask.taskId})
-  `;
   const definition = await runRegisteredAction({
     operationContext,
     payload: { collectionId, datatype: 'created_time', mandatory: false, name: 'Created time' },
@@ -611,7 +612,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
   const preference = await configurePrincipalTimeZone(operationContext, 'Europe/Prague');
   assert.equal(preference._tag, 'OperationSucceeded', JSON.stringify(preference));
-  const query = (operation) =>
+  const query = (operation, viewerLocale = 'en-GB') =>
     runRegisteredDataAccess({
       operationContext,
       payload: {
@@ -619,7 +620,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
         collectionId,
         operation,
         propertyDefinitionId: definition.response.definition.propertyDefinitionId,
-        viewerLocale: 'en-GB',
+        viewerLocale,
       },
       registration: queryIntrinsicTaskPropertiesDataAccessRegistration,
       resultCount: (response) => response.tasks.length,
@@ -639,6 +640,31 @@ test('Created time queries absolute milliseconds through the configured viewer z
     exactSecond.response.tasks.map(({ taskId }) => taskId),
     [firstTask.taskId],
   );
+
+  const displayedSearchCases = [
+    ['cs-CZ', '29. 3. 2026', [firstTask.taskId, secondTask.taskId]],
+    ['en-GB', '29 Mar 2026, 03:00', [secondTask.taskId]],
+    ['en-US', 'Mar 29, 2026, 3:00:00 AM', [secondTask.taskId]],
+  ];
+  const displayedSearchResults = await Promise.all(
+    displayedSearchCases.map(([viewerLocale, value]) =>
+      query({ _tag: 'CreatedTimeSearch', value }, viewerLocale),
+    ),
+  );
+  for (const [index, searched] of displayedSearchResults.entries()) {
+    const [viewerLocale, value, expectedTaskIds] = displayedSearchCases[index];
+    assert.equal(
+      searched._tag,
+      'OperationSucceeded',
+      `${viewerLocale}: ${value}: ${JSON.stringify(searched)}`,
+    );
+    assert.deepEqual(
+      searched.response.tasks.map(({ taskId }) => taskId),
+      expectedTaskIds,
+      `${viewerLocale}: ${value}`,
+    );
+  }
+
   const newYorkPreference = await configurePrincipalTimeZone(operationContext, 'America/New_York');
   assert.equal(newYorkPreference._tag, 'OperationSucceeded', JSON.stringify(newYorkPreference));
   const exactSecondInAnotherZone = await query({

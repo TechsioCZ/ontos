@@ -761,6 +761,9 @@ export const TicketingExperience = () => {
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
               {/* oxlint-disable-next-line eslint/complexity -- Keep every datatype in definition order on the integrated workspace surface. */}
               {openedTaskPropertyWorkspace.propertyDefinitions.map((definition) => {
+                if (definition.hidden) {
+                  return null;
+                }
                 const [task] = openedTaskPropertyWorkspace.tasks;
                 if (task === undefined) {
                   return null;

@@ -15,6 +15,7 @@ export type {
   OperationAuthorizationDenied,
   OperationAuthRequired,
   OperationContextInvalid,
+  OperationClock,
   OperationDomainRejected,
   OperationExecutionFailed,
   OperationIdempotencyConflict,
