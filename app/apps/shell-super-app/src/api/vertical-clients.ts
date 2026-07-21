@@ -1,4 +1,7 @@
 export {
+  queryTaskPropertyValues,
+  runUpdateTextPropertyValueAction,
+  runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,

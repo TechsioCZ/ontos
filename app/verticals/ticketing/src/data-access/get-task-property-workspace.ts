@@ -10,14 +10,23 @@ import type {
   GetTaskPropertyWorkspacePayload,
   TaskPropertyWorkspace,
 } from '../../shared/task-property-workspace.ts';
+import type { TextDocument } from '../../shared/text-property.ts';
 
 interface DefinitionRow {
-  readonly datatype: 'checkbox';
+  readonly datatype: 'checkbox' | 'text';
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
   readonly propertyDefinitionId: string;
   readonly revision: number;
+}
+
+interface TextValueRow {
+  readonly document: TextDocument | null;
+  readonly propertyDefinitionId: string;
+  readonly readableText: string | null;
+  readonly revision: number;
+  readonly taskId: string;
 }
 
 interface ValueRow {
@@ -37,6 +46,12 @@ interface TaskRow {
   }[];
   readonly taskId: string;
   readonly taskRevision: number;
+  textValues?: {
+    document: TextDocument | null;
+    propertyDefinitionId: string;
+    readableText: string | null;
+    revision: number;
+  }[];
   readonly title: string;
 }
 
@@ -79,7 +94,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and schema.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype = 'checkbox'
+        and definition.datatype in ('checkbox', 'text')
       order by definition.created_at, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -101,15 +116,37 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and task.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
     `);
+    const textValueResult = await db.execute(sql`
+      select
+        value.document,
+        value.property_definition_id as "propertyDefinitionId",
+        value.readable_text as "readableText",
+        value.revision,
+        value.task_id as "taskId"
+      from ticketing.task_text_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'text'
+      where task.collection_id = ${input.collectionId}
+        and task.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
     const definitions = rowsFromResult<DefinitionRow>(definitionResult);
     const valueRows = rowsFromResult<ValueRow>(valueResult);
+    const textValueRows = rowsFromResult<TextValueRow>(textValueResult);
     const tasks = new Map<string, TaskRow>();
+    const hasTextDefinitions = definitions.some(({ datatype }) => datatype === 'text');
 
     for (const row of valueRows) {
       const current = tasks.get(row.taskId) ?? {
         checkboxValues: [],
         taskId: row.taskId,
         taskRevision: row.taskRevision,
+        ...(hasTextDefinitions ? { textValues: [] } : {}),
         title: row.title,
       };
       if (row.propertyDefinitionId !== null) {
@@ -120,6 +157,15 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         });
       }
       tasks.set(row.taskId, current);
+    }
+
+    for (const row of textValueRows) {
+      tasks.get(row.taskId)?.textValues?.push({
+        document: row.document,
+        propertyDefinitionId: row.propertyDefinitionId,
+        readableText: row.readableText,
+        revision: row.revision,
+      });
     }
 
     return {
