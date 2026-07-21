@@ -23,23 +23,24 @@ import type {
 } from '../../shared/actions/delete-task-property-definition.ts';
 import type { TaskPropertyDefinition } from '../../shared/task-property-definition.ts';
 
-const deletedDatatypeByResponse = new WeakMap<
-  DeleteTaskPropertyDefinitionActionResponse,
-  TaskPropertyDefinition['datatype']
->();
+const deletedDatatypeEvidence = Symbol('deletedDatatypeEvidence');
+
+type DeleteTaskPropertyDefinitionInternalResponse = DeleteTaskPropertyDefinitionActionResponse & {
+  readonly [deletedDatatypeEvidence]: TaskPropertyDefinition['datatype'];
+};
 
 const deletedDefinitionEvidence = (
   input: DeleteTaskPropertyDefinitionActionPayload,
-  response: DeleteTaskPropertyDefinitionActionResponse,
+  response: DeleteTaskPropertyDefinitionInternalResponse,
 ) => {
-  const deletedDatatype = deletedDatatypeByResponse.get(response);
+  const deletedDatatype = response[deletedDatatypeEvidence];
   return {
     changedComponents:
       deletedDatatype === 'id'
         ? ['definition', 'idPrefix', 'idAssignments', 'idSequence']
         : ['definition', 'propertyValues'],
     collectionId: input.collectionId,
-    ...(deletedDatatype === undefined ? {} : { datatype: deletedDatatype }),
+    datatype: deletedDatatype,
     impactCount: response.impactCount,
     operation: 'deleted',
     propertyDefinitionId: response.deletedPropertyDefinitionId,
@@ -54,7 +55,7 @@ const deleteTaskPropertyDefinitionAuditEvent = {
   targetResourceType: 'task_property_definition',
 } satisfies ActionAuditEventDescriptor<
   DeleteTaskPropertyDefinitionActionPayload,
-  DeleteTaskPropertyDefinitionActionResponse
+  DeleteTaskPropertyDefinitionInternalResponse
 >;
 
 const deleteTaskPropertyDefinitionDomainEvent = {
@@ -66,12 +67,12 @@ const deleteTaskPropertyDefinitionDomainEvent = {
   subjectResourceType: 'task_property_definition',
 } satisfies ActionDomainEventDescriptor<
   DeleteTaskPropertyDefinitionActionPayload,
-  DeleteTaskPropertyDefinitionActionResponse
+  DeleteTaskPropertyDefinitionInternalResponse
 >;
 
 const deleteTaskPropertyDefinitionActionHandler: ActionHandler<
   DeleteTaskPropertyDefinitionActionPayload,
-  DeleteTaskPropertyDefinitionActionResponse
+  DeleteTaskPropertyDefinitionInternalResponse
 > = async (input, services) => {
   if (input.confirmed !== true) {
     throw rejectAction({
@@ -117,17 +118,19 @@ const deleteTaskPropertyDefinitionActionHandler: ActionHandler<
     });
   }
 
-  const response = {
-    deletedPropertyDefinitionId: input.propertyDefinitionId,
-    impactCount: confirmation.impactCount,
-  };
-  deletedDatatypeByResponse.set(response, target.datatype);
-  return response;
+  return Object.defineProperty(
+    {
+      deletedPropertyDefinitionId: input.propertyDefinitionId,
+      impactCount: confirmation.impactCount,
+    },
+    deletedDatatypeEvidence,
+    { value: target.datatype },
+  ) as DeleteTaskPropertyDefinitionInternalResponse;
 };
 
 export const deleteTaskPropertyDefinitionActionRegistration: ActionRegistration<
   DeleteTaskPropertyDefinitionActionPayload,
-  DeleteTaskPropertyDefinitionActionResponse
+  DeleteTaskPropertyDefinitionInternalResponse
 > = {
   descriptor: {
     actionKey: deleteTaskPropertyDefinitionActionKey,
