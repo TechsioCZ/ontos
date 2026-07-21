@@ -107,6 +107,19 @@ export interface TicketingClientOptions {
 
 type TicketingActionClientOptions = TicketingClientOptions & { idempotencyKey?: string };
 
+const browserLocaleFallback = 'en';
+
+export const resolveTicketingBrowserLocale = (): string => {
+  if (typeof navigator === 'undefined') {
+    return browserLocaleFallback;
+  }
+
+  const preferredLocale =
+    navigator.languages.find((language) => language.trim().length > 0) ?? navigator.language;
+
+  return preferredLocale.trim() || browserLocaleFallback;
+};
+
 const actionHeaders = (options: TicketingActionClientOptions): Record<string, string> | undefined =>
   options.idempotencyKey === undefined
     ? options.headers
@@ -173,9 +186,12 @@ export const getTaskCollection = (
 export const getTaskPropertyWorkspace = (
   collectionId: string,
   options: TicketingClientOptions = {},
-): TicketingClientEffect<TaskPropertyWorkspace> =>
-  createTicketingClient({
+): TicketingClientEffect<TaskPropertyWorkspace> => {
+  const locale = options.locale ?? resolveTicketingBrowserLocale();
+
+  return createTicketingClient({
     ...options,
+    locale,
     operationContext:
       options.operationContext ?? ticketingOperationContexts.getTaskPropertyWorkspace,
   }).pipe(
@@ -183,10 +199,11 @@ export const getTaskPropertyWorkspace = (
       client.ticketing.getTaskPropertyWorkspace({
         headers: options.headers ?? {},
         params: { collectionId },
-        query: { locale: options.locale },
+        query: { locale },
       }),
     ),
   );
+};
 
 export const filterTaskCheckboxValues = (
   collectionId: string,
@@ -528,28 +545,29 @@ export const runCreateSelectOptionAndSelectAction = (
   );
 };
 
+export type ConfigureSelectOptionOrderClientPayload = Omit<
+  ConfigureSelectOptionOrderActionPayload,
+  'viewerLocale'
+> & { readonly viewerLocale?: string };
+
 export const runConfigureSelectOptionOrderAction = (
-  payload: ConfigureSelectOptionOrderActionPayload,
+  payload: ConfigureSelectOptionOrderClientPayload,
   options: TicketingClientOptions & { idempotencyKey?: string } = {},
 ): TicketingClientEffect<ConfigureSelectOptionOrderActionOutcome> => {
-  const headers =
-    options.idempotencyKey === undefined
-      ? options.headers
-      : {
-          ...options.headers,
-          'Idempotency-Key': options.idempotencyKey,
-        };
+  const headers = actionHeaders(options);
+  const locale = options.locale ?? resolveTicketingBrowserLocale();
 
   return createTicketingClient({
     ...options,
     ...(headers === undefined ? undefined : { headers }),
+    locale,
     operationContext:
       options.operationContext ?? ticketingOperationContexts.configureSelectOptionOrderAction,
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.configureSelectOptionOrderAction({
         headers: headers ?? {},
-        payload,
+        payload: { ...payload, viewerLocale: locale },
       }),
     ),
   );
