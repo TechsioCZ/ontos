@@ -66,7 +66,7 @@ export type {
 } from './policy.ts';
 export { corePolicies } from './policies/index.ts';
 export { rowsFromResult } from './sql-result.ts';
-export { createPersonDirectory } from './person-directory.ts';
+export { createPersonDirectory, searchEligiblePeople } from './person-directory.ts';
 export type {
   EligiblePersonDirectoryEntry,
   PersonDirectory,

@@ -122,6 +122,7 @@ export const principalDirectoryEntries = coreSchema.table(
 export const principalDirectoryFieldVisibility = coreSchema.table(
   'principal_directory_field_visibility',
   {
+    displayNameVisible: boolean('display_name_visible').default(false).notNull(),
     emailVisible: boolean('email_visible').default(false).notNull(),
     loginVisible: boolean('login_visible').default(false).notNull(),
     subjectPrincipalId: uuid('subject_principal_id')

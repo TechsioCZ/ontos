@@ -14,6 +14,7 @@ import { transitionTaskRetentionActionRegistration } from '../src/actions/transi
 import { updatePersonPropertyValueActionRegistration } from '../src/actions/update-person-property-value.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
+import { searchEligiblePeopleDataAccessRegistration } from '../src/data-access/search-eligible-people.ts';
 
 const createdTenantIds = [];
 
@@ -33,6 +34,7 @@ after(async () => {
       await sqlClient`delete from ticketing.task_property_definitions where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_schemas where tenant_id = ${tenantId}`;
       await sqlClient`delete from ticketing.task_collections where tenant_id = ${tenantId}`;
+      await sqlClient`delete from core.principal_directory_field_visibility where tenant_id = ${tenantId}`;
       await sqlClient`delete from core.principal_directory_entries where tenant_id = ${tenantId}`;
       await sqlClient`delete from core.principals where tenant_id = ${tenantId}`;
       await sqlClient`delete from core.tenant_module_states where tenant_id = ${tenantId}`;
@@ -86,7 +88,14 @@ const createOperationIdentity = async () => {
 
 const createDirectoryPerson = async (
   operationContext,
-  { displayName, membershipKind = 'member', membershipStatus = 'active', status = 'active' },
+  {
+    displayName,
+    email = null,
+    login = null,
+    membershipKind = 'member',
+    membershipStatus = 'active',
+    status = 'active',
+  },
 ) => {
   const [principal] = await sqlClient`
     insert into core.principals (tenant_id, display_name, kind, status)
@@ -95,12 +104,16 @@ const createDirectoryPerson = async (
   `;
   await sqlClient`
     insert into core.principal_directory_entries (
+      email,
+      login,
       principal_id,
       tenant_id,
       membership_kind,
       membership_status
     )
     values (
+      ${email},
+      ${login},
       ${principal.principal_id},
       ${operationContext.tenantId},
       ${membershipKind},
@@ -108,6 +121,34 @@ const createDirectoryPerson = async (
     )
   `;
   return principal.principal_id;
+};
+
+const grantDirectoryVisibility = async ({
+  displayNameVisible,
+  emailVisible,
+  loginVisible,
+  operationContext,
+  subjectPrincipalId,
+  viewerPrincipalId = operationContext.principalId,
+}) => {
+  await sqlClient`
+    insert into core.principal_directory_field_visibility (
+      display_name_visible,
+      email_visible,
+      login_visible,
+      subject_principal_id,
+      tenant_id,
+      viewer_principal_id
+    )
+    values (
+      ${displayNameVisible},
+      ${emailVisible},
+      ${loginVisible},
+      ${subjectPrincipalId},
+      ${operationContext.tenantId},
+      ${viewerPrincipalId}
+    )
+  `;
 };
 
 const operationContextResolver = (operationContext) => () => ({
@@ -304,6 +345,74 @@ test('generic Task Property configuration preserves the Person cardinality contr
     propertyDefinitionId: definition.response.definition.propertyDefinitionId,
     revision: 2,
   });
+});
+
+test('eligible-person search is governed by the authenticated viewer and per-field visibility', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const subjectPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Private Person',
+    email: 'visible@example.test',
+    login: 'private-login',
+  });
+  const otherViewerPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Other viewer',
+  });
+  await grantDirectoryVisibility({
+    displayNameVisible: true,
+    emailVisible: true,
+    loginVisible: true,
+    operationContext,
+    subjectPrincipalId,
+    viewerPrincipalId: otherViewerPrincipalId,
+  });
+
+  const search = (payload) =>
+    runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: { collectionId: collection.response.collection.collectionId, ...payload },
+      registration: searchEligiblePeopleDataAccessRegistration,
+      resultCount: (response) => response.people.length,
+      transport: { headers: new Headers() },
+    });
+  const cannotBorrowVisibility = await search({
+    query: 'private-login',
+    viewerPrincipalId: otherViewerPrincipalId,
+  });
+  assert.equal(
+    cannotBorrowVisibility._tag,
+    'OperationSucceeded',
+    JSON.stringify(cannotBorrowVisibility),
+  );
+  assert.deepEqual(cannotBorrowVisibility.response.people, []);
+
+  await grantDirectoryVisibility({
+    displayNameVisible: true,
+    emailVisible: true,
+    loginVisible: false,
+    operationContext,
+    subjectPrincipalId,
+  });
+  const visibleEmail = await search({ query: 'visible@example' });
+  assert.equal(visibleEmail._tag, 'OperationSucceeded', JSON.stringify(visibleEmail));
+  assert.deepEqual(visibleEmail.response.people, [
+    {
+      displayName: 'Private Person',
+      email: 'visible@example.test',
+      principalId: subjectPrincipalId,
+    },
+  ]);
+  const hiddenLogin = await search({ query: 'private-login' });
+  assert.equal(hiddenLogin._tag, 'OperationSucceeded', JSON.stringify(hiddenLogin));
+  assert.deepEqual(hiddenLogin.response.people, []);
 });
 
 test('ineligible identities cannot be newly assigned while stored inactive references remain resolvable', async () => {
@@ -533,16 +642,20 @@ test('Person query filters, display-name search, sequence sort, and membership g
       resultCount: (response) => response.taskIds.length,
       transport: { headers: new Headers() },
     });
-  const containsAda = await query({ filter: 'contains', principalId: adaPrincipalId });
+  const containsAda = await query({
+    filter: { operator: 'contains', principalId: adaPrincipalId },
+  });
   assert.equal(containsAda._tag, 'OperationSucceeded', JSON.stringify(containsAda));
   assert.deepEqual(containsAda.response.taskIds, [
     firstTask.response.task.taskId,
     secondTask.taskId,
   ]);
-  const lacksAda = await query({ filter: 'doesNotContain', principalId: adaPrincipalId });
+  const lacksAda = await query({
+    filter: { operator: 'doesNotContain', principalId: adaPrincipalId },
+  });
   assert.equal(lacksAda._tag, 'OperationSucceeded', JSON.stringify(lacksAda));
   assert.deepEqual(lacksAda.response.taskIds, [emptyTask.taskId, fourthTask.taskId]);
-  const empty = await query({ filter: 'isEmpty' });
+  const empty = await query({ filter: { operator: 'isEmpty' } });
   assert.equal(empty._tag, 'OperationSucceeded', JSON.stringify(empty));
   assert.deepEqual(empty.response.taskIds, [emptyTask.taskId]);
   const searched = await query({ search: 'ADA' });
@@ -589,6 +702,93 @@ test('Person query filters, display-name search, sequence sort, and membership g
       taskIds: [firstTask.response.task.taskId],
     },
     { person: null, taskIds: [emptyTask.taskId] },
+  ]);
+});
+
+test('Person sorting uses the persisted Task Collection locale and compares full name sequences before identities', async () => {
+  const { queryTaskPersonValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-person-values.ts');
+  const operationContext = await createOperationIdentity();
+  const firstAlexPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Alex',
+  });
+  const secondAlexPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Alex',
+  });
+  const betaPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Beta',
+  });
+  const zuluPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Zulu',
+  });
+  const chataPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Chata',
+  });
+  const holubPrincipalId = await createDirectoryPerson(operationContext, {
+    displayName: 'Holub',
+  });
+  const {
+    collectionId,
+    definition,
+    task: firstTask,
+  } = await createCollectionTaskAndPersonDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  await sqlClient`
+    update ticketing.task_collections
+    set locale = ${'cs-CZ'}
+    where collection_id = ${collectionId}
+      and tenant_id = ${operationContext.tenantId}
+  `;
+  const createTask = async () => {
+    const created = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+    return created.response.task;
+  };
+  const secondTask = await createTask();
+  const chataTask = await createTask();
+  const holubTask = await createTask();
+  const [lowerAlexPrincipalId, higherAlexPrincipalId] = [
+    firstAlexPrincipalId,
+    secondAlexPrincipalId,
+  ].toSorted();
+  for (const [taskId, principalIds] of [
+    [firstTask.response.task.taskId, [lowerAlexPrincipalId, zuluPrincipalId]],
+    [secondTask.taskId, [higherAlexPrincipalId, betaPrincipalId]],
+    [chataTask.taskId, [chataPrincipalId]],
+    [holubTask.taskId, [holubPrincipalId]],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Each Task owns an independent Person value.
+    const assigned = await updatePersonValue({
+      collectionId,
+      expectedRevision: 1,
+      operationContext,
+      principalIds,
+      propertyDefinitionId,
+      taskId,
+    });
+    assert.equal(assigned._tag, 'OperationSucceeded', JSON.stringify(assigned));
+  }
+
+  const sorted = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, propertyDefinitionId, sort: 'ascending' },
+    registration: queryTaskPersonValuesDataAccessRegistration,
+    resultCount: (response) => response.taskIds.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(sorted._tag, 'OperationSucceeded', JSON.stringify(sorted));
+  assert.deepEqual(sorted.response.taskIds, [
+    secondTask.taskId,
+    firstTask.response.task.taskId,
+    holubTask.taskId,
+    chataTask.taskId,
   ]);
 });
 
@@ -794,16 +994,17 @@ test('Person writes enforce Mandatory, authorization, stale revisions, metadata 
   assert.equal(mandatoryEmpty._tag, 'OperationDomainRejected', JSON.stringify(mandatoryEmpty));
   assert.equal(mandatoryEmpty.code, 'ticketing.updatePersonPropertyValue.mandatory_empty');
 
-  const evidence = updatePersonPropertyValueActionRegistration.descriptor.auditEvent.evidence(
-    {
-      collectionId,
-      expectedRevision: 1,
-      principalIds: [firstPrincipalId],
-      propertyDefinitionId,
-      taskId,
-    },
-    userWrite.response,
-  );
+  const [persistedEvidence] = await sqlClient`
+    select evidence_json as evidence
+    from core.audit_events
+    where tenant_id = ${operationContext.tenantId}
+      and event_type = 'action.succeeded'
+      and target_resource_id = ${taskId}
+      and target_resource_type = 'task'
+    order by occurred_at desc, audit_event_id desc
+    limit 1
+  `;
+  const { evidence } = persistedEvidence;
   assert.deepEqual(evidence, {
     changedComponents: ['personValue'],
     collectionId,

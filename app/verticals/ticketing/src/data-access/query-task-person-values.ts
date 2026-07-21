@@ -54,15 +54,17 @@ const compareSequences = (
     if (comparison !== 0) {
       return comparison * direction;
     }
+  }
+  if (left.people.length !== right.people.length) {
+    return (left.people.length - right.people.length) * direction;
+  }
+  for (let index = 0; index < left.people.length; index += 1) {
     const identityComparison = (left.people[index]?.principalId ?? '').localeCompare(
       right.people[index]?.principalId ?? '',
     );
     if (identityComparison !== 0) {
-      return identityComparison * direction;
+      return identityComparison;
     }
-  }
-  if (left.people.length !== right.people.length) {
-    return (left.people.length - right.people.length) * direction;
   }
   return left.taskId.localeCompare(right.taskId);
 };
@@ -93,10 +95,8 @@ export const queryTaskPersonValuesDataAccessRegistration: DataAccessRegistration
   },
   handler: async (input, { context, db }) => {
     const collectionResult = await db.execute(sql`
-      select tenant.default_locale as locale
+      select collection.locale
       from ticketing.task_collections as collection
-      inner join core.tenants as tenant
-        on tenant.tenant_id = collection.tenant_id
       inner join ticketing.task_schemas as schema
         on schema.collection_id = collection.collection_id
         and schema.tenant_id = collection.tenant_id
@@ -136,7 +136,7 @@ export const queryTaskPersonValuesDataAccessRegistration: DataAccessRegistration
       tenantId: context.tenantId,
     }).resolveStoredPrincipalIds([...new Set(assignments.map(({ principalId }) => principalId))]);
     const personById = new Map(resolved.map((person) => [person.principalId, person]));
-    const collator = new Intl.Collator(locale, { sensitivity: 'variant' });
+    const collator = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'sort' });
     const taskPeople = tasks.map(({ taskId }) => {
       const principalIds = assignments
         .filter((assignment) => assignment.taskId === taskId)
@@ -162,12 +162,12 @@ export const queryTaskPersonValuesDataAccessRegistration: DataAccessRegistration
       ) {
         return false;
       }
-      switch (input.filter) {
+      switch (input.filter?.operator) {
         case 'contains': {
-          return input.principalId !== undefined && task.principalIds.has(input.principalId);
+          return task.principalIds.has(input.filter.principalId);
         }
         case 'doesNotContain': {
-          return input.principalId !== undefined && !task.principalIds.has(input.principalId);
+          return !task.principalIds.has(input.filter.principalId);
         }
         case 'isEmpty': {
           return task.people.length === 0;

@@ -1,0 +1,1 @@
+ALTER TABLE "core"."principal_directory_field_visibility" ADD COLUMN "display_name_visible" boolean DEFAULT false NOT NULL;

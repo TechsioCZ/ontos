@@ -1,12 +1,32 @@
 // oxlint-disable typescript/consistent-type-imports, import/newline-after-import -- TypeScript-generated query declaration
 import { Schema } from '@modern-js/plugin-bff/effect-client';
+export declare const taskPersonQueryFilterSchema: Schema.Union<
+  readonly [
+    Schema.Struct<{
+      readonly operator: Schema.Literals<readonly ['contains', 'doesNotContain']>;
+      readonly principalId: Schema.String;
+    }>,
+    Schema.Struct<{
+      readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+    }>,
+  ]
+>;
 export declare const queryTaskPersonValuesPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
   readonly filter: Schema.optional<
-    Schema.Literals<readonly ['contains', 'doesNotContain', 'isEmpty', 'isNotEmpty']>
+    Schema.Union<
+      readonly [
+        Schema.Struct<{
+          readonly operator: Schema.Literals<readonly ['contains', 'doesNotContain']>;
+          readonly principalId: Schema.String;
+        }>,
+        Schema.Struct<{
+          readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+        }>,
+      ]
+    >
   >;
   readonly group: Schema.optional<Schema.Boolean>;
-  readonly principalId: Schema.optional<Schema.String>;
   readonly propertyDefinitionId: Schema.String;
   readonly search: Schema.optional<Schema.String>;
   readonly sort: Schema.optional<Schema.Literals<readonly ['ascending', 'descending']>>;
@@ -34,3 +54,4 @@ export declare const queryTaskPersonValuesResponseSchema: Schema.Struct<{
 }>;
 export type QueryTaskPersonValuesPayload = typeof queryTaskPersonValuesPayloadSchema.Type;
 export type QueryTaskPersonValuesResponse = typeof queryTaskPersonValuesResponseSchema.Type;
+export type TaskPersonQueryFilter = typeof taskPersonQueryFilterSchema.Type;

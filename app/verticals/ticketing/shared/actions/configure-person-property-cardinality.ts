@@ -1,6 +1,5 @@
-import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { HttpApiSchema, Schema } from '@modern-js/plugin-bff/effect-client';
 import {
-  coreSdkOperationFailureSchema,
   coreSdkOperationFailureSchemas,
   idempotentActionHeadersSchema,
 } from '../core-sdk-operation.ts';
@@ -28,9 +27,49 @@ export const configurePersonPropertyCardinalityActionOutcomeSchema = Schema.Stru
   response: configurePersonPropertyCardinalityActionResponseSchema,
 });
 
-export const configurePersonPropertyCardinalityActionFailureSchemas =
-  coreSdkOperationFailureSchemas;
-export const configurePersonPropertyCardinalityActionFailureSchema = coreSdkOperationFailureSchema;
+const cardinalityDomainFailureFields = {
+  errorTag: Schema.Literal('OperationDomainRejected'),
+  httpStatus: Schema.Finite,
+  message: Schema.String,
+  ok: Schema.Literal(false),
+};
+
+export const configurePersonPropertyCardinalityConflictFailureSchema = Schema.Struct({
+  ...cardinalityDomainFailureFields,
+  code: Schema.Literal('ticketing.configurePersonPropertyCardinality.assignments_violate_limit'),
+  state: Schema.Struct({ violatingTaskCount: Schema.Finite }),
+}).pipe(HttpApiSchema.status(409));
+
+const configurePersonPropertyCardinalityStaleFailureSchema = Schema.Struct({
+  ...cardinalityDomainFailureFields,
+  code: Schema.Literal('ticketing.configurePersonPropertyCardinality.stale_or_missing'),
+}).pipe(HttpApiSchema.status(409));
+
+const nonDomainConflictFailureSchema = Schema.Struct({
+  code: Schema.optional(Schema.String),
+  errorTag: Schema.Literals([
+    'OperationIdempotencyConflict',
+    'OperationIdempotencyReplayUnavailable',
+    'OperationPolicyDenied',
+  ]),
+  httpStatus: Schema.Finite,
+  message: Schema.String,
+  ok: Schema.Literal(false),
+  state: Schema.optional(Schema.Json),
+}).pipe(HttpApiSchema.status(409));
+
+export const configurePersonPropertyCardinalityActionFailureSchemas = [
+  coreSdkOperationFailureSchemas[0],
+  coreSdkOperationFailureSchemas[1],
+  coreSdkOperationFailureSchemas[2],
+  configurePersonPropertyCardinalityConflictFailureSchema,
+  configurePersonPropertyCardinalityStaleFailureSchema,
+  nonDomainConflictFailureSchema,
+  coreSdkOperationFailureSchemas[4],
+] as const;
+export const configurePersonPropertyCardinalityActionFailureSchema = Schema.Union(
+  configurePersonPropertyCardinalityActionFailureSchemas,
+);
 
 export type ConfigurePersonPropertyCardinalityActionPayload =
   typeof configurePersonPropertyCardinalityActionPayloadSchema.Type;

@@ -11,7 +11,7 @@ export interface ResolvedPersonDirectoryEntry {
 }
 
 export interface EligiblePersonDirectoryEntry {
-  readonly displayName: string;
+  readonly displayName?: string;
   readonly email?: string;
   readonly login?: string;
   readonly principalId: string;
@@ -30,13 +30,11 @@ export interface PersonDirectory {
   readonly resolveStoredPrincipalIds: (
     principalIds: readonly string[],
   ) => Promise<readonly ResolvedPersonDirectoryEntry[]>;
-  readonly searchEligiblePeople: (
-    query: string,
-  ) => Promise<readonly EligiblePersonDirectoryEntry[]>;
 }
 
 interface EligiblePersonDirectoryRow {
   readonly displayName: string;
+  readonly displayNameVisible: boolean;
   readonly email: string | null;
   readonly emailVisible: boolean;
   readonly login: string | null;
@@ -85,11 +83,9 @@ const directoryRows = async ({
 export const createPersonDirectory = ({
   db,
   tenantId,
-  viewerPrincipalId,
 }: {
   readonly db: CoreReadonlyDbExecutor;
   readonly tenantId: string;
-  readonly viewerPrincipalId?: string;
 }): PersonDirectory => ({
   eligiblePrincipalIds: async (principalIds) => {
     const rows = await directoryRows({ db, principalIds, tenantId });
@@ -111,14 +107,22 @@ export const createPersonDirectory = ({
           (order.get(right.principalId) ?? Number.MAX_SAFE_INTEGER),
       );
   },
-  searchEligiblePeople: async (query) => {
-    if (viewerPrincipalId === undefined) {
-      return [];
-    }
-    const searchTerm = query.trim().normalize('NFC').toLocaleLowerCase();
-    const result = await db.execute(sql`
+});
+
+export const searchEligiblePeople = async ({
+  context,
+  db,
+  query,
+}: {
+  readonly context: { readonly principalId: string; readonly tenantId: string };
+  readonly db: CoreReadonlyDbExecutor;
+  readonly query: string;
+}): Promise<readonly EligiblePersonDirectoryEntry[]> => {
+  const searchTerm = query.trim().normalize('NFC').toLocaleLowerCase();
+  const result = await db.execute(sql`
       select
         principal.display_name as "displayName",
+        coalesce(visibility.display_name_visible, false) as "displayNameVisible",
         entry.email,
         coalesce(visibility.email_visible, false) as "emailVisible",
         entry.login,
@@ -130,15 +134,23 @@ export const createPersonDirectory = ({
         and entry.tenant_id = principal.tenant_id
       left join core.principal_directory_field_visibility as visibility
         on visibility.subject_principal_id = principal.principal_id
-        and visibility.viewer_principal_id = ${viewerPrincipalId}
+        and visibility.viewer_principal_id = ${context.principalId}
         and visibility.tenant_id = principal.tenant_id
-      where principal.tenant_id = ${tenantId}
+      where principal.tenant_id = ${context.tenantId}
         and principal.kind = 'human'
         and principal.status = 'active'
         and entry.membership_status = 'active'
         and (
+          coalesce(visibility.display_name_visible, false)
+          or coalesce(visibility.email_visible, false)
+          or coalesce(visibility.login_visible, false)
+        )
+        and (
           ${searchTerm} = ''
-          or position(${searchTerm} in lower(principal.display_name)) > 0
+          or (
+            coalesce(visibility.display_name_visible, false)
+            and position(${searchTerm} in lower(principal.display_name)) > 0
+          )
           or (
             coalesce(visibility.email_visible, false)
             and position(${searchTerm} in lower(coalesce(entry.email, ''))) > 0
@@ -148,13 +160,25 @@ export const createPersonDirectory = ({
             and position(${searchTerm} in lower(coalesce(entry.login, ''))) > 0
           )
         )
-      order by lower(principal.display_name), principal.principal_id
+      order by
+        case
+          when coalesce(visibility.display_name_visible, false)
+          then lower(principal.display_name)
+        end nulls last,
+        case
+          when coalesce(visibility.email_visible, false)
+          then lower(entry.email)
+        end nulls last,
+        case
+          when coalesce(visibility.login_visible, false)
+          then lower(entry.login)
+        end nulls last,
+        principal.principal_id
     `);
-    return rowsFromResult<EligiblePersonDirectoryRow>(result).map((row) => ({
-      displayName: row.displayName,
-      ...(row.emailVisible && row.email !== null ? { email: row.email } : {}),
-      ...(row.loginVisible && row.login !== null ? { login: row.login } : {}),
-      principalId: row.principalId,
-    }));
-  },
-});
+  return rowsFromResult<EligiblePersonDirectoryRow>(result).map((row) => ({
+    ...(row.displayNameVisible ? { displayName: row.displayName } : {}),
+    ...(row.emailVisible && row.email !== null ? { email: row.email } : {}),
+    ...(row.loginVisible && row.login !== null ? { login: row.login } : {}),
+    principalId: row.principalId,
+  }));
+};

@@ -71,38 +71,9 @@ const createPrincipal = async (
   return principal.principal_id;
 };
 
-const grantFieldVisibility = async ({
-  emailVisible,
-  loginVisible,
-  subjectPrincipalId,
-  tenantId,
-  viewerPrincipalId,
-}) => {
-  await sqlClient`
-    insert into core.principal_directory_field_visibility (
-      email_visible,
-      login_visible,
-      subject_principal_id,
-      tenant_id,
-      viewer_principal_id
-    )
-    values (
-      ${emailVisible},
-      ${loginVisible},
-      ${subjectPrincipalId},
-      ${tenantId},
-      ${viewerPrincipalId}
-    )
-  `;
-};
-
-test('Core Person Directory separates visibility-aware eligible search from historical resolution', async () => {
+test('Core Person Directory separates current eligibility from historical resolution', async () => {
   const tenantId = await createTenant('Directory tenant');
   const otherTenantId = await createTenant('Other directory tenant');
-  const viewerPrincipalId = await createPrincipal(tenantId, {
-    displayName: 'Directory viewer',
-    withDirectoryEntry: false,
-  });
   const memberPrincipalId = await createPrincipal(tenantId, {
     displayName: 'Ada Lovelace',
     email: 'ada@example.test',
@@ -130,38 +101,12 @@ test('Core Person Directory separates visibility-aware eligible search from hist
   await createPrincipal(otherTenantId, {
     displayName: 'Cross Tenant Person',
   });
-  await grantFieldVisibility({
-    emailVisible: true,
-    loginVisible: false,
-    subjectPrincipalId: memberPrincipalId,
-    tenantId,
-    viewerPrincipalId,
-  });
-  await grantFieldVisibility({
-    emailVisible: true,
-    loginVisible: true,
-    subjectPrincipalId: guestPrincipalId,
-    tenantId,
-    viewerPrincipalId,
-  });
 
-  const directory = createPersonDirectory({ db, tenantId, viewerPrincipalId });
-  assert.deepEqual(await directory.searchEligiblePeople('ada@example'), [
-    {
-      displayName: 'Ada Lovelace',
-      email: 'ada@example.test',
-      principalId: memberPrincipalId,
-    },
-  ]);
-  assert.deepEqual(await directory.searchEligiblePeople('hidden-ada-login'), []);
-  assert.deepEqual(await directory.searchEligiblePeople('grace-login'), [
-    {
-      displayName: 'Grace Hopper',
-      email: 'grace@example.test',
-      login: 'grace-login',
-      principalId: guestPrincipalId,
-    },
-  ]);
+  const directory = createPersonDirectory({ db, tenantId });
+  assert.deepEqual(
+    [...(await directory.eligiblePrincipalIds([memberPrincipalId, guestPrincipalId]))].toSorted(),
+    [guestPrincipalId, memberPrincipalId].toSorted(),
+  );
   assert.deepEqual(
     await directory.resolveStoredPrincipalIds([disabledPrincipalId, departedPrincipalId]),
     [

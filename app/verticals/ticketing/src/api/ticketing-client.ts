@@ -111,6 +111,7 @@ import type {
   CreatePersonPropertyDefinitionActionPayload,
   QueryTaskPersonValuesPayload,
   QueryTaskPersonValuesResponse,
+  SearchEligiblePeopleResponse,
   UpdatePersonPropertyValueActionFailure,
   UpdatePersonPropertyValueActionOutcome,
   UpdatePersonPropertyValueActionPayload,
@@ -327,6 +328,28 @@ export const queryTaskEmailValues = (
     ),
   );
 
+const taskPersonHttpQuery = (payload: QueryTaskPersonValuesPayload) => {
+  const common = {
+    ...(payload.group === undefined
+      ? {}
+      : { group: payload.group ? ('true' as const) : ('false' as const) }),
+    ...(payload.search === undefined ? {} : { search: payload.search }),
+    ...(payload.sort === undefined ? {} : { sort: payload.sort }),
+  };
+
+  if (payload.filter === undefined) {
+    return common;
+  }
+  if ('principalId' in payload.filter) {
+    return {
+      ...common,
+      filter: payload.filter.operator,
+      principalId: payload.filter.principalId,
+    };
+  }
+  return { ...common, filter: payload.filter.operator };
+};
+
 export const queryTaskPersonValues = (
   payload: QueryTaskPersonValuesPayload,
   options: TicketingClientOptions = {},
@@ -342,13 +365,25 @@ export const queryTaskPersonValues = (
           collectionId: payload.collectionId,
           propertyDefinitionId: payload.propertyDefinitionId,
         },
-        query: {
-          ...(payload.filter === undefined ? {} : { filter: payload.filter }),
-          ...(payload.group === undefined ? {} : { group: payload.group ? 'true' : 'false' }),
-          ...(payload.principalId === undefined ? {} : { principalId: payload.principalId }),
-          ...(payload.search === undefined ? {} : { search: payload.search }),
-          ...(payload.sort === undefined ? {} : { sort: payload.sort }),
-        },
+        query: taskPersonHttpQuery(payload),
+      }),
+    ),
+  );
+
+export const searchEligiblePeople = (
+  collectionId: string,
+  query: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<SearchEligiblePeopleResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.searchEligiblePeople,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.searchEligiblePeople({
+        headers: options.headers ?? {},
+        params: { collectionId },
+        query: { query },
       }),
     ),
   );

@@ -187,6 +187,7 @@ import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
+import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
@@ -429,6 +430,10 @@ export type {
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 export type { QueryTaskPersonValuesPayload, QueryTaskPersonValuesResponse } from './person-query';
+export type {
+  SearchEligiblePeoplePayload,
+  SearchEligiblePeopleResponse,
+} from './person-directory-search';
 
 export interface TicketingMarker {
   readonly appId: string;
@@ -508,6 +513,24 @@ export interface OperationContext {
   traceId?: string;
 }
 
+const taskPersonQueryCommonFields = {
+  group: Schema.optional(Schema.Literals(['true', 'false'])),
+  search: Schema.optional(Schema.String),
+  sort: Schema.optional(Schema.Literals(['ascending', 'descending'])),
+};
+
+const taskPersonHttpQuerySchema = Schema.Union([
+  Schema.Struct({
+    ...taskPersonQueryCommonFields,
+    filter: Schema.Literals(['contains', 'doesNotContain']),
+    principalId: Schema.String,
+  }),
+  Schema.Struct({
+    ...taskPersonQueryCommonFields,
+    filter: Schema.optional(Schema.Literals(['isEmpty', 'isNotEmpty'])),
+  }),
+]);
+
 export const ticketingApi = HttpApi.make('TicketingApi').add(
   HttpApiGroup.make('ticketing')
     .add(
@@ -543,6 +566,19 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         },
         success: taskCollectionAggregateSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'searchEligiblePeople',
+        '/ticketing/task-collections/:collectionId/person-directory',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          query: { query: Schema.String },
+          success: searchEligiblePeopleResponseSchema,
+        },
+      ),
     )
     .add(
       HttpApiEndpoint.get(
@@ -631,15 +667,7 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             collectionId: Schema.String,
             propertyDefinitionId: Schema.String,
           },
-          query: {
-            filter: Schema.optional(
-              Schema.Literals(['contains', 'doesNotContain', 'isEmpty', 'isNotEmpty']),
-            ),
-            group: Schema.optional(Schema.Literals(['true', 'false'])),
-            principalId: Schema.optional(Schema.String),
-            search: Schema.optional(Schema.String),
-            sort: Schema.optional(Schema.Literals(['ascending', 'descending'])),
-          },
+          query: taskPersonHttpQuerySchema,
           success: queryTaskPersonValuesResponseSchema,
         },
       ),
@@ -1168,6 +1196,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
     routePath: '/ticketing/readiness',
+    source: 'generated-client',
+  },
+  searchEligiblePeople: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:searchEligiblePeople',
+    routePath: '/ticketing/task-collections/:collectionId/person-directory',
     source: 'generated-client',
   },
   transitionTaskRetentionAction: {

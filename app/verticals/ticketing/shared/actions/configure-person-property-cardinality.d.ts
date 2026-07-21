@@ -37,6 +37,16 @@ export declare const configurePersonPropertyCardinalityActionOutcomeSchema: Sche
     }>;
   }>;
 }>;
+export declare const configurePersonPropertyCardinalityConflictFailureSchema: Schema.Struct<{
+  readonly errorTag: Schema.Literal<'OperationDomainRejected'>;
+  readonly httpStatus: Schema.Finite;
+  readonly message: Schema.String;
+  readonly ok: Schema.Literal<false>;
+  readonly code: Schema.Literal<'ticketing.configurePersonPropertyCardinality.assignments_violate_limit'>;
+  readonly state: Schema.Struct<{
+    readonly violatingTaskCount: Schema.Finite;
+  }>;
+}>;
 export declare const configurePersonPropertyCardinalityActionFailureSchemas: readonly [
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
@@ -67,19 +77,35 @@ export declare const configurePersonPropertyCardinalityActionFailureSchemas: rea
     readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
   }>,
   Schema.Struct<{
-    readonly code: Schema.optional<Schema.String>;
+    readonly errorTag: Schema.Literal<'OperationDomainRejected'>;
     readonly httpStatus: Schema.Finite;
     readonly message: Schema.String;
     readonly ok: Schema.Literal<false>;
-    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+    readonly code: Schema.Literal<'ticketing.configurePersonPropertyCardinality.assignments_violate_limit'>;
+    readonly state: Schema.Struct<{
+      readonly violatingTaskCount: Schema.Finite;
+    }>;
+  }>,
+  Schema.Struct<{
+    readonly errorTag: Schema.Literal<'OperationDomainRejected'>;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly code: Schema.Literal<'ticketing.configurePersonPropertyCardinality.stale_or_missing'>;
+  }>,
+  Schema.Struct<{
+    readonly code: Schema.optional<Schema.String>;
     readonly errorTag: Schema.Literals<
       readonly [
-        'OperationDomainRejected',
         'OperationIdempotencyConflict',
         'OperationIdempotencyReplayUnavailable',
         'OperationPolicyDenied',
       ]
     >;
+    readonly httpStatus: Schema.Finite;
+    readonly message: Schema.String;
+    readonly ok: Schema.Literal<false>;
+    readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
   }>,
   Schema.Struct<{
     readonly code: Schema.optional<Schema.String>;
@@ -123,19 +149,35 @@ export declare const configurePersonPropertyCardinalityActionFailureSchema: Sche
       readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
     }>,
     Schema.Struct<{
-      readonly code: Schema.optional<Schema.String>;
+      readonly errorTag: Schema.Literal<'OperationDomainRejected'>;
       readonly httpStatus: Schema.Finite;
       readonly message: Schema.String;
       readonly ok: Schema.Literal<false>;
-      readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+      readonly code: Schema.Literal<'ticketing.configurePersonPropertyCardinality.assignments_violate_limit'>;
+      readonly state: Schema.Struct<{
+        readonly violatingTaskCount: Schema.Finite;
+      }>;
+    }>,
+    Schema.Struct<{
+      readonly errorTag: Schema.Literal<'OperationDomainRejected'>;
+      readonly httpStatus: Schema.Finite;
+      readonly message: Schema.String;
+      readonly ok: Schema.Literal<false>;
+      readonly code: Schema.Literal<'ticketing.configurePersonPropertyCardinality.stale_or_missing'>;
+    }>,
+    Schema.Struct<{
+      readonly code: Schema.optional<Schema.String>;
       readonly errorTag: Schema.Literals<
         readonly [
-          'OperationDomainRejected',
           'OperationIdempotencyConflict',
           'OperationIdempotencyReplayUnavailable',
           'OperationPolicyDenied',
         ]
       >;
+      readonly httpStatus: Schema.Finite;
+      readonly message: Schema.String;
+      readonly ok: Schema.Literal<false>;
+      readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
     }>,
     Schema.Struct<{
       readonly code: Schema.optional<Schema.String>;

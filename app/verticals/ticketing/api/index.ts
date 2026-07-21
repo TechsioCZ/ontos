@@ -44,7 +44,72 @@ import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/q
 import { queryTaskPersonValuesDataAccessRegistration } from '../src/data-access/query-task-person-values.ts';
 import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
+import { searchEligiblePeopleDataAccessRegistration } from '../src/data-access/search-eligible-people.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
+import type { ConfigurePersonPropertyCardinalityActionFailure } from '../shared/actions/configure-person-property-cardinality.ts';
+import type { TaskPersonQueryFilter } from '../shared/person-query.ts';
+import type { CoreSdkOperationTransportOutcome } from './action-runtime.ts';
+
+type CoreSdkOperationTransportFailure = Extract<
+  CoreSdkOperationTransportOutcome<unknown>,
+  { readonly ok: false }
+>;
+
+const failureFields = (failure: CoreSdkOperationTransportFailure) => ({
+  ...(failure.code === undefined ? {} : { code: failure.code }),
+  httpStatus: failure.httpStatus,
+  message: failure.message,
+  ok: false as const,
+  ...(failure.state === undefined ? {} : { state: failure.state }),
+});
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const configurePersonCardinalityFailure = (
+  failure: CoreSdkOperationTransportFailure,
+): ConfigurePersonPropertyCardinalityActionFailure => {
+  if (failure.errorTag !== 'OperationDomainRejected') {
+    return {
+      ...failureFields(failure),
+      errorTag: failure.errorTag,
+    };
+  }
+
+  if (
+    failure.code === 'ticketing.configurePersonPropertyCardinality.assignments_violate_limit' &&
+    isRecord(failure.state) &&
+    typeof failure.state['violatingTaskCount'] === 'number' &&
+    Number.isFinite(failure.state['violatingTaskCount'])
+  ) {
+    return {
+      code: failure.code,
+      errorTag: failure.errorTag,
+      httpStatus: failure.httpStatus,
+      message: failure.message,
+      ok: false,
+      state: { violatingTaskCount: failure.state['violatingTaskCount'] },
+    };
+  }
+
+  if (failure.code === 'ticketing.configurePersonPropertyCardinality.stale_or_missing') {
+    return {
+      code: failure.code,
+      errorTag: failure.errorTag,
+      httpStatus: failure.httpStatus,
+      message: failure.message,
+      ok: false,
+    };
+  }
+
+  return {
+    code: 'ticketing.configurePersonPropertyCardinality.unexpected_domain_rejection',
+    errorTag: 'OperationExecutionFailed',
+    httpStatus: 500,
+    message: 'Configure Person Property Cardinality returned an invalid domain failure.',
+    ok: false,
+  };
+};
 
 const ticketingItems = [
   {
@@ -210,16 +275,40 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       ),
     )
-    .handle('queryTaskPersonValues', ({ params, query, request }) =>
+    .handle('searchEligiblePeople', ({ params, query, request }) =>
       Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: { collectionId: params.collectionId, query: query.query },
+          registration: searchEligiblePeopleDataAccessRegistration,
+          resultCount: (response) => response.people.length,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.searchEligiblePeople', {
+          attributes: operationAttributes(ticketingOperationContexts.searchEligiblePeople),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('queryTaskPersonValues', ({ params, query, request }) => {
+      let filter: TaskPersonQueryFilter | undefined;
+      if (query.filter === 'contains' || query.filter === 'doesNotContain') {
+        filter = { operator: query.filter, principalId: query.principalId };
+      } else if (query.filter !== undefined) {
+        filter = { operator: query.filter };
+      }
+
+      return Effect.promise(() =>
         runCoreSdkDataAccess({
           headers: new Headers(request.headers),
           payload: {
             collectionId: params.collectionId,
-            ...(query.filter === undefined ? {} : { filter: query.filter }),
-            ...(query.group === undefined ? {} : { group: query.group === 'true' }),
-            ...(query.principalId === undefined ? {} : { principalId: query.principalId }),
             propertyDefinitionId: params.propertyDefinitionId,
+            ...(filter === undefined ? {} : { filter }),
+            ...(query.group === undefined ? {} : { group: query.group === 'true' }),
             ...(query.search === undefined ? {} : { search: query.search }),
             ...(query.sort === undefined ? {} : { sort: query.sort }),
           },
@@ -234,8 +323,8 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           attributes: operationAttributes(ticketingOperationContexts.queryTaskPersonValues),
           kind: 'server',
         }),
-      ),
-    )
+      );
+    })
     .handle('getTaskPropertyDeletionImpact', ({ params, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
@@ -748,7 +837,11 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           registration: configurePersonPropertyCardinalityActionRegistration,
         }),
       ).pipe(
-        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.flatMap((outcome) =>
+          outcome.ok
+            ? Effect.succeed(outcome)
+            : Effect.fail(configurePersonCardinalityFailure(outcome)),
+        ),
         Effect.withSpan('ultramodern.api.ticketing.configurePersonPropertyCardinalityAction', {
           attributes: operationAttributes(
             ticketingOperationContexts.configurePersonPropertyCardinalityAction,

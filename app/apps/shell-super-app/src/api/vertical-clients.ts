@@ -39,5 +39,7 @@ export {
   getTaskPropertyWorkspace,
   getTaskPropertyEditCapability,
   listTicketing,
+  queryTaskPersonValues,
+  searchEligiblePeople,
   type TicketingClientOptions,
 } from '@app/ticketing/api/client';
