@@ -1,4 +1,6 @@
 export {
+  runCreatePhonePropertyDefinitionAction,
+  runUpdatePhonePropertyValueAction,
   queryTaskEmailValues,
   queryTaskUrlValues,
   runUpdateEmailPropertyValueAction,

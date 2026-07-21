@@ -29,6 +29,25 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
+    "phone": {
+      "call": "Volat",
+      "copy": "Kopírovat",
+      "copiedDescription": "Přesná hodnota telefonu je ve schránce.",
+      "copiedTitle": "Telefon zkopírován",
+      "copyFailedDescription": "Hodnotu telefonu se nepodařilo zkopírovat.",
+      "copyFailedTitle": "Kopírování telefonu selhalo",
+      "definitionCreate": "Přidat Phone property",
+      "definitionCreateFailedDescription": "Phone property se nepodařilo vytvořit.",
+      "definitionCreateFailedTitle": "Vytvoření Phone property selhalo",
+      "definitionCreating": "Přidávání Phone property",
+      "definitionName": "Název Phone property",
+      "invalid": "Zadejte jeden řádek bez řídicích znaků, nejvýše 256 znaků.",
+      "save": "Uložit",
+      "saveFailedDescription": "Hodnotu telefonu se nepodařilo uložit.",
+      "saveFailedTitle": "Uložení telefonu selhalo",
+      "staleDescription": "Váš rozepsaný telefon zůstal zachován. Před dalším pokusem načtěte aktuální hodnotu.",
+      "staleTitle": "Telefon byl změněn jinde"
+    },
     "number": {
       "definitionCreate": "Přidat číselnou property",
       "definitionCreateFailedDescription": "Číselnou property se nepodařilo vytvořit.",

@@ -6,6 +6,18 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  createPhonePropertyDefinitionActionHeadersSchema,
+  createPhonePropertyDefinitionActionFailureSchemas,
+  createPhonePropertyDefinitionActionOutcomeSchema,
+  createPhonePropertyDefinitionActionPayloadSchema,
+} from './actions/create-phone-property-definition';
+import {
+  updatePhonePropertyValueActionHeadersSchema,
+  updatePhonePropertyValueActionFailureSchemas,
+  updatePhonePropertyValueActionOutcomeSchema,
+  updatePhonePropertyValueActionPayloadSchema,
+} from './actions/update-phone-property-value';
+import {
   createEmailPropertyDefinitionActionFailureSchemas,
   createEmailPropertyDefinitionActionHeadersSchema,
   createEmailPropertyDefinitionActionOutcomeSchema,
@@ -227,6 +239,12 @@ export type {
   CreateCheckboxPropertyDefinitionActionResponse,
 } from './actions/create-checkbox-property-definition';
 export type {
+  CreatePhonePropertyDefinitionActionFailure,
+  CreatePhonePropertyDefinitionActionOutcome,
+  CreatePhonePropertyDefinitionActionPayload,
+  CreatePhonePropertyDefinitionActionResponse,
+} from './actions/create-phone-property-definition';
+export type {
   CreateSelectOptionAndSelectActionFailure,
   CreateSelectOptionAndSelectActionOutcome,
   CreateSelectOptionAndSelectActionPayload,
@@ -281,6 +299,12 @@ export type {
   UpdateCheckboxPropertyValueActionResponse,
 } from './actions/update-checkbox-property-value';
 export type {
+  UpdatePhonePropertyValueActionFailure,
+  UpdatePhonePropertyValueActionOutcome,
+  UpdatePhonePropertyValueActionPayload,
+  UpdatePhonePropertyValueActionResponse,
+} from './actions/update-phone-property-value';
+export type {
   UpdateUrlPropertyValueActionFailure,
   UpdateUrlPropertyValueActionOutcome,
   UpdateUrlPropertyValueActionPayload,
@@ -311,6 +335,7 @@ export {
   checkboxPropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
+  phonePropertyDefinitionSchema,
   selectOptionOrderModeSchema,
   selectOptionSchema,
   selectPropertyDefinitionSchema,
@@ -322,6 +347,7 @@ export type {
   CheckboxPropertyDefinition,
   EmailPropertyDefinition,
   NumberPropertyDefinition,
+  PhonePropertyDefinition,
   SelectOption,
   SelectOptionOrderMode,
   SelectPropertyDefinition,
@@ -329,6 +355,8 @@ export type {
   TextPropertyDefinition,
   UrlPropertyDefinition,
 } from './task-property-definition';
+export { phoneTelHref, validatePhoneValue } from './phone-value';
+export type { PhoneValueValidationFailure, PhoneValueValidationResult } from './phone-value';
 export { emailMailtoHref, parseEmailValue } from './email-value';
 export type { ParsedEmailValue } from './email-value';
 export type { TaskPropertyWorkspace } from './task-property-workspace';
@@ -829,6 +857,30 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: updateUrlPropertyValueActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createPhonePropertyDefinitionAction',
+        '/ticketing/actions/create-phone-property-definition',
+        {
+          error: createPhonePropertyDefinitionActionFailureSchemas,
+          headers: createPhonePropertyDefinitionActionHeadersSchema,
+          payload: createPhonePropertyDefinitionActionPayloadSchema,
+          success: createPhonePropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updatePhonePropertyValueAction',
+        '/ticketing/actions/update-phone-property-value',
+        {
+          error: updatePhonePropertyValueActionFailureSchemas,
+          headers: updatePhonePropertyValueActionHeadersSchema,
+          payload: updatePhonePropertyValueActionPayloadSchema,
+          success: updatePhonePropertyValueActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -867,6 +919,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createNumberPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-number-property-definition',
+    source: 'generated-client',
+  },
+  createPhonePropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createPhonePropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-phone-property-definition',
     source: 'generated-client',
   },
   createSelectOptionAction: {
@@ -1014,6 +1072,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateNumberPropertyValueAction',
     routePath: '/ticketing/actions/update-number-property-value',
+    source: 'generated-client',
+  },
+  updatePhonePropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updatePhonePropertyValueAction',
+    routePath: '/ticketing/actions/update-phone-property-value',
     source: 'generated-client',
   },
   updateSelectOptionAction: {

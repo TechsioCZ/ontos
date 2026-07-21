@@ -12,6 +12,7 @@ import {
   runCreateCheckboxPropertyDefinitionAction,
   runCreateEmailPropertyDefinitionAction,
   runCreateNumberPropertyDefinitionAction,
+  runCreatePhonePropertyDefinitionAction,
   runCreateTextPropertyDefinitionAction,
   runCreateTaskAction,
   runCreateTaskCollectionAction,
@@ -21,6 +22,7 @@ import {
   runUpdateCheckboxPropertyValueAction,
   runUpdateEmailPropertyValueAction,
   runUpdateNumberPropertyValueAction,
+  runUpdatePhonePropertyValueAction,
   runUpdateTextPropertyValueAction,
   runUpdateUrlPropertyValueAction,
 } from '../api/ticketing-client';
@@ -28,6 +30,7 @@ import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
 import { EmailPropertyEditor } from '../components/email-property-editor';
 import { NumberPropertyEditor } from '../components/number-property-editor';
+import { PhonePropertyEditor } from '../components/phone-property-editor';
 import { TextPropertyEditor } from '../components/text-property-editor';
 import { TextPropertyDuplication } from '../components/text-property-duplication';
 import { UrlPropertyEditor } from '../components/url-property-editor';
@@ -97,6 +100,11 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingNumberDefinition, setIsCreatingNumberDefinition] = useState(false);
+  const [phoneDefinitionName, setPhoneDefinitionName] = useState('');
+  const [phoneDefinitionIdempotencyKey, setPhoneDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingPhoneDefinition, setIsCreatingPhoneDefinition] = useState(false);
   const [urlDefinitionName, setUrlDefinitionName] = useState('');
   const [urlDefinitionIdempotencyKey, setUrlDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
@@ -169,6 +177,8 @@ export const TicketingExperience = () => {
               setEmailDefinitionIdempotencyKey(crypto.randomUUID());
               setNumberDefinitionName('');
               setNumberDefinitionIdempotencyKey(crypto.randomUUID());
+              setPhoneDefinitionName('');
+              setPhoneDefinitionIdempotencyKey(crypto.randomUUID());
               setUrlDefinitionName('');
               setUrlDefinitionIdempotencyKey(crypto.randomUUID());
               setOpenedTaskPropertyWorkspace({
@@ -179,6 +189,7 @@ export const TicketingExperience = () => {
                     checkboxValues: [],
                     emailValues: [],
                     numberValues: [],
+                    phoneValues: [],
                     selectValues: [],
                     taskId: taskCollection.task.taskId,
                     taskRevision: taskCollection.task.revision,
@@ -476,6 +487,50 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreatePhoneDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || phoneDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingPhoneDefinition(true);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreatePhonePropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: phoneDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: phoneDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setPhoneDefinitionName('');
+      setPhoneDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.phone.definitionCreateFailedDescription'),
+        title: t('ticketing.phone.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingPhoneDefinition(false);
+    }
+  };
+
   return (
     <main className="ticketing:min-h-screen ticketing:bg-um-canvas ticketing:px-4 ticketing:py-6 ticketing:text-um-foreground ticketing:sm:px-8">
       <nav aria-label={t('ticketing.language.switcher')} className="ticketing:flex ticketing:gap-3">
@@ -615,6 +670,23 @@ export const TicketingExperience = () => {
             >
               {t('ticketing.url.definitionCreate')}
             </Button>
+            <FormInput
+              id="phone-property-name"
+              label={t('ticketing.phone.definitionName')}
+              name="phone-property-name"
+              onChange={(event) => setPhoneDefinitionName(event.currentTarget.value)}
+              value={phoneDefinitionName}
+            />
+            <Button
+              disabled={phoneDefinitionName.trim().length === 0}
+              isLoading={isCreatingPhoneDefinition}
+              loadingText={t('ticketing.phone.definitionCreating')}
+              onClick={() => void handleCreatePhoneDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.phone.definitionCreate')}
+            </Button>
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
@@ -622,6 +694,58 @@ export const TicketingExperience = () => {
                 const [task] = openedTaskPropertyWorkspace.tasks;
                 if (task === undefined) {
                   return null;
+                }
+                if (definition.datatype === 'phone') {
+                  const phoneValue = task.phoneValues.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  return (
+                    <PhonePropertyEditor
+                      collectionId={openedTaskPropertyWorkspace.collectionId}
+                      key={definition.propertyDefinitionId}
+                      label={definition.name}
+                      onSave={async (draft, idempotencyKey) => {
+                        const operationContextToken = await loadTicketingOperationContextToken();
+                        const outcome = await runEffectRequest(
+                          runUpdatePhonePropertyValueAction(draft, {
+                            headers: { 'x-ontos-operation-context': operationContextToken },
+                            idempotencyKey,
+                          }),
+                        );
+                        setOpenedTaskPropertyWorkspace((current) =>
+                          current === undefined
+                            ? current
+                            : {
+                                ...current,
+                                tasks: current.tasks.map((candidate) => {
+                                  if (candidate.taskId !== draft.taskId) {
+                                    return candidate;
+                                  }
+                                  const otherValues = candidate.phoneValues.filter(
+                                    (value) =>
+                                      value.propertyDefinitionId !== draft.propertyDefinitionId,
+                                  );
+                                  return {
+                                    ...candidate,
+                                    phoneValues:
+                                      outcome.response.value === null
+                                        ? otherValues
+                                        : [...otherValues, outcome.response.value],
+                                    taskRevision: outcome.response.taskRevision,
+                                  };
+                                }),
+                              },
+                        );
+                        return outcome.response;
+                      }}
+                      propertyDefinitionId={definition.propertyDefinitionId}
+                      readOnly={!canEditTaskPropertyValues}
+                      revision={phoneValue?.revision ?? 0}
+                      taskId={task.taskId}
+                      value={phoneValue?.value ?? null}
+                    />
+                  );
                 }
                 if (definition.datatype === 'email') {
                   const emailValue = task.emailValues.find(

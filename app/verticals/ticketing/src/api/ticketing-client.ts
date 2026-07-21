@@ -97,6 +97,12 @@ import type {
   UpdateEmailPropertyValueActionPayload,
   QueryTaskEmailValuesPayload,
   QueryTaskEmailValuesResponse,
+  CreatePhonePropertyDefinitionActionFailure,
+  CreatePhonePropertyDefinitionActionOutcome,
+  CreatePhonePropertyDefinitionActionPayload,
+  UpdatePhonePropertyValueActionFailure,
+  UpdatePhonePropertyValueActionOutcome,
+  UpdatePhonePropertyValueActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -111,6 +117,8 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UpdatePhonePropertyValueActionFailure
+  | CreatePhonePropertyDefinitionActionFailure
   | UpdateEmailPropertyValueActionFailure
   | CreateEmailPropertyDefinitionActionFailure
   | UpdateUrlPropertyValueActionFailure
@@ -853,6 +861,40 @@ export const runUpdateEmailPropertyValueAction = (
         headers: headers ?? {},
         payload,
       }),
+    ),
+  );
+};
+
+export const runCreatePhonePropertyDefinitionAction = (
+  payload: CreatePhonePropertyDefinitionActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<CreatePhonePropertyDefinitionActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createPhonePropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createPhonePropertyDefinitionAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUpdatePhonePropertyValueAction = (
+  payload: UpdatePhonePropertyValueActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UpdatePhonePropertyValueActionOutcome> => {
+  const headers = actionHeaders(options);
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updatePhonePropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updatePhonePropertyValueAction({ headers: headers ?? {}, payload }),
     ),
   );
 };

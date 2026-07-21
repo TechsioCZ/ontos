@@ -62,6 +62,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
   for (const endpoint of [
     'createCheckboxPropertyDefinitionAction',
     'createEmailPropertyDefinitionAction',
+    'createPhonePropertyDefinitionAction',
     'createTaskAction',
     'createTaskCollectionAction',
     'createTextPropertyDefinitionAction',
@@ -74,6 +75,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'queryTaskUrlValues',
     'updateCheckboxPropertyValueAction',
     'updateEmailPropertyValueAction',
+    'updatePhonePropertyValueAction',
     'updateTextPropertyValueAction',
     'updateUrlPropertyValueAction',
   ]) {
@@ -92,6 +94,13 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.email.definitionName': 'Email property name',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
+        'ticketing.phone.call': 'Call',
+        'ticketing.phone.copy': 'Copy',
+        'ticketing.phone.definitionCreate': 'Add Phone property',
+        'ticketing.phone.definitionCreating': 'Adding Phone property',
+        'ticketing.phone.definitionName': 'Phone property name',
+        'ticketing.phone.invalid': 'Enter one control-free line of at most 256 characters.',
+        'ticketing.phone.save': 'Save Phone',
         'ticketing.role': 'Ticketing',
         'ticketing.taskCollection.create': 'Create Task',
         'ticketing.taskCollection.createFailed': 'Task creation failed',
@@ -227,6 +236,23 @@ rs.mock('../src/api/ticketing-client', () => {
             mandatory: payload.mandatory,
             name: payload.name,
             propertyDefinitionId: 'email-property-1',
+            revision: 1,
+          },
+        },
+      }),
+    runCreatePhonePropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'phone',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'phone-property-1',
             revision: 1,
           },
         },
@@ -465,7 +491,7 @@ test('wires a denied value-edit capability to read-only property editors', async
   fireEvent.click(screen.getByRole('button', { name: 'Create Email property' }));
 
   const email = await screen.findByRole('textbox', { name: 'Contact email' });
-  expect((email as HTMLInputElement).readOnly).toBe(true);
+  expect(email).toHaveAttribute('readonly');
 
   fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
     target: { value: 'Reference URL' },
@@ -473,5 +499,14 @@ test('wires a denied value-edit capability to read-only property editors', async
   fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
 
   const url = await screen.findByRole('textbox', { name: 'Reference URL' });
-  expect((url as HTMLInputElement).readOnly).toBe(true);
+  expect(url).toHaveAttribute('readonly');
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Phone property name' }), {
+    target: { value: 'Direct line' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Add Phone property' }));
+
+  const phone = await screen.findByRole('textbox', { name: 'Direct line' });
+  expect(phone).toHaveAttribute('readonly');
+  expect(screen.queryByRole('button', { name: 'Save Phone' })).not.toBeInTheDocument();
 });

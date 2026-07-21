@@ -32,6 +32,12 @@ export const emailPropertyValueSchema = Schema.Struct({
   value: Schema.NullOr(Schema.String),
 });
 
+export const phonePropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.String,
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
@@ -40,6 +46,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
+      phoneValues: Schema.Array(phonePropertyValueSchema),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
@@ -57,5 +64,6 @@ export const getTaskPropertyWorkspacePayloadSchema = Schema.Struct({
 
 export type GetTaskPropertyWorkspacePayload = typeof getTaskPropertyWorkspacePayloadSchema.Type;
 export type CheckboxPropertyValue = typeof checkboxPropertyValueSchema.Type;
+export type PhonePropertyValue = typeof phonePropertyValueSchema.Type;
 export type TaskPropertyWorkspace = typeof taskPropertyWorkspaceSchema.Type;
 export type UrlPropertyValue = typeof urlPropertyValueSchema.Type;

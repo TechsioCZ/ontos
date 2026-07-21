@@ -29,6 +29,25 @@
       "en": "English",
       "switcher": "Language"
     },
+    "phone": {
+      "call": "Call",
+      "copy": "Copy",
+      "copiedDescription": "The exact Phone value is on your clipboard.",
+      "copiedTitle": "Phone copied",
+      "copyFailedDescription": "The Phone value could not be copied.",
+      "copyFailedTitle": "Phone copy failed",
+      "definitionCreate": "Add Phone property",
+      "definitionCreateFailedDescription": "The Phone property could not be created.",
+      "definitionCreateFailedTitle": "Phone property creation failed",
+      "definitionCreating": "Adding Phone property",
+      "definitionName": "Phone property name",
+      "invalid": "Enter one control-free line of at most 256 characters.",
+      "save": "Save",
+      "saveFailedDescription": "The Phone value could not be saved.",
+      "saveFailedTitle": "Phone save failed",
+      "staleDescription": "Your Phone draft is still here. Reload before trying again.",
+      "staleTitle": "Phone changed elsewhere"
+    },
     "number": {
       "definitionCreate": "Add Number property",
       "definitionCreateFailedDescription": "The Number property could not be created.",

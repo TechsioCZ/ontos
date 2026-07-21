@@ -10,6 +10,8 @@ import { createEmailPropertyDefinitionActionRegistration } from '../src/actions/
 import { updateEmailPropertyValueActionRegistration } from '../src/actions/update-email-property-value.ts';
 import { createUrlPropertyDefinitionActionRegistration } from '../src/actions/create-url-property-definition.ts';
 import { updateUrlPropertyValueActionRegistration } from '../src/actions/update-url-property-value.ts';
+import { createPhonePropertyDefinitionActionRegistration } from '../src/actions/create-phone-property-definition.ts';
+import { updatePhonePropertyValueActionRegistration } from '../src/actions/update-phone-property-value.ts';
 import { configureNumberPropertyFormatActionRegistration } from '../src/actions/configure-number-property-format.ts';
 import { createNumberPropertyDefinitionActionRegistration } from '../src/actions/create-number-property-definition.ts';
 import { updateNumberPropertyValueActionRegistration } from '../src/actions/update-number-property-value.ts';
@@ -643,6 +645,40 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
         Effect.withSpan('ultramodern.api.ticketing.updateUrlPropertyValueAction', {
           attributes: operationAttributes(ticketingOperationContexts.updateUrlPropertyValueAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createPhonePropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createPhonePropertyDefinitionActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.createPhonePropertyDefinitionAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.createPhonePropertyDefinitionAction,
+          ),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updatePhonePropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updatePhonePropertyValueActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.updatePhonePropertyValueAction', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.updatePhonePropertyValueAction,
+          ),
           kind: 'server',
         }),
       ),

@@ -17,7 +17,7 @@ import type {
   UpdateNumberPropertyValueActionResponse,
 } from '../../shared/actions/update-number-property-value.ts';
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
-import { rejectTaskEditWithEmptyMandatoryEmail } from '../task-mandatory-validation.ts';
+import { rejectTaskEditWithEmptyMandatoryProperty } from '../task-mandatory-validation.ts';
 
 interface CurrentNumberValueRow {
   readonly mandatory: boolean;
@@ -121,7 +121,7 @@ const updateNumberPropertyValueActionHandler: ActionHandler<
       message: 'Mandatory Number must contain a value.',
     });
   }
-  await rejectTaskEditWithEmptyMandatoryEmail({
+  await rejectTaskEditWithEmptyMandatoryProperty({
     collectionId: input.collectionId,
     db: services.tx,
     taskId: input.taskId,

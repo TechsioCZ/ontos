@@ -17,6 +17,7 @@ import type {
   UpdateEmailPropertyValueActionResponse,
 } from '../../shared/actions/update-email-property-value.ts';
 import { parseEmailValue } from '../../shared/email-value.ts';
+import { rejectTaskEditWithEmptyMandatoryProperty } from '../task-mandatory-validation.ts';
 
 interface CurrentEmailValueRow {
   readonly mandatory: boolean;
@@ -121,6 +122,16 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
   }
 
   const nextValue = parsed._tag === 'Valid' ? parsed.value : null;
+  await rejectTaskEditWithEmptyMandatoryProperty({
+    collectionId: input.collectionId,
+    db: services.tx,
+    proposedValue: {
+      propertyDefinitionId: input.propertyDefinitionId,
+      value: nextValue,
+    },
+    taskId: input.taskId,
+    tenantId: services.context.tenantId,
+  });
   if (current.value === nextValue) {
     services.markNoOp();
     return {

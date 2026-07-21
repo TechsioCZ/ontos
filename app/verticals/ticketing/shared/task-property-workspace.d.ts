@@ -25,6 +25,11 @@ export declare const emailPropertyValueSchema: Schema.Struct<{
   readonly revision: Schema.Finite;
   readonly value: Schema.NullOr<Schema.String>;
 }>;
+export declare const phonePropertyValueSchema: Schema.Struct<{
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly value: Schema.String;
+}>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
   readonly propertyDefinitions: Schema.$Array<
@@ -51,6 +56,14 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly format: Schema.Literals<
             readonly ['number', 'number_with_separators', 'percent']
           >;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'phone'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
           readonly name: Schema.String;
@@ -120,6 +133,13 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
             readonly value: Schema.Union<readonly [Schema.String, Schema.Null]>;
           }>
         >
+      >;
+      readonly phoneValues: Schema.$Array<
+        Schema.Struct<{
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly value: Schema.String;
+        }>
       >;
       readonly selectValues: Schema.optional<
         Schema.$Array<
@@ -226,5 +246,6 @@ export declare const getTaskPropertyWorkspacePayloadSchema: Schema.Struct<{
 }>;
 export type GetTaskPropertyWorkspacePayload = typeof getTaskPropertyWorkspacePayloadSchema.Type;
 export type CheckboxPropertyValue = typeof checkboxPropertyValueSchema.Type;
+export type PhonePropertyValue = typeof phonePropertyValueSchema.Type;
 export type TaskPropertyWorkspace = typeof taskPropertyWorkspaceSchema.Type;
 export type UrlPropertyValue = typeof urlPropertyValueSchema.Type;
