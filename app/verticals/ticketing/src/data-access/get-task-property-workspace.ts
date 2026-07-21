@@ -222,6 +222,19 @@ const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectVa
   }
 };
 
+const appendFilesMediaItems = (
+  tasks: Map<string, TaskRow>,
+  rows: readonly FilesMediaItemRow[],
+): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task !== undefined) {
+      const { taskId: _taskId, ...item } = row;
+      task.filesMediaItems.push(item);
+    }
+  }
+};
+
 const taskRowsFromValues = ({
   definitions,
   emailValueRows,
@@ -304,14 +317,7 @@ const taskRowsFromValues = ({
     });
   }
 
-  for (const row of filesMediaRows) {
-    const task = tasks.get(row.taskId);
-    if (task !== undefined) {
-      const { taskId: _taskId, ...item } = row;
-      task.filesMediaItems.push(item);
-    }
-  }
-
+  appendFilesMediaItems(tasks, filesMediaRows);
   appendSelectValues(tasks, selectValueRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
