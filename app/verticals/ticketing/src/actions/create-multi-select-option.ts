@@ -17,7 +17,7 @@ import type {
   CreateMultiSelectOptionActionResponse,
 } from '../../shared/actions/create-multi-select-option.ts';
 import type { MultiSelectOption } from '../../shared/task-property-definition.ts';
-import { prepareSelectOptionName } from '../select-option-name.ts';
+import { prepareMultiSelectOptionName } from '../multi-select-option-name.ts';
 
 interface CreatedOptionRow extends MultiSelectOption {
   readonly definitionRevision: number;
@@ -60,19 +60,10 @@ const handler: ActionHandler<
   CreateMultiSelectOptionActionPayload,
   CreateMultiSelectOptionActionResponse
 > = async (input, services) => {
-  const { displayName, normalizedName } = prepareSelectOptionName(input.name);
-  if (displayName.length === 0) {
-    throw rejectAction({
-      code: 'ticketing.createMultiSelectOption.name_required',
-      message: 'An option name is required.',
-    });
-  }
-  if (displayName.includes(',')) {
-    throw rejectAction({
-      code: 'ticketing.createMultiSelectOption.comma_not_allowed',
-      message: 'A Multi-select option name cannot contain a comma.',
-    });
-  }
+  const { displayName, normalizedName } = prepareMultiSelectOptionName(
+    input.name,
+    'createMultiSelectOption',
+  );
   const result = await services.tx.execute(sql`
     with locked_definition as (
       select definition.property_definition_id
@@ -98,7 +89,7 @@ const handler: ActionHandler<
         ${services.context.tenantId}
       from locked_definition
       on conflict do nothing
-      returning catalog_position, color, name, option_id, revision
+      returning catalog_position, color, name, option_id, revision, updated_at
     ), updated_definition as (
       update ticketing.task_property_definitions as definition
       set revision = definition.revision + 1
@@ -112,7 +103,11 @@ const handler: ActionHandler<
       updated_definition.revision as "definitionRevision",
       inserted_option.name,
       inserted_option.option_id as "optionId",
-      inserted_option.revision
+      inserted_option.revision,
+      to_char(
+        inserted_option.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
     from inserted_option cross join updated_definition
   `);
   const row = rowsFromResult<CreatedOptionRow>(result).at(0);

@@ -77,7 +77,16 @@ const handler: ActionHandler<
     });
   }
   const optionsResult = await services.tx.execute(sql`
-    select catalog_position as "catalogPosition", color, name, option_id as "optionId", revision
+    select
+      catalog_position as "catalogPosition",
+      color,
+      name,
+      option_id as "optionId",
+      revision,
+      to_char(
+        updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
     from ticketing.multi_select_options
     where property_definition_id = ${input.propertyDefinitionId}
       and tenant_id = ${services.context.tenantId}
@@ -113,14 +122,25 @@ const handler: ActionHandler<
       throw new Error('Validated Multi-select option is missing.');
     }
     // oxlint-disable-next-line no-await-in-loop -- Unique catalog positions are persisted sequentially.
-    await services.tx.execute(sql`
+    const reorderedResult = await services.tx.execute(sql`
       update ticketing.multi_select_options
-      set catalog_position = ${catalogPosition}
+      set catalog_position = ${catalogPosition},
+          updated_at = statement_timestamp()
       where option_id = ${optionId}
         and property_definition_id = ${input.propertyDefinitionId}
         and tenant_id = ${services.context.tenantId}
+      returning to_char(
+        updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
     `);
-    reordered.push({ ...option, catalogPosition });
+    const updatedAt = rowsFromResult<{ readonly updatedAt: string }>(reorderedResult).at(
+      0,
+    )?.updatedAt;
+    if (updatedAt === undefined) {
+      throw new Error('Validated Multi-select option could not be reordered.');
+    }
+    reordered.push({ ...option, catalogPosition, updatedAt });
   }
   const updatedResult = await services.tx.execute(sql`
     update ticketing.task_property_definitions

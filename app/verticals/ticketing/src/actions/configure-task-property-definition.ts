@@ -100,7 +100,11 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
           option.color,
           option.name,
           option.option_id as "optionId",
-          option.revision
+          option.revision,
+          to_char(
+            option.updated_at at time zone 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) as "updatedAt"
         from ticketing.multi_select_options as option
         where option.property_definition_id = ${row.propertyDefinitionId}
           and option.tenant_id = ${services.context.tenantId}

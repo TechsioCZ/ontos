@@ -16,7 +16,7 @@ import type {
   CreateMultiSelectOptionAndSelectActionPayload,
   CreateMultiSelectOptionAndSelectActionResponse,
 } from '../../shared/actions/create-multi-select-option-and-select.ts';
-import { prepareSelectOptionName } from '../select-option-name.ts';
+import { prepareMultiSelectOptionName } from '../multi-select-option-name.ts';
 
 interface AtomicRow {
   readonly catalogPosition: number;
@@ -26,7 +26,9 @@ interface AtomicRow {
   readonly optionId: string;
   readonly optionRevision: number;
   readonly taskRevision: number;
+  readonly updatedAt: string;
   readonly valueRevision: number;
+  readonly valueUpdatedAt: string;
 }
 const evidence = (
   input: CreateMultiSelectOptionAndSelectActionPayload,
@@ -67,19 +69,10 @@ const handler: ActionHandler<
   CreateMultiSelectOptionAndSelectActionPayload,
   CreateMultiSelectOptionAndSelectActionResponse
 > = async (input, services) => {
-  const { displayName, normalizedName } = prepareSelectOptionName(input.name);
-  if (displayName.length === 0) {
-    throw rejectAction({
-      code: 'ticketing.createMultiSelectOptionAndSelect.name_required',
-      message: 'An option name is required.',
-    });
-  }
-  if (displayName.includes(',')) {
-    throw rejectAction({
-      code: 'ticketing.createMultiSelectOptionAndSelect.comma_not_allowed',
-      message: 'A Multi-select option name cannot contain a comma.',
-    });
-  }
+  const { displayName, normalizedName } = prepareMultiSelectOptionName(
+    input.name,
+    'createMultiSelectOptionAndSelect',
+  );
   const currentResult = await services.tx.execute(sql`
     select
       definition.revision as "definitionRevision",
@@ -129,7 +122,7 @@ const handler: ActionHandler<
         ${services.context.tenantId}
       )
       on conflict do nothing
-      returning catalog_position, color, name, option_id, revision
+      returning catalog_position, color, name, option_id, revision, updated_at
     ), inserted_selection as (
       insert into ticketing.task_multi_select_selections (
         option_id, property_definition_id, task_id, tenant_id
@@ -139,12 +132,13 @@ const handler: ActionHandler<
       returning task_id
     ), changed_value as (
       update ticketing.task_multi_select_values as value
-      set revision = value.revision + 1
+      set revision = value.revision + 1,
+          updated_at = statement_timestamp()
       from inserted_selection
       where value.task_id = inserted_selection.task_id
         and value.property_definition_id = ${input.propertyDefinitionId}
         and value.revision = ${input.expectedValueRevision}
-      returning value.revision, value.task_id
+      returning value.revision, value.task_id, value.updated_at
     ), updated_definition as (
       update ticketing.task_property_definitions as definition
       set revision = definition.revision + 1
@@ -176,7 +170,15 @@ const handler: ActionHandler<
       inserted_option.option_id as "optionId",
       inserted_option.revision as "optionRevision",
       updated_task.revision as "taskRevision",
-      changed_value.revision as "valueRevision"
+      to_char(
+        inserted_option.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt",
+      changed_value.revision as "valueRevision",
+      to_char(
+        changed_value.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "valueUpdatedAt"
     from inserted_option
     cross join changed_value
     cross join updated_definition
@@ -210,6 +212,7 @@ const handler: ActionHandler<
       name: row.name,
       optionId: row.optionId,
       revision: row.optionRevision,
+      updatedAt: row.updatedAt,
     },
     taskRevision: row.taskRevision,
     value: {
@@ -218,6 +221,7 @@ const handler: ActionHandler<
       ),
       propertyDefinitionId: input.propertyDefinitionId,
       revision: row.valueRevision,
+      updatedAt: row.valueUpdatedAt,
     },
   };
 };

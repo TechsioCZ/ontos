@@ -31,6 +31,7 @@ export const multiSelectPropertyValueSchema = Schema.Struct({
   optionIds: Schema.Array(Schema.String),
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
+  updatedAt: Schema.String,
 });
 
 export const numberPropertyValueSchema = Schema.Struct({

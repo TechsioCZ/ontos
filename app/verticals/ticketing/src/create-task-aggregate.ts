@@ -136,12 +136,16 @@ export const createTaskAggregate = async ({
     ),
     initialized_multi_select_values as (
       insert into ticketing.task_multi_select_values (
+        collection_id,
         property_definition_id,
+        schema_id,
         task_id,
         tenant_id
       )
       select
+        created_task.collection_id,
         definition.property_definition_id,
+        schema.schema_id,
         created_task.task_id,
         ${tenantId}
       from created_task

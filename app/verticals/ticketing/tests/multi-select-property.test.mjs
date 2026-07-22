@@ -73,6 +73,11 @@ const operationContextResolver = (operationContext) => () => ({
 
 const allowedAuthorization = () => ({ _tag: 'Allowed' });
 
+const assertIsoTimestamp = (value) => {
+  assert.equal(typeof value, 'string');
+  assert.equal(Number.isNaN(Date.parse(value)), false);
+};
+
 const authorizationForRole = (role) => (check) => {
   const permissions = {
     Editor: ['edit_task_property_values', 'manage_property_definitions', 'view_task_properties'],
@@ -144,16 +149,21 @@ test('Multi-select definitions give existing and new Tasks revision-bearing Empt
 
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
-  assert.deepEqual(
-    workspace.response.tasks.map(({ multiSelectValues, taskId }) => ({
-      multiSelectValues,
-      taskId,
-    })),
-    [existingTask.response.task.taskId, newTask.response.task.taskId].map((taskId) => ({
-      multiSelectValues: [{ optionIds: [], propertyDefinitionId, revision: 1 }],
-      taskId,
-    })),
+  const valuesByTask = new Map(
+    workspace.response.tasks.map(({ multiSelectValues, taskId }) => [taskId, multiSelectValues]),
   );
+  for (const taskId of [existingTask.response.task.taskId, newTask.response.task.taskId]) {
+    const [value] = valuesByTask.get(taskId);
+    assert.deepEqual(
+      {
+        optionIds: value.optionIds,
+        propertyDefinitionId: value.propertyDefinitionId,
+        revision: value.revision,
+      },
+      { optionIds: [], propertyDefinitionId, revision: 1 },
+    );
+    assertIsoTimestamp(value.updatedAt);
+  }
 });
 
 test('Multi-select mutations persist a unique set and return selections in catalog order', async () => {
@@ -190,6 +200,7 @@ test('Multi-select mutations persist a unique set and return selections in catal
     registration: createMultiSelectOptionActionRegistration,
   });
   assert.equal(backend._tag, 'OperationSucceeded', JSON.stringify(backend));
+  assertIsoTimestamp(backend.response.option.updatedAt);
   const bug = await runRegisteredAction({
     operationContext,
     payload: {
@@ -219,11 +230,16 @@ test('Multi-select mutations persist a unique set and return selections in catal
     registration: updateMultiSelectPropertyValueActionRegistration,
   });
   assert.equal(changed._tag, 'OperationSucceeded', JSON.stringify(changed));
-  assert.deepEqual(changed.response.value, {
-    optionIds: [backend.response.option.optionId, bug.response.option.optionId],
-    propertyDefinitionId,
-    revision: 2,
-  });
+  assert.deepEqual(
+    { ...changed.response.value, updatedAt: undefined },
+    {
+      optionIds: [backend.response.option.optionId, bug.response.option.optionId],
+      propertyDefinitionId,
+      revision: 2,
+      updatedAt: undefined,
+    },
+  );
+  assertIsoTimestamp(changed.response.value.updatedAt);
 
   const cleared = await runRegisteredAction({
     operationContext,
@@ -237,11 +253,16 @@ test('Multi-select mutations persist a unique set and return selections in catal
     registration: updateMultiSelectPropertyValueActionRegistration,
   });
   assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
-  assert.deepEqual(cleared.response.value, {
-    optionIds: [],
-    propertyDefinitionId,
-    revision: 3,
-  });
+  assert.deepEqual(
+    { ...cleared.response.value, updatedAt: undefined },
+    {
+      optionIds: [],
+      propertyDefinitionId,
+      revision: 3,
+      updatedAt: undefined,
+    },
+  );
+  assertIsoTimestamp(cleared.response.value.updatedAt);
 
   const stale = await runRegisteredAction({
     operationContext,
@@ -257,9 +278,7 @@ test('Multi-select mutations persist a unique set and return selections in catal
   assert.equal(stale._tag, 'OperationDomainRejected');
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
-  assert.deepEqual(workspace.response.tasks[0].multiSelectValues, [
-    { optionIds: [], propertyDefinitionId, revision: 3 },
-  ]);
+  assert.deepEqual(workspace.response.tasks[0].multiSelectValues, [{ ...cleared.response.value }]);
 });
 
 test('catalog rename, recolor, and reorder change display without changing membership', async () => {
@@ -391,6 +410,7 @@ test('catalog rename, recolor, and reorder change display without changing membe
       optionIds: [bug.response.option.optionId, backend.response.option.optionId],
       propertyDefinitionId,
       revision: selected.response.value.revision,
+      updatedAt: selected.response.value.updatedAt,
     },
   ]);
 });
@@ -494,11 +514,19 @@ test('inline creation atomically appends one shared option only to the current T
       optionIds: [createdAndSelected.response.option.optionId],
       propertyDefinitionId,
       revision: 2,
+      updatedAt: createdAndSelected.response.value.updatedAt,
     },
   ]);
-  assert.deepEqual(valuesByTask.get(otherTask.response.task.taskId), [
+  const [otherValue] = valuesByTask.get(otherTask.response.task.taskId);
+  assert.deepEqual(
+    {
+      optionIds: otherValue.optionIds,
+      propertyDefinitionId: otherValue.propertyDefinitionId,
+      revision: otherValue.revision,
+    },
     { optionIds: [], propertyDefinitionId, revision: 1 },
-  ]);
+  );
+  assertIsoTimestamp(otherValue.updatedAt);
 });
 
 test('generic Multi-select configuration returns the complete catalog definition', async () => {
@@ -572,12 +600,14 @@ test('Multi-select Action evidence is revision-bearing metadata without labels o
       name: input.name,
       optionId: randomUUID(),
       revision: 1,
+      updatedAt: '2026-07-22T00:00:00.000Z',
     },
     taskRevision: 9,
     value: {
       optionIds: [randomUUID()],
       propertyDefinitionId: input.propertyDefinitionId,
       revision: 8,
+      updatedAt: '2026-07-22T00:00:01.000Z',
     },
   };
   const { descriptor } = createMultiSelectOptionAndSelectActionRegistration;

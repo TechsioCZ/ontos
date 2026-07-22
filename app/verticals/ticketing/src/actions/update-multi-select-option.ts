@@ -17,7 +17,7 @@ import type {
   UpdateMultiSelectOptionActionResponse,
 } from '../../shared/actions/update-multi-select-option.ts';
 import type { MultiSelectOption } from '../../shared/task-property-definition.ts';
-import { prepareSelectOptionName } from '../select-option-name.ts';
+import { prepareMultiSelectOptionName } from '../multi-select-option-name.ts';
 
 interface UpdatedOptionRow extends MultiSelectOption {
   readonly definitionRevision: number;
@@ -59,26 +59,18 @@ const handler: ActionHandler<
   UpdateMultiSelectOptionActionPayload,
   UpdateMultiSelectOptionActionResponse
 > = async (input, services) => {
-  const { displayName, normalizedName } = prepareSelectOptionName(input.name);
-  if (displayName.length === 0) {
-    throw rejectAction({
-      code: 'ticketing.updateMultiSelectOption.name_required',
-      message: 'An option name is required.',
-    });
-  }
-  if (displayName.includes(',')) {
-    throw rejectAction({
-      code: 'ticketing.updateMultiSelectOption.comma_not_allowed',
-      message: 'A Multi-select option name cannot contain a comma.',
-    });
-  }
+  const { displayName, normalizedName } = prepareMultiSelectOptionName(
+    input.name,
+    'updateMultiSelectOption',
+  );
   const result = await services.tx.execute(sql`
     with updated_option as (
       update ticketing.multi_select_options as option
       set color = ${input.color},
           name = ${displayName},
           normalized_name = ${normalizedName},
-          revision = option.revision + 1
+          revision = option.revision + 1,
+          updated_at = statement_timestamp()
       from ticketing.task_property_definitions as definition
       inner join ticketing.task_schemas as schema
         on schema.schema_id = definition.schema_id and schema.tenant_id = definition.tenant_id
@@ -95,7 +87,7 @@ const handler: ActionHandler<
             and sibling.option_id <> option.option_id
             and sibling.normalized_name = ${normalizedName}
         )
-      returning option.catalog_position, option.color, option.name, option.option_id, option.property_definition_id, option.revision
+      returning option.catalog_position, option.color, option.name, option.option_id, option.property_definition_id, option.revision, option.updated_at
     ), updated_definition as (
       update ticketing.task_property_definitions as definition
       set revision = definition.revision + 1
@@ -109,7 +101,11 @@ const handler: ActionHandler<
       updated_definition.revision as "definitionRevision",
       updated_option.name,
       updated_option.option_id as "optionId",
-      updated_option.revision
+      updated_option.revision,
+      to_char(
+        updated_option.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
     from updated_option cross join updated_definition
   `);
   const row = rowsFromResult<UpdatedOptionRow>(result).at(0);

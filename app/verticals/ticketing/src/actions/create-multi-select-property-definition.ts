@@ -88,10 +88,12 @@ const handler: ActionHandler<
         schema_id
     ), initialized_values as (
       insert into ticketing.task_multi_select_values (
-        property_definition_id, task_id, tenant_id
+        collection_id, property_definition_id, schema_id, task_id, tenant_id
       )
       select
+        schema.collection_id,
         inserted_definition.property_definition_id,
+        inserted_definition.schema_id,
         task.task_id,
         ${services.context.tenantId}
       from inserted_definition

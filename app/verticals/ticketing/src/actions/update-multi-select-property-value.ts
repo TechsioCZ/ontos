@@ -20,6 +20,7 @@ import type {
 interface CurrentValueRow {
   readonly revision: number;
   readonly taskRevision: number;
+  readonly updatedAt: string;
 }
 
 const evidence = (
@@ -61,7 +62,13 @@ const handler: ActionHandler<
   UpdateMultiSelectPropertyValueActionResponse
 > = async (input, services) => {
   const currentResult = await services.tx.execute(sql`
-    select value.revision, task.revision as "taskRevision"
+    select
+      value.revision,
+      task.revision as "taskRevision",
+      to_char(
+        value.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
     from ticketing.task_multi_select_values as value
     inner join ticketing.tasks as task
       on task.task_id = value.task_id and task.tenant_id = value.tenant_id
@@ -131,6 +138,7 @@ const handler: ActionHandler<
         optionIds,
         propertyDefinitionId: input.propertyDefinitionId,
         revision: current.revision,
+        updatedAt: current.updatedAt,
       },
     };
   }
@@ -160,12 +168,13 @@ const handler: ActionHandler<
   const result = await services.tx.execute(sql`
     with changed_value as (
       update ticketing.task_multi_select_values as value
-      set revision = value.revision + 1
+      set revision = value.revision + 1,
+          updated_at = statement_timestamp()
       where value.task_id = ${input.taskId}
         and value.property_definition_id = ${input.propertyDefinitionId}
         and value.tenant_id = ${services.context.tenantId}
         and value.revision = ${input.expectedRevision}
-      returning value.property_definition_id, value.revision, value.task_id
+      returning value.property_definition_id, value.revision, value.task_id, value.updated_at
     ), updated_task as (
       update ticketing.tasks as task
       set last_edited_at = statement_timestamp(),
@@ -185,6 +194,10 @@ const handler: ActionHandler<
     select
       changed_value.property_definition_id as "propertyDefinitionId",
       changed_value.revision,
+      to_char(
+        changed_value.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt",
       updated_task.revision as "taskRevision"
     from changed_value inner join updated_task using (task_id) inner join created_revision using (task_id)
   `);
@@ -192,6 +205,7 @@ const handler: ActionHandler<
     readonly propertyDefinitionId: string;
     readonly revision: number;
     readonly taskRevision: number;
+    readonly updatedAt: string;
   }>(result).at(0);
   if (updated === undefined) {
     throw rejectAction({
@@ -205,6 +219,7 @@ const handler: ActionHandler<
       optionIds,
       propertyDefinitionId: updated.propertyDefinitionId,
       revision: updated.revision,
+      updatedAt: updated.updatedAt,
     },
   };
 };

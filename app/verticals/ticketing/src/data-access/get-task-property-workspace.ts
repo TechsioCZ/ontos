@@ -185,6 +185,7 @@ interface MultiSelectValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
   readonly taskId: string;
+  readonly updatedAt: string;
 }
 
 interface MultiSelectSelectionRow {
@@ -264,6 +265,7 @@ interface TaskRow {
     optionIds: string[];
     propertyDefinitionId: string;
     revision: number;
+    updatedAt: string;
   }[];
   readonly phoneValues: {
     propertyDefinitionId: string;
@@ -333,6 +335,7 @@ const appendMultiSelectValues = (
         .map(({ optionId }) => optionId),
       propertyDefinitionId: row.propertyDefinitionId,
       revision: row.revision,
+      updatedAt: row.updatedAt,
     });
   }
 };
@@ -778,7 +781,11 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         option.name,
         option.option_id as "optionId",
         option.property_definition_id as "propertyDefinitionId",
-        option.revision
+        option.revision,
+        to_char(
+          option.updated_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "updatedAt"
       from ticketing.multi_select_options as option
       inner join ticketing.task_property_definitions as definition
         on definition.property_definition_id = option.property_definition_id
@@ -794,7 +801,11 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       select
         value.property_definition_id as "propertyDefinitionId",
         value.revision,
-        value.task_id as "taskId"
+        value.task_id as "taskId",
+        to_char(
+          value.updated_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "updatedAt"
       from ticketing.task_multi_select_values as value
       inner join ticketing.tasks as task
         on task.task_id = value.task_id
