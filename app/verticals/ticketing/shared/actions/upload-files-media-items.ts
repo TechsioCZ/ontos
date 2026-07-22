@@ -11,6 +11,7 @@ export const filesMediaUploadSchema = Schema.Struct({
 
 export const uploadFilesMediaItemsActionPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
+  expectedRevision: Schema.Finite,
   files: Schema.Array(filesMediaUploadSchema),
   propertyDefinitionId: Schema.String,
   taskId: Schema.String,

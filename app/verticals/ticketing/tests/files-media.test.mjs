@@ -199,6 +199,7 @@ test('bulk upload reports every file independently and appends successful items 
     operationContext,
     payload: {
       ...target,
+      expectedRevision: prior.response.taskRevision,
       files: [
         { bytesBase64: Buffer.from('first').toString('base64'), filename: 'first' },
         {
@@ -266,6 +267,7 @@ test('an all-rejected bulk leaves the Files & media value Empty and the Task unc
       operationContext,
       payload: {
         collectionId,
+        expectedRevision: task.response.task.revision,
         files: [
           { bytesBase64: 'not-canonical-base64', filename: 'staged' },
           { bytesBase64: Buffer.alloc(65).toString('base64'), filename: 'oversized' },
@@ -324,6 +326,57 @@ test('an all-rejected bulk leaves the Files & media value Empty and the Task unc
       process.env.CORE_MEDIA_MAX_UPLOAD_BYTES = previous;
     }
   }
+});
+
+test('a stale bulk upload preserves the currently committed Files & media items', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    expectedRevision: task.response.task.revision,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const committed = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      files: [{ bytesBase64: Buffer.from('committed').toString('base64'), filename: 'committed' }],
+    },
+    registration: uploadFilesMediaItemsActionRegistration,
+  });
+  assert.equal(committed._tag, 'OperationSucceeded', JSON.stringify(committed));
+
+  const stale = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      files: [{ bytesBase64: Buffer.from('stale').toString('base64'), filename: 'stale' }],
+    },
+    registration: uploadFilesMediaItemsActionRegistration,
+  });
+  assert.deepEqual(stale, {
+    _tag: 'OperationDomainRejected',
+    code: 'ticketing.uploadFilesMediaItems.stale',
+    message: 'The Files & media value changed elsewhere.',
+  });
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [
+    committed.response.outcomes[0].item,
+  ]);
+  assert.equal(workspace.response.tasks[0].taskRevision, committed.response.taskRevision);
 });
 
 test('Core Media accepts positively detected content when the filename agrees and MIME is absent', async () => {

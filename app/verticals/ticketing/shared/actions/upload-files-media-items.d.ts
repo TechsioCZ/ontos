@@ -8,6 +8,7 @@ export declare const filesMediaUploadSchema: Schema.Struct<{
 }>;
 export declare const uploadFilesMediaItemsActionPayloadSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
+  readonly expectedRevision: Schema.Finite;
   readonly files: Schema.$Array<
     Schema.Struct<{
       readonly bytesBase64: Schema.String;

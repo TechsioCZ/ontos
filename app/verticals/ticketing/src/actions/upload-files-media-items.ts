@@ -1,6 +1,5 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
 import {
-  commitMediaAssetUpload,
   MediaUploadConfigurationError,
   MediaUploadRejectedError,
   rejectAction,
@@ -19,20 +18,19 @@ import {
   uploadFilesMediaItemsActionResponseSchema,
 } from '../../shared/actions/upload-files-media-items.ts';
 import type {
-  FilesMediaUpload,
   FilesMediaUploadOutcome,
   UploadFilesMediaItemsActionPayload,
   UploadFilesMediaItemsActionResponse,
 } from '../../shared/actions/upload-files-media-items.ts';
+import {
+  commitFilesMediaItem,
+  InvalidFilesMediaUploadBytesError,
+} from '../files-media-item-commit.ts';
 
 interface TargetRow {
   readonly nextPosition: number;
   readonly taskId: string;
   readonly taskRevision: number;
-}
-
-interface InsertedItemRow {
-  readonly itemId: string;
 }
 
 interface UpdatedTaskRow {
@@ -83,68 +81,11 @@ const domainEvent = {
   UploadFilesMediaItemsActionResponse
 >;
 
-const decodeBase64 = (input: string): Uint8Array | undefined => {
-  const bytes = Buffer.from(input, 'base64');
-  return bytes.toString('base64') === input ? bytes : undefined;
-};
-
 const uploadRejected = (code: string, message: string): FilesMediaUploadOutcome => ({
   code,
   message,
   ok: false,
 });
-
-const commitFile = async (
-  input: UploadFilesMediaItemsActionPayload,
-  file: FilesMediaUpload,
-  position: number,
-  services: Parameters<
-    ActionHandler<UploadFilesMediaItemsActionPayload, UploadFilesMediaItemsActionResponse>
-  >[1],
-): Promise<FilesMediaUploadOutcome> => {
-  const bytes = decodeBase64(file.bytesBase64);
-  if (bytes === undefined) {
-    return uploadRejected(
-      'ticketing.uploadFilesMediaItems.invalid_bytes',
-      'Uploaded bytes must use canonical base64 encoding.',
-    );
-  }
-
-  const asset = await commitMediaAssetUpload(
-    {
-      bytes,
-      ...(file.clientMimeType === undefined ? {} : { clientMimeType: file.clientMimeType }),
-      filename: file.filename,
-    },
-    { context: services.context, tx: services.tx },
-  );
-  const inserted = await services.tx.execute(sql`
-      insert into ticketing.task_files_media_items (
-        media_asset_id, position, property_definition_id, task_id, tenant_id
-      )
-      values (
-        ${asset.mediaAssetId},
-        ${position},
-        ${input.propertyDefinitionId},
-        ${input.taskId},
-        ${services.context.tenantId}
-      )
-      returning item_id as "itemId"
-    `);
-  const item = rowsFromResult<InsertedItemRow>(inserted).at(0);
-  if (item === undefined) {
-    throw new Error('The Files & media item could not be committed.');
-  }
-  return {
-    item: {
-      ...asset,
-      itemId: item.itemId,
-      position,
-      propertyDefinitionId: input.propertyDefinitionId,
-    },
-    ok: true,
-  };
-};
 
 const handler: ActionHandler<
   UploadFilesMediaItemsActionPayload,
@@ -182,6 +123,12 @@ const handler: ActionHandler<
       message: 'The Task or Files & media Task Property Definition was not found.',
     });
   }
+  if (target.taskRevision !== input.expectedRevision) {
+    throw rejectAction({
+      code: 'ticketing.uploadFilesMediaItems.stale',
+      message: 'The Files & media value changed elsewhere.',
+    });
+  }
 
   const outcomes: FilesMediaUploadOutcome[] = [];
   let committedItemCount = 0;
@@ -191,23 +138,35 @@ const handler: ActionHandler<
     try {
       // The lock-held savepoints preserve submitted order and isolate a failed file's writes.
       // oxlint-disable-next-line no-await-in-loop
-      outcome = await services.tx.transaction((tx) =>
-        commitFile(input, file, position, {
-          ...services,
-          tx,
-        }),
-      );
+      outcome = await services.tx.transaction(async (tx) => {
+        const item = await commitFilesMediaItem(
+          {
+            ...file,
+            position,
+            propertyDefinitionId: input.propertyDefinitionId,
+            taskId: input.taskId,
+          },
+          { context: services.context, tx },
+        );
+        return { item, ok: true } as const;
+      });
     } catch (error) {
       if (error instanceof MediaUploadConfigurationError) {
         throw error;
       }
-      outcome =
-        error instanceof MediaUploadRejectedError
-          ? uploadRejected(error.code, error.message)
-          : uploadRejected(
-              'ticketing.uploadFilesMediaItems.file_failed',
-              'The file could not be committed.',
-            );
+      if (error instanceof InvalidFilesMediaUploadBytesError) {
+        outcome = uploadRejected(
+          'ticketing.uploadFilesMediaItems.invalid_bytes',
+          'Uploaded bytes must use canonical base64 encoding.',
+        );
+      } else if (error instanceof MediaUploadRejectedError) {
+        outcome = uploadRejected(error.code, error.message);
+      } else {
+        outcome = uploadRejected(
+          'ticketing.uploadFilesMediaItems.file_failed',
+          'The file could not be committed.',
+        );
+      }
     }
     outcomes.push(outcome);
     if (outcome.ok) {
