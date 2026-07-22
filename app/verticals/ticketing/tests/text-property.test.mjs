@@ -318,6 +318,158 @@ test('whitespace is Empty while an equation or opaque Core Reference alone is no
   assert.deepEqual(workspace.response.tasks[0].textValues, [reference.response.value]);
 });
 
+test('known unresolved Mention and Relation nodes may retain the same opaque token', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndTextDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const { taskId } = task.response.task;
+  const targetTenantId = randomUUID();
+  const baseReference = {
+    entityId: 'shared-target',
+    entityType: 'customer',
+    lastResolvedLabel: 'Shared target',
+    ownerModuleKey: `crm-${randomUUID()}`,
+    targetTenantId,
+    token: 'one-opaque-token-for-two-kinds',
+  };
+  const unregister = registerCoreReferenceProvider({
+    authorizeOpen: () => true,
+    discover: () => [],
+    moduleKey: baseReference.ownerModuleKey,
+    open: () => Promise.resolve(),
+    recognize: ({ source }) =>
+      source.type === 'opaqueToken' && source.value === baseReference.token
+        ? {
+            entityId: baseReference.entityId,
+            entityType: baseReference.entityType,
+            label: baseReference.lastResolvedLabel,
+            openRequest: {},
+            targetTenantId,
+            token: baseReference.token,
+          }
+        : null,
+    resolve: () => null,
+  });
+  const document = {
+    content: [
+      { reference: { ...baseReference, kind: 'mention' }, type: 'reference' },
+      { reference: { ...baseReference, kind: 'relation' }, type: 'reference' },
+    ],
+    type: 'textDocument',
+  };
+  const created = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, document, expectedRevision: 1, propertyDefinitionId, taskId },
+    registration: updateTextPropertyValueActionRegistration,
+  });
+  assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+  unregister();
+
+  const editedDocument = {
+    ...document,
+    content: [...document.content, { marks: [], text: ' retained', type: 'text' }],
+  };
+  const retained = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      document: editedDocument,
+      expectedRevision: 2,
+      propertyDefinitionId,
+      taskId,
+    },
+    registration: updateTextPropertyValueActionRegistration,
+  });
+  assert.equal(retained._tag, 'OperationSucceeded', JSON.stringify(retained));
+  assert.deepEqual(retained.response.value.document, editedDocument);
+});
+
+test('Text reads and search use the current Core label and retain it through provider outage', async () => {
+  const { queryTaskPropertyValuesDataAccessRegistration } =
+    await import('../src/data-access/query-task-property-values.ts');
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndTextDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const { taskId } = task.response.task;
+  const target = {
+    entityId: 'rename-target',
+    entityType: 'customer',
+    label: 'Original label',
+    openRequest: {},
+    targetTenantId: randomUUID(),
+    token: 'rename-target-token',
+  };
+  let available = true;
+  const ownerModuleKey = `crm-${randomUUID()}`;
+  const unregister = registerCoreReferenceProvider({
+    authorizeOpen: () => true,
+    discover: () => [target],
+    moduleKey: ownerModuleKey,
+    open: () => Promise.resolve(),
+    recognize: ({ source }) =>
+      source.type === 'opaqueToken' && source.value === target.token ? target : null,
+    resolve: () => (available ? target : null),
+  });
+  const reference = {
+    entityId: target.entityId,
+    entityType: target.entityType,
+    kind: 'mention',
+    lastResolvedLabel: target.label,
+    ownerModuleKey,
+    targetTenantId: target.targetTenantId,
+    token: target.token,
+  };
+  const saved = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      document: {
+        content: [{ reference, type: 'reference' }],
+        type: 'textDocument',
+      },
+      expectedRevision: 1,
+      propertyDefinitionId,
+      taskId,
+    },
+    registration: updateTextPropertyValueActionRegistration,
+  });
+  assert.equal(saved._tag, 'OperationSucceeded', JSON.stringify(saved));
+
+  target.label = 'Renamed label';
+  const query = () =>
+    runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'text', operation: { query: 'renamed', type: 'search' } },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: (response) => response.taskIds.length,
+      transport: { headers: new Headers() },
+    });
+  const renamed = await query();
+  assert.equal(renamed._tag, 'OperationSucceeded', JSON.stringify(renamed));
+  assert.deepEqual(renamed.response.taskIds, [taskId]);
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(
+    workspace.response.tasks[0].textValues[0].document.content[0].reference.lastResolvedLabel,
+    'Renamed label',
+  );
+  assert.equal(workspace.response.tasks[0].textValues[0].readableText, 'Renamed label');
+
+  available = false;
+  const unavailable = await query();
+  assert.equal(unavailable._tag, 'OperationSucceeded', JSON.stringify(unavailable));
+  assert.deepEqual(unavailable.response.taskIds, [taskId]);
+  unregister();
+});
+
 test('Text search uses readable content with locale case folding and diacritic sensitivity', async () => {
   const { queryTaskPropertyValuesDataAccessRegistration } =
     await import('../src/data-access/query-task-property-values.ts');

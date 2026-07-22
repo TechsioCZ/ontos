@@ -32,6 +32,10 @@ export interface CoreReferenceProviderTarget extends CoreReferenceProviderCandid
   readonly openRequest: unknown;
 }
 
+export interface CoreReferenceNavigation {
+  readonly href: string;
+}
+
 export interface CoreReferenceProvider {
   readonly authorizeOpen: (input: {
     readonly context: CoreReferenceContext;
@@ -49,7 +53,7 @@ export interface CoreReferenceProvider {
     readonly context: CoreReferenceContext;
     readonly openRequest: unknown;
     readonly reference: CoreReference;
-  }) => void | Promise<void>;
+  }) => CoreReferenceNavigation | Promise<CoreReferenceNavigation | undefined> | undefined;
   readonly recognize: (input: {
     readonly context: CoreReferenceContext;
     readonly source: CoreReferenceSource;
@@ -76,7 +80,7 @@ export type CoreReferenceResolutionResult =
   | { readonly _tag: 'CoreReferenceFallback'; readonly reference: CoreReference };
 
 export type CoreReferenceOpenResult =
-  | { readonly _tag: 'CoreReferenceOpened' }
+  | { readonly _tag: 'CoreReferenceOpened'; readonly href?: string | undefined }
   | { readonly _tag: 'CoreReferenceOpenDenied' }
   | { readonly _tag: 'CoreReferenceOpenUnavailable' };
 
@@ -118,10 +122,20 @@ const targetMatchesReference = (
   target.targetTenantId === reference.targetTenantId &&
   target.token === reference.token;
 
+const referenceIdentityKey = (reference: CoreReference): string =>
+  JSON.stringify([
+    reference.ownerModuleKey,
+    reference.targetTenantId,
+    reference.entityType,
+    reference.entityId,
+    reference.token,
+  ]);
+
 export const createCoreReferenceRegistry = (
   providers: readonly CoreReferenceProvider[] = [],
 ): CoreReferenceRegistry => {
   const providerByModuleKey = new Map(providers.map((provider) => [provider.moduleKey, provider]));
+  const lastResolvedReferenceByIdentity = new Map<string, CoreReference>();
   const resolveTarget = async (input: {
     readonly context: CoreReferenceContext;
     readonly reference: CoreReference;
@@ -188,17 +202,19 @@ export const createCoreReferenceRegistry = (
         return { _tag: 'CoreReferenceRejected', code: 'unknown_reference' };
       }
       const { referenceProvider, target } = match;
+      const reference: CoreReference = {
+        entityId: target.entityId,
+        entityType: target.entityType,
+        kind: input.kind,
+        lastResolvedLabel: target.label,
+        ownerModuleKey: referenceProvider.moduleKey,
+        targetTenantId: target.targetTenantId,
+        token: target.token,
+      };
+      lastResolvedReferenceByIdentity.set(referenceIdentityKey(reference), reference);
       return {
         _tag: 'CoreReferenceInserted',
-        reference: {
-          entityId: target.entityId,
-          entityType: target.entityType,
-          kind: input.kind,
-          lastResolvedLabel: target.label,
-          ownerModuleKey: referenceProvider.moduleKey,
-          targetTenantId: target.targetTenantId,
-          token: target.token,
-        },
+        reference,
       };
     },
     open: async (input) => {
@@ -213,11 +229,19 @@ export const createCoreReferenceRegistry = (
       if (!authorized) {
         return { _tag: 'CoreReferenceOpenDenied' };
       }
-      await resolved.referenceProvider.open({
+      const navigation = await resolved.referenceProvider.open({
         ...input,
         openRequest: resolved.target.openRequest,
       });
-      return { _tag: 'CoreReferenceOpened' };
+      return {
+        _tag: 'CoreReferenceOpened',
+        ...(typeof navigation === 'object' &&
+        navigation !== null &&
+        'href' in navigation &&
+        typeof navigation.href === 'string'
+          ? { href: navigation.href }
+          : {}),
+      };
     },
     register: (provider) => {
       if (providerByModuleKey.has(provider.moduleKey)) {
@@ -232,12 +256,17 @@ export const createCoreReferenceRegistry = (
     },
     resolve: async (input) => {
       const resolved = await resolveTarget(input);
-      return resolved === null
-        ? { _tag: 'CoreReferenceFallback', reference: input.reference }
-        : {
-            _tag: 'CoreReferenceActive',
-            reference: { ...input.reference, lastResolvedLabel: resolved.target.label },
-          };
+      if (resolved === null) {
+        return {
+          _tag: 'CoreReferenceFallback',
+          reference:
+            lastResolvedReferenceByIdentity.get(referenceIdentityKey(input.reference)) ??
+            input.reference,
+        };
+      }
+      const reference = { ...input.reference, lastResolvedLabel: resolved.target.label };
+      lastResolvedReferenceByIdentity.set(referenceIdentityKey(reference), reference);
+      return { _tag: 'CoreReferenceActive', reference };
     },
   };
 };

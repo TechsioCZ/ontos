@@ -145,6 +145,8 @@ import type {
   DuplicateTaskActionFailure,
   DuplicateTaskActionOutcome,
   DuplicateTaskActionPayload,
+  CoreReferenceRequest,
+  CoreReferenceResponse,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -272,6 +274,47 @@ export const getTicketing = (
     ...options,
     operationContext: options.operationContext ?? ticketingOperationContexts.get,
   }).pipe(Effect.flatMap((client) => client.ticketing.get({ params: { id } })));
+
+export const executeCoreReference = (
+  payload: CoreReferenceRequest,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<CoreReferenceResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.coreReference,
+  }).pipe(
+    Effect.flatMap((client) => {
+      switch (payload.operation) {
+        case 'discover': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        case 'insert': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        case 'open': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        case 'resolve': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        default: {
+          return payload satisfies never;
+        }
+      }
+    }),
+  );
 
 export const getTaskCollection = (
   collectionId: string,

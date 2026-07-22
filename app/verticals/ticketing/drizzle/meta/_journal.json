@@ -134,6 +134,13 @@
       "when": 1784663876771,
       "tag": "0018_true_marauders",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784677378018,
+      "tag": "0019_loud_silvermane",
+      "breakpoints": true
     }
   ]
 }

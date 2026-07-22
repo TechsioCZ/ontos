@@ -246,6 +246,7 @@ import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
+import { coreReferenceRequestSchema, coreReferenceResponseSchema } from './core-reference';
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
@@ -482,6 +483,7 @@ export type {
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
 export type { TaskPropertyEditCapability } from './task-property-edit-capability';
+export type { CoreReferenceRequest, CoreReferenceResponse } from './core-reference';
 export {
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
@@ -751,6 +753,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         headers: operationContextHeadersSchema,
         payload: queryTaskPropertyValuesPayloadSchema,
         success: queryTaskPropertyValuesResponseSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('coreReference', '/ticketing/core-references', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        payload: coreReferenceRequestSchema,
+        success: coreReferenceResponseSchema,
       }),
     )
     .add(

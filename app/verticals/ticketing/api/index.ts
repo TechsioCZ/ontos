@@ -56,10 +56,14 @@ import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-acces
 import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
 import { searchEligiblePeopleDataAccessRegistration } from '../src/data-access/search-eligible-people.ts';
 import { queryIntrinsicTaskPropertiesDataAccessRegistration } from '../src/data-access/query-intrinsic-task-properties.ts';
+import { coreReferenceDataAccessRegistration } from '../src/data-access/core-reference.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 import type { ConfigurePersonPropertyCardinalityActionFailure } from '../shared/actions/configure-person-property-cardinality.ts';
 import type { TaskPersonQueryFilter } from '../shared/person-query.ts';
 import type { CoreSdkOperationTransportOutcome } from './action-runtime.ts';
+import { ensureTicketingCoreReferenceProviderRegistered } from '../src/core-reference-provider.ts';
+
+ensureTicketingCoreReferenceProviderRegistered();
 
 type CoreSdkOperationTransportFailure = Extract<
   CoreSdkOperationTransportOutcome<unknown>,
@@ -187,6 +191,25 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       );
     })
+    .handle('coreReference', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload,
+          registration: coreReferenceDataAccessRegistration,
+          resultCount: (response) =>
+            response.operation === 'discover' ? response.references.length : 1,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.coreReference', {
+          attributes: operationAttributes(ticketingOperationContexts.coreReference),
+          kind: 'server',
+        }),
+      ),
+    )
     .handle('getTaskCollection', ({ params, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({

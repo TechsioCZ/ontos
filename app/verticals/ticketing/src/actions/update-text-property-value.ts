@@ -16,7 +16,7 @@ import type {
   UpdateTextPropertyValueActionPayload,
   UpdateTextPropertyValueActionResponse,
 } from '../../shared/actions/update-text-property-value.ts';
-import type { TextDocument } from '../../shared/text-property.ts';
+import type { CoreReference, TextDocument } from '../../shared/text-property.ts';
 import {
   normalizeTextDocument,
   validateTextDocumentReferences,
@@ -33,6 +33,16 @@ interface CurrentTextValueRow {
 }
 
 type UpdatedTextValueRow = Omit<CurrentTextValueRow, 'mandatory'>;
+
+const coreReferenceIdentityKey = (reference: CoreReference): string =>
+  JSON.stringify([
+    reference.ownerModuleKey,
+    reference.targetTenantId,
+    reference.entityType,
+    reference.entityId,
+    reference.token,
+    reference.kind,
+  ]);
 
 const textPropertyValueEvidence = (
   input: UpdateTextPropertyValueActionPayload,
@@ -115,7 +125,7 @@ const updateTextPropertyValueActionHandler: ActionHandler<
   const currentReferences = new Map(
     (current.document?.content ?? [])
       .filter((node) => node.type === 'reference')
-      .map((node) => [node.reference.token, node.reference]),
+      .map((node) => [coreReferenceIdentityKey(node.reference), node.reference]),
   );
   const validatedDocument =
     input.document === null
@@ -144,7 +154,7 @@ const updateTextPropertyValueActionHandler: ActionHandler<
               ) {
                 return { ...node, reference: inserted.reference };
               }
-              const retained = currentReferences.get(node.reference.token);
+              const retained = currentReferences.get(coreReferenceIdentityKey(node.reference));
               if (
                 retained !== undefined &&
                 retained.entityId === node.reference.entityId &&

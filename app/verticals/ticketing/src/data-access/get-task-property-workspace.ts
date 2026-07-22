@@ -20,6 +20,7 @@ import type {
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
+import { resolveTextDocumentProjection } from '../core-reference-text-projection.ts';
 
 interface DefinitionFields {
   readonly hidden: boolean;
@@ -791,6 +792,15 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
           db,
         })
       : undefined;
+    const textValueRows = await Promise.all(
+      rowsFromResult<TextValueRow>(textValueResult).map(async (row) => ({
+        ...row,
+        ...(await resolveTextDocumentProjection({
+          context: { principalId: context.principalId, tenantId: context.tenantId },
+          document: row.document,
+        })),
+      })),
+    );
     const tasks = taskRowsFromValues({
       dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
       definitions,
@@ -802,7 +812,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
       resolvedPeople,
       selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
-      textValueRows: rowsFromResult<TextValueRow>(textValueResult),
+      textValueRows,
       urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),
       valueRows: rowsFromResult<ValueRow>(valueResult),
     });

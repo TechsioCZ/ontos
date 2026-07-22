@@ -54,6 +54,7 @@ export type {
   CoreReferenceContext,
   CoreReferenceInsertionResult,
   CoreReferenceKind,
+  CoreReferenceNavigation,
   CoreReferenceOpenResult,
   CoreReferenceProvider,
   CoreReferenceProviderCandidate,
@@ -78,6 +79,10 @@ export type {
 } from './outbox-worker.ts';
 export { allowPolicy, denyPolicy } from './policy.ts';
 export { resolveEffectiveTimeZone } from './principal-time-zone-preferences.ts';
+export {
+  createTenantScopedSpiceDbPermissionCheck,
+  spiceDbAuthorizationChecker,
+} from './spicedb-authorization.ts';
 export type { EffectiveTimeZone } from './principal-time-zone-preferences.ts';
 export type {
   PolicyAllowed,

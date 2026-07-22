@@ -5,12 +5,14 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { Label } from '@techsio/ui-kit/atoms/label';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClipboardEvent, ReactNode } from 'react';
 import type {
   CoreReference,
+  CoreReferenceInsertionResult,
   CoreReferenceOpenResult,
   CoreReferenceResolutionResult,
+  DiscoveredCoreReference,
 } from '@app/core-runtime/core-reference';
 import type { TextDocument, TextInlineNode, TextMark } from '../../shared/text-property.ts';
 import { flattenTextPaste } from '../text-property-paste.ts';
@@ -41,6 +43,11 @@ export interface TextPropertyEditorProps {
     draft: TextPropertyDraft,
     idempotencyKey: string,
   ) => Promise<SavedTextPropertyValue>;
+  readonly onDiscoverReferences?: (query: string) => Promise<readonly DiscoveredCoreReference[]>;
+  readonly onInsertReference?: (input: {
+    readonly kind: CoreReference['kind'];
+    readonly source: { readonly type: 'deepLink' | 'opaqueToken'; readonly value: string };
+  }) => Promise<CoreReferenceInsertionResult>;
   readonly onOpenReference?: (reference: CoreReference) => Promise<CoreReferenceOpenResult>;
   readonly onResolveReference?: (
     reference: CoreReference,
@@ -92,10 +99,12 @@ const renderTextNode = (node: Extract<TextInlineNode, { readonly type: 'text' }>
 
 const TextCoreReference = ({
   onOpen,
+  onResolved,
   onResolve,
   reference,
 }: {
   readonly onOpen: (reference: CoreReference) => Promise<CoreReferenceOpenResult>;
+  readonly onResolved: (reference: CoreReference) => void;
   readonly onResolve: (reference: CoreReference) => Promise<CoreReferenceResolutionResult>;
   readonly reference: CoreReference;
 }) => {
@@ -112,6 +121,9 @@ const TextCoreReference = ({
         const nextResolution = await onResolve(reference);
         if (mounted) {
           setResolution(nextResolution);
+          if (nextResolution._tag === 'CoreReferenceActive') {
+            onResolved(nextResolution.reference);
+          }
         }
       } catch {
         if (mounted) {
@@ -123,7 +135,7 @@ const TextCoreReference = ({
     return () => {
       mounted = false;
     };
-  }, [onResolve, reference]);
+  }, [onResolve, onResolved, reference]);
 
   if (resolution._tag === 'CoreReferenceFallback') {
     return (
@@ -144,7 +156,12 @@ const TextCoreReference = ({
         type: 'warning',
       });
     } else if (result._tag === 'CoreReferenceOpenUnavailable') {
-      setResolution({ _tag: 'CoreReferenceFallback', reference });
+      setResolution((current) => ({
+        _tag: 'CoreReferenceFallback',
+        reference: current.reference,
+      }));
+    } else if (result.href !== undefined) {
+      globalThis.location.assign(result.href);
     }
   };
 
@@ -167,6 +184,7 @@ const renderNode = (
   index: number,
   referenceHandlers?: {
     readonly onOpen: (reference: CoreReference) => Promise<CoreReferenceOpenResult>;
+    readonly onResolved: (reference: CoreReference) => void;
     readonly onResolve: (reference: CoreReference) => Promise<CoreReferenceResolutionResult>;
   },
 ): ReactNode => {
@@ -190,6 +208,7 @@ const renderNode = (
           <TextCoreReference
             key={node.reference.token}
             onOpen={referenceHandlers.onOpen}
+            onResolved={referenceHandlers.onResolved}
             onResolve={referenceHandlers.onResolve}
             reference={node.reference}
           />
@@ -212,6 +231,8 @@ export const TextPropertyEditor = ({
   document,
   label,
   onOpenReference,
+  onDiscoverReferences,
+  onInsertReference,
   onResolveReference,
   onSave,
   propertyDefinitionId,
@@ -229,6 +250,57 @@ export const TextPropertyEditor = ({
   const [isSaving, setIsSaving] = useState(false);
   const [linkHref, setLinkHref] = useState('');
   const [equationExpression, setEquationExpression] = useState('');
+  const [referenceKind, setReferenceKind] = useState<CoreReference['kind']>('mention');
+  const [referenceQuery, setReferenceQuery] = useState('');
+  const [referenceResults, setReferenceResults] = useState<readonly DiscoveredCoreReference[]>([]);
+
+  const appendReference = useCallback((reference: CoreReference) => {
+    setDraftDocument((current) => ({
+      content: [...(current?.content ?? []), { reference, type: 'reference' }],
+      type: 'textDocument',
+    }));
+  }, []);
+
+  const refreshReference = useCallback((reference: CoreReference) => {
+    setDraftDocument((current) => {
+      if (current === null) {
+        return current;
+      }
+      let changed = false;
+      const content = current.content.map((node) => {
+        if (
+          node.type !== 'reference' ||
+          node.reference.token !== reference.token ||
+          node.reference.kind !== reference.kind ||
+          node.reference.lastResolvedLabel === reference.lastResolvedLabel
+        ) {
+          return node;
+        }
+        changed = true;
+        return { ...node, reference };
+      });
+      return changed ? { ...current, content } : current;
+    });
+  }, []);
+
+  const insertReference = async (sourceValue: string) => {
+    if (onInsertReference === undefined || sourceValue.trim().length === 0) {
+      return false;
+    }
+    const value = sourceValue.trim();
+    const result = await onInsertReference({
+      kind: referenceKind,
+      source: {
+        type: /^(?:https?:\/\/|\/)/u.test(value) ? 'deepLink' : 'opaqueToken',
+        value,
+      },
+    });
+    if (result._tag !== 'CoreReferenceInserted') {
+      return false;
+    }
+    appendReference(result.reference);
+    return true;
+  };
 
   const readEditorDocument = () => {
     const editor = editorRef.current;
@@ -306,14 +378,24 @@ export const TextPropertyEditor = ({
     setEquationExpression('');
   };
 
-  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+  const handlePaste = async (event: ClipboardEvent<HTMLDivElement>) => {
     event.preventDefault();
-    setDraftDocument(
-      flattenTextPaste({
-        html: event.clipboardData.getData('text/html'),
-        plainText: event.clipboardData.getData('text/plain'),
-      }),
-    );
+    const html = event.clipboardData.getData('text/html');
+    const plainText = event.clipboardData.getData('text/plain');
+    if (onInsertReference === undefined) {
+      setDraftDocument(flattenTextPaste({ html, plainText }));
+      return;
+    }
+    const inserted = await insertReference(plainText);
+    if (!inserted) {
+      setDraftDocument(flattenTextPaste({ html, plainText }));
+    }
+  };
+
+  const searchReferences = async () => {
+    if (onDiscoverReferences !== undefined) {
+      setReferenceResults(await onDiscoverReferences(referenceQuery));
+    }
   };
 
   const handleSave = async () => {
@@ -360,12 +442,14 @@ export const TextPropertyEditor = ({
           aria-label={`${label} formatting`}
           className="ticketing:flex ticketing:flex-wrap ticketing:gap-1"
         >
-          {[
-            ['bold', 'bold'],
-            ['italic', 'italic'],
-            ['underline', 'underline'],
-            ['strikethrough', 'strikeThrough'],
-          ].map(([translation, command]) => (
+          {(
+            [
+              ['bold', 'bold'],
+              ['italic', 'italic'],
+              ['underline', 'underline'],
+              ['strikethrough', 'strikeThrough'],
+            ] as const
+          ).map(([translation, command]) => (
             <Button
               key={command}
               onClick={() => applyFormat(command)}
@@ -439,6 +523,63 @@ export const TextPropertyEditor = ({
           />
         </div>
       )}
+      {readOnly || onDiscoverReferences === undefined || onInsertReference === undefined ? null : (
+        <div className="ticketing:grid ticketing:gap-2">
+          <Label htmlFor={`${editorId}-reference-query`}>
+            {t('ticketing.text.referencePicker')}
+          </Label>
+          <div className="ticketing:flex ticketing:flex-wrap ticketing:gap-1">
+            <Button
+              onClick={() => setReferenceKind('mention')}
+              type="button"
+              variant={referenceKind === 'mention' ? 'primary' : 'secondary'}
+            >
+              {t('ticketing.text.mention')}
+            </Button>
+            <Button
+              onClick={() => setReferenceKind('relation')}
+              type="button"
+              variant={referenceKind === 'relation' ? 'primary' : 'secondary'}
+            >
+              {t('ticketing.text.relation')}
+            </Button>
+          </div>
+          <Input
+            id={`${editorId}-reference-query`}
+            onChange={(event) => setReferenceQuery(event.currentTarget.value)}
+            placeholder={t('ticketing.text.referenceQueryPlaceholder')}
+            value={referenceQuery}
+          />
+          <div className="ticketing:flex ticketing:flex-wrap ticketing:gap-1">
+            <Button
+              disabled={referenceQuery.trim().length === 0}
+              onClick={() => void searchReferences()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.text.referenceSearch')}
+            </Button>
+            <Button
+              disabled={referenceQuery.trim().length === 0}
+              onClick={() => void insertReference(referenceQuery)}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.text.referenceInsertKnown')}
+            </Button>
+          </div>
+          {referenceResults.map((candidate) => (
+            <Button
+              key={`${candidate.ownerModuleKey}:${candidate.token}`}
+              onClick={() => void insertReference(candidate.token)}
+              type="button"
+              variant="secondary"
+            >
+              {candidate.label}
+            </Button>
+          ))}
+        </div>
+      )}
       <div
         aria-labelledby={editorLabelId}
         aria-multiline="true"
@@ -446,7 +587,7 @@ export const TextPropertyEditor = ({
         contentEditable={!readOnly}
         id={editorId}
         onInput={readEditorDocument}
-        onPaste={handlePaste}
+        onPaste={(event) => void handlePaste(event)}
         ref={editorRef}
         role="textbox"
         suppressContentEditableWarning
@@ -457,7 +598,11 @@ export const TextPropertyEditor = ({
             index,
             onOpenReference === undefined || onResolveReference === undefined
               ? undefined
-              : { onOpen: onOpenReference, onResolve: onResolveReference },
+              : {
+                  onOpen: onOpenReference,
+                  onResolve: onResolveReference,
+                  onResolved: refreshReference,
+                },
           ),
         )}
       </div>
