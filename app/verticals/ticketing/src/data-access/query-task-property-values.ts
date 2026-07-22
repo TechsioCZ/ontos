@@ -34,6 +34,18 @@ interface TextCollation {
   readonly startsWith: (value: string, search: string) => boolean;
 }
 
+interface FilesMediaQueryRow {
+  readonly label: string | null;
+  readonly locale: string;
+  readonly position: number | null;
+  readonly taskId: string;
+}
+
+interface FilesMediaTaskLabels {
+  readonly labels: string[];
+  readonly taskId: string;
+}
+
 type NumberQueryOperation = Extract<
   TaskPropertyQuery,
   { readonly datatype: 'number' }
@@ -234,6 +246,89 @@ const groupTextRows = (rows: readonly TextQueryRow[], locale: string) => {
   });
 };
 
+const filesMediaTasksFromRows = (rows: readonly FilesMediaQueryRow[]): FilesMediaTaskLabels[] => {
+  const tasks = new Map<string, { labels: { label: string; position: number }[] }>();
+  for (const row of rows) {
+    const task = tasks.get(row.taskId) ?? { labels: [] };
+    if (row.label !== null && row.position !== null) {
+      task.labels.push({ label: row.label, position: row.position });
+    }
+    tasks.set(row.taskId, task);
+  }
+  return [...tasks]
+    .map(([taskId, { labels }]) => ({
+      labels: labels
+        .toSorted((left, right) => left.position - right.position)
+        .map(({ label }) => label),
+      taskId,
+    }))
+    .toSorted((left, right) => left.taskId.localeCompare(right.taskId));
+};
+
+const sortFilesMediaTasks = (
+  tasks: readonly FilesMediaTaskLabels[],
+  locale: string,
+  direction: 'ascending' | 'descending',
+): FilesMediaTaskLabels[] => {
+  const collator = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'sort' });
+  return [...tasks].toSorted((left, right) => {
+    if (left.labels.length === 0 || right.labels.length === 0) {
+      if (left.labels.length === right.labels.length) {
+        return left.taskId.localeCompare(right.taskId);
+      }
+      return left.labels.length === 0 ? 1 : -1;
+    }
+    const sharedLength = Math.min(left.labels.length, right.labels.length);
+    for (let index = 0; index < sharedLength; index += 1) {
+      const comparison = collator.compare(left.labels[index] ?? '', right.labels[index] ?? '');
+      if (comparison !== 0) {
+        return direction === 'ascending' ? comparison : -comparison;
+      }
+    }
+    if (left.labels.length !== right.labels.length) {
+      const comparison = left.labels.length - right.labels.length;
+      return direction === 'ascending' ? comparison : -comparison;
+    }
+    return left.taskId.localeCompare(right.taskId);
+  });
+};
+
+const groupFilesMediaTasks = (tasks: readonly FilesMediaTaskLabels[], locale: string) => {
+  const equality = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'search' });
+  const groups: { heading: string | null; taskIds: string[] }[] = [];
+  for (const task of tasks) {
+    if (task.labels.length === 0) {
+      const empty = groups.find(({ heading }) => heading === null);
+      if (empty === undefined) {
+        groups.push({ heading: null, taskIds: [task.taskId] });
+      } else {
+        empty.taskIds.push(task.taskId);
+      }
+      continue;
+    }
+    for (const label of task.labels) {
+      const group = groups.find(
+        ({ heading }) => heading !== null && equality.compare(heading, label) === 0,
+      );
+      if (group === undefined) {
+        groups.push({ heading: label, taskIds: [task.taskId] });
+      } else if (!group.taskIds.includes(task.taskId)) {
+        group.taskIds.push(task.taskId);
+      }
+    }
+  }
+  const ordering = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'sort' });
+  return groups.toSorted((left, right) => {
+    if (left.heading === null || right.heading === null) {
+      if (left.heading === right.heading) {
+        return 0;
+      }
+      return left.heading === null ? 1 : -1;
+    }
+    return ordering.compare(left.heading, right.heading);
+  });
+};
+
 const selectFilterPredicate = (
   operation: Extract<TaskPropertyQuery, { readonly datatype: 'select' }>['operation'],
 ) => {
@@ -281,6 +376,70 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
     transportResponseSchema: queryTaskPropertyValuesResponseSchema,
   },
   handler: async (input, { context, db }) => {
+    if (input.query.datatype === 'files_media') {
+      const result = await db.execute(sql`
+        select
+          collection.locale,
+          coalesce(item.external_url, asset.display_filename) as label,
+          item.position,
+          task.task_id as "taskId"
+        from ticketing.tasks as task
+        inner join ticketing.task_collections as collection
+          on collection.collection_id = task.collection_id
+          and collection.tenant_id = task.tenant_id
+        inner join ticketing.task_schemas as schema
+          on schema.collection_id = task.collection_id
+          and schema.tenant_id = task.tenant_id
+        inner join ticketing.task_property_definitions as definition
+          on definition.schema_id = schema.schema_id
+          and definition.property_definition_id = ${input.propertyDefinitionId}
+          and definition.datatype = 'files_media'
+          and definition.tenant_id = task.tenant_id
+        left join ticketing.task_files_media_items as item
+          on item.task_id = task.task_id
+          and item.property_definition_id = definition.property_definition_id
+          and item.tenant_id = task.tenant_id
+        left join core.media_assets as asset
+          on asset.media_asset_id = item.media_asset_id
+          and asset.tenant_id = item.tenant_id
+        where task.collection_id = ${input.collectionId}
+          and task.tenant_id = ${context.tenantId}
+        order by task.task_id, item.position
+      `);
+      const rows = rowsFromResult<FilesMediaQueryRow>(result);
+      const tasks = filesMediaTasksFromRows(rows);
+      const locale = rows.at(0)?.locale ?? 'en-GB';
+      const collation = textCollation(locale);
+      const { operation } = input.query;
+      if (operation.type === 'sort') {
+        return {
+          taskIds: sortFilesMediaTasks(tasks, locale, operation.direction).map(
+            ({ taskId }) => taskId,
+          ),
+        };
+      }
+      if (operation.type === 'group') {
+        return {
+          groups: groupFilesMediaTasks(tasks, locale),
+          taskIds: tasks.map(({ taskId }) => taskId),
+        };
+      }
+      const matching = tasks.filter(({ labels }) => {
+        if (operation.type === 'search') {
+          return labels.some((label) => collation.includes(label, operation.query));
+        }
+        if (operation.operator === 'isEmpty') {
+          return labels.length === 0;
+        }
+        if (operation.operator === 'isNotEmpty') {
+          return labels.length > 0;
+        }
+        const contains = labels.some((label) => collation.includes(label, operation.value));
+        return operation.operator === 'contains' ? contains : !contains;
+      });
+      return { taskIds: matching.map(({ taskId }) => taskId) };
+    }
+
     if (input.query.datatype === 'select') {
       const predicate = selectFilterPredicate(input.query.operation);
       const result = await db.execute(sql`

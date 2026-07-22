@@ -855,10 +855,11 @@ export const taskFilesMediaItems = ticketingSchema.table(
   'task_files_media_items',
   {
     createdAt: createdAt(),
+    externalUrl: text('external_url'),
     itemId: uuid('item_id').defaultRandom().primaryKey(),
-    mediaAssetId: uuid('media_asset_id')
-      .notNull()
-      .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' }),
+    mediaAssetId: uuid('media_asset_id').references(() => mediaAssets.mediaAssetId, {
+      onDelete: 'restrict',
+    }),
     position: integer('position').notNull(),
     propertyDefinitionId: uuid('property_definition_id')
       .notNull()
@@ -878,6 +879,10 @@ export const taskFilesMediaItems = ticketingSchema.table(
       table.tenantId,
       table.taskId,
       table.propertyDefinitionId,
+    ),
+    check(
+      'ticketing_task_files_media_items_kind_ck',
+      sql`(${table.mediaAssetId} is not null)::integer + (${table.externalUrl} is not null)::integer = 1`,
     ),
     check('ticketing_task_files_media_items_position_ck', sql`${table.position} >= 0`),
   ],

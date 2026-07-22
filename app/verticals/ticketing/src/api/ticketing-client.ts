@@ -203,6 +203,15 @@ import type {
   RetainTextCoreReferenceLabelActionFailure,
   RetainTextCoreReferenceLabelActionOutcome,
   RetainTextCoreReferenceLabelActionPayload,
+  AddFilesMediaExternalItemActionFailure,
+  AddFilesMediaExternalItemActionOutcome,
+  AddFilesMediaExternalItemActionPayload,
+  ReorderFilesMediaItemsActionFailure,
+  ReorderFilesMediaItemsActionOutcome,
+  ReorderFilesMediaItemsActionPayload,
+  RemoveFilesMediaItemActionFailure,
+  RemoveFilesMediaItemActionOutcome,
+  RemoveFilesMediaItemActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -217,6 +226,9 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | RemoveFilesMediaItemActionFailure
+  | ReorderFilesMediaItemsActionFailure
+  | AddFilesMediaExternalItemActionFailure
   | RetainTextCoreReferenceLabelActionFailure
   | DeleteSelectOptionActionFailure
   | CreateMultiSelectOptionAndSelectActionFailure
@@ -1923,6 +1935,87 @@ export const runRetainTextCoreReferenceLabelAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.retainTextCoreReferenceLabelAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runAddFilesMediaExternalItemAction = (
+  payload: AddFilesMediaExternalItemActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<AddFilesMediaExternalItemActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.addFilesMediaExternalItemAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.addFilesMediaExternalItemAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runReorderFilesMediaItemsAction = (
+  payload: ReorderFilesMediaItemsActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ReorderFilesMediaItemsActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.reorderFilesMediaItemsAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.reorderFilesMediaItemsAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runRemoveFilesMediaItemAction = (
+  payload: RemoveFilesMediaItemActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<RemoveFilesMediaItemActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.removeFilesMediaItemAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.removeFilesMediaItemAction({
         headers: headers ?? {},
         payload,
       }),

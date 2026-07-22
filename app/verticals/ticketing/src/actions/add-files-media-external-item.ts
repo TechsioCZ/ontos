@@ -1,5 +1,5 @@
-// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-import { MediaUploadRejectedError, rejectAction, rowsFromResult } from '@app/core-runtime';
+// @effect-diagnostics asyncFunction:off
+import { rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
   ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
@@ -8,37 +8,34 @@ import type {
 } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import {
-  uploadFilesMediaItemActionKey,
-  uploadFilesMediaItemActionPayloadSchema,
-  uploadFilesMediaItemActionResponseSchema,
-} from '../../shared/actions/upload-files-media-item.ts';
+  addFilesMediaExternalItemActionKey,
+  addFilesMediaExternalItemActionPayloadSchema,
+  addFilesMediaExternalItemActionResponseSchema,
+} from '../../shared/actions/add-files-media-external-item.ts';
 import type {
-  UploadFilesMediaItemActionPayload,
-  UploadFilesMediaItemActionResponse,
-} from '../../shared/actions/upload-files-media-item.ts';
-import {
-  commitFilesMediaItem,
-  InvalidFilesMediaUploadBytesError,
-} from '../files-media-item-commit.ts';
-
-interface ItemRow {
-  readonly taskRevision: number;
-}
+  AddFilesMediaExternalItemActionPayload,
+  AddFilesMediaExternalItemActionResponse,
+} from '../../shared/actions/add-files-media-external-item.ts';
+import { InvalidUrlPropertyValueError, validateUrlPropertyValue } from '../url-property.ts';
 
 interface TargetRow {
   readonly nextPosition: number;
-  readonly taskId: string;
+  readonly taskRevision: number;
+}
+
+interface CommittedRow {
+  readonly itemId: string;
   readonly taskRevision: number;
 }
 
 const evidence = (
-  input: UploadFilesMediaItemActionPayload,
-  response: UploadFilesMediaItemActionResponse,
+  input: AddFilesMediaExternalItemActionPayload,
+  response: AddFilesMediaExternalItemActionResponse,
 ) => ({
   changedComponents: ['filesMediaItems'],
   collectionId: input.collectionId,
   itemId: response.item.itemId,
-  operation: 'uploaded',
+  operation: 'externalItemAdded',
   propertyDefinitionId: input.propertyDefinitionId,
   taskId: input.taskId,
   taskRevision: response.taskRevision,
@@ -50,8 +47,8 @@ const auditEvent = {
   targetResourceId: (input) => input.taskId,
   targetResourceType: 'task',
 } satisfies ActionAuditEventDescriptor<
-  UploadFilesMediaItemActionPayload,
-  UploadFilesMediaItemActionResponse
+  AddFilesMediaExternalItemActionPayload,
+  AddFilesMediaExternalItemActionResponse
 >;
 
 const domainEvent = {
@@ -62,14 +59,30 @@ const domainEvent = {
   subjectResourceId: (input) => input.taskId,
   subjectResourceType: 'task',
 } satisfies ActionDomainEventDescriptor<
-  UploadFilesMediaItemActionPayload,
-  UploadFilesMediaItemActionResponse
+  AddFilesMediaExternalItemActionPayload,
+  AddFilesMediaExternalItemActionResponse
 >;
 
 const handler: ActionHandler<
-  UploadFilesMediaItemActionPayload,
-  UploadFilesMediaItemActionResponse
+  AddFilesMediaExternalItemActionPayload,
+  AddFilesMediaExternalItemActionResponse
 > = async (input, services) => {
+  let externalUrl: string | null;
+  try {
+    externalUrl = validateUrlPropertyValue(input.url);
+  } catch (error) {
+    if (error instanceof InvalidUrlPropertyValueError) {
+      throw rejectAction({ code: error.code, message: error.message });
+    }
+    throw error;
+  }
+  if (externalUrl === null) {
+    throw rejectAction({
+      code: 'ticketing.addFilesMediaExternalItem.url_required',
+      message: 'An external Files & media item requires a URL.',
+    });
+  }
+
   const selected = await services.tx.execute(sql`
     select
       coalesce((
@@ -79,7 +92,6 @@ const handler: ActionHandler<
           and item.property_definition_id = definition.property_definition_id
           and item.tenant_id = task.tenant_id
       ), 0)::integer as "nextPosition",
-      task.task_id as "taskId",
       task.revision as "taskRevision"
     from ticketing.tasks as task
     inner join ticketing.task_schemas as schema
@@ -98,52 +110,37 @@ const handler: ActionHandler<
   const target = rowsFromResult<TargetRow>(selected).at(0);
   if (target === undefined) {
     throw rejectAction({
-      code: 'ticketing.uploadFilesMediaItem.target_missing',
+      code: 'ticketing.addFilesMediaExternalItem.target_missing',
       message: 'The Task or Files & media Task Property Definition was not found.',
     });
   }
   if (target.taskRevision !== input.expectedRevision) {
     throw rejectAction({
-      code: 'ticketing.uploadFilesMediaItem.stale',
+      code: 'ticketing.addFilesMediaExternalItem.stale',
       message: 'The Files & media value changed elsewhere.',
     });
   }
 
-  let committedItem;
-  try {
-    committedItem = await commitFilesMediaItem(
-      {
-        bytesBase64: input.bytesBase64,
-        ...(input.clientMimeType === undefined ? {} : { clientMimeType: input.clientMimeType }),
-        filename: input.filename,
-        position: target.nextPosition,
-        propertyDefinitionId: input.propertyDefinitionId,
-        taskId: input.taskId,
-      },
-      { context: services.context, tx: services.tx },
-    );
-  } catch (error) {
-    if (error instanceof InvalidFilesMediaUploadBytesError) {
-      throw rejectAction({
-        code: 'ticketing.uploadFilesMediaItem.invalid_bytes',
-        message: 'Uploaded bytes must use canonical base64 encoding.',
-      });
-    }
-    if (error instanceof MediaUploadRejectedError) {
-      throw rejectAction({ code: error.code, message: error.message });
-    }
-    throw error;
-  }
-
   const changedAt = services.clock.now().toISOString();
-  const result = await services.tx.execute(sql`
-    with updated_task as (
+  const committed = await services.tx.execute(sql`
+    with created_item as (
+      insert into ticketing.task_files_media_items (
+        external_url, position, property_definition_id, task_id, tenant_id
+      )
+      values (
+        ${externalUrl}, ${target.nextPosition}, ${input.propertyDefinitionId},
+        ${input.taskId}, ${services.context.tenantId}
+      )
+      returning item_id, task_id
+    ),
+    updated_task as (
       update ticketing.tasks as task
       set
         last_edited_at = ${changedAt}::timestamptz,
         last_edited_by_principal_id = ${services.context.principalId},
         revision = task.revision + 1
-      where task.task_id = ${input.taskId}
+      from created_item
+      where task.task_id = created_item.task_id
         and task.tenant_id = ${services.context.tenantId}
       returning task.last_edited_at, task.revision, task.task_id
     ),
@@ -152,38 +149,45 @@ const handler: ActionHandler<
         changed_at, changed_by_principal_id, reason, revision, task_id, tenant_id
       )
       select
-        updated_task.last_edited_at,
-        ${services.context.principalId},
-        'files_media_value_changed',
-        updated_task.revision,
-        updated_task.task_id,
+        updated_task.last_edited_at, ${services.context.principalId},
+        'files_media_value_changed', updated_task.revision, updated_task.task_id,
         ${services.context.tenantId}
       from updated_task
       returning task_id
     )
-    select updated_task.revision as "taskRevision"
-    from updated_task
+    select
+      created_item.item_id as "itemId",
+      updated_task.revision as "taskRevision"
+    from created_item
+    inner join updated_task using (task_id)
     inner join created_revision using (task_id)
   `);
-  const item = rowsFromResult<ItemRow>(result).at(0);
-  if (item === undefined) {
+  const row = rowsFromResult<CommittedRow>(committed).at(0);
+  if (row === undefined) {
     throw rejectAction({
-      code: 'ticketing.uploadFilesMediaItem.not_committed',
-      message: 'The Files & media item could not be committed.',
+      code: 'ticketing.addFilesMediaExternalItem.not_committed',
+      message: 'The external Files & media item could not be committed.',
     });
   }
+
   return {
-    item: committedItem,
-    taskRevision: item.taskRevision,
+    item: {
+      access: 'external',
+      externalUrl,
+      itemId: row.itemId,
+      position: target.nextPosition,
+      propertyDefinitionId: input.propertyDefinitionId,
+    },
+    taskRevision: row.taskRevision,
   };
 };
 
-export const uploadFilesMediaItemActionRegistration: ActionRegistration<
-  UploadFilesMediaItemActionPayload,
-  UploadFilesMediaItemActionResponse
+export const addFilesMediaExternalItemActionRegistration: ActionRegistration<
+  AddFilesMediaExternalItemActionPayload,
+  AddFilesMediaExternalItemActionResponse
 > = {
   descriptor: {
-    actionKey: uploadFilesMediaItemActionKey,
+    actionKey: addFilesMediaExternalItemActionKey,
     auditEvent,
     auditProfile: 'sensitive',
     authorization: {
@@ -196,8 +200,8 @@ export const uploadFilesMediaItemActionRegistration: ActionRegistration<
     gatewayAudience: 'ticketing',
     idempotency: 'required',
     moduleStateAccess: 'mutate',
-    transportRequestSchema: uploadFilesMediaItemActionPayloadSchema,
-    transportResponseSchema: uploadFilesMediaItemActionResponseSchema,
+    transportRequestSchema: addFilesMediaExternalItemActionPayloadSchema,
+    transportResponseSchema: addFilesMediaExternalItemActionResponseSchema,
   },
   handler,
 };

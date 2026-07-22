@@ -7,6 +7,7 @@ export const getTaskPropertyDeletionImpactPayloadSchema = Schema.Struct({
 
 export const taskPropertyDeletionImpactSchema = Schema.Struct({
   impactCount: Schema.Finite,
+  impactRevision: Schema.optional(Schema.String),
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
 });

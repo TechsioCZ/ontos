@@ -12,6 +12,7 @@ export const deleteTaskPropertyDefinitionActionPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
   confirmed: Schema.Literal(true),
   expectedImpactCount: Schema.Finite,
+  expectedImpactRevision: Schema.optional(Schema.String),
   expectedRevision: Schema.Finite,
   propertyDefinitionId: Schema.String,
 });

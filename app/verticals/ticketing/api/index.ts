@@ -6,6 +6,9 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { removeFilesMediaItemActionRegistration } from '../src/actions/remove-files-media-item.ts';
+import { reorderFilesMediaItemsActionRegistration } from '../src/actions/reorder-files-media-items.ts';
+import { addFilesMediaExternalItemActionRegistration } from '../src/actions/add-files-media-external-item.ts';
 import { retainTextCoreReferenceLabelActionRegistration } from '../src/actions/retain-text-core-reference-label.ts';
 import { deleteSelectOptionActionRegistration } from '../src/actions/delete-select-option.ts';
 import { createMultiSelectOptionAndSelectActionRegistration } from '../src/actions/create-multi-select-option-and-select.ts';
@@ -1494,6 +1497,70 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
             attributes: operationAttributes(
               ticketingOperationContexts.retainTextCoreReferenceLabelAction,
             ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('addFilesMediaExternalItemAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: addFilesMediaExternalItemActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.addFilesMediaExternalItemAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.addFilesMediaExternalItemAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('reorderFilesMediaItemsAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: reorderFilesMediaItemsActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.reorderFilesMediaItemsAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.reorderFilesMediaItemsAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('removeFilesMediaItemAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: removeFilesMediaItemActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.removeFilesMediaItemAction', {
+            attributes: operationAttributes(ticketingOperationContexts.removeFilesMediaItemAction),
             kind: 'server',
           }),
         ),

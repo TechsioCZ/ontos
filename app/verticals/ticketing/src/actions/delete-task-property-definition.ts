@@ -103,11 +103,15 @@ const deleteTaskPropertyDefinitionActionHandler: ActionHandler<
     db: services.tx,
     target,
   });
-  if (confirmation.impactCount !== input.expectedImpactCount) {
+  const impactRevisionChanged =
+    target.datatype === 'files_media'
+      ? confirmation.impactRevision !== input.expectedImpactRevision
+      : input.expectedImpactRevision !== undefined &&
+        confirmation.impactRevision !== input.expectedImpactRevision;
+  if (confirmation.impactCount !== input.expectedImpactCount || impactRevisionChanged) {
     throw rejectAction({
       code: 'ticketing.deleteTaskPropertyDefinition.stale_impact',
-      message:
-        'The number of affected retained Tasks changed. Review the impact and confirm again.',
+      message: 'The affected retained Tasks changed. Review the impact and confirm again.',
     });
   }
 
