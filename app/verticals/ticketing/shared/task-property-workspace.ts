@@ -40,6 +40,13 @@ export const statusPropertyValueSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const multiSelectPropertyValueSchema = Schema.Struct({
+  optionIds: Schema.Array(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  updatedAt: Schema.String,
+});
+
 export const numberPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
@@ -111,6 +118,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       filesMediaItems: Schema.Array(filesMediaItemSchema),
       idAssignment: Schema.optional(idAssignmentSchema),
       lastEditedAt: Schema.optional(Schema.String),
+      multiSelectValues: Schema.optional(Schema.Array(multiSelectPropertyValueSchema)),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),

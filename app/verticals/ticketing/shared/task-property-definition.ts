@@ -70,6 +70,25 @@ export const selectOptionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const multiSelectOptionSchema = Schema.Struct({
+  catalogPosition: Schema.Finite,
+  color: Schema.String,
+  name: Schema.String,
+  optionId: Schema.String,
+  revision: Schema.Finite,
+  updatedAt: Schema.String,
+});
+
+export const multiSelectPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('multi_select'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  options: Schema.Array(multiSelectOptionSchema),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const selectPropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literal('select'),
   hidden: Schema.Boolean,
@@ -175,6 +194,7 @@ export const taskPropertyDefinitionSchema = Schema.Union([
   idPropertyDefinitionSchema,
   intrinsicPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
+  multiSelectPropertyDefinitionSchema,
   personPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
   selectPropertyDefinitionSchema,
@@ -191,6 +211,8 @@ export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSc
 export type IdPropertyDefinition = typeof idPropertyDefinitionSchema.Type;
 export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
+export type MultiSelectOption = typeof multiSelectOptionSchema.Type;
+export type MultiSelectPropertyDefinition = typeof multiSelectPropertyDefinitionSchema.Type;
 export type PersonPropertyDefinition = typeof personPropertyDefinitionSchema.Type;
 export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;

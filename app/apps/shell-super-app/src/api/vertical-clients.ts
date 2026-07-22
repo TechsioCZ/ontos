@@ -1,4 +1,10 @@
 export {
+  runCreateMultiSelectOptionAndSelectAction,
+  runReorderMultiSelectOptionsAction,
+  runUpdateMultiSelectOptionAction,
+  runUpdateMultiSelectPropertyValueAction,
+  runCreateMultiSelectOptionAction,
+  runCreateMultiSelectPropertyDefinitionAction,
   runUpdateTaskContentAction,
   runUpdateStatusOptionAction,
   runCreateStatusOptionAction,

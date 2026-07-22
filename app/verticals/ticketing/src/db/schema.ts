@@ -30,6 +30,9 @@ const tenantId = () =>
 const createdAt = () =>
   timestamp('created_at', { precision: 3, withTimezone: true }).defaultNow().notNull();
 
+const updatedAt = () =>
+  timestamp('updated_at', { precision: 3, withTimezone: true }).defaultNow().notNull();
+
 export const taskCollections = ticketingSchema.table(
   'task_collections',
   {
@@ -100,7 +103,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'date_range', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')`,
     ),
     check(
       'ticketing_task_property_definitions_date_range_time_ck',
@@ -117,6 +120,10 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     uniqueIndex('ticketing_task_property_definitions_schema_id_datatype_uk')
       .on(table.schemaId)
       .where(sql`${table.datatype} = 'id'`),
+    uniqueIndex('ticketing_task_property_definitions_tenant_definition_uk').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+    ),
     check('ticketing_task_property_definitions_revision_ck', sql`${table.revision} >= 1`),
   ],
 );
@@ -214,6 +221,48 @@ export const statusPropertyConfigurations = ticketingSchema.table(
       ],
       name: 'ticketing_status_property_configurations_default_option_fk',
     }).onDelete('restrict'),
+  ],
+);
+
+export const multiSelectOptions = ticketingSchema.table(
+  'multi_select_options',
+  {
+    catalogPosition: integer('catalog_position').notNull(),
+    color: text('color').notNull(),
+    name: text('name').notNull(),
+    normalizedName: text('normalized_name').notNull(),
+    optionId: uuid('option_id').defaultRandom().primaryKey(),
+    propertyDefinitionId: uuid('property_definition_id').notNull(),
+    revision: integer('revision').default(1).notNull(),
+    tenantId: tenantId(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.propertyDefinitionId],
+      foreignColumns: [
+        taskPropertyDefinitions.tenantId,
+        taskPropertyDefinitions.propertyDefinitionId,
+      ],
+      name: 'ticketing_multi_select_options_definition_fk',
+    }).onDelete('restrict'),
+    uniqueIndex('ticketing_multi_select_options_definition_name_uk').on(
+      table.propertyDefinitionId,
+      table.normalizedName,
+    ),
+    uniqueIndex('ticketing_multi_select_options_ownership_uk').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.optionId,
+    ),
+    uniqueIndex('ticketing_multi_select_options_catalog_position_uk').on(
+      table.propertyDefinitionId,
+      table.catalogPosition,
+    ),
+    check('ticketing_multi_select_options_name_ck', sql`btrim(${table.name}) <> ''`),
+    check('ticketing_multi_select_options_no_comma_ck', sql`${table.name} not like '%,%'`),
+    check('ticketing_multi_select_options_catalog_position_ck', sql`${table.catalogPosition} >= 0`),
+    check('ticketing_multi_select_options_revision_ck', sql`${table.revision} >= 1`),
   ],
 );
 
@@ -321,7 +370,7 @@ export const taskRevisions = ticketingSchema.table(
     index('ticketing_task_revisions_tenant_idx').on(table.tenantId, table.taskId),
     check(
       'ticketing_task_revisions_reason_ck',
-      sql`${table.reason} in ('created', 'content_changed', 'checkbox_value_changed', 'date_value_changed', 'date_range_value_changed', 'email_value_changed', 'files_media_value_changed', 'number_value_changed', 'person_value_changed', 'phone_value_changed', 'select_value_changed', 'status_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
+      sql`${table.reason} in ('created', 'content_changed', 'checkbox_value_changed', 'date_value_changed', 'date_range_value_changed', 'email_value_changed', 'files_media_value_changed', 'multi_select_value_changed', 'number_value_changed', 'person_value_changed', 'phone_value_changed', 'select_value_changed', 'status_value_changed', 'text_value_changed', 'url_value_changed', 'archived', 'restored', 'soft_deleted')`,
     ),
     check('ticketing_task_revisions_revision_ck', sql`${table.revision} >= 1`),
   ],
@@ -482,6 +531,93 @@ export const taskStatusValues = ticketingSchema.table(
       table.optionId,
     ),
     check('ticketing_task_status_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskMultiSelectValues = ticketingSchema.table(
+  'task_multi_select_values',
+  {
+    collectionId: uuid('collection_id').notNull(),
+    propertyDefinitionId: uuid('property_definition_id').notNull(),
+    revision: integer('revision').default(1).notNull(),
+    schemaId: uuid('schema_id').notNull(),
+    taskId: uuid('task_id').notNull(),
+    tenantId: tenantId(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId],
+      name: 'ticketing_task_multi_select_values_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.collectionId, table.taskId],
+      foreignColumns: [tasks.tenantId, tasks.collectionId, tasks.taskId],
+      name: 'ticketing_task_multi_select_values_task_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.collectionId, table.schemaId],
+      foreignColumns: [taskSchemas.tenantId, taskSchemas.collectionId, taskSchemas.schemaId],
+      name: 'ticketing_task_multi_select_values_schema_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.schemaId, table.propertyDefinitionId],
+      foreignColumns: [
+        taskPropertyDefinitions.tenantId,
+        taskPropertyDefinitions.schemaId,
+        taskPropertyDefinitions.propertyDefinitionId,
+      ],
+      name: 'ticketing_task_multi_select_values_definition_fk',
+    }).onDelete('restrict'),
+    index('ticketing_task_multi_select_values_definition_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+    ),
+    uniqueIndex('ticketing_task_multi_select_values_ownership_uk').on(
+      table.tenantId,
+      table.taskId,
+      table.propertyDefinitionId,
+    ),
+    check('ticketing_task_multi_select_values_revision_ck', sql`${table.revision} >= 1`),
+  ],
+);
+
+export const taskMultiSelectSelections = ticketingSchema.table(
+  'task_multi_select_selections',
+  {
+    optionId: uuid('option_id').notNull(),
+    propertyDefinitionId: uuid('property_definition_id').notNull(),
+    taskId: uuid('task_id').notNull(),
+    tenantId: tenantId(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.taskId, table.propertyDefinitionId, table.optionId],
+      name: 'ticketing_task_multi_select_selections_pk',
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.taskId, table.propertyDefinitionId],
+      foreignColumns: [
+        taskMultiSelectValues.tenantId,
+        taskMultiSelectValues.taskId,
+        taskMultiSelectValues.propertyDefinitionId,
+      ],
+      name: 'ticketing_task_multi_select_selections_value_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.tenantId, table.propertyDefinitionId, table.optionId],
+      foreignColumns: [
+        multiSelectOptions.tenantId,
+        multiSelectOptions.propertyDefinitionId,
+        multiSelectOptions.optionId,
+      ],
+      name: 'ticketing_task_multi_select_selections_option_fk',
+    }).onDelete('restrict'),
+    index('ticketing_task_multi_select_selections_membership_idx').on(
+      table.tenantId,
+      table.propertyDefinitionId,
+      table.optionId,
+    ),
   ],
 );
 

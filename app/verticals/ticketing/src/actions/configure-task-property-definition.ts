@@ -17,6 +17,7 @@ import type {
   ConfigureTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/configure-task-property-definition.ts';
 import type {
+  MultiSelectOption,
   SelectOption,
   SelectOptionOrderMode,
   TaskPropertyDefinition,
@@ -47,7 +48,18 @@ interface StatusDefinitionRow {
   readonly revision: number;
 }
 
+interface MultiSelectDefinitionRow {
+  readonly collectionLocale: string;
+  readonly datatype: 'multi_select';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
+
 type ConfigurableDefinitionRow =
+  | MultiSelectDefinitionRow
   | SelectDefinitionRow
   | StatusDefinitionRow
   | TaskPropertyDefinitionRow;
@@ -93,6 +105,33 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const projectDefinition = async (
     row: ConfigurableDefinitionRow,
   ): Promise<TaskPropertyDefinition> => {
+    if (row.datatype === 'multi_select') {
+      const optionResult = await services.tx.execute(sql`
+        select
+          option.catalog_position as "catalogPosition",
+          option.color,
+          option.name,
+          option.option_id as "optionId",
+          option.revision,
+          to_char(
+            option.updated_at at time zone 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) as "updatedAt"
+        from ticketing.multi_select_options as option
+        where option.property_definition_id = ${row.propertyDefinitionId}
+          and option.tenant_id = ${services.context.tenantId}
+        order by option.catalog_position, option.option_id
+      `);
+      return {
+        datatype: row.datatype,
+        hidden: row.hidden,
+        mandatory: row.mandatory,
+        name: row.name,
+        options: [...rowsFromResult<MultiSelectOption>(optionResult)],
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+      };
+    }
     if (row.datatype === 'status') {
       const definition = await getStatusDefinition({
         collectionId: input.collectionId,
