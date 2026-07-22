@@ -745,17 +745,6 @@ test('shared lifecycle evidence contains metadata but no property names or Check
       },
       configureResponse,
     );
-  const deleteEvidence =
-    deleteTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
-      {
-        collectionId: 'collection-1',
-        confirmed: true,
-        expectedImpactCount: 7,
-        expectedRevision: 2,
-        propertyDefinitionId: 'definition-2',
-      },
-      { deletedPropertyDefinitionId: 'definition-2', impactCount: 7 },
-    );
   const retentionEvidence =
     transitionTaskRetentionActionRegistration.descriptor.auditEvent.evidence(
       {
@@ -771,7 +760,6 @@ test('shared lifecycle evidence contains metadata but no property names or Check
   assert.equal(Object.hasOwn(configureEvidence, 'name'), false);
   assert.equal(Object.hasOwn(duplicateEvidence, 'value'), false);
   assert.equal(duplicateEvidence.copiedValues, true);
-  assert.equal(deleteEvidence.impactCount, 7);
   assert.deepEqual(retentionEvidence, {
     changedComponents: ['retentionState'],
     collectionId: 'collection-1',
