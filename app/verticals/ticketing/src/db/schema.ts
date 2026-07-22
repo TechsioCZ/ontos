@@ -87,6 +87,9 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     schemaId: uuid('schema_id')
       .notNull()
       .references(() => taskSchemas.schemaId, { onDelete: 'restrict' }),
+    schemaPosition: numeric('schema_position', { precision: 38, scale: 18 })
+      .default(sql`extract(epoch from clock_timestamp())`)
+      .notNull(),
     selectOptionOrderMode: text('select_option_order_mode'),
     tenantId: tenantId(),
   },

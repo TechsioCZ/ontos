@@ -6,6 +6,13 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  deleteSelectOptionActionHeadersSchema,
+  deleteSelectOptionActionFailureSchemas,
+  deleteSelectOptionActionOutcomeSchema,
+  deleteSelectOptionActionPayloadSchema,
+} from './actions/delete-select-option';
+
+import {
   createMultiSelectOptionAndSelectActionHeadersSchema,
   createMultiSelectOptionAndSelectActionFailureSchemas,
   createMultiSelectOptionAndSelectActionOutcomeSchema,
@@ -357,6 +364,7 @@ import {
   operationContextHeadersSchema,
 } from './core-sdk-operation';
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
+import { selectOptionDeletionImpactSchema } from './select-option-deletion-impact';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import {
@@ -370,6 +378,12 @@ import {
 } from './task-property-query';
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
+export type {
+  DeleteSelectOptionActionFailure,
+  DeleteSelectOptionActionOutcome,
+  DeleteSelectOptionActionPayload,
+  DeleteSelectOptionActionResponse,
+} from './actions/delete-select-option';
 export type {
   CreateMultiSelectOptionAndSelectActionFailure,
   CreateMultiSelectOptionAndSelectActionOutcome,
@@ -690,6 +704,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export type {
+  GetSelectOptionDeletionImpactPayload,
+  SelectOptionDeletionImpact,
+} from './select-option-deletion-impact';
 export type {
   TaskPropertyDefinitionEditCapability,
   TaskPropertyEditCapability,
@@ -1052,6 +1070,22 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: taskPropertyDeletionImpactSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'getSelectOptionDeletionImpact',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/options/:optionId/deletion-impact',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            optionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: selectOptionDeletionImpactSchema,
         },
       ),
     )
@@ -1692,6 +1726,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: createMultiSelectOptionAndSelectActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post('deleteSelectOptionAction', '/ticketing/actions/delete-select-option', {
+        error: deleteSelectOptionActionFailureSchemas,
+        headers: deleteSelectOptionActionHeadersSchema,
+        payload: deleteSelectOptionActionPayloadSchema,
+        success: deleteSelectOptionActionOutcomeSchema,
+      }),
     ),
 );
 
@@ -1876,6 +1918,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/create-url-property-definition',
     source: 'generated-client',
   },
+  deleteSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:deleteSelectOptionAction',
+    routePath: '/ticketing/actions/delete-select-option',
+    source: 'generated-client',
+  },
   deleteTaskPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:deleteTaskPropertyDefinitionAction',
@@ -1905,6 +1953,13 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:get',
     routePath: '/ticketing/:id',
+    source: 'generated-client',
+  },
+  getSelectOptionDeletionImpact: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getSelectOptionDeletionImpact',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/options/:optionId/deletion-impact',
     source: 'generated-client',
   },
   getTaskCollection: {

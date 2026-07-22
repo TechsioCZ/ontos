@@ -1,4 +1,5 @@
 export {
+  runDeleteSelectOptionAction,
   runCreateMultiSelectOptionAndSelectAction,
   runReorderMultiSelectOptionsAction,
   runUpdateMultiSelectOptionAction,
@@ -50,6 +51,7 @@ export {
   runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
+  getSelectOptionDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,
   runConfigureTaskPropertyDefinitionAction,

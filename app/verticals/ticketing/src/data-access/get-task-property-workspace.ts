@@ -711,7 +711,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
         and definition.datatype in ('checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')
-      order by definition.created_at, definition.property_definition_id
+      order by definition.schema_position, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
       select
