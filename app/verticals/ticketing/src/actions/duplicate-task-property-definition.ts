@@ -11,6 +11,7 @@ import {
   duplicateTaskPropertyDefinitionActionPayloadSchema,
   duplicateTaskPropertyDefinitionActionResponseSchema,
 } from '../../shared/actions/duplicate-task-property-definition.ts';
+import { resolveTaskPropertyDefinitionValueCopy } from '../../shared/task-property-definition-value-copy-policy.ts';
 import type {
   DuplicateTaskPropertyDefinitionActionPayload,
   DuplicateTaskPropertyDefinitionActionResponse,
@@ -19,7 +20,6 @@ import { lockTaskCollectionForPropertyInitialization } from '../task-collection-
 import {
   duplicateTaskPropertyDefinition,
   lockTaskPropertyDefinitionLifecycleTarget,
-  shouldCopyTaskPropertyDefinitionValues,
 } from '../task-property-definition-lifecycle.ts';
 
 const duplicatedDefinitionEvidence = (
@@ -34,7 +34,7 @@ const duplicatedDefinitionEvidence = (
       ? ['definition']
       : ['definition', 'propertyValues'],
   collectionId: input.collectionId,
-  copiedValues: shouldCopyTaskPropertyDefinitionValues({
+  copiedValues: resolveTaskPropertyDefinitionValueCopy({
     datatype: response.definition.datatype,
     requestedCopyValues: input.copyValues ?? false,
   }),

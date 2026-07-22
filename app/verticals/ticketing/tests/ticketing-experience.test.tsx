@@ -28,12 +28,31 @@ const mocks = rs.hoisted(() => ({
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
   definitionCapabilityAllowed: true,
   definitionCapabilityAttempts: 0,
+  deleteDefinitionCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly confirmed: true;
+    readonly expectedImpactCount: number;
+    readonly expectedImpactRevision?: string;
+    readonly expectedRevision: number;
+    readonly propertyDefinitionId: string;
+  }>[],
+  deletionImpactCalls: [] as {
+    readonly collectionId: string;
+    readonly propertyDefinitionId: string;
+  }[],
+  duplicateDefinitionCalls: [] as BoundaryCall<{
+    readonly collectionId: string;
+    readonly copyValues?: boolean;
+    readonly expectedRevision: number;
+    readonly propertyDefinitionId: string;
+  }>[],
   intrinsicCalls: [] as BoundaryCall<{
     readonly collectionId: string;
     readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
     readonly mandatory: boolean;
     readonly name: string;
   }>[],
+  propertyMutationWorkspace: 'none' as 'deleted' | 'duplicated' | 'none',
   readCalls: [] as string[],
   readFailuresRemaining: 0,
   taskAttempts: 0,
@@ -103,7 +122,7 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
     language: 'en',
     supportedLanguages: ['en'],
-    t: (key: string) =>
+    t: (key: string, options?: { readonly count?: number; readonly name?: string }) =>
       ({
         'ticketing.date.definitionCreate': 'Create Date property',
         'ticketing.date.definitionCreating': 'Creating Date property',
@@ -140,6 +159,21 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.phone.definitionName': 'Phone property name',
         'ticketing.phone.invalid': 'Enter one control-free line of at most 256 characters.',
         'ticketing.phone.save': 'Save Phone',
+        'ticketing.propertyActions.copyValuesHelp':
+          'Copy every Task’s current value to the duplicate.',
+        'ticketing.propertyActions.copyValuesLabel': 'Copy current values',
+        'ticketing.propertyActions.delete': `Delete ${options?.name ?? 'field'}`,
+        'ticketing.propertyActions.deleteConfirm': 'Delete field',
+        'ticketing.propertyActions.deleteDescription':
+          'This permanently removes the field from this collection.',
+        'ticketing.propertyActions.deleteImpact': `Affected Tasks: ${options?.count ?? 0}.`,
+        'ticketing.propertyActions.deleteImpactLoading': 'Checking affected Tasks…',
+        'ticketing.propertyActions.deleting': 'Deleting field',
+        'ticketing.propertyActions.duplicate': `Duplicate ${options?.name ?? 'field'}`,
+        'ticketing.propertyActions.duplicateConfirm': 'Duplicate field',
+        'ticketing.propertyActions.duplicateDescription':
+          'The duplicate keeps this field’s configuration.',
+        'ticketing.propertyActions.duplicating': 'Duplicating field',
         'ticketing.propertyDefinition.create': 'Create field',
         'ticketing.propertyDefinition.createFailedDescription': 'The field could not be created.',
         'ticketing.propertyDefinition.createFailedTitle': 'Field creation failed',
@@ -245,6 +279,65 @@ rs.mock('../src/api/ticketing-client', () => {
     },
   };
 
+  const urlWorkspace = (includeDuplicate: boolean) => ({
+    collectionId,
+    effectiveTimeZone: { source: 'browser', timeZone: 'Europe/Prague' },
+    propertyDefinitions: [
+      {
+        datatype: 'url',
+        hidden: false,
+        mandatory: false,
+        name: 'Reference URL',
+        propertyDefinitionId: 'url-property-1',
+        revision: 1,
+      },
+      ...(includeDuplicate
+        ? [
+            {
+              datatype: 'url',
+              hidden: false,
+              mandatory: false,
+              name: 'Reference URL Copy',
+              propertyDefinitionId: 'url-property-copy',
+              revision: 1,
+            },
+          ]
+        : []),
+    ],
+    tasks: [
+      {
+        canvas: {},
+        checkboxValues: [],
+        dateRangeValues: [],
+        dateValues: [],
+        emailValues: [],
+        numberValues: [],
+        phoneValues: [],
+        selectValues: [],
+        statusValues: [],
+        taskId,
+        taskRevision: 1,
+        title: '',
+        urlValues: [
+          {
+            propertyDefinitionId: 'url-property-1',
+            revision: 0,
+            value: null,
+          },
+          ...(includeDuplicate
+            ? [
+                {
+                  propertyDefinitionId: 'url-property-copy',
+                  revision: 0,
+                  value: null,
+                },
+              ]
+            : []),
+        ],
+      },
+    ],
+  });
+
   return {
     Effect: {
       flatMap:
@@ -285,14 +378,35 @@ rs.mock('../src/api/ticketing-client', () => {
         ? success({ canEditDefinitions: true })
         : failure({ httpStatus: 403, message: 'User cannot change the schema.', ok: false });
     },
+    getTaskPropertyDeletionImpact: (
+      requestedCollectionId: string,
+      propertyDefinitionId: string,
+    ) => {
+      mocks.deletionImpactCalls.push({
+        collectionId: requestedCollectionId,
+        propertyDefinitionId,
+      });
+      return success({
+        impactCount: 1,
+        impactRevision: 'impact-1',
+        propertyDefinitionId,
+        revision: 1,
+      });
+    },
     getTaskPropertyEditCapability: () => {
       mocks.capabilityAttempts += 1;
       return mocks.capabilityAllowed
         ? success({ canEdit: true })
         : failure({ httpStatus: 403, message: 'Viewer is read-only.', ok: false });
     },
-    getTaskPropertyWorkspace: () =>
-      success({
+    getTaskPropertyWorkspace: () => {
+      if (mocks.propertyMutationWorkspace === 'duplicated') {
+        return success(urlWorkspace(true));
+      }
+      if (mocks.propertyMutationWorkspace === 'deleted') {
+        return success(urlWorkspace(false));
+      }
+      return success({
         collectionId,
         effectiveTimeZone: { source: 'browser', timeZone: 'Europe/Prague' },
         propertyDefinitions: [
@@ -332,7 +446,8 @@ rs.mock('../src/api/ticketing-client', () => {
             urlValues: [],
           },
         ],
-      }),
+      });
+    },
     runCreateDatePropertyDefinitionAction: (payload: {
       readonly collectionId: string;
       readonly mandatory: boolean;
@@ -474,6 +589,50 @@ rs.mock('../src/api/ticketing-client', () => {
         },
       });
     },
+    runDeleteTaskPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly confirmed: true;
+        readonly expectedImpactCount: number;
+        readonly expectedImpactRevision?: string;
+        readonly expectedRevision: number;
+        readonly propertyDefinitionId: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.deleteDefinitionCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      mocks.propertyMutationWorkspace = 'deleted';
+      return success({
+        response: {
+          deletedPropertyDefinitionId: payload.propertyDefinitionId,
+          impactCount: payload.expectedImpactCount,
+        },
+      });
+    },
+    runDuplicateTaskPropertyDefinitionAction: (
+      payload: {
+        readonly collectionId: string;
+        readonly copyValues?: boolean;
+        readonly expectedRevision: number;
+        readonly propertyDefinitionId: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.duplicateDefinitionCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      mocks.propertyMutationWorkspace = 'duplicated';
+      return success({
+        response: {
+          definition: {
+            datatype: 'url',
+            hidden: false,
+            mandatory: false,
+            name: 'Reference URL Copy',
+            propertyDefinitionId: 'url-property-copy',
+            revision: 1,
+          },
+        },
+      });
+    },
     runEffectRequest: (current: FakeEffect<unknown>) =>
       current.result.ok
         ? Promise.resolve(current.result.value)
@@ -508,10 +667,14 @@ beforeEach(() => {
   mocks.capabilityAttempts = 0;
   mocks.definitionCapabilityAllowed = true;
   mocks.definitionCapabilityAttempts = 0;
+  mocks.deleteDefinitionCalls.length = 0;
+  mocks.deletionImpactCalls.length = 0;
+  mocks.duplicateDefinitionCalls.length = 0;
   mocks.collectionCalls.length = 0;
   mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
+  mocks.propertyMutationWorkspace = 'none';
   mocks.taskAttempts = 0;
   mocks.taskCalls.length = 0;
   mocks.taskFailuresRemaining = 1;
@@ -726,6 +889,61 @@ test('creates, edits, and opens a URL through the public Ticketing surface', asy
     taskId: 'task-1',
     value: exactValue,
   });
+});
+
+test('duplicates and deletes a rendered field through governed page actions', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  await selectFieldType('url', 'URL');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
+    target: { value: 'Reference URL' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+  await screen.findByRole('textbox', { name: 'Reference URL' });
+
+  expect(screen.getByRole('button', { name: 'Duplicate Reference URL' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Delete Reference URL' })).toBeDefined();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Duplicate Reference URL' }));
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Copy current values' }));
+  await waitFor(() =>
+    expect(screen.getByRole('checkbox', { name: 'Copy current values' })).toBeChecked(),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Duplicate field' }));
+
+  await screen.findByRole('textbox', { name: 'Reference URL Copy' });
+  expect(mocks.duplicateDefinitionCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    copyValues: true,
+    expectedRevision: 1,
+    propertyDefinitionId: 'url-property-1',
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Duplicate Reference URL' })).toBeNull(),
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Reference URL Copy' }));
+  expect(await screen.findByText('Affected Tasks: 1.')).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Delete field' }));
+
+  await waitFor(() => expect(mocks.deleteDefinitionCalls).toHaveLength(1));
+  expect(mocks.deletionImpactCalls).toEqual([
+    { collectionId: 'collection-1', propertyDefinitionId: 'url-property-copy' },
+  ]);
+  expect(mocks.deleteDefinitionCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    confirmed: true,
+    expectedImpactCount: 1,
+    expectedImpactRevision: 'impact-1',
+    expectedRevision: 1,
+    propertyDefinitionId: 'url-property-copy',
+  });
+  await waitFor(() =>
+    expect(screen.queryByRole('textbox', { name: 'Reference URL Copy' })).toBeNull(),
+  );
 });
 
 test('wires a denied value-edit capability to read-only property editors', async () => {

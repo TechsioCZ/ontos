@@ -575,7 +575,7 @@ test('Checkbox duplication copies configuration and generates the first availabl
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(
     workspace.response.propertyDefinitions.map(({ name }) => name),
-    ['Approved', 'Approved Copy', 'Approved Copy 2'],
+    ['Approved', 'Approved Copy 2', 'Approved Copy'],
   );
   assert.deepEqual(workspace.response.tasks, [
     {

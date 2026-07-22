@@ -13,6 +13,7 @@ import type {
   TaskPropertyDefinition,
 } from '../shared/task-property-definition.ts';
 import type { TaskPropertyDeletionImpact } from '../shared/task-property-deletion-impact.ts';
+import { resolveTaskPropertyDefinitionValueCopy } from '../shared/task-property-definition-value-copy-policy.ts';
 import { statusDefinitionFromParts, statusGroupLabel } from './status-property.ts';
 
 interface TaskPropertyDefinitionLifecycleTarget {
@@ -57,29 +58,6 @@ const intrinsicPropertyDatatypeValues = [
   'last_edited_by',
   'last_edited_time',
 ] as const satisfies readonly TaskPropertyDefinition['datatype'][];
-
-type IntrinsicPropertyDatatype = (typeof intrinsicPropertyDatatypeValues)[number];
-
-const intrinsicPropertyDatatypes: ReadonlySet<string> = new Set(intrinsicPropertyDatatypeValues);
-
-const isIntrinsicPropertyDatatype = (datatype: string): datatype is IntrinsicPropertyDatatype =>
-  intrinsicPropertyDatatypes.has(datatype);
-
-export const shouldCopyTaskPropertyDefinitionValues = ({
-  datatype,
-  requestedCopyValues,
-}: {
-  readonly datatype: string;
-  readonly requestedCopyValues: boolean;
-}): boolean => {
-  if (datatype === 'date_range') {
-    return true;
-  }
-  if (isIntrinsicPropertyDatatype(datatype) || datatype === 'text') {
-    return false;
-  }
-  return requestedCopyValues;
-};
 
 interface ImpactCountRow {
   readonly impactCount: number;
@@ -1062,16 +1040,13 @@ export const getTaskPropertyDefinitionDeletionImpact = async ({
   };
 };
 
-const normalizeSelectPropertySchemaPositions = async ({
+const normalizePropertySchemaPositionsForDuplication = async ({
   source,
   tx,
 }: {
   readonly source: TaskPropertyDefinitionLifecycleTarget;
   readonly tx: CoreTransaction;
 }): Promise<void> => {
-  if (source.datatype !== 'select') {
-    return;
-  }
   await tx.execute(sql`
     with ranked_positions as materialized (
       select
@@ -1206,11 +1181,11 @@ export const duplicateTaskPropertyDefinition = async ({
   if (adapter === undefined) {
     return undefined;
   }
-  const effectiveCopyValues = shouldCopyTaskPropertyDefinitionValues({
+  const effectiveCopyValues = resolveTaskPropertyDefinitionValueCopy({
     datatype: source.datatype,
     requestedCopyValues: copyValues,
   });
-  await normalizeSelectPropertySchemaPositions({ source, tx });
+  await normalizePropertySchemaPositionsForDuplication({ source, tx });
   const result = await tx.execute(sql`
     with available_name as (
       select
@@ -1261,14 +1236,11 @@ export const duplicateTaskPropertyDefinition = async ({
       ${source.mandatory},
       available_name.name,
       ${source.numberFormat},
-      case
-        when ${source.datatype} = 'select' then (
-          select schema_position + 1
-          from positions
-          where property_definition_id = ${source.propertyDefinitionId}
-        )
-        else coalesce((select max(schema_position) from positions), 0) + 1
-      end,
+      (
+        select schema_position + 1
+        from positions
+        where property_definition_id = ${source.propertyDefinitionId}
+      ),
       ${source.schemaId},
       ${source.selectOptionOrderMode},
       ${source.tenantId}
