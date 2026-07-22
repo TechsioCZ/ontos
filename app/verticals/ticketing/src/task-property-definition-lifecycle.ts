@@ -46,7 +46,12 @@ export const shouldCopyTaskPropertyDefinitionValues = ({
   if (datatype === 'date_range') {
     return true;
   }
-  if (datatype === 'created_by' || datatype === 'created_time' || datatype === 'text') {
+  if (
+    datatype === 'created_by' ||
+    datatype === 'created_time' ||
+    datatype === 'last_edited_time' ||
+    datatype === 'text'
+  ) {
     return false;
   }
   return requestedCopyValues;
