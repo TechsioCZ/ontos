@@ -8,6 +8,12 @@ export const taskPropertyEditCapabilitySchema = Schema.Struct({
   canEdit: Schema.Literal(true),
 });
 
+export const taskPropertyDefinitionEditCapabilitySchema = Schema.Struct({
+  canEditDefinitions: Schema.Literal(true),
+});
+
 export type GetTaskPropertyEditCapabilityPayload =
   typeof getTaskPropertyEditCapabilityPayloadSchema.Type;
 export type TaskPropertyEditCapability = typeof taskPropertyEditCapabilitySchema.Type;
+export type TaskPropertyDefinitionEditCapability =
+  typeof taskPropertyDefinitionEditCapabilitySchema.Type;

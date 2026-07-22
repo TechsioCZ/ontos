@@ -12,6 +12,7 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { createFilesMediaPropertyDefinitionActionRegistration } from '../src/actions/create-files-media-property-definition.ts';
 import { uploadFilesMediaItemActionRegistration } from '../src/actions/upload-files-media-item.ts';
+import { uploadFilesMediaItemsActionRegistration } from '../src/actions/upload-files-media-items.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 
 const createdTenantIds = [];
@@ -171,6 +172,211 @@ test('an Editor uploads one generic download-only item through Ticketing and rea
   });
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [upload.response.item]);
+});
+
+test('bulk upload reports every file independently and appends successful items in submitted order', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const prior = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      bytesBase64: Buffer.from([9, 8, 7]).toString('base64'),
+      filename: 'prior',
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.equal(prior._tag, 'OperationSucceeded', JSON.stringify(prior));
+
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00]);
+  const upload = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: prior.response.taskRevision,
+      files: [
+        { bytesBase64: Buffer.from('first').toString('base64'), filename: 'first' },
+        {
+          bytesBase64: png.toString('base64'),
+          clientMimeType: 'application/pdf',
+          filename: 'rejected.pdf',
+        },
+        { bytesBase64: Buffer.from('third').toString('base64'), filename: 'third' },
+      ],
+    },
+    registration: uploadFilesMediaItemsActionRegistration,
+  });
+
+  assert.equal(upload._tag, 'OperationSucceeded', JSON.stringify(upload));
+  assert.deepEqual(upload.response.outcomes, [
+    {
+      item: upload.response.outcomes[0].item,
+      ok: true,
+    },
+    {
+      code: 'core.media.type_mismatch',
+      message: 'Detected file content conflicts with a supplied filename extension or MIME type.',
+      ok: false,
+    },
+    {
+      item: upload.response.outcomes[2].item,
+      ok: true,
+    },
+  ]);
+  assert.equal(upload.response.taskRevision, prior.response.taskRevision + 1);
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [
+    prior.response.item,
+    upload.response.outcomes[0].item,
+    upload.response.outcomes[2].item,
+  ]);
+  assert.deepEqual(
+    workspace.response.tasks[0].filesMediaItems.map(({ position }) => position),
+    [0, 1, 2],
+  );
+});
+
+test('an all-rejected bulk leaves the Files & media value Empty and the Task unchanged', async () => {
+  const previous = process.env.CORE_MEDIA_MAX_UPLOAD_BYTES;
+  process.env.CORE_MEDIA_MAX_UPLOAD_BYTES = '64';
+  try {
+    const operationContext = await createOperationIdentity();
+    const { collectionId, definition, task } =
+      await createCollectionTaskAndDefinition(operationContext);
+    const png = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00,
+    ]);
+    const upload = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: task.response.task.revision,
+        files: [
+          { bytesBase64: 'not-canonical-base64', filename: 'staged' },
+          { bytesBase64: Buffer.alloc(65).toString('base64'), filename: 'oversized' },
+          {
+            bytesBase64: png.toString('base64'),
+            clientMimeType: 'application/pdf',
+            filename: 'mismatched.pdf',
+          },
+        ],
+        propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+        taskId: task.response.task.taskId,
+      },
+      registration: uploadFilesMediaItemsActionRegistration,
+    });
+
+    assert.equal(upload._tag, 'OperationSucceeded', JSON.stringify(upload));
+    assert.deepEqual(upload.response, {
+      outcomes: [
+        {
+          code: 'ticketing.uploadFilesMediaItems.invalid_bytes',
+          message: 'Uploaded bytes must use canonical base64 encoding.',
+          ok: false,
+        },
+        {
+          code: 'core.media.upload_too_large',
+          message: 'The upload exceeds the 64 byte per-file limit.',
+          ok: false,
+        },
+        {
+          code: 'core.media.type_mismatch',
+          message:
+            'Detected file content conflicts with a supplied filename extension or MIME type.',
+          ok: false,
+        },
+      ],
+      taskRevision: task.response.task.revision,
+    });
+
+    const workspace = await runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: { collectionId },
+      registration: getTaskPropertyWorkspaceDataAccessRegistration,
+      resultCount: (response) => response.tasks.length,
+      transport: { headers: new Headers() },
+    });
+    assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+    assert.deepEqual(workspace.response.tasks[0].filesMediaItems, []);
+    assert.equal(workspace.response.tasks[0].taskRevision, task.response.task.revision);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.CORE_MEDIA_MAX_UPLOAD_BYTES;
+    } else {
+      process.env.CORE_MEDIA_MAX_UPLOAD_BYTES = previous;
+    }
+  }
+});
+
+test('a stale bulk upload preserves the currently committed Files & media items', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    expectedRevision: task.response.task.revision,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const committed = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      files: [{ bytesBase64: Buffer.from('committed').toString('base64'), filename: 'committed' }],
+    },
+    registration: uploadFilesMediaItemsActionRegistration,
+  });
+  assert.equal(committed._tag, 'OperationSucceeded', JSON.stringify(committed));
+
+  const stale = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      files: [{ bytesBase64: Buffer.from('stale').toString('base64'), filename: 'stale' }],
+    },
+    registration: uploadFilesMediaItemsActionRegistration,
+  });
+  assert.deepEqual(stale, {
+    _tag: 'OperationDomainRejected',
+    code: 'ticketing.uploadFilesMediaItems.stale',
+    message: 'The Files & media value changed elsewhere.',
+  });
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [
+    committed.response.outcomes[0].item,
+  ]);
+  assert.equal(workspace.response.tasks[0].taskRevision, committed.response.taskRevision);
 });
 
 test('Core Media accepts positively detected content when the filename agrees and MIME is absent', async () => {

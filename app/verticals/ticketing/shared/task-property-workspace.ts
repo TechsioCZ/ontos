@@ -2,6 +2,7 @@ import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { taskPropertyDefinitionSchema } from './task-property-definition.ts';
 import { filesMediaItemSchema } from './actions/upload-files-media-item.ts';
 import { textPropertyValueSchema } from './text-property.ts';
+import { dateRangeValueSchema } from './date-range-value.ts';
 
 export const checkboxPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
@@ -15,6 +16,12 @@ export const datePropertyValueSchema = Schema.Struct({
   value: Schema.NullOr(Schema.String),
 });
 
+export const dateRangePropertyValueSchema = Schema.Struct({
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  value: Schema.NullOr(dateRangeValueSchema),
+});
+
 export const idAssignmentSchema = Schema.Struct({
   displayValue: Schema.String,
   number: Schema.String,
@@ -25,6 +32,19 @@ export const selectPropertyValueSchema = Schema.Struct({
   optionId: Schema.optional(Schema.String),
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
+});
+
+export const statusPropertyValueSchema = Schema.Struct({
+  optionId: Schema.optional(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
+export const multiSelectPropertyValueSchema = Schema.Struct({
+  optionIds: Schema.Array(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  updatedAt: Schema.String,
 });
 
 export const numberPropertyValueSchema = Schema.Struct({
@@ -82,6 +102,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
   propertyDefinitions: Schema.Array(taskPropertyDefinitionSchema),
   tasks: Schema.Array(
     Schema.Struct({
+      canvas: Schema.Json,
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       createdAt: Schema.optional(Schema.String),
       createdBy: Schema.optional(
@@ -91,14 +112,18 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
           principalId: Schema.String,
         }),
       ),
+      dateRangeValues: Schema.Array(dateRangePropertyValueSchema),
       dateValues: Schema.Array(datePropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       filesMediaItems: Schema.Array(filesMediaItemSchema),
       idAssignment: Schema.optional(idAssignmentSchema),
+      lastEditedAt: Schema.optional(Schema.String),
+      multiSelectValues: Schema.optional(Schema.Array(multiSelectPropertyValueSchema)),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
+      statusValues: Schema.Array(statusPropertyValueSchema),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
       textValues: Schema.optional(Schema.Array(textPropertyValueSchema)),

@@ -1,5 +1,5 @@
 {
-  "id": "f25b13e9-55c4-4220-9653-98993a2e82f7",
+  "id": "22e8f1e8-ef44-498d-8c58-93e0936613a1",
   "prevId": "ab448471-6429-46e1-827e-e2b44a2533dd",
   "version": "7",
   "dialect": "postgresql",
@@ -1710,13 +1710,6 @@
           "notNull": true,
           "default": 1
         },
-        "schema_position": {
-          "name": "schema_position",
-          "type": "numeric(38, 18)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "extract(epoch from clock_timestamp())"
-        },
         "schema_id": {
           "name": "schema_id",
           "type": "uuid",
@@ -1815,7 +1808,7 @@
         },
         "ticketing_task_property_definitions_datatype_ck": {
           "name": "ticketing_task_property_definitions_datatype_ck",
-          "value": "\"ticketing\".\"task_property_definitions\".\"datatype\" in ('title', 'checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')"
+          "value": "\"ticketing\".\"task_property_definitions\".\"datatype\" in ('title', 'checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')"
         },
         "ticketing_task_property_definitions_select_order_ck": {
           "name": "ticketing_task_property_definitions_select_order_ck",

@@ -10,12 +10,29 @@ export declare const datePropertyValueSchema: Schema.Struct<{
   readonly revision: Schema.Finite;
   readonly value: Schema.NullOr<Schema.String>;
 }>;
+export declare const dateRangePropertyValueSchema: Schema.Struct<{
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly value: Schema.NullOr<
+    Schema.Struct<{
+      readonly endDate: Schema.String;
+      readonly endTime: Schema.NullOr<Schema.String>;
+      readonly startDate: Schema.String;
+      readonly startTime: Schema.NullOr<Schema.String>;
+    }>
+  >;
+}>;
 export declare const idAssignmentSchema: Schema.Struct<{
   readonly displayValue: Schema.String;
   readonly number: Schema.String;
   readonly propertyDefinitionId: Schema.String;
 }>;
 export declare const selectPropertyValueSchema: Schema.Struct<{
+  readonly optionId: Schema.optional<Schema.String>;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
+export declare const statusPropertyValueSchema: Schema.Struct<{
   readonly optionId: Schema.optional<Schema.String>;
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
@@ -61,18 +78,18 @@ export declare const personPropertyValueSchema: Schema.Struct<{
 }>;
 export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
   readonly collectionId: Schema.String;
-  readonly idGroups: Schema.$Array<
-    Schema.Struct<{
-      readonly number: Schema.String;
-      readonly taskIds: Schema.$Array<Schema.String>;
-    }>
-  >;
   readonly effectiveTimeZone: Schema.optional<
     Schema.Struct<{
       readonly source: Schema.Literals<
         readonly ['browser_fallback', 'configured', 'system_fallback']
       >;
       readonly timeZone: Schema.String;
+    }>
+  >;
+  readonly idGroups: Schema.$Array<
+    Schema.Struct<{
+      readonly number: Schema.String;
+      readonly taskIds: Schema.$Array<Schema.String>;
     }>
   >;
   readonly propertyDefinitions: Schema.$Array<
@@ -93,6 +110,15 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly name: Schema.String;
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'date_range'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly timeEnabled: Schema.Boolean;
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;
@@ -176,6 +202,31 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly revision: Schema.Finite;
         }>,
         Schema.Struct<{
+          readonly datatype: Schema.Literal<'status'>;
+          readonly defaultOptionId: Schema.String;
+          readonly groups: Schema.$Array<
+            Schema.Struct<{
+              readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+              readonly label: Schema.String;
+              readonly options: Schema.$Array<
+                Schema.Struct<{
+                  readonly color: Schema.String;
+                  readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+                  readonly name: Schema.String;
+                  readonly optionId: Schema.String;
+                  readonly position: Schema.Finite;
+                  readonly revision: Schema.Finite;
+                }>
+              >;
+            }>
+          >;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
           readonly datatype: Schema.Literal<'text'>;
           readonly hidden: Schema.Boolean;
           readonly mandatory: Schema.Boolean;
@@ -216,6 +267,20 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
           readonly value: Schema.NullOr<Schema.String>;
+        }>
+      >;
+      readonly dateRangeValues: Schema.$Array<
+        Schema.Struct<{
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly value: Schema.NullOr<
+            Schema.Struct<{
+              readonly endDate: Schema.String;
+              readonly endTime: Schema.NullOr<Schema.String>;
+              readonly startDate: Schema.String;
+              readonly startTime: Schema.NullOr<Schema.String>;
+            }>
+          >;
         }>
       >;
       readonly emailValues: Schema.$Array<
@@ -287,6 +352,13 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
             readonly revision: Schema.Finite;
           }>
         >
+      >;
+      readonly statusValues: Schema.$Array<
+        Schema.Struct<{
+          readonly optionId: Schema.optional<Schema.String>;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>
       >;
       readonly taskId: Schema.String;
       readonly taskRevision: Schema.Finite;

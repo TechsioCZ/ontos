@@ -7,6 +7,22 @@ import type {
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
 import { deleteSelectOptionActionRegistration } from '../src/actions/delete-select-option.ts';
+import { createMultiSelectOptionAndSelectActionRegistration } from '../src/actions/create-multi-select-option-and-select.ts';
+import { reorderMultiSelectOptionsActionRegistration } from '../src/actions/reorder-multi-select-options.ts';
+import { updateMultiSelectOptionActionRegistration } from '../src/actions/update-multi-select-option.ts';
+import { updateMultiSelectPropertyValueActionRegistration } from '../src/actions/update-multi-select-property-value.ts';
+import { createMultiSelectOptionActionRegistration } from '../src/actions/create-multi-select-option.ts';
+import { createMultiSelectPropertyDefinitionActionRegistration } from '../src/actions/create-multi-select-property-definition.ts';
+import { updateTaskContentActionRegistration } from '../src/actions/update-task-content.ts';
+import { updateStatusOptionActionRegistration } from '../src/actions/update-status-option.ts';
+import { createStatusOptionActionRegistration } from '../src/actions/create-status-option.ts';
+import { updateStatusPropertyValueActionRegistration } from '../src/actions/update-status-property-value.ts';
+import { configureStatusDefaultActionRegistration } from '../src/actions/configure-status-default.ts';
+import { createStatusPropertyDefinitionActionRegistration } from '../src/actions/create-status-property-definition.ts';
+import { configureDateRangeTimeSupportActionRegistration } from '../src/actions/configure-date-range-time-support.ts';
+import { updateDateRangePropertyValueActionRegistration } from '../src/actions/update-date-range-property-value.ts';
+import { createDateRangePropertyDefinitionActionRegistration } from '../src/actions/create-date-range-property-definition.ts';
+import { uploadFilesMediaItemsActionRegistration } from '../src/actions/upload-files-media-items.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -49,7 +65,6 @@ import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
-import { getSelectOptionDeletionImpactDataAccessRegistration } from '../src/data-access/get-select-option-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import { groupTaskDateValuesDataAccessRegistration } from '../src/data-access/group-task-date-values.ts';
 import { queryTaskEmailValuesDataAccessRegistration } from '../src/data-access/query-task-email-values.ts';
@@ -379,28 +394,6 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyDeletionImpact', {
           attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyDeletionImpact),
-          kind: 'server',
-        }),
-      ),
-    )
-    .handle('getSelectOptionDeletionImpact', ({ params, request }) =>
-      Effect.promise(() =>
-        runCoreSdkDataAccess({
-          headers: new Headers(request.headers),
-          payload: {
-            collectionId: params.collectionId,
-            optionId: params.optionId,
-            propertyDefinitionId: params.propertyDefinitionId,
-          },
-          registration: getSelectOptionDeletionImpactDataAccessRegistration,
-          resultCount: () => 1,
-        }),
-      ).pipe(
-        Effect.flatMap((outcome) =>
-          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
-        ),
-        Effect.withSpan('ultramodern.api.ticketing.getSelectOptionDeletionImpact', {
-          attributes: operationAttributes(ticketingOperationContexts.getSelectOptionDeletionImpact),
           kind: 'server',
         }),
       ),
@@ -1076,6 +1069,345 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           kind: 'server',
         }),
       ),
+    )
+    .handle('updateTaskContentAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateTaskContentActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateTaskContentAction', {
+            attributes: operationAttributes(ticketingOperationContexts.updateTaskContentAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createStatusPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createStatusPropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createStatusPropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createStatusPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configureStatusDefaultAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureStatusDefaultActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configureStatusDefaultAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configureStatusDefaultAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateStatusPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateStatusPropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateStatusPropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateStatusPropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createStatusOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createStatusOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createStatusOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.createStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateStatusOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateStatusOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateStatusOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.updateStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createDateRangePropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createDateRangePropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createDateRangePropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createDateRangePropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateDateRangePropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateDateRangePropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateDateRangePropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateDateRangePropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configureDateRangeTimeSupportAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureDateRangeTimeSupportActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configureDateRangeTimeSupportAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configureDateRangeTimeSupportAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('uploadFilesMediaItemsAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: uploadFilesMediaItemsActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.uploadFilesMediaItemsAction', {
+          attributes: operationAttributes(ticketingOperationContexts.uploadFilesMediaItemsAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('createMultiSelectPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createMultiSelectPropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createMultiSelectPropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createMultiSelectPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createMultiSelectOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createMultiSelectOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createMultiSelectOptionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createMultiSelectOptionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateMultiSelectPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateMultiSelectPropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateMultiSelectPropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateMultiSelectPropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateMultiSelectOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateMultiSelectOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateMultiSelectOptionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateMultiSelectOptionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('reorderMultiSelectOptionsAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: reorderMultiSelectOptionsActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.reorderMultiSelectOptionsAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.reorderMultiSelectOptionsAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createMultiSelectOptionAndSelectAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createMultiSelectOptionAndSelectActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createMultiSelectOptionAndSelectAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createMultiSelectOptionAndSelectAction,
+            ),
+            kind: 'server',
+          }),
+        ),
     )
     .handle('deleteSelectOptionAction', ({ payload, request }) =>
       Effect.promise(() =>

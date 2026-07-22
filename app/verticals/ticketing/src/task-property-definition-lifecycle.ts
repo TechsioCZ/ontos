@@ -12,7 +12,8 @@ import type { TaskPropertyDeletionImpact } from '../shared/task-property-deletio
 
 interface TaskPropertyDefinitionLifecycleTarget {
   readonly cardinality: 'one' | 'unlimited' | null;
-  readonly datatype: string;
+  readonly datatype: TaskPropertyDefinition['datatype'];
+  readonly dateRangeTimeEnabled: boolean | null;
   readonly hidden: boolean;
   readonly mandatory: boolean;
   readonly name: string;
@@ -40,6 +41,27 @@ interface TaskPropertyLifecycleAdapter {
     readonly target: TaskPropertyDefinitionLifecycleTarget;
   }) => Promise<number>;
 }
+
+export const shouldCopyTaskPropertyDefinitionValues = ({
+  datatype,
+  requestedCopyValues,
+}: {
+  readonly datatype: string;
+  readonly requestedCopyValues: boolean;
+}): boolean => {
+  if (datatype === 'date_range') {
+    return true;
+  }
+  if (
+    datatype === 'created_by' ||
+    datatype === 'created_time' ||
+    datatype === 'last_edited_time' ||
+    datatype === 'text'
+  ) {
+    return false;
+  }
+  return requestedCopyValues;
+};
 
 interface ImpactCountRow {
   readonly impactCount: number;
@@ -234,6 +256,40 @@ const dateLifecycleAdapter: TaskPropertyLifecycleAdapter = {
       where value.property_definition_id = ${target.propertyDefinitionId}
         and value.tenant_id = ${target.tenantId}
         and value.value is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
+const dateRangeLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ source, target, tx }) => {
+    await tx.execute(sql`
+      insert into ticketing.task_date_range_values (
+        end_date, end_time, property_definition_id, task_id, tenant_id, start_date, start_time
+      )
+      select source_value.end_date, source_value.end_time, ${target.propertyDefinitionId},
+        source_value.task_id, source_value.tenant_id, source_value.start_date, source_value.start_time
+      from ticketing.task_date_range_values as source_value
+      where source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_date_range_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_date_range_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.start_date is not null and value.end_date is not null
     `);
     return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
   },
@@ -559,8 +615,10 @@ const lifecycleAdapters = {
   created_by: intrinsicLifecycleAdapter,
   created_time: intrinsicLifecycleAdapter,
   date: dateLifecycleAdapter,
+  date_range: dateRangeLifecycleAdapter,
   email: emailLifecycleAdapter,
   id: idLifecycleAdapter,
+  last_edited_time: intrinsicLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
   phone: phoneLifecycleAdapter,
@@ -601,6 +659,7 @@ export const findTaskPropertyDefinitionLifecycleTarget = async ({
       select
         configuration.cardinality,
         definition.datatype,
+        definition.date_range_time_enabled as "dateRangeTimeEnabled",
         definition.hidden,
         definition.mandatory,
         definition.name,
@@ -639,6 +698,7 @@ export const lockTaskPropertyDefinitionLifecycleTarget = async ({
       select
         configuration.cardinality,
         definition.datatype,
+        definition.date_range_time_enabled as "dateRangeTimeEnabled",
         definition.hidden,
         definition.mandatory,
         definition.name,
@@ -680,6 +740,35 @@ export const getTaskPropertyDefinitionDeletionImpact = async ({
   };
 };
 
+const normalizeSelectPropertySchemaPositions = async ({
+  source,
+  tx,
+}: {
+  readonly source: TaskPropertyDefinitionLifecycleTarget;
+  readonly tx: CoreTransaction;
+}): Promise<void> => {
+  if (source.datatype !== 'select') {
+    return;
+  }
+  await tx.execute(sql`
+    with ranked_positions as materialized (
+      select
+        sibling.property_definition_id,
+        (row_number() over (
+          order by sibling.schema_position, sibling.property_definition_id
+        ) * 2)::numeric(38, 18) as schema_position
+      from ticketing.task_property_definitions as sibling
+      where sibling.schema_id = ${source.schemaId}
+        and sibling.tenant_id = ${source.tenantId}
+    )
+    update ticketing.task_property_definitions as sibling
+    set schema_position = ranked_positions.schema_position
+    from ranked_positions
+    where sibling.property_definition_id = ranked_positions.property_definition_id
+      and sibling.tenant_id = ${source.tenantId}
+  `);
+};
+
 export const duplicateTaskPropertyDefinition = async ({
   copyValues,
   source,
@@ -693,25 +782,11 @@ export const duplicateTaskPropertyDefinition = async ({
   if (adapter === undefined) {
     return undefined;
   }
-  if (source.datatype === 'select') {
-    await tx.execute(sql`
-      with ranked_positions as materialized (
-        select
-          sibling.property_definition_id,
-          (row_number() over (
-            order by sibling.schema_position, sibling.property_definition_id
-          ) * 2)::numeric(38, 18) as schema_position
-        from ticketing.task_property_definitions as sibling
-        where sibling.schema_id = ${source.schemaId}
-          and sibling.tenant_id = ${source.tenantId}
-      )
-      update ticketing.task_property_definitions as sibling
-      set schema_position = ranked_positions.schema_position
-      from ranked_positions
-      where sibling.property_definition_id = ranked_positions.property_definition_id
-        and sibling.tenant_id = ${source.tenantId}
-    `);
-  }
+  const effectiveCopyValues = shouldCopyTaskPropertyDefinitionValues({
+    datatype: source.datatype,
+    requestedCopyValues: copyValues,
+  });
+  await normalizeSelectPropertySchemaPositions({ source, tx });
   const result = await tx.execute(sql`
     with available_name as (
       select
@@ -745,6 +820,7 @@ export const duplicateTaskPropertyDefinition = async ({
     )
     insert into ticketing.task_property_definitions (
       datatype,
+      date_range_time_enabled,
       hidden,
       mandatory,
       name,
@@ -756,6 +832,7 @@ export const duplicateTaskPropertyDefinition = async ({
     )
     select
       ${source.datatype},
+      ${source.dateRangeTimeEnabled},
       ${source.datatype === 'text' ? false : source.hidden},
       ${source.mandatory},
       available_name.name,
@@ -775,6 +852,7 @@ export const duplicateTaskPropertyDefinition = async ({
     returning
       ${source.cardinality}::text as cardinality,
       datatype,
+      date_range_time_enabled as "timeEnabled",
       number_format as format,
       hidden,
       mandatory,
@@ -797,7 +875,7 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (target.datatype === 'select') {
@@ -845,7 +923,23 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
+    return definition;
+  }
+  if (target.datatype === 'date_range') {
+    if (source.dateRangeTimeEnabled === null) {
+      throw new Error('Date Range time configuration is missing.');
+    }
+    const definition: TaskPropertyDefinition = {
+      datatype: 'date_range',
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+      timeEnabled: source.dateRangeTimeEnabled,
+    };
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (target.datatype === 'checkbox') {
@@ -857,13 +951,14 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (
     target.datatype === 'date' ||
     target.datatype === 'created_by' ||
     target.datatype === 'created_time' ||
+    target.datatype === 'last_edited_time' ||
     target.datatype === 'email' ||
     target.datatype === 'phone' ||
     target.datatype === 'text' ||
@@ -877,7 +972,7 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   return undefined;

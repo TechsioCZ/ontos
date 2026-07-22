@@ -190,6 +190,7 @@ const updatePersonPropertyValueActionHandler: ActionHandler<
     `);
   }
 
+  const changedAt = services.clock.now().toISOString();
   const result = await services.tx.execute(sql`
     with updated_value as (
       update ticketing.task_person_values as value
@@ -203,7 +204,7 @@ const updatePersonPropertyValueActionHandler: ActionHandler<
     updated_task as (
       update ticketing.tasks as task
       set
-        last_edited_at = statement_timestamp(),
+        last_edited_at = ${changedAt}::timestamptz,
         last_edited_by_principal_id = ${services.context.principalId},
         revision = task.revision + 1
       from updated_value

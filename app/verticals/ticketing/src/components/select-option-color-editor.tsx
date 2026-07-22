@@ -12,7 +12,7 @@ export interface SelectOptionColorEditorProps {
   readonly readOnly?: boolean;
 }
 
-export const SelectOptionColorEditor = ({
+const OptionColorEditor = ({
   availableColors,
   currentColor,
   onColorChange,
@@ -29,3 +29,6 @@ export const SelectOptionColorEditor = ({
     selectionMode="single"
   />
 );
+
+export const SelectOptionColorEditor = OptionColorEditor;
+export const MultiSelectOptionColorEditor = OptionColorEditor;

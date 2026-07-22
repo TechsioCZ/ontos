@@ -37,8 +37,18 @@ export const datePropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const dateRangePropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('date_range'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  timeEnabled: Schema.Boolean,
+});
+
 export const intrinsicPropertyDefinitionSchema = Schema.Struct({
-  datatype: Schema.Literals(['created_time', 'created_by']),
+  datatype: Schema.Literals(['created_time', 'created_by', 'last_edited_time']),
   hidden: Schema.Boolean,
   mandatory: Schema.Boolean,
   name: Schema.String,
@@ -60,6 +70,25 @@ export const selectOptionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const multiSelectOptionSchema = Schema.Struct({
+  catalogPosition: Schema.Finite,
+  color: Schema.String,
+  name: Schema.String,
+  optionId: Schema.String,
+  revision: Schema.Finite,
+  updatedAt: Schema.String,
+});
+
+export const multiSelectPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('multi_select'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  options: Schema.Array(multiSelectOptionSchema),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const selectPropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literal('select'),
   hidden: Schema.Boolean,
@@ -67,6 +96,34 @@ export const selectPropertyDefinitionSchema = Schema.Struct({
   name: Schema.String,
   optionOrderMode: selectOptionOrderModeSchema,
   options: Schema.Array(selectOptionSchema),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
+export const statusGroupKeySchema = Schema.Literals(['todo', 'in_progress', 'complete']);
+
+export const statusOptionSchema = Schema.Struct({
+  color: Schema.String,
+  group: statusGroupKeySchema,
+  name: Schema.String,
+  optionId: Schema.String,
+  position: Schema.Finite,
+  revision: Schema.Finite,
+});
+
+export const statusGroupSchema = Schema.Struct({
+  group: statusGroupKeySchema,
+  label: Schema.String,
+  options: Schema.Array(statusOptionSchema),
+});
+
+export const statusPropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('status'),
+  defaultOptionId: Schema.String,
+  groups: Schema.Array(statusGroupSchema),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
 });
@@ -131,30 +188,40 @@ export const personPropertyDefinitionSchema = Schema.Struct({
 export const taskPropertyDefinitionSchema = Schema.Union([
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
+  dateRangePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   filesMediaPropertyDefinitionSchema,
   idPropertyDefinitionSchema,
   intrinsicPropertyDefinitionSchema,
   numberPropertyDefinitionSchema,
+  multiSelectPropertyDefinitionSchema,
   personPropertyDefinitionSchema,
   phonePropertyDefinitionSchema,
   selectPropertyDefinitionSchema,
+  statusPropertyDefinitionSchema,
   textPropertyDefinitionSchema,
   urlPropertyDefinitionSchema,
 ]);
 
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
 export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
+export type DateRangePropertyDefinition = typeof dateRangePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSchema.Type;
 export type IdPropertyDefinition = typeof idPropertyDefinitionSchema.Type;
 export type IntrinsicPropertyDefinition = typeof intrinsicPropertyDefinitionSchema.Type;
 export type NumberPropertyDefinition = typeof numberPropertyDefinitionSchema.Type;
+export type MultiSelectOption = typeof multiSelectOptionSchema.Type;
+export type MultiSelectPropertyDefinition = typeof multiSelectPropertyDefinitionSchema.Type;
 export type PersonPropertyDefinition = typeof personPropertyDefinitionSchema.Type;
 export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;
 export type SelectOptionOrderMode = typeof selectOptionOrderModeSchema.Type;
 export type SelectPropertyDefinition = typeof selectPropertyDefinitionSchema.Type;
+export type StatusGroup = typeof statusGroupSchema.Type;
+export type StatusGroupKey = typeof statusGroupKeySchema.Type;
+export type StatusOption = typeof statusOptionSchema.Type;
+export type StatusPropertyDefinition = typeof statusPropertyDefinitionSchema.Type;
 export type TextPropertyDefinition = typeof textPropertyDefinitionSchema.Type;
 export type UrlPropertyDefinition = typeof urlPropertyDefinitionSchema.Type;
 export type TaskPropertyDefinition = typeof taskPropertyDefinitionSchema.Type;

@@ -31,6 +31,15 @@ export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literal<'date_range'>;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+        readonly timeEnabled: Schema.Boolean;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literal<'email'>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
@@ -110,6 +119,31 @@ export declare const duplicateTaskPropertyDefinitionActionResponseSchema: Schema
         readonly revision: Schema.Finite;
       }>,
       Schema.Struct<{
+        readonly datatype: Schema.Literal<'status'>;
+        readonly defaultOptionId: Schema.String;
+        readonly groups: Schema.$Array<
+          Schema.Struct<{
+            readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+            readonly label: Schema.String;
+            readonly options: Schema.$Array<
+              Schema.Struct<{
+                readonly color: Schema.String;
+                readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+                readonly name: Schema.String;
+                readonly optionId: Schema.String;
+                readonly position: Schema.Finite;
+                readonly revision: Schema.Finite;
+              }>
+            >;
+          }>
+        >;
+        readonly hidden: Schema.Boolean;
+        readonly mandatory: Schema.Boolean;
+        readonly name: Schema.String;
+        readonly propertyDefinitionId: Schema.String;
+        readonly revision: Schema.Finite;
+      }>,
+      Schema.Struct<{
         readonly datatype: Schema.Literal<'text'>;
         readonly hidden: Schema.Boolean;
         readonly mandatory: Schema.Boolean;
@@ -149,6 +183,15 @@ export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.
           readonly name: Schema.String;
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'date_range'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly timeEnabled: Schema.Boolean;
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;
@@ -228,6 +271,31 @@ export declare const duplicateTaskPropertyDefinitionActionOutcomeSchema: Schema.
               readonly revision: Schema.Finite;
             }>
           >;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'status'>;
+          readonly defaultOptionId: Schema.String;
+          readonly groups: Schema.$Array<
+            Schema.Struct<{
+              readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+              readonly label: Schema.String;
+              readonly options: Schema.$Array<
+                Schema.Struct<{
+                  readonly color: Schema.String;
+                  readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+                  readonly name: Schema.String;
+                  readonly optionId: Schema.String;
+                  readonly position: Schema.Finite;
+                  readonly revision: Schema.Finite;
+                }>
+              >;
+            }>
+          >;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
         }>,
