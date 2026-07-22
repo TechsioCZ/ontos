@@ -15,6 +15,7 @@ import { createStatusPropertyDefinitionActionRegistration } from '../src/actions
 import { configureDateRangeTimeSupportActionRegistration } from '../src/actions/configure-date-range-time-support.ts';
 import { updateDateRangePropertyValueActionRegistration } from '../src/actions/update-date-range-property-value.ts';
 import { createDateRangePropertyDefinitionActionRegistration } from '../src/actions/create-date-range-property-definition.ts';
+import { uploadFilesMediaItemsActionRegistration } from '../src/actions/upload-files-media-items.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -1253,6 +1254,21 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
             kind: 'server',
           }),
         ),
+    )
+    .handle('uploadFilesMediaItemsAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: uploadFilesMediaItemsActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.uploadFilesMediaItemsAction', {
+          attributes: operationAttributes(ticketingOperationContexts.uploadFilesMediaItemsAction),
+          kind: 'server',
+        }),
+      ),
     ),
 );
 

@@ -8,6 +8,7 @@ export {
   runConfigureDateRangeTimeSupportAction,
   runUpdateDateRangePropertyValueAction,
   runCreateDateRangePropertyDefinitionAction,
+  runUploadFilesMediaItemsAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,

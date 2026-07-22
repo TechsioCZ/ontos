@@ -1,10 +1,5 @@
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
-import {
-  commitMediaAssetUpload,
-  MediaUploadRejectedError,
-  rejectAction,
-  rowsFromResult,
-} from '@app/core-runtime';
+import { MediaUploadRejectedError, rejectAction, rowsFromResult } from '@app/core-runtime';
 import type {
   ActionAuditEventDescriptor,
   ActionDomainEventDescriptor,
@@ -21,11 +16,18 @@ import type {
   UploadFilesMediaItemActionPayload,
   UploadFilesMediaItemActionResponse,
 } from '../../shared/actions/upload-files-media-item.ts';
+import {
+  commitFilesMediaItem,
+  InvalidFilesMediaUploadBytesError,
+} from '../files-media-item-commit.ts';
 
 interface ItemRow {
-  readonly itemId: string;
-  readonly position: number;
   readonly taskRevision: number;
+}
+
+interface TargetRow {
+  readonly nextPosition: number;
+  readonly taskId: string;
 }
 
 const evidence = (
@@ -63,23 +65,20 @@ const domainEvent = {
   UploadFilesMediaItemActionResponse
 >;
 
-const decodeBase64 = (input: string): Uint8Array => {
-  const bytes = Buffer.from(input, 'base64');
-  if (bytes.toString('base64') !== input) {
-    throw rejectAction({
-      code: 'ticketing.uploadFilesMediaItem.invalid_bytes',
-      message: 'Uploaded bytes must use canonical base64 encoding.',
-    });
-  }
-  return bytes;
-};
-
 const handler: ActionHandler<
   UploadFilesMediaItemActionPayload,
   UploadFilesMediaItemActionResponse
 > = async (input, services) => {
   const selected = await services.tx.execute(sql`
-    select task.task_id
+    select
+      coalesce((
+        select max(item.position) + 1
+        from ticketing.task_files_media_items as item
+        where item.task_id = task.task_id
+          and item.property_definition_id = definition.property_definition_id
+          and item.tenant_id = task.tenant_id
+      ), 0)::integer as "nextPosition",
+      task.task_id as "taskId"
     from ticketing.tasks as task
     inner join ticketing.task_schemas as schema
       on schema.collection_id = task.collection_id
@@ -94,24 +93,34 @@ const handler: ActionHandler<
       and definition.property_definition_id = ${input.propertyDefinitionId}
     for update of task
   `);
-  if (rowsFromResult(selected).length === 0) {
+  const target = rowsFromResult<TargetRow>(selected).at(0);
+  if (target === undefined) {
     throw rejectAction({
       code: 'ticketing.uploadFilesMediaItem.target_missing',
       message: 'The Task or Files & media Task Property Definition was not found.',
     });
   }
 
-  let asset;
+  let committedItem;
   try {
-    asset = await commitMediaAssetUpload(
+    committedItem = await commitFilesMediaItem(
       {
-        bytes: decodeBase64(input.bytesBase64),
+        bytesBase64: input.bytesBase64,
         ...(input.clientMimeType === undefined ? {} : { clientMimeType: input.clientMimeType }),
         filename: input.filename,
+        position: target.nextPosition,
+        propertyDefinitionId: input.propertyDefinitionId,
+        taskId: input.taskId,
       },
       { context: services.context, tx: services.tx },
     );
   } catch (error) {
+    if (error instanceof InvalidFilesMediaUploadBytesError) {
+      throw rejectAction({
+        code: 'ticketing.uploadFilesMediaItem.invalid_bytes',
+        message: 'Uploaded bytes must use canonical base64 encoding.',
+      });
+    }
     if (error instanceof MediaUploadRejectedError) {
       throw rejectAction({ code: error.code, message: error.message });
     }
@@ -120,30 +129,13 @@ const handler: ActionHandler<
 
   const changedAt = services.clock.now().toISOString();
   const result = await services.tx.execute(sql`
-    with inserted_item as (
-      insert into ticketing.task_files_media_items (
-        media_asset_id, position, property_definition_id, task_id, tenant_id
-      )
-      select
-        ${asset.mediaAssetId},
-        coalesce(max(item.position) + 1, 0),
-        ${input.propertyDefinitionId},
-        ${input.taskId},
-        ${services.context.tenantId}
-      from ticketing.task_files_media_items as item
-      where item.task_id = ${input.taskId}
-        and item.property_definition_id = ${input.propertyDefinitionId}
-        and item.tenant_id = ${services.context.tenantId}
-      returning item_id, position, task_id
-    ),
-    updated_task as (
+    with updated_task as (
       update ticketing.tasks as task
       set
         last_edited_at = ${changedAt}::timestamptz,
         last_edited_by_principal_id = ${services.context.principalId},
         revision = task.revision + 1
-      from inserted_item
-      where task.task_id = inserted_item.task_id
+      where task.task_id = ${input.taskId}
         and task.tenant_id = ${services.context.tenantId}
       returning task.last_edited_at, task.revision, task.task_id
     ),
@@ -161,12 +153,8 @@ const handler: ActionHandler<
       from updated_task
       returning task_id
     )
-    select
-      inserted_item.item_id as "itemId",
-      inserted_item.position,
-      updated_task.revision as "taskRevision"
-    from inserted_item
-    inner join updated_task using (task_id)
+    select updated_task.revision as "taskRevision"
+    from updated_task
     inner join created_revision using (task_id)
   `);
   const item = rowsFromResult<ItemRow>(result).at(0);
@@ -177,12 +165,7 @@ const handler: ActionHandler<
     });
   }
   return {
-    item: {
-      ...asset,
-      itemId: item.itemId,
-      position: item.position,
-      propertyDefinitionId: input.propertyDefinitionId,
-    },
+    item: committedItem,
     taskRevision: item.taskRevision,
   };
 };
