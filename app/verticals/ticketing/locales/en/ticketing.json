@@ -63,6 +63,12 @@
         "details": "Details",
         "name": "Created time"
       },
+      "last_edited_time": {
+        "create": "Add Last edited time property",
+        "creating": "Adding Last edited time property",
+        "details": "Details",
+        "name": "Last edited time"
+      },
       "inactive": "inactive"
     },
     "phone": {

@@ -6,6 +6,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { updateTaskContentActionRegistration } from '../src/actions/update-task-content.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -1052,6 +1053,26 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
           kind: 'server',
         }),
       ),
+    )
+    .handle('updateTaskContentAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateTaskContentActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateTaskContentAction', {
+            attributes: operationAttributes(ticketingOperationContexts.updateTaskContentAction),
+            kind: 'server',
+          }),
+        ),
     ),
 );
 

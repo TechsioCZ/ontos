@@ -25,6 +25,24 @@ export const intrinsicTaskPropertyQueryOperationSchema = Schema.Union([
     direction: Schema.Literals(['ascending', 'descending']),
   }),
   Schema.TaggedStruct('CreatedTimeGroup', {}),
+  Schema.TaggedStruct('LastEditedTimeSearch', { value: Schema.String }),
+  Schema.TaggedStruct('LastEditedTimeFilter', {
+    endValue: Schema.optional(Schema.String),
+    operator: Schema.Literals([
+      'exact',
+      'before',
+      'after',
+      'on_or_before',
+      'on_or_after',
+      'local_day',
+      'local_range',
+    ]),
+    value: Schema.String,
+  }),
+  Schema.TaggedStruct('LastEditedTimeSort', {
+    direction: Schema.Literals(['ascending', 'descending']),
+  }),
+  Schema.TaggedStruct('LastEditedTimeGroup', {}),
 ]);
 
 export const queryIntrinsicTaskPropertiesPayloadSchema = Schema.Struct({
@@ -44,6 +62,7 @@ export const intrinsicTaskQueryRowSchema = Schema.Struct({
       principalId: Schema.String,
     }),
   ),
+  lastEditedAt: Schema.optional(Schema.String),
   taskId: Schema.String,
 });
 

@@ -188,6 +188,7 @@ test('schema configuration trims the name and preserves Checkbox values and Task
   assert.deepEqual(workspace.response.propertyDefinitions, [configured.response.definition]);
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -576,6 +577,7 @@ test('Checkbox duplication copies configuration and generates the first availabl
   );
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: configured.response.definition.propertyDefinitionId,

@@ -63,6 +63,12 @@
         "details": "Podrobnosti",
         "name": "Čas vytvoření"
       },
+      "last_edited_time": {
+        "create": "Přidat vlastnost Čas poslední úpravy",
+        "creating": "Přidávání vlastnosti Čas poslední úpravy",
+        "details": "Podrobnosti",
+        "name": "Čas poslední úpravy"
+      },
       "inactive": "neaktivní"
     },
     "phone": {

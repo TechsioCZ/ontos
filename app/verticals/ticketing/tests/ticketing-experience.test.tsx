@@ -28,7 +28,7 @@ const mocks = rs.hoisted(() => ({
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
   intrinsicCalls: [] as BoundaryCall<{
     readonly collectionId: string;
-    readonly datatype: 'created_by' | 'created_time';
+    readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
     readonly mandatory: boolean;
     readonly name: string;
   }>[],
@@ -88,6 +88,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'updateDatePropertyValueAction',
     'updateEmailPropertyValueAction',
     'updatePhonePropertyValueAction',
+    'updateTaskContentAction',
     'updateTextPropertyValueAction',
     'updateUrlPropertyValueAction',
   ]) {
@@ -116,6 +117,10 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.intrinsic.created_time.details': 'Details',
         'ticketing.intrinsic.created_time.name': 'Created time',
         'ticketing.intrinsic.inactive': 'inactive',
+        'ticketing.intrinsic.last_edited_time.create': 'Add Last edited time property',
+        'ticketing.intrinsic.last_edited_time.creating': 'Adding Last edited time property',
+        'ticketing.intrinsic.last_edited_time.details': 'Details',
+        'ticketing.intrinsic.last_edited_time.name': 'Last edited time',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
         'ticketing.phone.call': 'Call',
@@ -196,6 +201,7 @@ rs.mock('../src/api/ticketing-client', () => {
       schemaId: 'schema-1',
     },
     task: {
+      canvas: {},
       collectionId,
       createdAt: '2026-07-20T12:00:00.000Z',
       createdByPrincipalId: 'principal-1',
@@ -253,11 +259,11 @@ rs.mock('../src/api/ticketing-client', () => {
         effectiveTimeZone: { source: 'browser', timeZone: 'Europe/Prague' },
         propertyDefinitions: [
           {
-            datatype: 'created_time',
+            datatype: mocks.intrinsicCalls.at(-1)?.payload.datatype ?? 'created_time',
             hidden: false,
             mandatory: false,
-            name: 'Created time',
-            propertyDefinitionId: 'created-time-1',
+            name: mocks.intrinsicCalls.at(-1)?.payload.name ?? 'Created time',
+            propertyDefinitionId: 'intrinsic-time-1',
             revision: 1,
           },
           {
@@ -271,10 +277,12 @@ rs.mock('../src/api/ticketing-client', () => {
         ],
         tasks: [
           {
+            canvas: {},
             checkboxValues: [],
             createdAt: aggregate.task.createdAt,
             dateValues: [],
             emailValues: [],
+            lastEditedAt: aggregate.task.lastEditedAt,
             numberValues: [],
             phoneValues: [],
             selectValues: [],
@@ -322,7 +330,7 @@ rs.mock('../src/api/ticketing-client', () => {
     runCreateIntrinsicPropertyDefinitionAction: (
       payload: {
         readonly collectionId: string;
-        readonly datatype: 'created_by' | 'created_time';
+        readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
         readonly mandatory: boolean;
         readonly name: string;
       },
@@ -567,6 +575,25 @@ test('creates and renders an intrinsic property through the application path', a
   fireEvent.click(screen.getByText('Details'));
   expect(document.querySelector('details')?.hasAttribute('open')).toBe(true);
   expect(document.querySelectorAll('time')[1]?.textContent).toContain(':00:00');
+});
+
+test('creates a Last edited time definition through the existing UI-kit action path', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  fireEvent.click(screen.getByRole('button', { name: 'Add Last edited time property' }));
+
+  await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
+  expect(mocks.intrinsicCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    datatype: 'last_edited_time',
+    mandatory: false,
+    name: 'Last edited time',
+  });
+  await waitFor(() => expect(document.querySelectorAll('time')).toHaveLength(2));
+  expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T12:00:00.000Z');
 });
 
 test('creates, edits, and opens a URL through the public Ticketing surface', async () => {

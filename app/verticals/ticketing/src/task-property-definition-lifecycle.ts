@@ -474,6 +474,7 @@ const lifecycleAdapters = {
   date: dateLifecycleAdapter,
   email: emailLifecycleAdapter,
   id: idLifecycleAdapter,
+  last_edited_time: intrinsicLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
   phone: phoneLifecycleAdapter,
@@ -709,6 +710,7 @@ export const duplicateTaskPropertyDefinition = async ({
     target.datatype === 'date' ||
     target.datatype === 'created_by' ||
     target.datatype === 'created_time' ||
+    target.datatype === 'last_edited_time' ||
     target.datatype === 'email' ||
     target.datatype === 'phone' ||
     target.datatype === 'text' ||

@@ -234,6 +234,7 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
   ]);
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -295,6 +296,7 @@ test('concurrent Task and Checkbox definition creation still resolves the value 
   assert.equal(workspace._tag, 'OperationSucceeded');
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: definition.response.definition.propertyDefinitionId,

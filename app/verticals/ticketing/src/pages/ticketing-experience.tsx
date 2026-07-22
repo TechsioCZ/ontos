@@ -39,6 +39,7 @@ import { PhonePropertyEditor } from '../components/phone-property-editor';
 import {
   CreatedByPresentation,
   CreatedTimePresentation,
+  LastEditedTimePresentation,
 } from '../components/intrinsic-property-presentation';
 import { TextPropertyEditor } from '../components/text-property-editor';
 import { TextPropertyDuplication } from '../components/text-property-duplication';
@@ -132,10 +133,14 @@ export const TicketingExperience = () => {
   );
   const [isCreatingUrlDefinition, setIsCreatingUrlDefinition] = useState(false);
   const [creatingIntrinsicDatatype, setCreatingIntrinsicDatatype] = useState<
-    'created_by' | 'created_time'
+    'created_by' | 'created_time' | 'last_edited_time'
   >();
   const [intrinsicDefinitionIdempotencyKeys, setIntrinsicDefinitionIdempotencyKeys] = useState(
-    () => ({ created_by: crypto.randomUUID(), created_time: crypto.randomUUID() }),
+    () => ({
+      created_by: crypto.randomUUID(),
+      created_time: crypto.randomUUID(),
+      last_edited_time: crypto.randomUUID(),
+    }),
   );
 
   const handleCreateTask = async () => {
@@ -609,7 +614,9 @@ export const TicketingExperience = () => {
     }
   };
 
-  const handleCreateIntrinsicDefinition = async (datatype: 'created_by' | 'created_time') => {
+  const handleCreateIntrinsicDefinition = async (
+    datatype: 'created_by' | 'created_time' | 'last_edited_time',
+  ) => {
     if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
@@ -827,7 +834,7 @@ export const TicketingExperience = () => {
             </Button>
           </div>
           <div className="ticketing:mt-4 ticketing:flex ticketing:flex-wrap ticketing:gap-3">
-            {(['created_time', 'created_by'] as const).map((datatype) => (
+            {(['created_time', 'created_by', 'last_edited_time'] as const).map((datatype) => (
               <Button
                 isLoading={creatingIntrinsicDatatype === datatype}
                 key={datatype}
@@ -936,6 +943,29 @@ export const TicketingExperience = () => {
                         inactive={task.createdBy.inactive}
                         inactiveLabel={t('ticketing.intrinsic.inactive')}
                       />
+                    </div>
+                  );
+                }
+                if (definition.datatype === 'last_edited_time') {
+                  return task.lastEditedAt === undefined ||
+                    openedTaskPropertyWorkspace.effectiveTimeZone === undefined ? null : (
+                    <div key={definition.propertyDefinitionId}>
+                      <span className="ticketing:font-bold">{definition.name}: </span>
+                      <LastEditedTimePresentation
+                        detail={false}
+                        instant={task.lastEditedAt}
+                        locale={language}
+                        timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
+                      />
+                      <details>
+                        <summary>{t('ticketing.intrinsic.last_edited_time.details')}</summary>
+                        <LastEditedTimePresentation
+                          detail
+                          instant={task.lastEditedAt}
+                          locale={language}
+                          timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
+                        />
+                      </details>
                     </div>
                   );
                 }

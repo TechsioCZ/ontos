@@ -145,6 +145,9 @@ import type {
   DuplicateTaskActionFailure,
   DuplicateTaskActionOutcome,
   DuplicateTaskActionPayload,
+  UpdateTaskContentActionFailure,
+  UpdateTaskContentActionOutcome,
+  UpdateTaskContentActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -159,6 +162,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | UpdateTaskContentActionFailure
   | DuplicateTaskActionFailure
   | ConfigureIdPropertyPrefixActionFailure
   | CreateIdPropertyDefinitionActionFailure
@@ -1290,6 +1294,33 @@ export const runDuplicateTaskAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.duplicateTaskAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUpdateTaskContentAction = (
+  payload: UpdateTaskContentActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateTaskContentActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateTaskContentAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateTaskContentAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };
