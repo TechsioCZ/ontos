@@ -55,13 +55,10 @@ const intrinsicPropertyDatatypeValues = [
 
 type IntrinsicPropertyDatatype = (typeof intrinsicPropertyDatatypeValues)[number];
 
-const intrinsicPropertyDatatypes = new Set<TaskPropertyDefinition['datatype']>(
-  intrinsicPropertyDatatypeValues,
-);
+const intrinsicPropertyDatatypes: ReadonlySet<string> = new Set(intrinsicPropertyDatatypeValues);
 
-const isIntrinsicPropertyDatatype = (
-  datatype: TaskPropertyDefinition['datatype'],
-): datatype is IntrinsicPropertyDatatype => intrinsicPropertyDatatypes.has(datatype);
+const isIntrinsicPropertyDatatype = (datatype: string): datatype is IntrinsicPropertyDatatype =>
+  intrinsicPropertyDatatypes.has(datatype);
 
 export const shouldCopyTaskPropertyDefinitionValues = ({
   datatype,
