@@ -12,6 +12,7 @@ import { createTaskCollectionActionRegistration } from '../src/actions/create-ta
 import { updateCheckboxPropertyValueActionRegistration as updateCheckboxPropertyValueDescriptorRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
+import { getTaskPropertyDefinitionEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-definition-edit-capability.ts';
 
 const createdTenantIds = [];
 
@@ -234,6 +235,7 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
   ]);
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -241,10 +243,12 @@ test('an Editor creates a Checkbox definition and an existing Task reads false',
           value: false,
         },
       ],
+      dateRangeValues: [],
       dateValues: [],
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
+      statusValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
@@ -295,6 +299,7 @@ test('concurrent Task and Checkbox definition creation still resolves the value 
   assert.equal(workspace._tag, 'OperationSucceeded');
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -302,10 +307,12 @@ test('concurrent Task and Checkbox definition creation still resolves the value 
           value: false,
         },
       ],
+      dateRangeValues: [],
       dateValues: [],
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
+      statusValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
@@ -700,6 +707,29 @@ test('collection roles separate schema management, value editing, and read acces
     assert.equal(capabilityChecks[0].permission, 'edit_task_property_values');
     if (capability._tag === 'OperationSucceeded') {
       assert.deepEqual(capability.response, { canEdit: true });
+    }
+  }
+
+  for (const role of ['Editor', 'User']) {
+    const capabilityChecks = [];
+    // oxlint-disable-next-line no-await-in-loop -- The role responses are independently asserted.
+    const capability = await runDataAccess({
+      options: {
+        authorizationChecker: authorizationForRole(role, capabilityChecks),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: { collectionId },
+      registration: getTaskPropertyDefinitionEditCapabilityDataAccessRegistration,
+      resultCount: () => 1,
+      transport: { headers: new Headers() },
+    });
+    assert.equal(
+      capability._tag,
+      role === 'Editor' ? 'OperationSucceeded' : 'OperationAuthorizationDenied',
+    );
+    assert.equal(capabilityChecks[0].permission, 'manage_property_definitions');
+    if (capability._tag === 'OperationSucceeded') {
+      assert.deepEqual(capability.response, { canEditDefinitions: true });
     }
   }
 });

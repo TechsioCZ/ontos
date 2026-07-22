@@ -17,11 +17,13 @@ import type {
   ConfigureTaskPropertyDefinitionActionResponse,
 } from '../../shared/actions/configure-task-property-definition.ts';
 import type {
+  MultiSelectOption,
   SelectOption,
   SelectOptionOrderMode,
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
+import { getStatusDefinition } from '../status-property.ts';
 import { taskPropertyDefinitionFromRow } from '../task-property-definition-projection.ts';
 import type { TaskPropertyDefinitionRow } from '../task-property-definition-projection.ts';
 
@@ -36,7 +38,31 @@ interface SelectDefinitionRow {
   readonly revision: number;
 }
 
-type ConfigurableDefinitionRow = SelectDefinitionRow | TaskPropertyDefinitionRow;
+interface StatusDefinitionRow {
+  readonly collectionLocale: string;
+  readonly datatype: 'status';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
+
+interface MultiSelectDefinitionRow {
+  readonly collectionLocale: string;
+  readonly datatype: 'multi_select';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
+
+type ConfigurableDefinitionRow =
+  | MultiSelectDefinitionRow
+  | SelectDefinitionRow
+  | StatusDefinitionRow
+  | TaskPropertyDefinitionRow;
 
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
@@ -79,6 +105,49 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const projectDefinition = async (
     row: ConfigurableDefinitionRow,
   ): Promise<TaskPropertyDefinition> => {
+    if (row.datatype === 'multi_select') {
+      const optionResult = await services.tx.execute(sql`
+        select
+          option.catalog_position as "catalogPosition",
+          option.color,
+          option.name,
+          option.option_id as "optionId",
+          option.revision,
+          to_char(
+            option.updated_at at time zone 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+          ) as "updatedAt"
+        from ticketing.multi_select_options as option
+        where option.property_definition_id = ${row.propertyDefinitionId}
+          and option.tenant_id = ${services.context.tenantId}
+        order by option.catalog_position, option.option_id
+      `);
+      return {
+        datatype: row.datatype,
+        hidden: row.hidden,
+        mandatory: row.mandatory,
+        name: row.name,
+        options: [...rowsFromResult<MultiSelectOption>(optionResult)],
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+      };
+    }
+    if (row.datatype === 'status') {
+      const definition = await getStatusDefinition({
+        collectionId: input.collectionId,
+        db: services.tx,
+        locale: row.collectionLocale,
+        propertyDefinitionId: row.propertyDefinitionId,
+        tenantId: services.context.tenantId,
+      });
+      if (definition === undefined) {
+        throw rejectAction({
+          code: 'ticketing.configureTaskPropertyDefinition.status_configuration_missing',
+          message: 'The Status configuration is unavailable.',
+        });
+      }
+      return definition;
+    }
     if (row.datatype !== 'select') {
       return taskPropertyDefinitionFromRow(row);
     }
@@ -122,6 +191,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       collection.locale as "collectionLocale",
       person_configuration.cardinality,
       definition.datatype,
+      definition.date_range_time_enabled as "timeEnabled",
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,
@@ -200,6 +270,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
           and person_configuration.tenant_id = definition.tenant_id
       ) as cardinality,
       definition.datatype,
+      definition.date_range_time_enabled as "timeEnabled",
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,

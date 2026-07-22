@@ -26,9 +26,11 @@ const mocks = rs.hoisted(() => ({
   capabilityAllowed: true,
   capabilityAttempts: 0,
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
+  definitionCapabilityAllowed: true,
+  definitionCapabilityAttempts: 0,
   intrinsicCalls: [] as BoundaryCall<{
     readonly collectionId: string;
-    readonly datatype: 'created_by' | 'created_time';
+    readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
     readonly mandatory: boolean;
     readonly name: string;
   }>[],
@@ -79,6 +81,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'filterTaskCheckboxValues',
     'getTaskCollection',
     'getTaskPropertyEditCapability',
+    'getTaskPropertyDefinitionEditCapability',
     'getTaskPropertyWorkspace',
     'groupTaskDateValues',
     'queryIntrinsicTaskProperties',
@@ -88,6 +91,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'updateDatePropertyValueAction',
     'updateEmailPropertyValueAction',
     'updatePhonePropertyValueAction',
+    'updateTaskContentAction',
     'updateTextPropertyValueAction',
     'updateUrlPropertyValueAction',
   ]) {
@@ -105,6 +109,13 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.date.definitionCreating': 'Creating Date property',
         'ticketing.date.definitionName': 'Date property name',
         'ticketing.date.empty': 'Empty',
+        'ticketing.dateRange.definitionCreate': 'Create Date Range property',
+        'ticketing.dateRange.definitionCreating': 'Creating Date Range property',
+        'ticketing.dateRange.definitionName': 'Date Range property name',
+        'ticketing.dateRange.endDate': 'End date',
+        'ticketing.dateRange.save': 'Save range',
+        'ticketing.dateRange.startDate': 'Start date',
+        'ticketing.dateRange.timeSupport': 'Include time',
         'ticketing.email.definitionCreate': 'Create Email property',
         'ticketing.email.definitionCreating': 'Creating Email property',
         'ticketing.email.definitionName': 'Email property name',
@@ -116,6 +127,10 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.intrinsic.created_time.details': 'Details',
         'ticketing.intrinsic.created_time.name': 'Created time',
         'ticketing.intrinsic.inactive': 'inactive',
+        'ticketing.intrinsic.last_edited_time.create': 'Add Last edited time property',
+        'ticketing.intrinsic.last_edited_time.creating': 'Adding Last edited time property',
+        'ticketing.intrinsic.last_edited_time.details': 'Details',
+        'ticketing.intrinsic.last_edited_time.name': 'Last edited time',
         'ticketing.language.en': 'English',
         'ticketing.language.switcher': 'Language',
         'ticketing.phone.call': 'Call',
@@ -196,6 +211,7 @@ rs.mock('../src/api/ticketing-client', () => {
       schemaId: 'schema-1',
     },
     task: {
+      canvas: {},
       collectionId,
       createdAt: '2026-07-20T12:00:00.000Z',
       createdByPrincipalId: 'principal-1',
@@ -241,6 +257,12 @@ rs.mock('../src/api/ticketing-client', () => {
       }
       return success(aggregate);
     },
+    getTaskPropertyDefinitionEditCapability: () => {
+      mocks.definitionCapabilityAttempts += 1;
+      return mocks.definitionCapabilityAllowed
+        ? success({ canEditDefinitions: true })
+        : failure({ httpStatus: 403, message: 'User cannot change the schema.', ok: false });
+    },
     getTaskPropertyEditCapability: () => {
       mocks.capabilityAttempts += 1;
       return mocks.capabilityAllowed
@@ -253,11 +275,11 @@ rs.mock('../src/api/ticketing-client', () => {
         effectiveTimeZone: { source: 'browser', timeZone: 'Europe/Prague' },
         propertyDefinitions: [
           {
-            datatype: 'created_time',
+            datatype: mocks.intrinsicCalls.at(-1)?.payload.datatype ?? 'created_time',
             hidden: false,
             mandatory: false,
-            name: 'Created time',
-            propertyDefinitionId: 'created-time-1',
+            name: mocks.intrinsicCalls.at(-1)?.payload.name ?? 'Created time',
+            propertyDefinitionId: 'intrinsic-time-1',
             revision: 1,
           },
           {
@@ -271,13 +293,17 @@ rs.mock('../src/api/ticketing-client', () => {
         ],
         tasks: [
           {
+            canvas: {},
             checkboxValues: [],
             createdAt: aggregate.task.createdAt,
+            dateRangeValues: [],
             dateValues: [],
             emailValues: [],
+            lastEditedAt: aggregate.task.lastEditedAt,
             numberValues: [],
             phoneValues: [],
             selectValues: [],
+            statusValues: [],
             taskId,
             taskRevision: 1,
             title: '',
@@ -302,6 +328,25 @@ rs.mock('../src/api/ticketing-client', () => {
           },
         },
       }),
+    runCreateDateRangePropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+      readonly timeEnabled: boolean;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'date_range',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'date-range-property-1',
+            revision: 1,
+            timeEnabled: payload.timeEnabled,
+          },
+        },
+      }),
     runCreateEmailPropertyDefinitionAction: (payload: {
       readonly collectionId: string;
       readonly mandatory: boolean;
@@ -322,7 +367,7 @@ rs.mock('../src/api/ticketing-client', () => {
     runCreateIntrinsicPropertyDefinitionAction: (
       payload: {
         readonly collectionId: string;
-        readonly datatype: 'created_by' | 'created_time';
+        readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
         readonly mandatory: boolean;
         readonly name: string;
       },
@@ -439,6 +484,8 @@ rs.mock('../src/api/ticketing-client', () => {
 beforeEach(() => {
   mocks.capabilityAllowed = true;
   mocks.capabilityAttempts = 0;
+  mocks.definitionCapabilityAllowed = true;
+  mocks.definitionCapabilityAttempts = 0;
   mocks.collectionCalls.length = 0;
   mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
@@ -569,6 +616,25 @@ test('creates and renders an intrinsic property through the application path', a
   expect(document.querySelectorAll('time')[1]?.textContent).toContain(':00:00');
 });
 
+test('creates a Last edited time definition through the existing UI-kit action path', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  fireEvent.click(screen.getByRole('button', { name: 'Add Last edited time property' }));
+
+  await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
+  expect(mocks.intrinsicCalls[0]?.payload).toEqual({
+    collectionId: 'collection-1',
+    datatype: 'last_edited_time',
+    mandatory: false,
+    name: 'Last edited time',
+  });
+  await waitFor(() => expect(document.querySelectorAll('time')).toHaveLength(2));
+  expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-07-20T12:00:00.000Z');
+});
+
 test('creates, edits, and opens a URL through the public Ticketing surface', async () => {
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
@@ -643,4 +709,22 @@ test('wires a denied value-edit capability to read-only property editors', async
   const phone = await screen.findByRole('textbox', { name: 'Direct line' });
   expect(phone).toHaveAttribute('readonly');
   expect(screen.queryByRole('button', { name: 'Save Phone' })).not.toBeInTheDocument();
+});
+
+test('keeps Date Range values editable while schema controls require definition permission', async () => {
+  mocks.definitionCapabilityAllowed = false;
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  await waitFor(() => expect(mocks.definitionCapabilityAttempts).toBe(1));
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Date Range property name' }), {
+    target: { value: 'Delivery window' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create Date Range property' }));
+
+  expect(await screen.findByRole('checkbox', { name: 'Include time' })).toBeDisabled();
+  expect(screen.getByRole('group', { name: 'Delivery window' })).not.toBeDisabled();
 });

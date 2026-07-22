@@ -234,6 +234,28 @@ const groupTextRows = (rows: readonly TextQueryRow[], locale: string) => {
   });
 };
 
+const selectFilterPredicate = (
+  operation: Extract<TaskPropertyQuery, { readonly datatype: 'select' }>['operation'],
+) => {
+  switch (operation.operator) {
+    case 'isEmpty': {
+      return sql`value.option_id is null`;
+    }
+    case 'isNotEmpty': {
+      return sql`value.option_id is not null`;
+    }
+    case 'is': {
+      return sql`value.option_id = ${operation.optionId}`;
+    }
+    case 'isNot': {
+      return sql`value.option_id is distinct from ${operation.optionId}`;
+    }
+    default: {
+      throw new Error('A supported Select filter operator is required.');
+    }
+  }
+};
+
 export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistration<
   QueryTaskPropertyValuesPayload,
   QueryTaskPropertyValuesResponse
@@ -259,6 +281,33 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
     transportResponseSchema: queryTaskPropertyValuesResponseSchema,
   },
   handler: async (input, { context, db }) => {
+    if (input.query.datatype === 'select') {
+      const predicate = selectFilterPredicate(input.query.operation);
+      const result = await db.execute(sql`
+        select task.task_id as "taskId"
+        from ticketing.tasks as task
+        inner join ticketing.task_schemas as schema
+          on schema.collection_id = task.collection_id
+          and schema.tenant_id = task.tenant_id
+        inner join ticketing.task_property_definitions as definition
+          on definition.schema_id = schema.schema_id
+          and definition.property_definition_id = ${input.propertyDefinitionId}
+          and definition.datatype = 'select'
+          and definition.tenant_id = task.tenant_id
+        left join ticketing.task_select_values as value
+          on value.task_id = task.task_id
+          and value.property_definition_id = definition.property_definition_id
+          and value.tenant_id = task.tenant_id
+        where task.collection_id = ${input.collectionId}
+          and task.tenant_id = ${context.tenantId}
+          and ${predicate}
+        order by task.task_id
+      `);
+      return {
+        taskIds: rowsFromResult<{ readonly taskId: string }>(result).map(({ taskId }) => taskId),
+      };
+    }
+
     if (input.query.datatype === 'number') {
       const { operation } = input.query;
       const predicate = numberQueryPredicate(operation);

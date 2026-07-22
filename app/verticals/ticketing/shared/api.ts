@@ -6,6 +6,122 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  deleteSelectOptionActionHeadersSchema,
+  deleteSelectOptionActionFailureSchemas,
+  deleteSelectOptionActionOutcomeSchema,
+  deleteSelectOptionActionPayloadSchema,
+} from './actions/delete-select-option';
+
+import {
+  createMultiSelectOptionAndSelectActionHeadersSchema,
+  createMultiSelectOptionAndSelectActionFailureSchemas,
+  createMultiSelectOptionAndSelectActionOutcomeSchema,
+  createMultiSelectOptionAndSelectActionPayloadSchema,
+} from './actions/create-multi-select-option-and-select';
+
+import {
+  reorderMultiSelectOptionsActionHeadersSchema,
+  reorderMultiSelectOptionsActionFailureSchemas,
+  reorderMultiSelectOptionsActionOutcomeSchema,
+  reorderMultiSelectOptionsActionPayloadSchema,
+} from './actions/reorder-multi-select-options';
+
+import {
+  updateMultiSelectOptionActionHeadersSchema,
+  updateMultiSelectOptionActionFailureSchemas,
+  updateMultiSelectOptionActionOutcomeSchema,
+  updateMultiSelectOptionActionPayloadSchema,
+} from './actions/update-multi-select-option';
+
+import {
+  updateMultiSelectPropertyValueActionHeadersSchema,
+  updateMultiSelectPropertyValueActionFailureSchemas,
+  updateMultiSelectPropertyValueActionOutcomeSchema,
+  updateMultiSelectPropertyValueActionPayloadSchema,
+} from './actions/update-multi-select-property-value';
+
+import {
+  createMultiSelectOptionActionHeadersSchema,
+  createMultiSelectOptionActionFailureSchemas,
+  createMultiSelectOptionActionOutcomeSchema,
+  createMultiSelectOptionActionPayloadSchema,
+} from './actions/create-multi-select-option';
+
+import {
+  createMultiSelectPropertyDefinitionActionHeadersSchema,
+  createMultiSelectPropertyDefinitionActionFailureSchemas,
+  createMultiSelectPropertyDefinitionActionOutcomeSchema,
+  createMultiSelectPropertyDefinitionActionPayloadSchema,
+} from './actions/create-multi-select-property-definition';
+
+import {
+  updateTaskContentActionHeadersSchema,
+  updateTaskContentActionFailureSchemas,
+  updateTaskContentActionOutcomeSchema,
+  updateTaskContentActionPayloadSchema,
+} from './actions/update-task-content';
+import {
+  updateStatusOptionActionHeadersSchema,
+  updateStatusOptionActionFailureSchemas,
+  updateStatusOptionActionOutcomeSchema,
+  updateStatusOptionActionPayloadSchema,
+} from './actions/update-status-option';
+
+import {
+  createStatusOptionActionHeadersSchema,
+  createStatusOptionActionFailureSchemas,
+  createStatusOptionActionOutcomeSchema,
+  createStatusOptionActionPayloadSchema,
+} from './actions/create-status-option';
+
+import {
+  updateStatusPropertyValueActionHeadersSchema,
+  updateStatusPropertyValueActionFailureSchemas,
+  updateStatusPropertyValueActionOutcomeSchema,
+  updateStatusPropertyValueActionPayloadSchema,
+} from './actions/update-status-property-value';
+
+import {
+  configureStatusDefaultActionHeadersSchema,
+  configureStatusDefaultActionFailureSchemas,
+  configureStatusDefaultActionOutcomeSchema,
+  configureStatusDefaultActionPayloadSchema,
+} from './actions/configure-status-default';
+
+import {
+  createStatusPropertyDefinitionActionHeadersSchema,
+  createStatusPropertyDefinitionActionFailureSchemas,
+  createStatusPropertyDefinitionActionOutcomeSchema,
+  createStatusPropertyDefinitionActionPayloadSchema,
+} from './actions/create-status-property-definition';
+import {
+  configureDateRangeTimeSupportActionHeadersSchema,
+  configureDateRangeTimeSupportActionFailureSchemas,
+  configureDateRangeTimeSupportActionOutcomeSchema,
+  configureDateRangeTimeSupportActionPayloadSchema,
+} from './actions/configure-date-range-time-support';
+
+import {
+  updateDateRangePropertyValueActionHeadersSchema,
+  updateDateRangePropertyValueActionFailureSchemas,
+  updateDateRangePropertyValueActionOutcomeSchema,
+  updateDateRangePropertyValueActionPayloadSchema,
+} from './actions/update-date-range-property-value';
+
+import {
+  createDateRangePropertyDefinitionActionHeadersSchema,
+  createDateRangePropertyDefinitionActionFailureSchemas,
+  createDateRangePropertyDefinitionActionOutcomeSchema,
+  createDateRangePropertyDefinitionActionPayloadSchema,
+} from './actions/create-date-range-property-definition';
+import {
+  uploadFilesMediaItemsActionHeadersSchema,
+  uploadFilesMediaItemsActionFailureSchemas,
+  uploadFilesMediaItemsActionOutcomeSchema,
+  uploadFilesMediaItemsActionPayloadSchema,
+} from './actions/upload-files-media-items.ts';
+
+import {
   duplicateTaskActionFailureSchemas,
   duplicateTaskActionHeadersSchema,
   duplicateTaskActionOutcomeSchema,
@@ -237,6 +353,7 @@ import {
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
 import { groupTaskDateValuesResponseSchema } from './date-grouping';
+import { groupTaskDateRangeValuesResponseSchema } from './date-range-grouping';
 import { emailQueryOperationSchema, queryTaskEmailValuesResponseSchema } from './email-query';
 import {
   queryIntrinsicTaskPropertiesPayloadSchema,
@@ -250,7 +367,10 @@ import { coreReferenceRequestSchema, coreReferenceResponseSchema } from './core-
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
-import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
+import {
+  taskPropertyDefinitionEditCapabilitySchema,
+  taskPropertyEditCapabilitySchema,
+} from './task-property-edit-capability';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 import {
   queryTaskPropertyValuesPayloadSchema,
@@ -258,6 +378,102 @@ import {
 } from './task-property-query';
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
+export type {
+  DeleteSelectOptionActionFailure,
+  DeleteSelectOptionActionOutcome,
+  DeleteSelectOptionActionPayload,
+  DeleteSelectOptionActionResponse,
+} from './actions/delete-select-option';
+export type {
+  CreateMultiSelectOptionAndSelectActionFailure,
+  CreateMultiSelectOptionAndSelectActionOutcome,
+  CreateMultiSelectOptionAndSelectActionPayload,
+  CreateMultiSelectOptionAndSelectActionResponse,
+} from './actions/create-multi-select-option-and-select';
+export type {
+  CreateMultiSelectOptionActionFailure,
+  CreateMultiSelectOptionActionOutcome,
+  CreateMultiSelectOptionActionPayload,
+  CreateMultiSelectOptionActionResponse,
+} from './actions/create-multi-select-option';
+export type {
+  CreateMultiSelectPropertyDefinitionActionFailure,
+  CreateMultiSelectPropertyDefinitionActionOutcome,
+  CreateMultiSelectPropertyDefinitionActionPayload,
+  CreateMultiSelectPropertyDefinitionActionResponse,
+} from './actions/create-multi-select-property-definition';
+export type {
+  ReorderMultiSelectOptionsActionFailure,
+  ReorderMultiSelectOptionsActionOutcome,
+  ReorderMultiSelectOptionsActionPayload,
+  ReorderMultiSelectOptionsActionResponse,
+} from './actions/reorder-multi-select-options';
+export type {
+  UpdateMultiSelectOptionActionFailure,
+  UpdateMultiSelectOptionActionOutcome,
+  UpdateMultiSelectOptionActionPayload,
+  UpdateMultiSelectOptionActionResponse,
+} from './actions/update-multi-select-option';
+export type {
+  UpdateMultiSelectPropertyValueActionFailure,
+  UpdateMultiSelectPropertyValueActionOutcome,
+  UpdateMultiSelectPropertyValueActionPayload,
+  UpdateMultiSelectPropertyValueActionResponse,
+} from './actions/update-multi-select-property-value';
+export type {
+  UpdateTaskContentActionFailure,
+  UpdateTaskContentActionOutcome,
+  UpdateTaskContentActionPayload,
+  UpdateTaskContentActionResponse,
+} from './actions/update-task-content';
+export type {
+  ConfigureStatusDefaultActionFailure,
+  ConfigureStatusDefaultActionOutcome,
+  ConfigureStatusDefaultActionPayload,
+  ConfigureStatusDefaultActionResponse,
+} from './actions/configure-status-default';
+export type {
+  CreateStatusOptionActionFailure,
+  CreateStatusOptionActionOutcome,
+  CreateStatusOptionActionPayload,
+  CreateStatusOptionActionResponse,
+} from './actions/create-status-option';
+export type {
+  CreateStatusPropertyDefinitionActionFailure,
+  CreateStatusPropertyDefinitionActionOutcome,
+  CreateStatusPropertyDefinitionActionPayload,
+  CreateStatusPropertyDefinitionActionResponse,
+} from './actions/create-status-property-definition';
+export type {
+  UpdateStatusOptionActionFailure,
+  UpdateStatusOptionActionOutcome,
+  UpdateStatusOptionActionPayload,
+  UpdateStatusOptionActionResponse,
+} from './actions/update-status-option';
+export type {
+  UpdateStatusPropertyValueActionFailure,
+  UpdateStatusPropertyValueActionOutcome,
+  UpdateStatusPropertyValueActionPayload,
+  UpdateStatusPropertyValueActionResponse,
+} from './actions/update-status-property-value';
+export type {
+  ConfigureDateRangeTimeSupportActionFailure,
+  ConfigureDateRangeTimeSupportActionOutcome,
+  ConfigureDateRangeTimeSupportActionPayload,
+  ConfigureDateRangeTimeSupportActionResponse,
+} from './actions/configure-date-range-time-support';
+export type {
+  CreateDateRangePropertyDefinitionActionFailure,
+  CreateDateRangePropertyDefinitionActionOutcome,
+  CreateDateRangePropertyDefinitionActionPayload,
+  CreateDateRangePropertyDefinitionActionResponse,
+} from './actions/create-date-range-property-definition';
+export type {
+  UpdateDateRangePropertyValueActionFailure,
+  UpdateDateRangePropertyValueActionOutcome,
+  UpdateDateRangePropertyValueActionPayload,
+  UpdateDateRangePropertyValueActionResponse,
+} from './actions/update-date-range-property-value';
 export type {
   ConfigureIdPropertyPrefixActionFailure,
   ConfigureIdPropertyPrefixActionOutcome,
@@ -463,6 +679,12 @@ export type {
   UploadFilesMediaItemActionResponse,
 } from './actions/upload-files-media-item.ts';
 export type {
+  UploadFilesMediaItemsActionFailure,
+  UploadFilesMediaItemsActionOutcome,
+  UploadFilesMediaItemsActionPayload,
+  UploadFilesMediaItemsActionResponse,
+} from './actions/upload-files-media-items.ts';
+export type {
   TransitionTaskRetentionActionFailure,
   TransitionTaskRetentionActionOutcome,
   TransitionTaskRetentionActionPayload,
@@ -482,7 +704,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
-export type { TaskPropertyEditCapability } from './task-property-edit-capability';
+export type {
+  TaskPropertyDefinitionEditCapability,
+  TaskPropertyEditCapability,
+} from './task-property-edit-capability';
 export type { CoreReferenceRequest, CoreReferenceResponse } from './core-reference';
 export {
   checkboxPropertyDefinitionSchema,
@@ -550,6 +775,10 @@ export type {
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 export type { GroupTaskDateValuesPayload, GroupTaskDateValuesResponse } from './date-grouping';
+export type {
+  GroupTaskDateRangeValuesPayload,
+  GroupTaskDateRangeValuesResponse,
+} from './date-range-grouping';
 export type { QueryTaskPersonValuesPayload, QueryTaskPersonValuesResponse } from './person-query';
 export type {
   SearchEligiblePeoplePayload,
@@ -748,6 +977,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.get(
+        'getTaskPropertyDefinitionEditCapability',
+        '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          success: taskPropertyDefinitionEditCapabilitySchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.post('queryTaskPropertyValues', '/ticketing/task-properties/query', {
         error: coreSdkOperationFailureSchemas,
         headers: operationContextHeadersSchema,
@@ -849,6 +1090,21 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: groupTaskDateValuesResponseSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'groupTaskDateRangeValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-range-groups',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: groupTaskDateRangeValuesResponseSchema,
         },
       ),
     )
@@ -1279,10 +1535,204 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: duplicateTaskActionPayloadSchema,
         success: duplicateTaskActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateTaskContentAction', '/ticketing/actions/update-task-content', {
+        error: updateTaskContentActionFailureSchemas,
+        headers: updateTaskContentActionHeadersSchema,
+        payload: updateTaskContentActionPayloadSchema,
+        success: updateTaskContentActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createStatusPropertyDefinitionAction',
+        '/ticketing/actions/create-status-property-definition',
+        {
+          error: createStatusPropertyDefinitionActionFailureSchemas,
+          headers: createStatusPropertyDefinitionActionHeadersSchema,
+          payload: createStatusPropertyDefinitionActionPayloadSchema,
+          success: createStatusPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createDateRangePropertyDefinitionAction',
+        '/ticketing/actions/create-date-range-property-definition',
+        {
+          error: createDateRangePropertyDefinitionActionFailureSchemas,
+          headers: createDateRangePropertyDefinitionActionHeadersSchema,
+          payload: createDateRangePropertyDefinitionActionPayloadSchema,
+          success: createDateRangePropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureStatusDefaultAction',
+        '/ticketing/actions/configure-status-default',
+        {
+          error: configureStatusDefaultActionFailureSchemas,
+          headers: configureStatusDefaultActionHeadersSchema,
+          payload: configureStatusDefaultActionPayloadSchema,
+          success: configureStatusDefaultActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateDateRangePropertyValueAction',
+        '/ticketing/actions/update-date-range-property-value',
+        {
+          error: updateDateRangePropertyValueActionFailureSchemas,
+          headers: updateDateRangePropertyValueActionHeadersSchema,
+          payload: updateDateRangePropertyValueActionPayloadSchema,
+          success: updateDateRangePropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateStatusPropertyValueAction',
+        '/ticketing/actions/update-status-property-value',
+        {
+          error: updateStatusPropertyValueActionFailureSchemas,
+          headers: updateStatusPropertyValueActionHeadersSchema,
+          payload: updateStatusPropertyValueActionPayloadSchema,
+          success: updateStatusPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createStatusOptionAction', '/ticketing/actions/create-status-option', {
+        error: createStatusOptionActionFailureSchemas,
+        headers: createStatusOptionActionHeadersSchema,
+        payload: createStatusOptionActionPayloadSchema,
+        success: createStatusOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateStatusOptionAction', '/ticketing/actions/update-status-option', {
+        error: updateStatusOptionActionFailureSchemas,
+        headers: updateStatusOptionActionHeadersSchema,
+        payload: updateStatusOptionActionPayloadSchema,
+        success: updateStatusOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureDateRangeTimeSupportAction',
+        '/ticketing/actions/configure-date-range-time-support',
+        {
+          error: configureDateRangeTimeSupportActionFailureSchemas,
+          headers: configureDateRangeTimeSupportActionHeadersSchema,
+          payload: configureDateRangeTimeSupportActionPayloadSchema,
+          success: configureDateRangeTimeSupportActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'uploadFilesMediaItemsAction',
+        '/ticketing/actions/upload-files-media-items',
+        {
+          error: uploadFilesMediaItemsActionFailureSchemas,
+          headers: uploadFilesMediaItemsActionHeadersSchema,
+          payload: uploadFilesMediaItemsActionPayloadSchema,
+          success: uploadFilesMediaItemsActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createMultiSelectPropertyDefinitionAction',
+        '/ticketing/actions/create-multi-select-property-definition',
+        {
+          error: createMultiSelectPropertyDefinitionActionFailureSchemas,
+          headers: createMultiSelectPropertyDefinitionActionHeadersSchema,
+          payload: createMultiSelectPropertyDefinitionActionPayloadSchema,
+          success: createMultiSelectPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createMultiSelectOptionAction',
+        '/ticketing/actions/create-multi-select-option',
+        {
+          error: createMultiSelectOptionActionFailureSchemas,
+          headers: createMultiSelectOptionActionHeadersSchema,
+          payload: createMultiSelectOptionActionPayloadSchema,
+          success: createMultiSelectOptionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateMultiSelectPropertyValueAction',
+        '/ticketing/actions/update-multi-select-property-value',
+        {
+          error: updateMultiSelectPropertyValueActionFailureSchemas,
+          headers: updateMultiSelectPropertyValueActionHeadersSchema,
+          payload: updateMultiSelectPropertyValueActionPayloadSchema,
+          success: updateMultiSelectPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateMultiSelectOptionAction',
+        '/ticketing/actions/update-multi-select-option',
+        {
+          error: updateMultiSelectOptionActionFailureSchemas,
+          headers: updateMultiSelectOptionActionHeadersSchema,
+          payload: updateMultiSelectOptionActionPayloadSchema,
+          success: updateMultiSelectOptionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'reorderMultiSelectOptionsAction',
+        '/ticketing/actions/reorder-multi-select-options',
+        {
+          error: reorderMultiSelectOptionsActionFailureSchemas,
+          headers: reorderMultiSelectOptionsActionHeadersSchema,
+          payload: reorderMultiSelectOptionsActionPayloadSchema,
+          success: reorderMultiSelectOptionsActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createMultiSelectOptionAndSelectAction',
+        '/ticketing/actions/create-multi-select-option-and-select',
+        {
+          error: createMultiSelectOptionAndSelectActionFailureSchemas,
+          headers: createMultiSelectOptionAndSelectActionHeadersSchema,
+          payload: createMultiSelectOptionAndSelectActionPayloadSchema,
+          success: createMultiSelectOptionAndSelectActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('deleteSelectOptionAction', '/ticketing/actions/delete-select-option', {
+        error: deleteSelectOptionActionFailureSchemas,
+        headers: deleteSelectOptionActionHeadersSchema,
+        payload: deleteSelectOptionActionPayloadSchema,
+        success: deleteSelectOptionActionOutcomeSchema,
+      }),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configureDateRangeTimeSupportAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureDateRangeTimeSupportAction',
+    routePath: '/ticketing/actions/configure-date-range-time-support',
+    source: 'generated-client',
+  },
   configureIdPropertyPrefixAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureIdPropertyPrefixAction',
@@ -1313,6 +1763,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/configure-select-option-order',
     source: 'generated-client',
   },
+  configureStatusDefaultAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureStatusDefaultAction',
+    routePath: '/ticketing/actions/configure-status-default',
+    source: 'generated-client',
+  },
   configureTaskPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureTaskPropertyDefinitionAction',
@@ -1329,6 +1785,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createDatePropertyDefinitionAction',
     routePath: '/ticketing/actions/create-date-property-definition',
+    source: 'generated-client',
+  },
+  createDateRangePropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createDateRangePropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-date-range-property-definition',
     source: 'generated-client',
   },
   createEmailPropertyDefinitionAction: {
@@ -1353,6 +1815,24 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createIntrinsicPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-intrinsic-property-definition',
+    source: 'generated-client',
+  },
+  createMultiSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createMultiSelectOptionAction',
+    routePath: '/ticketing/actions/create-multi-select-option',
+    source: 'generated-client',
+  },
+  createMultiSelectOptionAndSelectAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createMultiSelectOptionAndSelectAction',
+    routePath: '/ticketing/actions/create-multi-select-option-and-select',
+    source: 'generated-client',
+  },
+  createMultiSelectPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createMultiSelectPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-multi-select-property-definition',
     source: 'generated-client',
   },
   createNumberPropertyDefinitionAction: {
@@ -1391,6 +1871,18 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/create-select-property-definition',
     source: 'generated-client',
   },
+  createStatusOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createStatusOptionAction',
+    routePath: '/ticketing/actions/create-status-option',
+    source: 'generated-client',
+  },
+  createStatusPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createStatusPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-status-property-definition',
+    source: 'generated-client',
+  },
   createTaskAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createTaskAction',
@@ -1413,6 +1905,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createUrlPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-url-property-definition',
+    source: 'generated-client',
+  },
+  deleteSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:deleteSelectOptionAction',
+    routePath: '/ticketing/actions/delete-select-option',
     source: 'generated-client',
   },
   deleteTaskPropertyDefinitionAction: {
@@ -1452,6 +1950,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/task-collections/:collectionId',
     source: 'generated-client',
   },
+  getTaskPropertyDefinitionEditCapability: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyDefinitionEditCapability',
+    routePath: '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
+    source: 'generated-client',
+  },
   getTaskPropertyDeletionImpact: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskPropertyDeletionImpact',
@@ -1469,6 +1973,13 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskPropertyWorkspace',
     routePath: '/ticketing/task-collections/:collectionId/properties',
+    source: 'generated-client',
+  },
+  groupTaskDateRangeValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:groupTaskDateRangeValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-range-groups',
     source: 'generated-client',
   },
   groupTaskDateValues: {
@@ -1522,6 +2033,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/readiness',
     source: 'generated-client',
   },
+  reorderMultiSelectOptionsAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:reorderMultiSelectOptionsAction',
+    routePath: '/ticketing/actions/reorder-multi-select-options',
+    source: 'generated-client',
+  },
   searchEligiblePeople: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:searchEligiblePeople',
@@ -1546,10 +2063,28 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/update-date-property-value',
     source: 'generated-client',
   },
+  updateDateRangePropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateDateRangePropertyValueAction',
+    routePath: '/ticketing/actions/update-date-range-property-value',
+    source: 'generated-client',
+  },
   updateEmailPropertyValueAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateEmailPropertyValueAction',
     routePath: '/ticketing/actions/update-email-property-value',
+    source: 'generated-client',
+  },
+  updateMultiSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateMultiSelectOptionAction',
+    routePath: '/ticketing/actions/update-multi-select-option',
+    source: 'generated-client',
+  },
+  updateMultiSelectPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateMultiSelectPropertyValueAction',
+    routePath: '/ticketing/actions/update-multi-select-property-value',
     source: 'generated-client',
   },
   updateNumberPropertyValueAction: {
@@ -1582,6 +2117,24 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/update-select-property-value',
     source: 'generated-client',
   },
+  updateStatusOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateStatusOptionAction',
+    routePath: '/ticketing/actions/update-status-option',
+    source: 'generated-client',
+  },
+  updateStatusPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateStatusPropertyValueAction',
+    routePath: '/ticketing/actions/update-status-property-value',
+    source: 'generated-client',
+  },
+  updateTaskContentAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateTaskContentAction',
+    routePath: '/ticketing/actions/update-task-content',
+    source: 'generated-client',
+  },
   updateTextPropertyValueAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateTextPropertyValueAction',
@@ -1598,6 +2151,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:uploadFilesMediaItemAction',
     routePath: '/ticketing/actions/upload-files-media-item',
+    source: 'generated-client',
+  },
+  uploadFilesMediaItemsAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:uploadFilesMediaItemsAction',
+    routePath: '/ticketing/actions/upload-files-media-items',
     source: 'generated-client',
   },
 } satisfies Record<string, OperationContext>;

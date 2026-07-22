@@ -144,6 +144,7 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
     };
   }
 
+  const changedAt = services.clock.now().toISOString();
   if (parsed._tag === 'Valid') {
     const result = await services.tx.execute(sql`
       with changed_value as (
@@ -170,7 +171,7 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
       updated_task as (
         update ticketing.tasks as task
         set
-          last_edited_at = statement_timestamp(),
+          last_edited_at = ${changedAt}::timestamptz,
           last_edited_by_principal_id = ${services.context.principalId},
           revision = task.revision + 1
         from changed_value
@@ -238,7 +239,7 @@ const updateEmailPropertyValueActionHandler: ActionHandler<
     updated_task as (
       update ticketing.tasks as task
       set
-        last_edited_at = statement_timestamp(),
+        last_edited_at = ${changedAt}::timestamptz,
         last_edited_by_principal_id = ${services.context.principalId},
         revision = task.revision + 1
       from changed_value

@@ -125,6 +125,12 @@ const transitionTaskRetentionActionHandler: ActionHandler<
           and tenant_id = ${services.context.tenantId}
         returning task_id
       ),
+      deleted_select_values as (
+        delete from ticketing.task_select_values
+        where task_id = ${input.taskId}
+          and tenant_id = ${services.context.tenantId}
+        returning task_id
+      ),
       deleted_revisions as (
         delete from ticketing.task_revisions
         where task_id = ${input.taskId}
@@ -194,12 +200,13 @@ const transitionTaskRetentionActionHandler: ActionHandler<
     });
   }
 
+  const changedAt = services.clock.now().toISOString();
   const result = await services.tx.execute(sql`
     with updated_task as (
       update ticketing.tasks as task
       set
         last_edited_at = case
-          when ${updatesLastEdit} then statement_timestamp()
+          when ${updatesLastEdit} then ${changedAt}::timestamptz
           else task.last_edited_at
         end,
         last_edited_by_principal_id = case
@@ -213,7 +220,7 @@ const transitionTaskRetentionActionHandler: ActionHandler<
         and task.collection_id = ${input.collectionId}
         and task.tenant_id = ${services.context.tenantId}
       returning
-        statement_timestamp() as changed_at,
+        ${changedAt}::timestamptz as changed_at,
         task.retention_state,
         task.revision,
         task.task_id

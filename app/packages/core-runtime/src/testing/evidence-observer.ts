@@ -13,8 +13,14 @@ export interface ObservedCoreActionOutboxMessage {
   readonly topic: string;
 }
 
+export interface ObservedCoreActionDomainEvent {
+  readonly eventType: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
 export interface ObservedCoreActionEvidence {
   readonly auditEvents: readonly ObservedCoreActionAuditEvent[];
+  readonly domainEvents: readonly ObservedCoreActionDomainEvent[];
   readonly outboxMessages: readonly ObservedCoreActionOutboxMessage[];
 }
 
@@ -37,6 +43,15 @@ export const observeCoreActionEvidence = async ({
       and tenant_id = ${tenantId}
     order by occurred_at, audit_event_id
   `);
+  const domainResult = await db.execute(sql`
+    select
+      event_type as "eventType",
+      payload_json as payload
+    from core.domain_events
+    where action_invocation_id = ${actionInvocationId}
+      and tenant_id = ${tenantId}
+    order by tenant_sequence_no, domain_event_id
+  `);
   const outboxResult = await db.execute(sql`
     select message.topic
     from core.outbox_messages as message
@@ -49,6 +64,7 @@ export const observeCoreActionEvidence = async ({
   `);
   return {
     auditEvents: [...rowsFromResult<ObservedCoreActionAuditEvent>(auditResult)],
+    domainEvents: [...rowsFromResult<ObservedCoreActionDomainEvent>(domainResult)],
     outboxMessages: [...rowsFromResult<ObservedCoreActionOutboxMessage>(outboxResult)],
   };
 };

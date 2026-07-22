@@ -1,5 +1,5 @@
 {
-  "id": "18622c51-a1b6-41d4-ad7d-963f581817fc",
+  "id": "22e8f1e8-ef44-498d-8c58-93e0936613a1",
   "prevId": "ab448471-6429-46e1-827e-e2b44a2533dd",
   "version": "7",
   "dialect": "postgresql",
@@ -1808,7 +1808,7 @@
         },
         "ticketing_task_property_definitions_datatype_ck": {
           "name": "ticketing_task_property_definitions_datatype_ck",
-          "value": "\"ticketing\".\"task_property_definitions\".\"datatype\" in ('title', 'checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')"
+          "value": "\"ticketing\".\"task_property_definitions\".\"datatype\" in ('title', 'checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')"
         },
         "ticketing_task_property_definitions_select_order_ck": {
           "name": "ticketing_task_property_definitions_select_order_ck",
@@ -2520,13 +2520,6 @@
           "notNull": true,
           "default": "'active'"
         },
-        "core_reference_token": {
-          "name": "core_reference_token",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
         "revision": {
           "name": "revision",
           "type": "integer",
@@ -2573,21 +2566,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "ticketing_tasks_core_reference_token_uk": {
-          "name": "ticketing_tasks_core_reference_token_uk",
-          "columns": [
-            {
-              "expression": "core_reference_token",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}

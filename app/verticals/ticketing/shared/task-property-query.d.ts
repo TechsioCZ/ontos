@@ -39,6 +39,22 @@ export declare const taskPropertyQuerySchema: Schema.Union<
       >;
     }>,
     Schema.Struct<{
+      readonly datatype: Schema.Literal<'select'>;
+      readonly operation: Schema.Union<
+        readonly [
+          Schema.Struct<{
+            readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+            readonly type: Schema.Literal<'filter'>;
+          }>,
+          Schema.Struct<{
+            readonly operator: Schema.Literals<readonly ['is', 'isNot']>;
+            readonly optionId: Schema.String;
+            readonly type: Schema.Literal<'filter'>;
+          }>,
+        ]
+      >;
+    }>,
+    Schema.Struct<{
       readonly datatype: Schema.Literal<'text'>;
       readonly operation: Schema.Union<
         readonly [
@@ -113,6 +129,22 @@ export declare const queryTaskPropertyValuesPayloadSchema: Schema.Struct<{
             }>,
             Schema.Struct<{
               readonly type: Schema.Literal<'group'>;
+            }>,
+          ]
+        >;
+      }>,
+      Schema.Struct<{
+        readonly datatype: Schema.Literal<'select'>;
+        readonly operation: Schema.Union<
+          readonly [
+            Schema.Struct<{
+              readonly operator: Schema.Literals<readonly ['isEmpty', 'isNotEmpty']>;
+              readonly type: Schema.Literal<'filter'>;
+            }>,
+            Schema.Struct<{
+              readonly operator: Schema.Literals<readonly ['is', 'isNot']>;
+              readonly optionId: Schema.String;
+              readonly type: Schema.Literal<'filter'>;
             }>,
           ]
         >;

@@ -15,11 +15,15 @@ import type {
 import type { TextDocument } from '../../shared/text-property.ts';
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
 import type {
+  MultiSelectOption,
   SelectOption,
   SelectOptionOrderMode,
+  StatusOption,
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
+import { dateRangeValueFromNullableFields } from '../date-range-value-projection.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
+import { statusDefinitionFromParts, statusGroupLabel } from '../status-property.ts';
 import { resolveTextDocumentProjection } from '../core-reference-text-projection.ts';
 
 interface DefinitionFields {
@@ -33,7 +37,10 @@ interface DefinitionFields {
 type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
   | (DefinitionFields & { readonly datatype: 'date' })
-  | (DefinitionFields & { readonly datatype: 'created_by' | 'created_time' })
+  | (DefinitionFields & {
+      readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
+    })
+  | (DefinitionFields & { readonly datatype: 'date_range'; readonly timeEnabled: boolean })
   | (DefinitionFields & { readonly datatype: 'email' })
   | (DefinitionFields & { readonly datatype: 'files_media' })
   | (DefinitionFields & { readonly datatype: 'id'; readonly prefix: string })
@@ -46,8 +53,15 @@ type DefinitionRow =
       readonly datatype: 'person';
     })
   | (DefinitionFields & {
+      readonly datatype: 'multi_select';
+    })
+  | (DefinitionFields & {
       readonly datatype: 'select';
       readonly optionOrderMode: SelectOptionOrderMode | null;
+    })
+  | (DefinitionFields & {
+      readonly datatype: 'status';
+      readonly defaultOptionId: string;
     })
   | (DefinitionFields & { readonly datatype: 'phone' })
   | (DefinitionFields & { readonly datatype: 'text' })
@@ -57,13 +71,36 @@ interface OptionRow extends SelectOption {
   readonly propertyDefinitionId: string;
 }
 
+interface StatusOptionRow extends StatusOption {
+  readonly propertyDefinitionId: string;
+}
+
+interface MultiSelectOptionRow extends MultiSelectOption {
+  readonly propertyDefinitionId: string;
+}
+
 const taskPropertyDefinitionFromRow = (
   definition: DefinitionRow,
+  multiSelectOptionRows: readonly MultiSelectOptionRow[],
   optionRows: readonly OptionRow[],
+  statusOptionRows: readonly StatusOptionRow[],
   locale: string,
 ): TaskPropertyDefinition => {
   if (definition.datatype === 'id' || definition.datatype === 'number') {
     return definition;
+  }
+  if (definition.datatype === 'multi_select') {
+    return {
+      datatype: 'multi_select',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      options: multiSelectOptionRows
+        .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
+        .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+    };
   }
   if (definition.datatype === 'select') {
     const optionOrderMode = definition.optionOrderMode ?? 'manual';
@@ -84,6 +121,15 @@ const taskPropertyDefinitionFromRow = (
       revision: definition.revision,
     };
   }
+  if (definition.datatype === 'status') {
+    return statusDefinitionFromParts({
+      ...definition,
+      groupLabel: (group) => statusGroupLabel(group, locale),
+      options: statusOptionRows
+        .filter((option) => option.propertyDefinitionId === definition.propertyDefinitionId)
+        .map(({ propertyDefinitionId: _propertyDefinitionId, ...option }) => option),
+    });
+  }
   if (definition.datatype === 'person') {
     return {
       cardinality: definition.cardinality,
@@ -93,6 +139,17 @@ const taskPropertyDefinitionFromRow = (
       name: definition.name,
       propertyDefinitionId: definition.propertyDefinitionId,
       revision: definition.revision,
+    };
+  }
+  if (definition.datatype === 'date_range') {
+    return {
+      datatype: 'date_range',
+      hidden: definition.hidden,
+      mandatory: definition.mandatory,
+      name: definition.name,
+      propertyDefinitionId: definition.propertyDefinitionId,
+      revision: definition.revision,
+      timeEnabled: definition.timeEnabled,
     };
   }
   return {
@@ -124,6 +181,16 @@ interface DateValueRow {
   readonly revision: number;
   readonly taskId: string;
   readonly value: string | null;
+}
+
+interface DateRangeValueRow {
+  readonly endDate: string | null;
+  readonly endTime: string | null;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly startDate: string | null;
+  readonly startTime: string | null;
+  readonly taskId: string;
 }
 
 interface PhoneValueRow {
@@ -160,6 +227,26 @@ interface SelectValueRow {
   readonly taskId: string;
 }
 
+interface StatusValueRow {
+  readonly optionId: string | null;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+}
+
+interface MultiSelectValueRow {
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+  readonly taskId: string;
+  readonly updatedAt: string;
+}
+
+interface MultiSelectSelectionRow {
+  readonly optionId: string;
+  readonly propertyDefinitionId: string;
+  readonly taskId: string;
+}
+
 interface UrlValueRow {
   readonly propertyDefinitionId: string;
   readonly revision: number;
@@ -168,6 +255,7 @@ interface UrlValueRow {
 }
 
 interface ValueRow {
+  readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
   readonly createdAt: string;
   readonly createdByDisplayName: string;
   readonly createdByPrincipalId: string;
@@ -175,6 +263,7 @@ interface ValueRow {
   readonly idNumber: string | null;
   readonly idPrefix: string | null;
   readonly idPropertyDefinitionId: string | null;
+  readonly lastEditedAt: string;
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -199,6 +288,7 @@ interface FilesMediaItemRow extends StoredFilesMediaItemRow {
 }
 
 interface TaskRow {
+  readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
   readonly checkboxValues: {
     propertyDefinitionId: string;
     revision: number;
@@ -208,6 +298,16 @@ interface TaskRow {
     propertyDefinitionId: string;
     revision: number;
     value: string | null;
+  }[];
+  readonly dateRangeValues: {
+    propertyDefinitionId: string;
+    revision: number;
+    value: {
+      endDate: string;
+      endTime: string | null;
+      startDate: string;
+      startTime: string | null;
+    } | null;
   }[];
   readonly emailValues: {
     propertyDefinitionId: string;
@@ -222,10 +322,17 @@ interface TaskRow {
     inactive: boolean;
     principalId: string;
   };
+  readonly lastEditedAt?: string;
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
     value: string | null;
+  }[];
+  multiSelectValues?: {
+    optionIds: string[];
+    propertyDefinitionId: string;
+    revision: number;
+    updatedAt: string;
   }[];
   readonly phoneValues: {
     propertyDefinitionId: string;
@@ -239,6 +346,11 @@ interface TaskRow {
     revision: number;
   }[];
   selectValues?: {
+    optionId?: string;
+    propertyDefinitionId: string;
+    revision: number;
+  }[];
+  readonly statusValues: {
     optionId?: string;
     propertyDefinitionId: string;
     revision: number;
@@ -274,6 +386,32 @@ const optionalTaskValueArraysFactory = (
   });
 };
 
+const appendMultiSelectValues = (
+  tasks: Map<string, TaskRow>,
+  rows: readonly MultiSelectValueRow[],
+  selections: readonly MultiSelectSelectionRow[],
+): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task === undefined) {
+      continue;
+    }
+    task.multiSelectValues ??= [];
+    task.multiSelectValues.push({
+      optionIds: selections
+        .filter(
+          (selection) =>
+            selection.taskId === row.taskId &&
+            selection.propertyDefinitionId === row.propertyDefinitionId,
+        )
+        .map(({ optionId }) => optionId),
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      updatedAt: row.updatedAt,
+    });
+  }
+};
+
 const appendUrlValues = (tasks: Map<string, TaskRow>, rows: readonly UrlValueRow[]): void => {
   for (const row of rows) {
     const task = tasks.get(row.taskId);
@@ -297,6 +435,19 @@ const appendDateValues = (tasks: Map<string, TaskRow>, rows: readonly DateValueR
   }
 };
 
+const appendDateRangeValues = (
+  tasks: Map<string, TaskRow>,
+  rows: readonly DateRangeValueRow[],
+): void => {
+  for (const row of rows) {
+    tasks.get(row.taskId)?.dateRangeValues.push({
+      propertyDefinitionId: row.propertyDefinitionId,
+      revision: row.revision,
+      value: dateRangeValueFromNullableFields(row),
+    });
+  }
+};
+
 const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectValueRow[]): void => {
   for (const row of rows) {
     const task = tasks.get(row.taskId);
@@ -309,6 +460,19 @@ const appendSelectValues = (tasks: Map<string, TaskRow>, rows: readonly SelectVa
       propertyDefinitionId: row.propertyDefinitionId,
       revision: row.revision,
     });
+  }
+};
+
+const appendStatusValues = (tasks: Map<string, TaskRow>, rows: readonly StatusValueRow[]): void => {
+  for (const row of rows) {
+    const task = tasks.get(row.taskId);
+    if (task !== undefined) {
+      task.statusValues.push({
+        ...(row.optionId === null ? {} : { optionId: row.optionId }),
+        propertyDefinitionId: row.propertyDefinitionId,
+        revision: row.revision,
+      });
+    }
   }
 };
 
@@ -329,8 +493,10 @@ const intrinsicTaskFacts = (
   row: ValueRow,
   exposesCreatedBy: boolean,
   exposesCreatedTime: boolean,
-): Pick<TaskRow, 'createdAt' | 'createdBy'> => ({
+  exposesLastEditedTime: boolean,
+): Pick<TaskRow, 'createdAt' | 'createdBy' | 'lastEditedAt'> => ({
   ...(exposesCreatedTime ? { createdAt: row.createdAt } : {}),
+  ...(exposesLastEditedTime ? { lastEditedAt: row.lastEditedAt } : {}),
   ...(exposesCreatedBy
     ? {
         createdBy: {
@@ -355,29 +521,37 @@ const idAssignmentFromValueRow = (row: ValueRow): IdAssignment | undefined => {
 
 const taskRowsFromValues = ({
   dateValueRows,
+  dateRangeValueRows,
   definitions,
   emailValueRows,
   filesMediaRows,
   numberValueRows,
+  multiSelectSelectionRows,
+  multiSelectValueRows,
   personAssignmentRows,
   personValueRows,
   phoneValueRows,
   resolvedPeople,
   selectValueRows,
+  statusValueRows,
   textValueRows,
   urlValueRows,
   valueRows,
 }: {
   readonly dateValueRows: readonly DateValueRow[];
+  readonly dateRangeValueRows: readonly DateRangeValueRow[];
   readonly definitions: readonly TaskPropertyDefinition[];
   readonly emailValueRows: readonly EmailValueRow[];
   readonly filesMediaRows: readonly FilesMediaItemRow[];
   readonly numberValueRows: readonly NumberValueRow[];
+  readonly multiSelectSelectionRows: readonly MultiSelectSelectionRow[];
+  readonly multiSelectValueRows: readonly MultiSelectValueRow[];
   readonly personAssignmentRows: readonly PersonAssignmentRow[];
   readonly personValueRows: readonly PersonValueRow[];
   readonly phoneValueRows: readonly PhoneValueRow[];
   readonly resolvedPeople: readonly ResolvedPersonDirectoryEntry[];
   readonly selectValueRows: readonly SelectValueRow[];
+  readonly statusValueRows: readonly StatusValueRow[];
   readonly textValueRows: readonly TextValueRow[];
   readonly urlValueRows: readonly UrlValueRow[];
   readonly valueRows: readonly ValueRow[];
@@ -390,16 +564,22 @@ const taskRowsFromValues = ({
   const exposesCreatedBy = definitions.some(
     (definition) => definition.datatype === 'created_by' && !definition.hidden,
   );
+  const exposesLastEditedTime = definitions.some(
+    (definition) => definition.datatype === 'last_edited_time' && !definition.hidden,
+  );
 
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
+      canvas: row.canvas,
       checkboxValues: [],
+      dateRangeValues: [],
       dateValues: [],
-      ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime),
+      ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime, exposesLastEditedTime),
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
       ...optionalTaskValueArrays(),
+      statusValues: [],
       taskId: row.taskId,
       taskRevision: row.taskRevision,
       title: row.title,
@@ -471,7 +651,10 @@ const taskRowsFromValues = ({
   }
 
   appendSelectValues(tasks, selectValueRows);
+  appendMultiSelectValues(tasks, multiSelectValueRows, multiSelectSelectionRows);
+  appendStatusValues(tasks, statusValueRows);
   appendDateValues(tasks, dateValueRows);
+  appendDateRangeValues(tasks, dateRangeValueRows);
   appendFilesMediaItems(tasks, filesMediaRows);
   appendUrlValues(tasks, urlValueRows);
   return [...tasks.values()];
@@ -506,8 +689,10 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       select
         configuration.cardinality,
         definition.datatype,
+        definition.date_range_time_enabled as "timeEnabled",
         definition.number_format as format,
         definition.select_option_order_mode as "optionOrderMode",
+        status_configuration.default_option_id as "defaultOptionId",
         definition.hidden,
         definition.mandatory,
         definition.name,
@@ -521,13 +706,17 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       left join ticketing.task_person_property_configurations as configuration
         on configuration.property_definition_id = definition.property_definition_id
         and configuration.tenant_id = definition.tenant_id
+      left join ticketing.status_property_configurations as status_configuration
+        on status_configuration.property_definition_id = definition.property_definition_id
+        and status_configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'date', 'email', 'files_media', 'id', 'number', 'person', 'phone', 'select', 'text', 'url')
-      order by definition.created_at, definition.property_definition_id
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')
+      order by definition.schema_position, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
       select
+        task.canvas,
         to_char(
           task.created_at at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
@@ -535,6 +724,10 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         creator.display_name as "createdByDisplayName",
         task.created_by_principal_id as "createdByPrincipalId",
         creator.status as "createdByStatus",
+        to_char(
+          task.last_edited_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "lastEditedAt",
         id_assignment.number::text as "idNumber",
         id_definition.prefix as "idPrefix",
         id_assignment.property_definition_id as "idPropertyDefinitionId",
@@ -596,6 +789,26 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
         and definition.datatype = 'date'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const dateRangeValueResult = await db.execute(sql`
+      select
+        value.end_date::text as "endDate",
+        to_char(value.end_time, 'HH24:MI') as "endTime",
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.start_date::text as "startDate",
+        to_char(value.start_time, 'HH24:MI') as "startTime",
+        value.task_id as "taskId"
+      from ticketing.task_date_range_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'date_range'
       where task.collection_id = ${input.collectionId}
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
@@ -703,6 +916,67 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       where schema.collection_id = ${input.collectionId}
         and option.tenant_id = ${context.tenantId}
     `);
+    const multiSelectOptionResult = await db.execute(sql`
+      select
+        option.catalog_position as "catalogPosition",
+        option.color,
+        option.name,
+        option.option_id as "optionId",
+        option.property_definition_id as "propertyDefinitionId",
+        option.revision,
+        to_char(
+          option.updated_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "updatedAt"
+      from ticketing.multi_select_options as option
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = option.property_definition_id
+        and definition.tenant_id = option.tenant_id
+      inner join ticketing.task_schemas as schema
+        on schema.schema_id = definition.schema_id
+        and schema.tenant_id = definition.tenant_id
+      where schema.collection_id = ${input.collectionId}
+        and option.tenant_id = ${context.tenantId}
+      order by option.catalog_position, option.option_id
+    `);
+    const multiSelectValueResult = await db.execute(sql`
+      select
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId",
+        to_char(
+          value.updated_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "updatedAt"
+      from ticketing.task_multi_select_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'multi_select'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const multiSelectSelectionResult = await db.execute(sql`
+      select
+        selection.option_id as "optionId",
+        selection.property_definition_id as "propertyDefinitionId",
+        selection.task_id as "taskId"
+      from ticketing.task_multi_select_selections as selection
+      inner join ticketing.tasks as task
+        on task.task_id = selection.task_id
+        and task.tenant_id = selection.tenant_id
+      inner join ticketing.multi_select_options as option
+        on option.option_id = selection.option_id
+        and option.property_definition_id = selection.property_definition_id
+        and option.tenant_id = selection.tenant_id
+      where task.collection_id = ${input.collectionId}
+        and selection.tenant_id = ${context.tenantId}
+      order by selection.task_id, selection.property_definition_id, option.catalog_position, option.option_id
+    `);
     const selectValueResult = await db.execute(sql`
       select
         value.option_id as "optionId",
@@ -717,6 +991,44 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         on definition.property_definition_id = value.property_definition_id
         and definition.tenant_id = value.tenant_id
         and definition.datatype = 'select'
+      where task.collection_id = ${input.collectionId}
+        and value.tenant_id = ${context.tenantId}
+      order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
+    `);
+    const statusOptionResult = await db.execute(sql`
+      select
+        option.color,
+        option.group_key as "group",
+        option.name,
+        option.option_id as "optionId",
+        option.position,
+        option.property_definition_id as "propertyDefinitionId",
+        option.revision
+      from ticketing.status_options as option
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = option.property_definition_id
+        and definition.tenant_id = option.tenant_id
+      inner join ticketing.task_schemas as schema
+        on schema.schema_id = definition.schema_id
+        and schema.tenant_id = definition.tenant_id
+      where schema.collection_id = ${input.collectionId}
+        and option.tenant_id = ${context.tenantId}
+      order by option.group_key, option.position, option.option_id
+    `);
+    const statusValueResult = await db.execute(sql`
+      select
+        value.option_id as "optionId",
+        value.property_definition_id as "propertyDefinitionId",
+        value.revision,
+        value.task_id as "taskId"
+      from ticketing.task_status_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = value.property_definition_id
+        and definition.tenant_id = value.tenant_id
+        and definition.datatype = 'status'
       where task.collection_id = ${input.collectionId}
         and value.tenant_id = ${context.tenantId}
       order by task.created_at, task.task_id, definition.created_at, value.property_definition_id
@@ -755,10 +1067,20 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       order by item.task_id, item.property_definition_id, item.position
     `);
     const optionRows = rowsFromResult<OptionRow>(optionResult);
+    const multiSelectOptionRows = rowsFromResult<MultiSelectOptionRow>(multiSelectOptionResult);
+    const statusOptionRows = rowsFromResult<StatusOptionRow>(statusOptionResult);
     const locale = input.locale ?? 'en-GB';
     const definitions: TaskPropertyDefinition[] = rowsFromResult<DefinitionRow>(
       definitionResult,
-    ).map((definition) => taskPropertyDefinitionFromRow(definition, optionRows, locale));
+    ).map((definition) =>
+      taskPropertyDefinitionFromRow(
+        definition,
+        multiSelectOptionRows,
+        optionRows,
+        statusOptionRows,
+        locale,
+      ),
+    );
     const personAssignmentRows = rowsFromResult<PersonAssignmentRow>(personAssignmentResult);
     const resolvedPeople = await createPersonDirectory({
       db,
@@ -802,16 +1124,20 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       })),
     );
     const tasks = taskRowsFromValues({
+      dateRangeValueRows: rowsFromResult<DateRangeValueRow>(dateRangeValueResult),
       dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
       definitions,
       emailValueRows: rowsFromResult<EmailValueRow>(emailValueResult),
       filesMediaRows,
+      multiSelectSelectionRows: rowsFromResult<MultiSelectSelectionRow>(multiSelectSelectionResult),
+      multiSelectValueRows: rowsFromResult<MultiSelectValueRow>(multiSelectValueResult),
       numberValueRows: rowsFromResult<NumberValueRow>(numberValueResult),
       personAssignmentRows,
       personValueRows: rowsFromResult<PersonValueRow>(personValueResult),
       phoneValueRows: rowsFromResult<PhoneValueRow>(phoneValueResult),
       resolvedPeople,
       selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
+      statusValueRows: rowsFromResult<StatusValueRow>(statusValueResult),
       textValueRows,
       urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),
       valueRows: rowsFromResult<ValueRow>(valueResult),

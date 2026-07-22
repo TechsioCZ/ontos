@@ -200,11 +200,12 @@ const updatePhonePropertyValueActionHandler: ActionHandler<
     throw staleOrMissing();
   }
 
+  const changedAt = services.clock.now().toISOString();
   const taskResult = await services.tx.execute(sql`
     with updated_task as (
       update ticketing.tasks as task
       set
-        last_edited_at = statement_timestamp(),
+        last_edited_at = ${changedAt}::timestamptz,
         last_edited_by_principal_id = ${services.context.principalId},
         revision = task.revision + 1
       where task.task_id = ${input.taskId}
