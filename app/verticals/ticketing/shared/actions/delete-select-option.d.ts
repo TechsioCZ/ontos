@@ -6,6 +6,7 @@ export declare const deleteSelectOptionActionPayloadSchema: Schema.Struct<{
   readonly confirmed: Schema.Boolean;
   readonly expectedDefinitionRevision: Schema.Finite;
   readonly expectedImpactCount: Schema.Finite;
+  readonly expectedImpactToken: Schema.String;
   readonly expectedOptionRevision: Schema.Finite;
   readonly optionId: Schema.String;
   readonly propertyDefinitionId: Schema.String;

@@ -16,14 +16,11 @@ import type {
   DeleteSelectOptionActionPayload,
   DeleteSelectOptionActionResponse,
 } from '../../shared/actions/delete-select-option.ts';
+import { getSelectOptionDeletionImpactState } from '../select-option-deletion-impact.ts';
 
 interface LockedOptionRow {
   readonly definitionRevision: number;
   readonly optionRevision: number;
-}
-
-interface ImpactCountRow {
-  readonly impactCount: number;
 }
 
 const evidence = (
@@ -103,18 +100,17 @@ const handler: ActionHandler<
     });
   }
 
-  const impactResult = await services.tx.execute(sql`
-    select count(task.task_id)::integer as "impactCount"
-    from ticketing.task_select_values as value
-    inner join ticketing.tasks as task
-      on task.task_id = value.task_id
-      and task.tenant_id = value.tenant_id
-    where value.property_definition_id = ${input.propertyDefinitionId}
-      and value.option_id = ${input.optionId}
-      and value.tenant_id = ${services.context.tenantId}
-  `);
-  const impactCount = rowsFromResult<ImpactCountRow>(impactResult).at(0)?.impactCount ?? 0;
-  if (impactCount !== input.expectedImpactCount) {
+  const impact = await getSelectOptionDeletionImpactState({
+    db: services.tx,
+    lockAffectedValues: true,
+    optionId: input.optionId,
+    propertyDefinitionId: input.propertyDefinitionId,
+    tenantId: services.context.tenantId,
+  });
+  if (
+    impact.impactCount !== input.expectedImpactCount ||
+    impact.impactToken !== input.expectedImpactToken
+  ) {
     throw rejectAction({
       code: 'ticketing.deleteSelectOption.stale_impact',
       message:
@@ -165,7 +161,7 @@ const handler: ActionHandler<
   return {
     definitionRevision,
     deletedOptionId: input.optionId,
-    impactCount,
+    impactCount: impact.impactCount,
     propertyDefinitionId: input.propertyDefinitionId,
   };
 };

@@ -717,6 +717,7 @@ test('confirmed Select option deletion clears every retained affected Task', asy
       confirmed: true,
       expectedDefinitionRevision: preview.response.definitionRevision,
       expectedImpactCount: preview.response.impactCount,
+      expectedImpactToken: preview.response.impactToken,
       expectedOptionRevision: preview.response.optionRevision,
       optionId,
       propertyDefinitionId,
@@ -810,6 +811,7 @@ test('Select option deletion previews zero after an affected Task is hard-delete
       confirmed: true,
       expectedDefinitionRevision: preview.response.definitionRevision,
       expectedImpactCount: 0,
+      expectedImpactToken: preview.response.impactToken,
       expectedOptionRevision: preview.response.optionRevision,
       optionId: option.response.option.optionId,
       propertyDefinitionId,
@@ -822,6 +824,12 @@ test('Select option deletion previews zero after an affected Task is hard-delete
 test('Select option deletion requires fresh confirmation when retained impact changes', async () => {
   const operationContext = await createOperationIdentity();
   const { collectionId, task } = await createCollectionAndTask(operationContext);
+  const replacementTask = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(replacementTask._tag, 'OperationSucceeded', JSON.stringify(replacementTask));
   const definition = await runRegisteredAction({
     operationContext,
     payload: { collectionId, mandatory: false, name: 'Priority' },
@@ -842,6 +850,18 @@ test('Select option deletion requires fresh confirmation when retained impact ch
   });
   assert.equal(option._tag, 'OperationSucceeded', JSON.stringify(option));
   const { optionId } = option.response.option;
+  const initiallySelected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      optionId,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: updateSelectPropertyValueActionRegistration,
+  });
+  assert.equal(initiallySelected._tag, 'OperationSucceeded', JSON.stringify(initiallySelected));
   const preview = await runDataAccess({
     options: {
       authorizationChecker: allowedAuthorization,
@@ -853,25 +873,15 @@ test('Select option deletion requires fresh confirmation when retained impact ch
     transport: { headers: new Headers() },
   });
   assert.equal(preview._tag, 'OperationSucceeded', JSON.stringify(preview));
-  assert.equal(preview.response.impactCount, 0);
+  assert.equal(preview.response.impactCount, 1);
+  assert.match(preview.response.impactToken, /^[a-f\d]{64}$/u);
 
-  const selected = await runRegisteredAction({
-    operationContext,
-    payload: {
-      collectionId,
-      expectedRevision: 0,
-      optionId,
-      propertyDefinitionId,
-      taskId: task.response.task.taskId,
-    },
-    registration: updateSelectPropertyValueActionRegistration,
-  });
-  assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
   const deletionPayload = {
     collectionId,
     confirmed: true,
     expectedDefinitionRevision: preview.response.definitionRevision,
     expectedImpactCount: preview.response.impactCount,
+    expectedImpactToken: preview.response.impactToken,
     expectedOptionRevision: preview.response.optionRevision,
     optionId,
     propertyDefinitionId,
@@ -884,6 +894,30 @@ test('Select option deletion requires fresh confirmation when retained impact ch
   assert.equal(unconfirmed._tag, 'OperationDomainRejected', JSON.stringify(unconfirmed));
   assert.equal(unconfirmed.code, 'ticketing.deleteSelectOption.confirmation_required');
 
+  const cleared = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: initiallySelected.response.value.revision,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: updateSelectPropertyValueActionRegistration,
+  });
+  assert.equal(cleared._tag, 'OperationSucceeded', JSON.stringify(cleared));
+  const replacementSelected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 0,
+      optionId,
+      propertyDefinitionId,
+      taskId: replacementTask.response.task.taskId,
+    },
+    registration: updateSelectPropertyValueActionRegistration,
+  });
+  assert.equal(replacementSelected._tag, 'OperationSucceeded', JSON.stringify(replacementSelected));
+
   const stale = await runRegisteredAction({
     operationContext,
     payload: deletionPayload,
@@ -895,7 +929,11 @@ test('Select option deletion requires fresh confirmation when retained impact ch
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.equal(workspace.response.propertyDefinitions[0].options[0].optionId, optionId);
-  assert.equal(workspace.response.tasks[0].selectValues[0].optionId, optionId);
+  assert.equal(
+    workspace.response.tasks.find(({ taskId }) => taskId === replacementTask.response.task.taskId)
+      .selectValues[0].optionId,
+    optionId,
+  );
 });
 
 test('Select is-not filtering includes another selection and Empty', async () => {
@@ -1188,5 +1226,50 @@ test('Select duplication remaps copied values to new option identities beside it
       (value) => value.propertyDefinitionId === blankDuplicate.propertyDefinitionId,
     ),
     false,
+  );
+});
+
+test('repeated Select duplication keeps the newest duplicate immediately after its source', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId } = await createCollectionAndTask(operationContext);
+  const source = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Priority' },
+    registration: createSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(source._tag, 'OperationSucceeded', JSON.stringify(source));
+  const sibling = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Stage' },
+    registration: createSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(sibling._tag, 'OperationSucceeded', JSON.stringify(sibling));
+
+  let latestDuplicate;
+  for (let duplicateIndex = 0; duplicateIndex < 70; duplicateIndex += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- Each duplication observes the prior schema order.
+    const duplicated = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        copyValues: false,
+        expectedRevision: source.response.definition.revision,
+        propertyDefinitionId: source.response.definition.propertyDefinitionId,
+      },
+      registration: duplicateTaskPropertyDefinitionActionRegistration,
+    });
+    assert.equal(duplicated._tag, 'OperationSucceeded', JSON.stringify(duplicated));
+    latestDuplicate = duplicated.response.definition;
+  }
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(
+    workspace.response.propertyDefinitions[0].propertyDefinitionId,
+    source.response.definition.propertyDefinitionId,
+  );
+  assert.equal(
+    workspace.response.propertyDefinitions[1].propertyDefinitionId,
+    latestDuplicate.propertyDefinitionId,
   );
 });

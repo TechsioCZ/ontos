@@ -12,6 +12,7 @@ export const deleteSelectOptionActionPayloadSchema = Schema.Struct({
   confirmed: Schema.Boolean,
   expectedDefinitionRevision: Schema.Finite,
   expectedImpactCount: Schema.Finite,
+  expectedImpactToken: Schema.String,
   expectedOptionRevision: Schema.Finite,
   optionId: Schema.String,
   propertyDefinitionId: Schema.String,

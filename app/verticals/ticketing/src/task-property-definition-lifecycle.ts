@@ -19,7 +19,6 @@ interface TaskPropertyDefinitionLifecycleTarget {
   readonly numberFormat: string | null;
   readonly propertyDefinitionId: string;
   readonly revision: number;
-  readonly schemaPosition: string;
   readonly schemaId: string;
   readonly selectOptionOrderMode: SelectOptionOrderMode | null;
   readonly tenantId: string;
@@ -608,7 +607,6 @@ export const findTaskPropertyDefinitionLifecycleTarget = async ({
         definition.number_format as "numberFormat",
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision,
-        definition.schema_position as "schemaPosition",
         definition.schema_id as "schemaId",
         definition.select_option_order_mode as "selectOptionOrderMode",
         definition.tenant_id as "tenantId"
@@ -647,7 +645,6 @@ export const lockTaskPropertyDefinitionLifecycleTarget = async ({
         definition.number_format as "numberFormat",
         definition.property_definition_id as "propertyDefinitionId",
         definition.revision,
-        definition.schema_position as "schemaPosition",
         definition.schema_id as "schemaId",
         definition.select_option_order_mode as "selectOptionOrderMode",
         definition.tenant_id as "tenantId"
@@ -696,6 +693,25 @@ export const duplicateTaskPropertyDefinition = async ({
   if (adapter === undefined) {
     return undefined;
   }
+  if (source.datatype === 'select') {
+    await tx.execute(sql`
+      with ranked_positions as materialized (
+        select
+          sibling.property_definition_id,
+          (row_number() over (
+            order by sibling.schema_position, sibling.property_definition_id
+          ) * 2)::numeric(38, 18) as schema_position
+        from ticketing.task_property_definitions as sibling
+        where sibling.schema_id = ${source.schemaId}
+          and sibling.tenant_id = ${source.tenantId}
+      )
+      update ticketing.task_property_definitions as sibling
+      set schema_position = ranked_positions.schema_position
+      from ranked_positions
+      where sibling.property_definition_id = ranked_positions.property_definition_id
+        and sibling.tenant_id = ${source.tenantId}
+    `);
+  }
   const result = await tx.execute(sql`
     with available_name as (
       select
@@ -723,7 +739,7 @@ export const duplicateTaskPropertyDefinition = async ({
       limit 1
     )
     , positions as (
-      select sibling.schema_position
+      select sibling.property_definition_id, sibling.schema_position
       from ticketing.task_property_definitions as sibling
       where sibling.schema_id = ${source.schemaId}
     )
@@ -745,18 +761,12 @@ export const duplicateTaskPropertyDefinition = async ({
       available_name.name,
       ${source.numberFormat},
       case
-        when ${source.datatype} <> 'select' then
-          coalesce((select max(schema_position) from positions), 0) + 1
-        when not exists (
-          select 1 from positions where schema_position > ${source.schemaPosition}::numeric
-        ) then ${source.schemaPosition}::numeric + 1
-        else (
-          ${source.schemaPosition}::numeric + (
-            select min(schema_position)
-            from positions
-            where schema_position > ${source.schemaPosition}::numeric
-          )
-        ) / 2
+        when ${source.datatype} = 'select' then (
+          select schema_position + 1
+          from positions
+          where property_definition_id = ${source.propertyDefinitionId}
+        )
+        else coalesce((select max(schema_position) from positions), 0) + 1
       end,
       ${source.schemaId},
       ${source.selectOptionOrderMode},

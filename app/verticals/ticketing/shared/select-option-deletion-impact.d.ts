@@ -8,6 +8,7 @@ export declare const getSelectOptionDeletionImpactPayloadSchema: Schema.Struct<{
 export declare const selectOptionDeletionImpactSchema: Schema.Struct<{
   readonly definitionRevision: Schema.Finite;
   readonly impactCount: Schema.Finite;
+  readonly impactToken: Schema.String;
   readonly optionId: Schema.String;
   readonly optionRevision: Schema.Finite;
   readonly propertyDefinitionId: Schema.String;

@@ -9,6 +9,7 @@ export const getSelectOptionDeletionImpactPayloadSchema = Schema.Struct({
 export const selectOptionDeletionImpactSchema = Schema.Struct({
   definitionRevision: Schema.Finite,
   impactCount: Schema.Finite,
+  impactToken: Schema.String,
   optionId: Schema.String,
   optionRevision: Schema.Finite,
   propertyDefinitionId: Schema.String,
