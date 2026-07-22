@@ -23,6 +23,7 @@ import type {
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
+import { getStatusDefinition } from '../status-property.ts';
 import { taskPropertyDefinitionFromRow } from '../task-property-definition-projection.ts';
 import type { TaskPropertyDefinitionRow } from '../task-property-definition-projection.ts';
 
@@ -33,6 +34,16 @@ interface SelectDefinitionRow {
   readonly mandatory: boolean;
   readonly name: string;
   readonly optionOrderMode: SelectOptionOrderMode | null;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
+
+interface StatusDefinitionRow {
+  readonly collectionLocale: string;
+  readonly datatype: 'status';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
   readonly propertyDefinitionId: string;
   readonly revision: number;
 }
@@ -50,6 +61,7 @@ interface MultiSelectDefinitionRow {
 type ConfigurableDefinitionRow =
   | MultiSelectDefinitionRow
   | SelectDefinitionRow
+  | StatusDefinitionRow
   | TaskPropertyDefinitionRow;
 
 const configuredDefinitionEvidence = (
@@ -120,6 +132,22 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
         revision: row.revision,
       };
     }
+    if (row.datatype === 'status') {
+      const definition = await getStatusDefinition({
+        collectionId: input.collectionId,
+        db: services.tx,
+        locale: row.collectionLocale,
+        propertyDefinitionId: row.propertyDefinitionId,
+        tenantId: services.context.tenantId,
+      });
+      if (definition === undefined) {
+        throw rejectAction({
+          code: 'ticketing.configureTaskPropertyDefinition.status_configuration_missing',
+          message: 'The Status configuration is unavailable.',
+        });
+      }
+      return definition;
+    }
     if (row.datatype !== 'select') {
       return taskPropertyDefinitionFromRow(row);
     }
@@ -163,6 +191,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       collection.locale as "collectionLocale",
       person_configuration.cardinality,
       definition.datatype,
+      definition.date_range_time_enabled as "timeEnabled",
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,
@@ -241,6 +270,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
           and person_configuration.tenant_id = definition.tenant_id
       ) as cardinality,
       definition.datatype,
+      definition.date_range_time_enabled as "timeEnabled",
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,

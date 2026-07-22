@@ -109,6 +109,7 @@ const handler: ActionHandler<
       message: 'The Select catalog or value changed elsewhere or is no longer available.',
     });
   }
+  const changedAt = services.clock.now().toISOString();
   const result = await services.tx.execute(sql`
     with inserted_option as (
       insert into ticketing.select_options (
@@ -143,7 +144,7 @@ const handler: ActionHandler<
       returning definition.revision
     ), updated_task as (
       update ticketing.tasks as task
-      set last_edited_at = statement_timestamp(),
+      set last_edited_at = ${changedAt}::timestamptz,
           last_edited_by_principal_id = ${services.context.principalId},
           revision = task.revision + 1
       from changed_value

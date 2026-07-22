@@ -12,6 +12,16 @@ import { updateMultiSelectOptionActionRegistration } from '../src/actions/update
 import { updateMultiSelectPropertyValueActionRegistration } from '../src/actions/update-multi-select-property-value.ts';
 import { createMultiSelectOptionActionRegistration } from '../src/actions/create-multi-select-option.ts';
 import { createMultiSelectPropertyDefinitionActionRegistration } from '../src/actions/create-multi-select-property-definition.ts';
+import { updateTaskContentActionRegistration } from '../src/actions/update-task-content.ts';
+import { updateStatusOptionActionRegistration } from '../src/actions/update-status-option.ts';
+import { createStatusOptionActionRegistration } from '../src/actions/create-status-option.ts';
+import { updateStatusPropertyValueActionRegistration } from '../src/actions/update-status-property-value.ts';
+import { configureStatusDefaultActionRegistration } from '../src/actions/configure-status-default.ts';
+import { createStatusPropertyDefinitionActionRegistration } from '../src/actions/create-status-property-definition.ts';
+import { configureDateRangeTimeSupportActionRegistration } from '../src/actions/configure-date-range-time-support.ts';
+import { updateDateRangePropertyValueActionRegistration } from '../src/actions/update-date-range-property-value.ts';
+import { createDateRangePropertyDefinitionActionRegistration } from '../src/actions/create-date-range-property-definition.ts';
+import { uploadFilesMediaItemsActionRegistration } from '../src/actions/upload-files-media-items.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -1055,6 +1065,213 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
         Effect.withSpan('ultramodern.api.ticketing.duplicateTaskAction', {
           attributes: operationAttributes(ticketingOperationContexts.duplicateTaskAction),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('updateTaskContentAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateTaskContentActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateTaskContentAction', {
+            attributes: operationAttributes(ticketingOperationContexts.updateTaskContentAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createStatusPropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createStatusPropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createStatusPropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createStatusPropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configureStatusDefaultAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureStatusDefaultActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configureStatusDefaultAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configureStatusDefaultAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateStatusPropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateStatusPropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateStatusPropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateStatusPropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createStatusOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createStatusOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createStatusOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.createStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateStatusOptionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateStatusOptionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateStatusOptionAction', {
+            attributes: operationAttributes(ticketingOperationContexts.updateStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createDateRangePropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createDateRangePropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createDateRangePropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createDateRangePropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateDateRangePropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateDateRangePropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateDateRangePropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateDateRangePropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configureDateRangeTimeSupportAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureDateRangeTimeSupportActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configureDateRangeTimeSupportAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configureDateRangeTimeSupportAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('uploadFilesMediaItemsAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: uploadFilesMediaItemsActionRegistration,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) => (outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome))),
+        Effect.withSpan('ultramodern.api.ticketing.uploadFilesMediaItemsAction', {
+          attributes: operationAttributes(ticketingOperationContexts.uploadFilesMediaItemsAction),
           kind: 'server',
         }),
       ),

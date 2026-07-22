@@ -33,6 +33,15 @@ export declare const datePropertyDefinitionSchema: Schema.Struct<{
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
 }>;
+export declare const dateRangePropertyDefinitionSchema: Schema.Struct<{
+  readonly datatype: Schema.Literal<'date_range'>;
+  readonly hidden: Schema.Boolean;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly timeEnabled: Schema.Boolean;
+}>;
 export declare const intrinsicPropertyDefinitionSchema: Schema.Struct<{
   readonly datatype: Schema.Literals<readonly ['created_time', 'created_by']>;
   readonly hidden: Schema.Boolean;
@@ -68,6 +77,56 @@ export declare const selectPropertyDefinitionSchema: Schema.Struct<{
       readonly revision: Schema.Finite;
     }>
   >;
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+}>;
+export declare const statusGroupKeySchema: Schema.Literals<
+  readonly ['todo', 'in_progress', 'complete']
+>;
+export declare const statusOptionSchema: Schema.Struct<{
+  readonly color: Schema.String;
+  readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+  readonly name: Schema.String;
+  readonly optionId: Schema.String;
+  readonly position: Schema.Finite;
+  readonly revision: Schema.Finite;
+}>;
+export declare const statusGroupSchema: Schema.Struct<{
+  readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+  readonly label: Schema.String;
+  readonly options: Schema.$Array<
+    Schema.Struct<{
+      readonly color: Schema.String;
+      readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+      readonly name: Schema.String;
+      readonly optionId: Schema.String;
+      readonly position: Schema.Finite;
+      readonly revision: Schema.Finite;
+    }>
+  >;
+}>;
+export declare const statusPropertyDefinitionSchema: Schema.Struct<{
+  readonly datatype: Schema.Literal<'status'>;
+  readonly defaultOptionId: Schema.String;
+  readonly groups: Schema.$Array<
+    Schema.Struct<{
+      readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+      readonly label: Schema.String;
+      readonly options: Schema.$Array<
+        Schema.Struct<{
+          readonly color: Schema.String;
+          readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+          readonly name: Schema.String;
+          readonly optionId: Schema.String;
+          readonly position: Schema.Finite;
+          readonly revision: Schema.Finite;
+        }>
+      >;
+    }>
+  >;
+  readonly hidden: Schema.Boolean;
+  readonly mandatory: Schema.Boolean;
+  readonly name: Schema.String;
   readonly propertyDefinitionId: Schema.String;
   readonly revision: Schema.Finite;
 }>;
@@ -138,6 +197,15 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
       readonly name: Schema.String;
       readonly propertyDefinitionId: Schema.String;
       readonly revision: Schema.Finite;
+    }>,
+    Schema.Struct<{
+      readonly datatype: Schema.Literal<'date_range'>;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+      readonly timeEnabled: Schema.Boolean;
     }>,
     Schema.Struct<{
       readonly datatype: Schema.Literal<'email'>;
@@ -219,6 +287,31 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
       readonly revision: Schema.Finite;
     }>,
     Schema.Struct<{
+      readonly datatype: Schema.Literal<'status'>;
+      readonly defaultOptionId: Schema.String;
+      readonly groups: Schema.$Array<
+        Schema.Struct<{
+          readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+          readonly label: Schema.String;
+          readonly options: Schema.$Array<
+            Schema.Struct<{
+              readonly color: Schema.String;
+              readonly group: Schema.Literals<readonly ['todo', 'in_progress', 'complete']>;
+              readonly name: Schema.String;
+              readonly optionId: Schema.String;
+              readonly position: Schema.Finite;
+              readonly revision: Schema.Finite;
+            }>
+          >;
+        }>
+      >;
+      readonly hidden: Schema.Boolean;
+      readonly mandatory: Schema.Boolean;
+      readonly name: Schema.String;
+      readonly propertyDefinitionId: Schema.String;
+      readonly revision: Schema.Finite;
+    }>,
+    Schema.Struct<{
       readonly datatype: Schema.Literal<'text'>;
       readonly hidden: Schema.Boolean;
       readonly mandatory: Schema.Boolean;
@@ -238,6 +331,7 @@ export declare const taskPropertyDefinitionSchema: Schema.Union<
 >;
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
 export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
+export type DateRangePropertyDefinition = typeof dateRangePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSchema.Type;
 export type IdPropertyDefinition = typeof idPropertyDefinitionSchema.Type;
@@ -248,6 +342,10 @@ export type PhonePropertyDefinition = typeof phonePropertyDefinitionSchema.Type;
 export type SelectOption = typeof selectOptionSchema.Type;
 export type SelectOptionOrderMode = typeof selectOptionOrderModeSchema.Type;
 export type SelectPropertyDefinition = typeof selectPropertyDefinitionSchema.Type;
+export type StatusGroup = typeof statusGroupSchema.Type;
+export type StatusGroupKey = typeof statusGroupKeySchema.Type;
+export type StatusOption = typeof statusOptionSchema.Type;
+export type StatusPropertyDefinition = typeof statusPropertyDefinitionSchema.Type;
 export type TextPropertyDefinition = typeof textPropertyDefinitionSchema.Type;
 export type UrlPropertyDefinition = typeof urlPropertyDefinitionSchema.Type;
 export type TaskPropertyDefinition = typeof taskPropertyDefinitionSchema.Type;

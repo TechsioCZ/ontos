@@ -188,6 +188,7 @@ test('schema configuration trims the name and preserves Checkbox values and Task
   assert.deepEqual(workspace.response.propertyDefinitions, [configured.response.definition]);
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: definition.response.definition.propertyDefinitionId,
@@ -195,10 +196,12 @@ test('schema configuration trims the name and preserves Checkbox values and Task
           value: false,
         },
       ],
+      dateRangeValues: [],
       dateValues: [],
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
+      statusValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
@@ -576,6 +579,7 @@ test('Checkbox duplication copies configuration and generates the first availabl
   );
   assert.deepEqual(workspace.response.tasks, [
     {
+      canvas: {},
       checkboxValues: [
         {
           propertyDefinitionId: configured.response.definition.propertyDefinitionId,
@@ -593,10 +597,12 @@ test('Checkbox duplication copies configuration and generates the first availabl
           value: false,
         },
       ],
+      dateRangeValues: [],
       dateValues: [],
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
+      statusValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',
@@ -743,17 +749,6 @@ test('shared lifecycle evidence contains metadata but no property names or Check
       },
       configureResponse,
     );
-  const deleteEvidence =
-    deleteTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
-      {
-        collectionId: 'collection-1',
-        confirmed: true,
-        expectedImpactCount: 7,
-        expectedRevision: 2,
-        propertyDefinitionId: 'definition-2',
-      },
-      { deletedPropertyDefinitionId: 'definition-2', impactCount: 7 },
-    );
   const retentionEvidence =
     transitionTaskRetentionActionRegistration.descriptor.auditEvent.evidence(
       {
@@ -769,7 +764,6 @@ test('shared lifecycle evidence contains metadata but no property names or Check
   assert.equal(Object.hasOwn(configureEvidence, 'name'), false);
   assert.equal(Object.hasOwn(duplicateEvidence, 'value'), false);
   assert.equal(duplicateEvidence.copiedValues, true);
-  assert.equal(deleteEvidence.impactCount, 7);
   assert.deepEqual(retentionEvidence, {
     changedComponents: ['retentionState'],
     collectionId: 'collection-1',

@@ -11,7 +11,7 @@ export const createIntrinsicPropertyDefinitionActionKey =
 
 export const createIntrinsicPropertyDefinitionActionPayloadSchema = Schema.Struct({
   collectionId: Schema.String,
-  datatype: Schema.Literals(['created_time', 'created_by']),
+  datatype: Schema.Literals(['created_time', 'created_by', 'last_edited_time']),
   mandatory: Schema.Boolean,
   name: Schema.String,
 });

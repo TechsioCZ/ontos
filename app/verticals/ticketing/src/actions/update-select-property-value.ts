@@ -127,6 +127,7 @@ const handler: ActionHandler<
       },
     };
   }
+  const changedAt = services.clock.now().toISOString();
   const result = await services.tx.execute(sql`
     with changed_value as (
       insert into ticketing.task_select_values (
@@ -141,7 +142,7 @@ const handler: ActionHandler<
       returning option_id, property_definition_id, revision, task_id
     ), updated_task as (
       update ticketing.tasks as task
-      set last_edited_at = statement_timestamp(),
+      set last_edited_at = ${changedAt}::timestamptz,
           last_edited_by_principal_id = ${services.context.principalId},
           revision = task.revision + 1
       from changed_value

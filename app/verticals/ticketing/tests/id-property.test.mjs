@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
-import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
+import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
+import { observeCoreActionEvidence } from '@app/core-runtime/testing/evidence-observer';
 import { allowPolicy } from '../../../packages/core-runtime/src/policy.ts';
 import { createCheckboxPropertyDefinitionActionRegistration } from '../src/actions/create-checkbox-property-definition.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
@@ -168,6 +169,21 @@ const activateId = (operationContext, collectionId, overrides = {}) =>
     registration: createIdPropertyDefinitionActionRegistration,
   });
 
+const transitionTasks = async (operationContext, collectionId, taskTransitions) => {
+  const results = await Promise.all(
+    taskTransitions.map(([task, transition]) =>
+      runRegisteredAction({
+        operationContext,
+        payload: { collectionId, expectedRevision: 1, taskId: task.taskId, transition },
+        registration: transitionTaskRetentionActionRegistration,
+      }),
+    ),
+  );
+  for (const result of results) {
+    assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));
+  }
+};
+
 test('activating ID backfills every retained Task in deterministic creation order', async () => {
   const operationContext = await createOperationIdentity();
   const collectionId = await createCollection(operationContext);
@@ -177,21 +193,10 @@ test('activating ID backfills every retained Task in deterministic creation orde
   const archived = await createTask(operationContext, collectionId, earlierClock);
   const softDeleted = await createTask(operationContext, collectionId, earlierClock);
 
-  const transitions = await Promise.all(
-    [
-      [archived, 'archive'],
-      [softDeleted, 'softDelete'],
-    ].map(([task, transition]) =>
-      runRegisteredAction({
-        operationContext,
-        payload: { collectionId, expectedRevision: 1, taskId: task.taskId, transition },
-        registration: transitionTaskRetentionActionRegistration,
-      }),
-    ),
-  );
-  for (const transitioned of transitions) {
-    assert.equal(transitioned._tag, 'OperationSucceeded', JSON.stringify(transitioned));
-  }
+  await transitionTasks(operationContext, collectionId, [
+    [archived, 'archive'],
+    [softDeleted, 'softDelete'],
+  ]);
 
   const activated = await runRegisteredAction({
     operationContext,
@@ -457,13 +462,21 @@ test('ID is a singleton definition and rejects definition duplication', async ()
   assert.equal(duplicated.code, 'ticketing.duplicateTaskPropertyDefinition.id_not_duplicable');
 });
 
-test('confirmed ID deletion removes its namespace and reactivation deterministically starts at 1', async () => {
+test('confirmed ID deletion removes every retained assignment and reactivation starts a fresh namespace at 1', async () => {
   const operationContext = await createOperationIdentity();
   const collectionId = await createCollection(operationContext);
-  await createTask(operationContext, collectionId);
-  await createTask(operationContext, collectionId);
+  const active = await createTask(operationContext, collectionId);
+  const archived = await createTask(operationContext, collectionId);
+  const softDeleted = await createTask(operationContext, collectionId);
+  const hardDeleted = await createTask(operationContext, collectionId);
   const activation = await activateId(operationContext, collectionId, { prefix: 'OLD' });
   assert.equal(activation._tag, 'OperationSucceeded', JSON.stringify(activation));
+
+  await transitionTasks(operationContext, collectionId, [
+    [archived, 'archive'],
+    [softDeleted, 'softDelete'],
+    [hardDeleted, 'hardDelete'],
+  ]);
 
   const impact = await runDataAccess({
     options: {
@@ -479,14 +492,14 @@ test('confirmed ID deletion removes its namespace and reactivation deterministic
     transport: { headers: new Headers() },
   });
   assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
-  assert.equal(impact.response.impactCount, 2);
+  assert.equal(impact.response.impactCount, 3);
 
   const deleted = await runRegisteredAction({
     operationContext,
     payload: {
       collectionId,
       confirmed: true,
-      expectedImpactCount: 2,
+      expectedImpactCount: 3,
       expectedRevision: 1,
       propertyDefinitionId: activation.response.definition.propertyDefinitionId,
     },
@@ -499,17 +512,83 @@ test('confirmed ID deletion removes its namespace and reactivation deterministic
     afterDeletion.response.tasks.every((task) => task.idAssignment === undefined),
     true,
   );
+  assert.equal(
+    afterDeletion.response.propertyDefinitions.some(({ datatype }) => datatype === 'id'),
+    false,
+  );
+
+  const activationInvocationId = activation.context.actionInvocation?.actionInvocationId;
+  const deletionInvocationId = deleted.context.actionInvocation?.actionInvocationId;
+  assert.ok(activationInvocationId);
+  assert.ok(deletionInvocationId);
+  const [retainedActivationEvidence, deletionEvidence] = await Promise.all(
+    [activationInvocationId, deletionInvocationId].map((actionInvocationId) =>
+      observeCoreActionEvidence({
+        actionInvocationId,
+        db,
+        tenantId: operationContext.tenantId,
+      }),
+    ),
+  );
+  const persistedActivationEvidence = retainedActivationEvidence.auditEvents.find(
+    ({ eventType }) => eventType === 'action.succeeded',
+  )?.evidence;
+  assert.deepEqual(persistedActivationEvidence, {
+    changedComponents: ['definition', 'idAssignments'],
+    collectionId,
+    datatype: 'id',
+    operation: 'created',
+    propertyDefinitionId: activation.response.definition.propertyDefinitionId,
+    revision: 1,
+  });
+  assert.deepEqual(retainedActivationEvidence.domainEvents, [
+    {
+      eventType: 'ticketing.taskPropertyDefinition.created',
+      payload: persistedActivationEvidence,
+    },
+  ]);
+  const persistedDeletionEvidence = deletionEvidence.auditEvents.find(
+    ({ eventType }) => eventType === 'action.succeeded',
+  )?.evidence;
+  assert.deepEqual(persistedDeletionEvidence, {
+    changedComponents: ['definition', 'idPrefix', 'idAssignments', 'idSequence'],
+    collectionId,
+    datatype: 'id',
+    impactCount: 3,
+    operation: 'deleted',
+    propertyDefinitionId: activation.response.definition.propertyDefinitionId,
+    revision: 1,
+  });
+  assert.deepEqual(deletionEvidence.domainEvents, [
+    {
+      eventType: 'ticketing.taskPropertyDefinition.deleted',
+      payload: persistedDeletionEvidence,
+    },
+  ]);
+  const evidenceText = JSON.stringify({ persistedDeletionEvidence, retainedActivationEvidence });
+  assert.equal(evidenceText.includes('OLD'), false);
+  assert.equal(evidenceText.includes(active.taskId), false);
+  assert.equal(evidenceText.includes(archived.taskId), false);
+  assert.equal(evidenceText.includes(softDeleted.taskId), false);
+  assert.equal(evidenceText.includes(hardDeleted.taskId), false);
 
   const reactivated = await activateId(operationContext, collectionId, { prefix: 'NEW' });
   assert.equal(reactivated._tag, 'OperationSucceeded', JSON.stringify(reactivated));
+  assert.notEqual(
+    reactivated.response.definition.propertyDefinitionId,
+    activation.response.definition.propertyDefinitionId,
+  );
   const nextTask = await createTask(operationContext, collectionId);
   const afterReactivation = await readWorkspace(operationContext, collectionId);
   assert.equal(afterReactivation._tag, 'OperationSucceeded', JSON.stringify(afterReactivation));
   assert.deepEqual(
     afterReactivation.response.tasks.map((task) => task.idAssignment.displayValue),
-    ['NEW-1', 'NEW-2', 'NEW-3'],
+    ['NEW-1', 'NEW-2', 'NEW-3', 'NEW-4'],
   );
-  assert.equal(afterReactivation.response.tasks[2].taskId, nextTask.taskId);
+  assert.deepEqual(
+    afterReactivation.response.tasks.map(({ taskId }) => taskId),
+    [active.taskId, archived.taskId, softDeleted.taskId, nextTask.taskId],
+  );
 });
 
 test('soft delete and restore retain an assignment while Task duplication allocates a fresh one', async () => {

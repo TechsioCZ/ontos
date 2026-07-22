@@ -35,6 +35,7 @@ import type {
   UpdateCheckboxPropertyValueActionPayload,
   FilterTaskCheckboxValuesResponse,
   GroupTaskDateValuesResponse,
+  GroupTaskDateRangeValuesResponse,
   ConfigureTaskPropertyDefinitionActionFailure,
   ConfigureTaskPropertyDefinitionActionOutcome,
   ConfigureTaskPropertyDefinitionActionPayload,
@@ -145,6 +146,36 @@ import type {
   DuplicateTaskActionFailure,
   DuplicateTaskActionOutcome,
   DuplicateTaskActionPayload,
+  UpdateTaskContentActionFailure,
+  UpdateTaskContentActionOutcome,
+  UpdateTaskContentActionPayload,
+  CreateStatusPropertyDefinitionActionFailure,
+  CreateStatusPropertyDefinitionActionOutcome,
+  CreateStatusPropertyDefinitionActionPayload,
+  ConfigureStatusDefaultActionFailure,
+  ConfigureStatusDefaultActionOutcome,
+  ConfigureStatusDefaultActionPayload,
+  UpdateStatusPropertyValueActionFailure,
+  UpdateStatusPropertyValueActionOutcome,
+  UpdateStatusPropertyValueActionPayload,
+  CreateStatusOptionActionFailure,
+  CreateStatusOptionActionOutcome,
+  CreateStatusOptionActionPayload,
+  UpdateStatusOptionActionFailure,
+  UpdateStatusOptionActionOutcome,
+  UpdateStatusOptionActionPayload,
+  CreateDateRangePropertyDefinitionActionFailure,
+  CreateDateRangePropertyDefinitionActionOutcome,
+  CreateDateRangePropertyDefinitionActionPayload,
+  UpdateDateRangePropertyValueActionFailure,
+  UpdateDateRangePropertyValueActionOutcome,
+  UpdateDateRangePropertyValueActionPayload,
+  ConfigureDateRangeTimeSupportActionFailure,
+  ConfigureDateRangeTimeSupportActionOutcome,
+  ConfigureDateRangeTimeSupportActionPayload,
+  UploadFilesMediaItemsActionFailure,
+  UploadFilesMediaItemsActionOutcome,
+  UploadFilesMediaItemsActionPayload,
   CreateMultiSelectPropertyDefinitionActionFailure,
   CreateMultiSelectPropertyDefinitionActionOutcome,
   CreateMultiSelectPropertyDefinitionActionPayload,
@@ -183,6 +214,16 @@ export type TicketingClientError =
   | UpdateMultiSelectPropertyValueActionFailure
   | CreateMultiSelectOptionActionFailure
   | CreateMultiSelectPropertyDefinitionActionFailure
+  | ConfigureDateRangeTimeSupportActionFailure
+  | UpdateDateRangePropertyValueActionFailure
+  | CreateDateRangePropertyDefinitionActionFailure
+  | UpdateTaskContentActionFailure
+  | UpdateStatusOptionActionFailure
+  | CreateStatusOptionActionFailure
+  | UpdateStatusPropertyValueActionFailure
+  | ConfigureStatusDefaultActionFailure
+  | CreateStatusPropertyDefinitionActionFailure
+  | UploadFilesMediaItemsActionFailure
   | DuplicateTaskActionFailure
   | ConfigureIdPropertyPrefixActionFailure
   | CreateIdPropertyDefinitionActionFailure
@@ -415,6 +456,24 @@ export const groupTaskDateValues = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.groupTaskDateValues({
+        headers: options.headers ?? {},
+        params: { collectionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const groupTaskDateRangeValues = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<GroupTaskDateRangeValuesResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.groupTaskDateRangeValues,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.groupTaskDateRangeValues({
         headers: options.headers ?? {},
         params: { collectionId, propertyDefinitionId },
       }),
@@ -1268,6 +1327,27 @@ export const runUploadFilesMediaItemAction = (
   );
 };
 
+export const runUploadFilesMediaItemsAction = (
+  payload: UploadFilesMediaItemsActionPayload,
+  options: TicketingActionClientOptions = {},
+): TicketingClientEffect<UploadFilesMediaItemsActionOutcome> => {
+  const headers = actionHeaders(options);
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.uploadFilesMediaItemsAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.uploadFilesMediaItemsAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
 export const runCreateIdPropertyDefinitionAction = (
   payload: CreateIdPropertyDefinitionActionPayload,
   options: TicketingActionClientOptions = {},
@@ -1314,6 +1394,250 @@ export const runDuplicateTaskAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.duplicateTaskAction({ headers: headers ?? {}, payload }),
+    ),
+  );
+};
+
+export const runUpdateTaskContentAction = (
+  payload: UpdateTaskContentActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateTaskContentActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateTaskContentAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateTaskContentAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateStatusPropertyDefinitionAction = (
+  payload: CreateStatusPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateStatusPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createStatusPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createStatusPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureStatusDefaultAction = (
+  payload: ConfigureStatusDefaultActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureStatusDefaultActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureStatusDefaultAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureStatusDefaultAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateStatusPropertyValueAction = (
+  payload: UpdateStatusPropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateStatusPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateStatusPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateStatusPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateStatusOptionAction = (
+  payload: CreateStatusOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateStatusOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createStatusOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createStatusOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateStatusOptionAction = (
+  payload: UpdateStatusOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateStatusOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateStatusOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateStatusOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateDateRangePropertyDefinitionAction = (
+  payload: CreateDateRangePropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateDateRangePropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.createDateRangePropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createDateRangePropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateDateRangePropertyValueAction = (
+  payload: UpdateDateRangePropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateDateRangePropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateDateRangePropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateDateRangePropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureDateRangeTimeSupportAction = (
+  payload: ConfigureDateRangeTimeSupportActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureDateRangeTimeSupportActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureDateRangeTimeSupportAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureDateRangeTimeSupportAction({
+        headers: headers ?? {},
+        payload,
+      }),
     ),
   );
 };
