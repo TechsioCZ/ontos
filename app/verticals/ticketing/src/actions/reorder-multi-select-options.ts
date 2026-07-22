@@ -125,22 +125,26 @@ const handler: ActionHandler<
     const reorderedResult = await services.tx.execute(sql`
       update ticketing.multi_select_options
       set catalog_position = ${catalogPosition},
+          revision = revision + 1,
           updated_at = statement_timestamp()
       where option_id = ${optionId}
         and property_definition_id = ${input.propertyDefinitionId}
         and tenant_id = ${services.context.tenantId}
-      returning to_char(
-        updated_at at time zone 'UTC',
-        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
-      ) as "updatedAt"
+      returning
+        revision,
+        to_char(
+          updated_at at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as "updatedAt"
     `);
-    const updatedAt = rowsFromResult<{ readonly updatedAt: string }>(reorderedResult).at(
-      0,
-    )?.updatedAt;
-    if (updatedAt === undefined) {
+    const reorderedOption = rowsFromResult<{
+      readonly revision: number;
+      readonly updatedAt: string;
+    }>(reorderedResult).at(0);
+    if (reorderedOption === undefined) {
       throw new Error('Validated Multi-select option could not be reordered.');
     }
-    reordered.push({ ...option, catalogPosition, updatedAt });
+    reordered.push({ ...option, ...reorderedOption, catalogPosition });
   }
   const updatedResult = await services.tx.execute(sql`
     update ticketing.task_property_definitions

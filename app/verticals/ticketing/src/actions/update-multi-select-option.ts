@@ -63,6 +63,46 @@ const handler: ActionHandler<
     input.name,
     'updateMultiSelectOption',
   );
+  const currentResult = await services.tx.execute(sql`
+    select
+      option.catalog_position as "catalogPosition",
+      option.color,
+      definition.revision as "definitionRevision",
+      option.name,
+      option.option_id as "optionId",
+      option.revision,
+      to_char(
+        option.updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
+    from ticketing.multi_select_options as option
+    inner join ticketing.task_property_definitions as definition
+      on definition.property_definition_id = option.property_definition_id
+      and definition.tenant_id = option.tenant_id
+      and definition.datatype = 'multi_select'
+    inner join ticketing.task_schemas as schema
+      on schema.schema_id = definition.schema_id
+      and schema.tenant_id = definition.tenant_id
+    where option.option_id = ${input.optionId}
+      and option.property_definition_id = ${input.propertyDefinitionId}
+      and option.revision = ${input.expectedRevision}
+      and option.tenant_id = ${services.context.tenantId}
+      and schema.collection_id = ${input.collectionId}
+    for update of option, definition
+  `);
+  const current = rowsFromResult<UpdatedOptionRow>(currentResult).at(0);
+  if (current === undefined) {
+    throw rejectAction({
+      code: 'ticketing.updateMultiSelectOption.stale_missing_or_name_conflict',
+      message:
+        'The Multi-select option changed, is unavailable, or conflicts with another option name.',
+    });
+  }
+  if (current.color === input.color && current.name === displayName) {
+    services.markNoOp();
+    const { definitionRevision, ...option } = current;
+    return { definitionRevision, option };
+  }
   const result = await services.tx.execute(sql`
     with updated_option as (
       update ticketing.multi_select_options as option
