@@ -1,5 +1,7 @@
 import { defineRuntimeConfig } from '@modern-js/runtime';
 import { ultramodernBoundaryDebuggerPlugin } from '@modern-js/runtime/boundary-debugger';
+import csTicketingResource from '@app/ticketing/locales/cs';
+import enTicketingResource from '@app/ticketing/locales/en';
 import { createInstance } from 'i18next';
 import csResource from '../locales/cs/shell.json';
 import enResource from '../locales/en/shell.json';
@@ -24,8 +26,18 @@ const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<st
 
 const i18nInstance = createInstance();
 const resources = {
-  cs: { [ultramodernRouteNamespace]: flattenLocaleResource(csResource) },
-  en: { [ultramodernRouteNamespace]: flattenLocaleResource(enResource) },
+  cs: {
+    [ultramodernRouteNamespace]: {
+      ...flattenLocaleResource(csResource),
+      ...flattenLocaleResource(csTicketingResource),
+    },
+  },
+  en: {
+    [ultramodernRouteNamespace]: {
+      ...flattenLocaleResource(enResource),
+      ...flattenLocaleResource(enTicketingResource),
+    },
+  },
 } as const;
 
 export default defineRuntimeConfig({

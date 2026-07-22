@@ -146,6 +146,32 @@
       "staleDescription": "Vaše rozepsané číslo zůstalo zachováno. Před dalším pokusem načtěte aktuální hodnotu.",
       "staleTitle": "Číslo bylo změněno jinde"
     },
+    "propertyDefinition": {
+      "create": "Vytvořit pole",
+      "createFailedDescription": "Pole se nepodařilo vytvořit.",
+      "createFailedTitle": "Vytvoření pole selhalo",
+      "creating": "Vytváření pole",
+      "heading": "Přidat pole",
+      "mandatoryHelp": "Úkoly musí mít pro toto pole vyplněnou hodnotu.",
+      "mandatoryLabel": "Povinné",
+      "nameLabel": "Název pole",
+      "typeLabel": "Typ pole",
+      "typePlaceholder": "Vyberte typ pole",
+      "types": {
+        "checkbox": "Zaškrtávací pole",
+        "created_by": "Vytvořil(a)",
+        "created_time": "Čas vytvoření",
+        "date": "Datum",
+        "date_range": "Rozsah dat",
+        "email": "E-mail",
+        "last_edited_by": "Naposledy upravil(a)",
+        "last_edited_time": "Čas poslední úpravy",
+        "number": "Číslo",
+        "phone": "Telefon",
+        "text": "Text",
+        "url": "URL"
+      }
+    },
     "routes": {
       "home": "Domů"
     },

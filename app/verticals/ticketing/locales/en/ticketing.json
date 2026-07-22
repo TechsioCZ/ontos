@@ -146,6 +146,32 @@
       "staleDescription": "Your number draft is still here. Reload before trying again.",
       "staleTitle": "Number changed elsewhere"
     },
+    "propertyDefinition": {
+      "create": "Create field",
+      "createFailedDescription": "The field could not be created.",
+      "createFailedTitle": "Field creation failed",
+      "creating": "Creating field",
+      "heading": "Add a field",
+      "mandatoryHelp": "Tasks must have a value for this field.",
+      "mandatoryLabel": "Mandatory",
+      "nameLabel": "Field name",
+      "typeLabel": "Field type",
+      "typePlaceholder": "Select a field type",
+      "types": {
+        "checkbox": "Checkbox",
+        "created_by": "Created by",
+        "created_time": "Created time",
+        "date": "Date",
+        "date_range": "Date range",
+        "email": "Email",
+        "last_edited_by": "Last edited by",
+        "last_edited_time": "Last edited time",
+        "number": "Number",
+        "phone": "Phone",
+        "text": "Text",
+        "url": "URL"
+      }
+    },
     "routes": {
       "home": "Home"
     },

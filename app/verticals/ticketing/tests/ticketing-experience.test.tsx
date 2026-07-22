@@ -140,6 +140,28 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.phone.definitionName': 'Phone property name',
         'ticketing.phone.invalid': 'Enter one control-free line of at most 256 characters.',
         'ticketing.phone.save': 'Save Phone',
+        'ticketing.propertyDefinition.create': 'Create field',
+        'ticketing.propertyDefinition.createFailedDescription': 'The field could not be created.',
+        'ticketing.propertyDefinition.createFailedTitle': 'Field creation failed',
+        'ticketing.propertyDefinition.creating': 'Creating field',
+        'ticketing.propertyDefinition.heading': 'Add a field',
+        'ticketing.propertyDefinition.mandatoryHelp': 'Tasks must have a value for this field.',
+        'ticketing.propertyDefinition.mandatoryLabel': 'Mandatory',
+        'ticketing.propertyDefinition.nameLabel': 'Field name',
+        'ticketing.propertyDefinition.typeLabel': 'Field type',
+        'ticketing.propertyDefinition.typePlaceholder': 'Select a field type',
+        'ticketing.propertyDefinition.types.checkbox': 'Checkbox',
+        'ticketing.propertyDefinition.types.created_by': 'Created by',
+        'ticketing.propertyDefinition.types.created_time': 'Created time',
+        'ticketing.propertyDefinition.types.date': 'Date',
+        'ticketing.propertyDefinition.types.date_range': 'Date range',
+        'ticketing.propertyDefinition.types.email': 'Email',
+        'ticketing.propertyDefinition.types.last_edited_by': 'Last edited by',
+        'ticketing.propertyDefinition.types.last_edited_time': 'Last edited time',
+        'ticketing.propertyDefinition.types.number': 'Number',
+        'ticketing.propertyDefinition.types.phone': 'Phone',
+        'ticketing.propertyDefinition.types.text': 'Text',
+        'ticketing.propertyDefinition.types.url': 'URL',
         'ticketing.role': 'Ticketing',
         'ticketing.taskCollection.create': 'Create Task',
         'ticketing.taskCollection.createFailed': 'Task creation failed',
@@ -446,7 +468,7 @@ rs.mock('../src/api/ticketing-client', () => {
             hidden: false,
             mandatory: payload.mandatory,
             name: payload.name.trim(),
-            propertyDefinitionId: 'url-property-1',
+            propertyDefinitionId: `url-property-${mocks.urlDefinitionCalls.length}`,
             revision: 1,
           },
         },
@@ -510,6 +532,17 @@ afterEach(() => {
   cleanup();
   rs.unstubAllGlobals();
 });
+
+const selectFieldType = async (value: string, label: string) => {
+  const nativeTypeSelect = document.querySelector<HTMLSelectElement>(
+    'select[name="task-property-datatype"]',
+  );
+  expect(nativeTypeSelect).not.toBeNull();
+  fireEvent.change(nativeTypeSelect as HTMLSelectElement, { target: { value } });
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: 'Field type' })).toHaveTextContent(label),
+  );
+};
 
 test('uses one form-scoped idempotency key and rotates it after complete success', async () => {
   render(<TicketingExperience />);
@@ -599,7 +632,11 @@ test('creates and renders an intrinsic property through the application path', a
 
   fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
   await screen.findByRole('region', { name: 'Opened Task' });
-  fireEvent.click(screen.getByRole('button', { name: 'Add Created time property' }));
+  await selectFieldType('created_time', 'Created time');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
+    target: { value: 'Created time' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
   await waitFor(() => expect(document.querySelector('time')).not.toBeNull());
@@ -622,7 +659,11 @@ test('creates a Last edited time definition through the existing UI-kit action p
 
   fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
   await screen.findByRole('region', { name: 'Opened Task' });
-  fireEvent.click(screen.getByRole('button', { name: 'Add Last edited time property' }));
+  await selectFieldType('last_edited_time', 'Last edited time');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
+    target: { value: 'Last edited time' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   await waitFor(() => expect(mocks.intrinsicCalls).toHaveLength(1));
   expect(mocks.intrinsicCalls[0]?.payload).toEqual({
@@ -642,23 +683,42 @@ test('creates, edits, and opens a URL through the public Ticketing surface', asy
   fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
   await screen.findByRole('region', { name: 'Opened Task' });
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+  await selectFieldType('url', 'URL');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
     target: { value: 'Reference URL' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Mandatory' }));
+  await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Mandatory' })).toBeChecked());
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
-  const valueInput = await screen.findByRole('textbox', { name: 'Reference URL' });
+  await waitFor(() => expect(mocks.urlDefinitionCalls).toHaveLength(1));
+  expect(mocks.toastCreate).toHaveBeenCalledTimes(1);
+  const valueInput = await screen.findByRole('textbox', { name: /^Reference URL/u });
+  await waitFor(() => expect(screen.getByRole('textbox', { name: 'Field name' })).toHaveValue(''));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
+    target: { value: 'Backup URL' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
+  await screen.findByRole('textbox', { name: 'Backup URL' });
+
   const exactValue = 'HTTPS://Example.com/%7EExact?Q=One#Part';
   fireEvent.change(valueInput, { target: { value: exactValue } });
-  fireEvent.click(screen.getByRole('button', { name: 'Save URL' }));
+  fireEvent.click(screen.getAllByRole('button', { name: 'Save URL' })[0] as HTMLButtonElement);
 
   const open = await screen.findByRole('link', { name: 'Open URL' });
   expect(open.getAttribute('href')).toBe(exactValue);
-  expect(mocks.urlDefinitionCalls[0]?.payload).toEqual({
-    collectionId: 'collection-1',
-    mandatory: false,
-    name: 'Reference URL',
-  });
+  expect(mocks.urlDefinitionCalls.map(({ payload }) => payload)).toEqual([
+    {
+      collectionId: 'collection-1',
+      mandatory: true,
+      name: 'Reference URL',
+    },
+    {
+      collectionId: 'collection-1',
+      mandatory: false,
+      name: 'Backup URL',
+    },
+  ]);
   expect(mocks.urlUpdateCalls[0]?.payload).toEqual({
     collectionId: 'collection-1',
     expectedRevision: 0,
@@ -677,34 +737,38 @@ test('wires a denied value-edit capability to read-only property editors', async
   await screen.findByRole('region', { name: 'Opened Task' });
   await waitFor(() => expect(mocks.capabilityAttempts).toBe(1));
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'Email property name' }), {
+  await selectFieldType('email', 'Email');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
     target: { value: 'Contact email' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Create Email property' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   const email = await screen.findByRole('textbox', { name: 'Contact email' });
   expect(email).toHaveAttribute('readonly');
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'Date property name' }), {
+  await selectFieldType('date', 'Date');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
     target: { value: 'Due date' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Create Date property' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   const date = await screen.findByRole('button', { name: 'Due date: Empty' });
   expect(date).toBeDisabled();
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'URL property name' }), {
+  await selectFieldType('url', 'URL');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
     target: { value: 'Reference URL' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Add URL property' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   const url = await screen.findByRole('textbox', { name: 'Reference URL' });
   expect(url).toHaveAttribute('readonly');
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'Phone property name' }), {
+  await selectFieldType('phone', 'Phone');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
     target: { value: 'Direct line' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Add Phone property' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   const phone = await screen.findByRole('textbox', { name: 'Direct line' });
   expect(phone).toHaveAttribute('readonly');
@@ -720,10 +784,11 @@ test('keeps Date Range values editable while schema controls require definition 
   await screen.findByRole('region', { name: 'Opened Task' });
   await waitFor(() => expect(mocks.definitionCapabilityAttempts).toBe(1));
 
-  fireEvent.change(screen.getByRole('textbox', { name: 'Date Range property name' }), {
+  await selectFieldType('date_range', 'Date range');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
     target: { value: 'Delivery window' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Create Date Range property' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Create field' }));
 
   expect(await screen.findByRole('checkbox', { name: 'Include time' })).toBeDisabled();
   expect(screen.getByRole('group', { name: 'Delivery window' })).not.toBeDisabled();

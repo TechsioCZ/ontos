@@ -54,6 +54,11 @@ import {
 } from '../components/intrinsic-property-presentation';
 import { TextPropertyEditor } from '../components/text-property-editor';
 import { TextPropertyDuplication } from '../components/text-property-duplication';
+import { TaskPropertyDefinitionForm } from '../components/task-property-definition-form';
+import type {
+  CreatableTaskPropertyDatatype,
+  TaskPropertyDefinitionDraft,
+} from '../components/task-property-definition-form';
 import { UrlPropertyEditor } from '../components/url-property-editor';
 import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
 import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
@@ -70,6 +75,20 @@ const datePropertyLocaleByLanguage: Readonly<Record<string, DatePropertyLocale>>
   en: 'en-GB',
 };
 const defaultDatePropertyLocale: DatePropertyLocale = 'en-GB';
+const createDefinitionIdempotencyKeys = (): Record<CreatableTaskPropertyDatatype, string> => ({
+  checkbox: crypto.randomUUID(),
+  created_by: crypto.randomUUID(),
+  created_time: crypto.randomUUID(),
+  date: crypto.randomUUID(),
+  date_range: crypto.randomUUID(),
+  email: crypto.randomUUID(),
+  last_edited_by: crypto.randomUUID(),
+  last_edited_time: crypto.randomUUID(),
+  number: crypto.randomUUID(),
+  phone: crypto.randomUUID(),
+  text: crypto.randomUUID(),
+  url: crypto.randomUUID(),
+});
 
 const loadTicketingOperationContextToken = async (): Promise<string> => {
   const response = await fetch('/shell-super-app-api/operation-context', {
@@ -107,59 +126,17 @@ export const TicketingExperience = () => {
   const [openedTaskPropertyWorkspace, setOpenedTaskPropertyWorkspace] =
     useState<TaskPropertyWorkspace>();
   const [isCreatingTask, setIsCreatingTask] = useState(false);
-  const [checkboxDefinitionName, setCheckboxDefinitionName] = useState('');
-  const [checkboxDefinitionIdempotencyKey, setCheckboxDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
+  const [definitionIdempotencyKeys, setDefinitionIdempotencyKeys] = useState(
+    createDefinitionIdempotencyKeys,
   );
-  const [isCreatingCheckboxDefinition, setIsCreatingCheckboxDefinition] = useState(false);
-  const [dateDefinitionName, setDateDefinitionName] = useState('');
-  const [dateDefinitionIdempotencyKey, setDateDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingDateDefinition, setIsCreatingDateDefinition] = useState(false);
-  const [dateRangeDefinitionName, setDateRangeDefinitionName] = useState('');
-  const [dateRangeDefinitionIdempotencyKey, setDateRangeDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingDateRangeDefinition, setIsCreatingDateRangeDefinition] = useState(false);
-  const [emailDefinitionName, setEmailDefinitionName] = useState('');
-  const [emailDefinitionIdempotencyKey, setEmailDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
   const [canEditTaskPropertyValues, setCanEditTaskPropertyValues] = useState(false);
   const [canEditTaskPropertyDefinitions, setCanEditTaskPropertyDefinitions] = useState(false);
-  const [textDefinitionName, setTextDefinitionName] = useState('');
-  const [textDefinitionIdempotencyKey, setTextDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingTextDefinition, setIsCreatingTextDefinition] = useState(false);
-  const [numberDefinitionName, setNumberDefinitionName] = useState('');
-  const [numberDefinitionIdempotencyKey, setNumberDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingNumberDefinition, setIsCreatingNumberDefinition] = useState(false);
-  const [phoneDefinitionName, setPhoneDefinitionName] = useState('');
-  const [phoneDefinitionIdempotencyKey, setPhoneDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingPhoneDefinition, setIsCreatingPhoneDefinition] = useState(false);
-  const [urlDefinitionName, setUrlDefinitionName] = useState('');
-  const [urlDefinitionIdempotencyKey, setUrlDefinitionIdempotencyKey] = useState(() =>
-    crypto.randomUUID(),
-  );
-  const [isCreatingUrlDefinition, setIsCreatingUrlDefinition] = useState(false);
-  const [creatingIntrinsicDatatype, setCreatingIntrinsicDatatype] = useState<
-    'created_by' | 'created_time' | 'last_edited_time' | 'last_edited_by'
-  >();
-  const [intrinsicDefinitionIdempotencyKeys, setIntrinsicDefinitionIdempotencyKeys] = useState(
-    () => ({
-      created_by: crypto.randomUUID(),
-      created_time: crypto.randomUUID(),
-      last_edited_by: crypto.randomUUID(),
-      last_edited_time: crypto.randomUUID(),
-    }),
-  );
+
+  const rotateDefinitionIdempotencyKey = (datatype: CreatableTaskPropertyDatatype) =>
+    setDefinitionIdempotencyKeys((current) => ({
+      ...current,
+      [datatype]: crypto.randomUUID(),
+    }));
 
   const handleCreateTask = async () => {
     setIsCreatingTask(true);
@@ -221,26 +198,14 @@ export const TicketingExperience = () => {
             },
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
-              setCheckboxDefinitionName('');
-              setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
-              setDateDefinitionName('');
-              setDateDefinitionIdempotencyKey(crypto.randomUUID());
-              setDateRangeDefinitionName('');
-              setDateRangeDefinitionIdempotencyKey(crypto.randomUUID());
-              setEmailDefinitionName('');
-              setEmailDefinitionIdempotencyKey(crypto.randomUUID());
-              setNumberDefinitionName('');
-              setNumberDefinitionIdempotencyKey(crypto.randomUUID());
-              setPhoneDefinitionName('');
-              setPhoneDefinitionIdempotencyKey(crypto.randomUUID());
-              setUrlDefinitionName('');
-              setUrlDefinitionIdempotencyKey(crypto.randomUUID());
+              setDefinitionIdempotencyKeys(createDefinitionIdempotencyKeys());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
                 idGroups: [],
                 propertyDefinitions: [],
                 tasks: [
                   {
+                    canvas: {},
                     checkboxValues: [],
                     dateRangeValues: [],
                     dateValues: [],
@@ -298,440 +263,339 @@ export const TicketingExperience = () => {
     }
   };
 
-  const handleCreateCheckboxDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || checkboxDefinitionName.trim().length === 0) {
+  const handleCreateCheckboxDefinition = async ({
+    mandatory,
+    name,
+  }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingCheckboxDefinition(true);
-
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateCheckboxPropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: checkboxDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateCheckboxPropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.checkbox,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            tasks: current.tasks.map((task) => ({
+              ...task,
+              checkboxValues: [
+                ...task.checkboxValues,
+                {
+                  propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                  revision: 1,
+                  value: false,
+                },
+              ],
+            })),
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: checkboxDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-              tasks: current.tasks.map((task) => ({
-                ...task,
-                checkboxValues: [
-                  ...task.checkboxValues,
-                  {
-                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
-                    revision: 1,
-                    value: false,
-                  },
-                ],
-              })),
-            },
-      );
-      setCheckboxDefinitionName('');
-      setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.checkbox.definitionCreateFailedDescription'),
-        title: t('ticketing.checkbox.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingCheckboxDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('checkbox');
   };
 
-  const handleCreateEmailDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || emailDefinitionName.trim().length === 0) {
+  const handleCreateEmailDefinition = async ({ mandatory, name }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingEmailDefinition(true);
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateEmailPropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: emailDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateEmailPropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.email,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: emailDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-            },
-      );
-      setEmailDefinitionName('');
-      setEmailDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.email.definitionCreateFailedDescription'),
-        title: t('ticketing.email.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingEmailDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('email');
   };
 
-  const handleCreateTextDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || textDefinitionName.trim().length === 0) {
+  const handleCreateTextDefinition = async ({ mandatory, name }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingTextDefinition(true);
-
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateTextPropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: textDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateTextPropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.text,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            tasks: current.tasks.map((task) => ({
+              ...task,
+              textValues: [
+                ...(task.textValues ?? []),
+                {
+                  document: null,
+                  propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                  readableText: null,
+                  revision: 1,
+                },
+              ],
+            })),
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: textDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-              tasks: current.tasks.map((task) => ({
-                ...task,
-                textValues: [
-                  ...(task.textValues ?? []),
-                  {
-                    document: null,
-                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
-                    readableText: null,
-                    revision: 1,
-                  },
-                ],
-              })),
-            },
-      );
-      setTextDefinitionName('');
-      setTextDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.text.definitionCreateFailedDescription'),
-        title: t('ticketing.text.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingTextDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('text');
   };
 
-  const handleCreateNumberDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || numberDefinitionName.trim().length === 0) {
+  const handleCreateNumberDefinition = async ({ mandatory, name }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingNumberDefinition(true);
-
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateNumberPropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: numberDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateNumberPropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.number,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: numberDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-            },
-      );
-      setNumberDefinitionName('');
-      setNumberDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.number.definitionCreateFailedDescription'),
-        title: t('ticketing.number.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingNumberDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('number');
   };
 
-  const handleCreateUrlDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || urlDefinitionName.trim().length === 0) {
+  const handleCreateUrlDefinition = async ({ mandatory, name }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingUrlDefinition(true);
-
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateUrlPropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: urlDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateUrlPropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.url,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            tasks: current.tasks.map((task) => ({
+              ...task,
+              urlValues: [
+                ...(task.urlValues ?? []),
+                {
+                  propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
+                  revision: 0,
+                  value: null,
+                },
+              ],
+            })),
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: urlDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-              tasks: current.tasks.map((task) => ({
-                ...task,
-                urlValues: [
-                  ...(task.urlValues ?? []),
-                  {
-                    propertyDefinitionId: outcome.response.definition.propertyDefinitionId,
-                    revision: 0,
-                    value: null,
-                  },
-                ],
-              })),
-            },
-      );
-      setUrlDefinitionName('');
-      setUrlDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.url.definitionCreateFailedDescription'),
-        title: t('ticketing.url.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingUrlDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('url');
   };
 
-  const handleCreatePhoneDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || phoneDefinitionName.trim().length === 0) {
+  const handleCreatePhoneDefinition = async ({ mandatory, name }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingPhoneDefinition(true);
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreatePhonePropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: phoneDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreatePhonePropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.phone,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: phoneDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-            },
-      );
-      setPhoneDefinitionName('');
-      setPhoneDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.phone.definitionCreateFailedDescription'),
-        title: t('ticketing.phone.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingPhoneDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('phone');
   };
 
-  const handleCreateDateDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || dateDefinitionName.trim().length === 0) {
+  const handleCreateDateDefinition = async ({ mandatory, name }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingDateDefinition(true);
-
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateDatePropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: dateDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateDatePropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.date,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: dateDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-            },
-      );
-      setDateDefinitionName('');
-      setDateDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.date.definitionCreateFailedDescription'),
-        title: t('ticketing.date.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingDateDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('date');
   };
 
-  const handleCreateDateRangeDefinition = async () => {
-    if (openedTaskPropertyWorkspace === undefined || dateRangeDefinitionName.trim().length === 0) {
+  const handleCreateDateRangeDefinition = async ({
+    mandatory,
+    name,
+  }: TaskPropertyDefinitionDraft) => {
+    if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
-    setIsCreatingDateRangeDefinition(true);
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const outcome = await runEffectRequest(
-        runCreateDateRangePropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            mandatory: false,
-            name: dateRangeDefinitionName,
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const outcome = await runEffectRequest(
+      runCreateDateRangePropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          mandatory,
+          name,
+        },
+        {
+          headers: { 'x-ontos-operation-context': operationContextToken },
+          idempotencyKey: definitionIdempotencyKeys.date_range,
+        },
+      ),
+    );
+    setOpenedTaskPropertyWorkspace((current) =>
+      current === undefined
+        ? current
+        : {
+            ...current,
+            propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
           },
-          {
-            headers: { 'x-ontos-operation-context': operationContextToken },
-            idempotencyKey: dateRangeDefinitionIdempotencyKey,
-          },
-        ),
-      );
-      setOpenedTaskPropertyWorkspace((current) =>
-        current === undefined
-          ? current
-          : {
-              ...current,
-              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
-            },
-      );
-      setDateRangeDefinitionName('');
-      setDateRangeDefinitionIdempotencyKey(crypto.randomUUID());
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error
-            ? error.message
-            : t('ticketing.dateRange.definitionCreateFailedDescription'),
-        title: t('ticketing.dateRange.definitionCreateFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsCreatingDateRangeDefinition(false);
-    }
+    );
+    rotateDefinitionIdempotencyKey('date_range');
   };
 
-  const handleCreateIntrinsicDefinition = async (
-    datatype: 'created_by' | 'created_time' | 'last_edited_time' | 'last_edited_by',
-  ) => {
+  const handleCreateIntrinsicDefinition = async ({
+    datatype,
+    mandatory,
+    name,
+  }: TaskPropertyDefinitionDraft) => {
     if (openedTaskPropertyWorkspace === undefined) {
       return;
     }
 
-    setCreatingIntrinsicDatatype(datatype);
-    try {
-      const operationContextToken = await loadTicketingOperationContextToken();
-      const headers = { 'x-ontos-operation-context': operationContextToken };
-      await runEffectRequest(
-        runCreateIntrinsicPropertyDefinitionAction(
-          {
-            collectionId: openedTaskPropertyWorkspace.collectionId,
-            datatype,
-            mandatory: false,
-            name: t(`ticketing.intrinsic.${datatype}.name`),
-          },
-          { headers, idempotencyKey: intrinsicDefinitionIdempotencyKeys[datatype] },
-        ),
-      );
-      const workspace = await runEffectRequest(
-        getTaskPropertyWorkspace(openedTaskPropertyWorkspace.collectionId, {
-          browserTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          headers,
-        }),
-      );
-      setOpenedTaskPropertyWorkspace(workspace);
-      setIntrinsicDefinitionIdempotencyKeys((current) => ({
-        ...current,
-        [datatype]: crypto.randomUUID(),
-      }));
-    } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error ? error.message : t('ticketing.intrinsic.createFailedDescription'),
-        title: t('ticketing.intrinsic.createFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setCreatingIntrinsicDatatype(undefined);
+    if (
+      datatype !== 'created_by' &&
+      datatype !== 'created_time' &&
+      datatype !== 'last_edited_time' &&
+      datatype !== 'last_edited_by'
+    ) {
+      return;
     }
+
+    const operationContextToken = await loadTicketingOperationContextToken();
+    const headers = { 'x-ontos-operation-context': operationContextToken };
+    await runEffectRequest(
+      runCreateIntrinsicPropertyDefinitionAction(
+        {
+          collectionId: openedTaskPropertyWorkspace.collectionId,
+          datatype,
+          mandatory,
+          name,
+        },
+        { headers, idempotencyKey: definitionIdempotencyKeys[datatype] },
+      ),
+    );
+    const workspace = await runEffectRequest(
+      getTaskPropertyWorkspace(openedTaskPropertyWorkspace.collectionId, {
+        browserTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        headers,
+      }),
+    );
+    setOpenedTaskPropertyWorkspace(workspace);
+    rotateDefinitionIdempotencyKey(datatype);
+  };
+
+  const handleCreatePropertyDefinition = (draft: TaskPropertyDefinitionDraft): Promise<void> => {
+    const handlers = {
+      checkbox: handleCreateCheckboxDefinition,
+      created_by: handleCreateIntrinsicDefinition,
+      created_time: handleCreateIntrinsicDefinition,
+      date: handleCreateDateDefinition,
+      date_range: handleCreateDateRangeDefinition,
+      email: handleCreateEmailDefinition,
+      last_edited_by: handleCreateIntrinsicDefinition,
+      last_edited_time: handleCreateIntrinsicDefinition,
+      number: handleCreateNumberDefinition,
+      phone: handleCreatePhoneDefinition,
+      text: handleCreateTextDefinition,
+      url: handleCreateUrlDefinition,
+    } satisfies Record<
+      TaskPropertyDefinitionDraft['datatype'],
+      (input: TaskPropertyDefinitionDraft) => Promise<void>
+    >;
+
+    return handlers[draft.datatype](draft);
   };
 
   return (
@@ -787,159 +651,8 @@ export const TicketingExperience = () => {
             name="title"
             value={openedTaskCollection.task.title}
           />
-          <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
-            <FormInput
-              id="checkbox-property-name"
-              label={t('ticketing.checkbox.definitionName')}
-              name="checkbox-property-name"
-              onChange={(event) => setCheckboxDefinitionName(event.currentTarget.value)}
-              value={checkboxDefinitionName}
-            />
-            <Button
-              disabled={checkboxDefinitionName.trim().length === 0}
-              isLoading={isCreatingCheckboxDefinition}
-              loadingText={t('ticketing.checkbox.definitionCreating')}
-              onClick={() => void handleCreateCheckboxDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.checkbox.definitionCreate')}
-            </Button>
-            <FormInput
-              id="date-property-name"
-              label={t('ticketing.date.definitionName')}
-              name="date-property-name"
-              onChange={(event) => setDateDefinitionName(event.currentTarget.value)}
-              value={dateDefinitionName}
-            />
-            <Button
-              disabled={dateDefinitionName.trim().length === 0}
-              isLoading={isCreatingDateDefinition}
-              loadingText={t('ticketing.date.definitionCreating')}
-              onClick={() => void handleCreateDateDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.date.definitionCreate')}
-            </Button>
-            <FormInput
-              id="date-range-property-name"
-              label={t('ticketing.dateRange.definitionName')}
-              name="date-range-property-name"
-              onChange={(event) => setDateRangeDefinitionName(event.currentTarget.value)}
-              value={dateRangeDefinitionName}
-            />
-            <Button
-              disabled={dateRangeDefinitionName.trim().length === 0}
-              isLoading={isCreatingDateRangeDefinition}
-              loadingText={t('ticketing.dateRange.definitionCreating')}
-              onClick={() => void handleCreateDateRangeDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.dateRange.definitionCreate')}
-            </Button>
-            <FormInput
-              id="email-property-name"
-              label={t('ticketing.email.definitionName')}
-              name="email-property-name"
-              onChange={(event) => setEmailDefinitionName(event.currentTarget.value)}
-              value={emailDefinitionName}
-            />
-            <Button
-              disabled={emailDefinitionName.trim().length === 0}
-              isLoading={isCreatingEmailDefinition}
-              loadingText={t('ticketing.email.definitionCreating')}
-              onClick={() => void handleCreateEmailDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.email.definitionCreate')}
-            </Button>
-            <FormInput
-              id="text-property-name"
-              label={t('ticketing.text.definitionName')}
-              name="text-property-name"
-              onChange={(event) => setTextDefinitionName(event.currentTarget.value)}
-              value={textDefinitionName}
-            />
-            <Button
-              disabled={textDefinitionName.trim().length === 0}
-              isLoading={isCreatingTextDefinition}
-              loadingText={t('ticketing.text.definitionCreating')}
-              onClick={() => void handleCreateTextDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.text.definitionCreate')}
-            </Button>
-            <FormInput
-              id="number-property-name"
-              label={t('ticketing.number.definitionName')}
-              name="number-property-name"
-              onChange={(event) => setNumberDefinitionName(event.currentTarget.value)}
-              value={numberDefinitionName}
-            />
-            <Button
-              disabled={numberDefinitionName.trim().length === 0}
-              isLoading={isCreatingNumberDefinition}
-              loadingText={t('ticketing.number.definitionCreating')}
-              onClick={() => void handleCreateNumberDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.number.definitionCreate')}
-            </Button>
-            <FormInput
-              id="url-property-name"
-              label={t('ticketing.url.definitionName')}
-              name="url-property-name"
-              onChange={(event) => setUrlDefinitionName(event.currentTarget.value)}
-              value={urlDefinitionName}
-            />
-            <Button
-              disabled={urlDefinitionName.trim().length === 0}
-              isLoading={isCreatingUrlDefinition}
-              loadingText={t('ticketing.url.definitionCreating')}
-              onClick={() => void handleCreateUrlDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.url.definitionCreate')}
-            </Button>
-            <FormInput
-              id="phone-property-name"
-              label={t('ticketing.phone.definitionName')}
-              name="phone-property-name"
-              onChange={(event) => setPhoneDefinitionName(event.currentTarget.value)}
-              value={phoneDefinitionName}
-            />
-            <Button
-              disabled={phoneDefinitionName.trim().length === 0}
-              isLoading={isCreatingPhoneDefinition}
-              loadingText={t('ticketing.phone.definitionCreating')}
-              onClick={() => void handleCreatePhoneDefinition()}
-              type="button"
-              variant="secondary"
-            >
-              {t('ticketing.phone.definitionCreate')}
-            </Button>
-          </div>
-          <div className="ticketing:mt-4 ticketing:flex ticketing:flex-wrap ticketing:gap-3">
-            {(['created_time', 'created_by', 'last_edited_time', 'last_edited_by'] as const).map(
-              (datatype) => (
-                <Button
-                  isLoading={creatingIntrinsicDatatype === datatype}
-                  key={datatype}
-                  loadingText={t(`ticketing.intrinsic.${datatype}.creating`)}
-                  onClick={() => void handleCreateIntrinsicDefinition(datatype)}
-                  type="button"
-                  variant="secondary"
-                >
-                  {t(`ticketing.intrinsic.${datatype}.create`)}
-                </Button>
-              ),
-            )}
+          <div className="ticketing:mt-6">
+            <TaskPropertyDefinitionForm onCreate={handleCreatePropertyDefinition} />
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
