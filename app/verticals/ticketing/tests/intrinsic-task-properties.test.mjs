@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { on } from 'node:events';
 import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { createVerticalGatewayToken } from '../../../packages/core-runtime/src/vertical-gateway-token.ts';
 import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { resolveEffectiveTimeZone } from '../../../packages/core-runtime/src/principal-time-zone-preferences.ts';
+import { runOutboxWorkerTick } from '../../../packages/outbox-worker/src/runtime.ts';
 import { observeCoreActionEvidence } from '@app/core-runtime/testing/evidence-observer';
 import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
@@ -27,6 +30,16 @@ const createdTenantIds = [];
 after(async () => {
   await Promise.all(
     createdTenantIds.map(async (tenantId) => {
+      await sqlClient`delete from core.outbox_attempts where outbox_delivery_id in (
+        select delivery.outbox_delivery_id
+        from core.outbox_deliveries as delivery
+        inner join core.outbox_messages as message
+          on message.outbox_message_id = delivery.outbox_message_id
+        where message.tenant_id = ${tenantId}
+      )`;
+      await sqlClient`delete from core.outbox_deliveries where outbox_message_id in (
+        select outbox_message_id from core.outbox_messages where tenant_id = ${tenantId}
+      )`;
       await sqlClient`delete from core.outbox_messages where tenant_id = ${tenantId}`;
       await sqlClient`delete from core.domain_events where tenant_id = ${tenantId}`;
       await sqlClient`delete from core.audit_events where tenant_id = ${tenantId}`;
@@ -142,6 +155,61 @@ const runSignedRegisteredAction = ({ clock, operationContext, payload, registrat
       }),
     },
   });
+
+const waitForChildMessage = async (child, expectedType) => {
+  for await (const [message] of on(child, 'message')) {
+    if (message?.type === 'error') {
+      throw new Error(message.error);
+    }
+    if (message?.type === expectedType) {
+      return message;
+    }
+  }
+  throw new Error(`Controlled Task content Action exited before sending ${expectedType}.`);
+};
+
+const readControlledActionResult = async (child) => {
+  const message = await waitForChildMessage(child, 'result');
+  return message.result;
+};
+
+const startControlledTaskContentAction = ({ clock, operationContext, payload }) => {
+  const child = fork(new URL('fixtures/controlled-task-content-action.mjs', import.meta.url), {
+    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+  });
+  const entered = waitForChildMessage(child, 'entered');
+  const result = readControlledActionResult(child);
+  child.send({ clock, operationContext, payload, type: 'run' });
+  return {
+    entered,
+    release: () => child.send({ type: 'release' }),
+    result,
+  };
+};
+
+const createRelayActionRegistration = ({ actionKey, eventType, outputTopic }) => ({
+  descriptor: {
+    actionKey,
+    auditProfile: 'standard',
+    domainEvent: {
+      eventType,
+      payload: (input) => input,
+      producerModuleKey: 'ticketing',
+      subjectModuleKey: 'ticketing',
+      subjectResourceId: (input) => input.taskId,
+      subjectResourceType: 'task',
+    },
+    gatewayAudience: 'ticketing',
+    idempotency: 'required',
+    moduleStateAccess: 'mutate',
+    transportRequestSchema: { parse: (input) => input },
+    transportResponseSchema: { parse: (input) => input },
+  },
+  handler: (input, services) => {
+    services.context.addOutboxMessage({ payload: input, topic: outputTopic });
+    return input;
+  },
+});
 
 const configurePrincipalTimeZone = (operationContext, timeZone) =>
   runRegisteredAction({
@@ -294,6 +362,17 @@ test('Last edited by initializes to the creator and projects the latest successf
     registration: createIntrinsicPropertyDefinitionActionRegistration,
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const lastEditedTime = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_time',
+      mandatory: false,
+      name: 'Last edited time',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(lastEditedTime._tag, 'OperationSucceeded', JSON.stringify(lastEditedTime));
 
   const initialWorkspace = await runRegisteredDataAccess({
     operationContext: creatorContext,
@@ -365,17 +444,41 @@ test('Last edited by initializes to the creator and projects the latest successf
     registration: updateTaskContentActionRegistration,
   });
   assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
-  const finalSave = await runRegisteredAction({
+
+  const [finalEditor] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${creatorContext.tenantId}, ${'Katherine Johnson'}, ${'human'}, ${'active'})
+    returning principal_id
+  `;
+  const firstCommit = startControlledTaskContentAction({
+    clock: '2026-07-22T08:00:00.100Z',
     operationContext: creatorContext,
     payload: {
       canvas: {},
       collectionId,
       expectedRevision: 2,
       taskId: task.response.task.taskId,
-      title: 'Creator commits last',
+      title: 'Creator commits first',
     },
-    registration: updateTaskContentActionRegistration,
   });
+  await firstCommit.entered;
+  const finalCommit = startControlledTaskContentAction({
+    clock: '2026-07-22T08:00:00.200Z',
+    operationContext: { ...creatorContext, principalId: finalEditor.principal_id },
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 3,
+      taskId: task.response.task.taskId,
+      title: 'Final overlapping commit',
+    },
+  });
+  await finalCommit.entered;
+  firstCommit.release();
+  const firstSave = await firstCommit.result;
+  assert.equal(firstSave._tag, 'OperationSucceeded', JSON.stringify(firstSave));
+  finalCommit.release();
+  const finalSave = await finalCommit.result;
   assert.equal(finalSave._tag, 'OperationSucceeded', JSON.stringify(finalSave));
 
   const finalWorkspace = await runRegisteredDataAccess({
@@ -385,11 +488,9 @@ test('Last edited by initializes to the creator and projects the latest successf
     resultCount: (response) => response.tasks.length,
   });
   assert.equal(finalWorkspace._tag, 'OperationSucceeded', JSON.stringify(finalWorkspace));
-  assert.equal(
-    finalWorkspace.response.tasks[0].lastEditedBy.principalId,
-    creatorContext.principalId,
-  );
-  assert.equal(finalWorkspace.response.tasks[0].taskRevision, 3);
+  assert.equal(finalWorkspace.response.tasks[0].lastEditedBy.principalId, finalEditor.principal_id);
+  assert.equal(finalWorkspace.response.tasks[0].lastEditedAt, '2026-07-22T08:00:00.200Z');
+  assert.equal(finalWorkspace.response.tasks[0].taskRevision, 4);
 });
 
 test('a user-driven automation attributes its successful Task mutation to the originating Principal', async () => {
@@ -457,6 +558,152 @@ test('a user-driven automation attributes its successful Task mutation to the or
   assert.deepEqual(workspace.response.tasks[0].lastEditedBy, {
     displayName: 'Retained originating editor',
     inactive: true,
+    principalId: originContext.principalId,
+  });
+});
+
+test('a two-hop outbox automation chain retains its originating Principal', async () => {
+  const originContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext: originContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const [firstAutomation, secondAutomation] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values
+      (${originContext.tenantId}, ${'First automation hop'}, ${'system'}, ${'active'}),
+      (${originContext.tenantId}, ${'Second automation hop'}, ${'system'}, ${'active'})
+    returning principal_id
+  `;
+  const suffix = randomUUID();
+  const firstTopic = `ticketing.test.lastEditedBy.first.${suffix}`;
+  const secondTopic = `ticketing.test.lastEditedBy.second.${suffix}`;
+  const secondRelayAction = createRelayActionRegistration({
+    actionKey: `ticketing.test.lastEditedBy.second.${suffix}`,
+    eventType: `ticketing.test.lastEditedBy.second.${suffix}`,
+    outputTopic: secondTopic,
+  });
+  const firstRelayAction = createRelayActionRegistration({
+    actionKey: `ticketing.test.lastEditedBy.first.${suffix}`,
+    eventType: `ticketing.test.lastEditedBy.first.${suffix}`,
+    outputTopic: firstTopic,
+  });
+  const payload = {
+    collectionId,
+    expectedRevision: 1,
+    taskId: task.response.task.taskId,
+    title: 'Edited after two automation hops',
+  };
+  const initiated = await runRegisteredAction({
+    operationContext: originContext,
+    payload,
+    registration: firstRelayAction,
+  });
+  assert.equal(initiated._tag, 'OperationSucceeded', JSON.stringify(initiated));
+
+  let firstWorkerMessage;
+  const firstTick = await runOutboxWorkerTick({
+    config: {
+      claimBatchSize: 100,
+      materializeBatchSize: 10_000,
+      maxAttempts: 1,
+      retryBackoffMs: 0,
+      runtimeId: `last-edited-by-first-${suffix}`,
+    },
+    registrations: [
+      {
+        descriptor: {
+          consumerModuleKey: 'ticketing',
+          owningModuleKey: 'ticketing',
+          topics: [firstTopic],
+          workerKey: `ticketing.test.lastEditedBy.first.${suffix}`,
+        },
+        handler: ({ context, payload: messagePayload }) => {
+          firstWorkerMessage = { context, payload: messagePayload };
+        },
+      },
+    ],
+  });
+  assert.equal(firstTick.deliveriesClaimed, 1);
+  const relayed = await runSignedRegisteredAction({
+    operationContext: {
+      legalEntityId: firstWorkerMessage.context.legalEntityId,
+      originatingPrincipalId: firstWorkerMessage.context.originatingPrincipalId,
+      principalId: firstAutomation.principal_id,
+      tenantId: firstWorkerMessage.context.tenantId,
+    },
+    payload: firstWorkerMessage.payload,
+    registration: secondRelayAction,
+  });
+  assert.equal(relayed?._tag, 'OperationSucceeded', JSON.stringify(relayed));
+
+  let secondWorkerMessage;
+  const secondTick = await runOutboxWorkerTick({
+    config: {
+      claimBatchSize: 100,
+      materializeBatchSize: 10_000,
+      maxAttempts: 1,
+      retryBackoffMs: 0,
+      runtimeId: `last-edited-by-second-${suffix}`,
+    },
+    registrations: [
+      {
+        descriptor: {
+          consumerModuleKey: 'ticketing',
+          owningModuleKey: 'ticketing',
+          topics: [secondTopic],
+          workerKey: `ticketing.test.lastEditedBy.second.${suffix}`,
+        },
+        handler: ({ context, payload: messagePayload }) => {
+          secondWorkerMessage = { context, payload: messagePayload };
+        },
+      },
+    ],
+  });
+  assert.equal(secondTick.deliveriesClaimed, 1);
+  const automated = await runSignedRegisteredAction({
+    clock: { now: () => new Date('2026-07-22T09:00:00.333Z') },
+    operationContext: {
+      legalEntityId: secondWorkerMessage.context.legalEntityId,
+      originatingPrincipalId: secondWorkerMessage.context.originatingPrincipalId,
+      principalId: secondAutomation.principal_id,
+      tenantId: secondWorkerMessage.context.tenantId,
+    },
+    payload: { ...secondWorkerMessage.payload, canvas: {} },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(automated?._tag, 'OperationSucceeded', JSON.stringify(automated));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext: originContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].lastEditedBy, {
+    displayName: 'Ada Lovelace',
+    inactive: false,
     principalId: originContext.principalId,
   });
 });

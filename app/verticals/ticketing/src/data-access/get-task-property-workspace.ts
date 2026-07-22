@@ -287,6 +287,8 @@ interface StoredFilesMediaItemRow {
 
 type FilesMediaItemRow = FilesMediaItem & { readonly taskId: string };
 
+type TaskPrincipalAttribution = NonNullable<TaskPropertyWorkspace['tasks'][number]['createdBy']>;
+
 interface TaskRow {
   readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
   readonly checkboxValues: {
@@ -317,17 +319,9 @@ interface TaskRow {
   readonly filesMediaItems: Omit<FilesMediaItemRow, 'taskId'>[];
   idAssignment?: IdAssignment;
   readonly createdAt?: string;
-  readonly createdBy?: {
-    displayName: string;
-    inactive: boolean;
-    principalId: string;
-  };
+  readonly createdBy?: TaskPrincipalAttribution;
   readonly lastEditedAt?: string;
-  readonly lastEditedBy?: {
-    displayName: string;
-    inactive: boolean;
-    principalId: string;
-  };
+  readonly lastEditedBy?: TaskPrincipalAttribution;
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
@@ -494,6 +488,20 @@ const appendFilesMediaItems = (
   }
 };
 
+const taskPrincipalAttribution = ({
+  displayName,
+  principalId,
+  status,
+}: {
+  readonly displayName: string;
+  readonly principalId: string;
+  readonly status: 'active' | 'archived' | 'disabled';
+}): TaskPrincipalAttribution => ({
+  displayName,
+  inactive: status !== 'active',
+  principalId,
+});
+
 const intrinsicTaskFacts = (
   row: ValueRow,
   exposesCreatedBy: boolean,
@@ -505,20 +513,20 @@ const intrinsicTaskFacts = (
   ...(exposesLastEditedTime ? { lastEditedAt: row.lastEditedAt } : {}),
   ...(exposesLastEditedBy
     ? {
-        lastEditedBy: {
+        lastEditedBy: taskPrincipalAttribution({
           displayName: row.lastEditedByDisplayName,
-          inactive: row.lastEditedByStatus !== 'active',
           principalId: row.lastEditedByPrincipalId,
-        },
+          status: row.lastEditedByStatus,
+        }),
       }
     : {}),
   ...(exposesCreatedBy
     ? {
-        createdBy: {
+        createdBy: taskPrincipalAttribution({
           displayName: row.createdByDisplayName,
-          inactive: row.createdByStatus !== 'active',
           principalId: row.createdByPrincipalId,
-        },
+          status: row.createdByStatus,
+        }),
       }
     : {}),
 });

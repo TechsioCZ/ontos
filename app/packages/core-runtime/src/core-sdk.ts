@@ -458,11 +458,11 @@ const resolveContext = <TAction>({
     : contextInvalid(result.error);
 };
 
-const validateActionActor = async <TAction>(
+const validateActionAttributionContext = async <TAction>(
   context: OperationContext<TAction>,
 ): Promise<OperationContext<TAction> | OperationContextInvalid> => {
   const actor = await db
-    .select({ principalId: principals.principalId })
+    .select({ kind: principals.kind, principalId: principals.principalId })
     .from(principals)
     .where(
       and(
@@ -481,7 +481,9 @@ const validateActionActor = async <TAction>(
   }
 
   if (context.originatingPrincipalId === undefined) {
-    return context;
+    return actor[0]?.kind === 'human'
+      ? { ...context, originatingPrincipalId: context.principalId }
+      : context;
   }
 
   const origin = await db
@@ -685,6 +687,7 @@ const claimFailedActionInvocationRetry = async <TAction>({
     .update(actionInvocations)
     .set({
       completedAt: null,
+      originatingPrincipalId: context.originatingPrincipalId,
       status: 'received',
     })
     .where(
@@ -772,6 +775,7 @@ const registerActionInvocation = async <TAction>({
       authMethod: 'session',
       idempotencyKey,
       legalEntityId: context.legalEntityId,
+      originatingPrincipalId: context.originatingPrincipalId,
       principalId: context.principalId,
       requestHash: hash,
       status: 'received',
@@ -1280,7 +1284,7 @@ export const runAction = async <TAction, TResponse>({
     return context;
   }
 
-  const actorValidatedContext = await validateActionActor(context);
+  const actorValidatedContext = await validateActionAttributionContext(context);
 
   if ('_tag' in actorValidatedContext) {
     return actorValidatedContext;

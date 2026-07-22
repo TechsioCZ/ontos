@@ -246,6 +246,7 @@ export const actionInvocations = coreSchema.table(
     idempotencyKey: text('idempotency_key'),
     impersonatedByPrincipalId: optionalPrincipalId('impersonated_by_principal_id'),
     legalEntityId: legalEntityId(),
+    originatingPrincipalId: optionalPrincipalId('originating_principal_id'),
     principalId: principalId(),
     requestHash: text('request_hash').notNull(),
     startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),

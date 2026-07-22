@@ -45,6 +45,7 @@ export interface OutboxWorkerHandlerContext {
   readonly originalActionInvocationId?: string;
   readonly originalActionKey?: string;
   readonly originalActionIdempotencyKey?: string;
+  readonly originatingPrincipalId?: string;
   readonly producerModuleKey: string;
   readonly consumerModuleKey: string;
   readonly workerKey: string;
