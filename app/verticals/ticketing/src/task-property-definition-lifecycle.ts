@@ -46,6 +46,23 @@ interface TaskPropertyLifecycleAdapter {
   }) => Promise<Pick<TaskPropertyDeletionImpact, 'impactCount' | 'impactRevision'>>;
 }
 
+const intrinsicPropertyDatatypeValues = [
+  'created_by',
+  'created_time',
+  'last_edited_by',
+  'last_edited_time',
+] as const satisfies readonly TaskPropertyDefinition['datatype'][];
+
+type IntrinsicPropertyDatatype = (typeof intrinsicPropertyDatatypeValues)[number];
+
+const intrinsicPropertyDatatypes = new Set<TaskPropertyDefinition['datatype']>(
+  intrinsicPropertyDatatypeValues,
+);
+
+const isIntrinsicPropertyDatatype = (
+  datatype: TaskPropertyDefinition['datatype'],
+): datatype is IntrinsicPropertyDatatype => intrinsicPropertyDatatypes.has(datatype);
+
 export const shouldCopyTaskPropertyDefinitionValues = ({
   datatype,
   requestedCopyValues,
@@ -56,12 +73,7 @@ export const shouldCopyTaskPropertyDefinitionValues = ({
   if (datatype === 'date_range') {
     return true;
   }
-  if (
-    datatype === 'created_by' ||
-    datatype === 'created_time' ||
-    datatype === 'last_edited_time' ||
-    datatype === 'text'
-  ) {
+  if (isIntrinsicPropertyDatatype(datatype) || datatype === 'text') {
     return false;
   }
   return requestedCopyValues;
@@ -699,6 +711,7 @@ const lifecycleAdapters = {
   email: emailLifecycleAdapter,
   files_media: filesMediaLifecycleAdapter,
   id: idLifecycleAdapter,
+  last_edited_by: intrinsicLifecycleAdapter,
   last_edited_time: intrinsicLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
@@ -857,12 +870,10 @@ const normalizeSelectPropertySchemaPositions = async ({
 };
 
 const simpleDuplicatedDatatypeValues = [
-  'created_by',
-  'created_time',
+  ...intrinsicPropertyDatatypeValues,
   'date',
   'email',
   'files_media',
-  'last_edited_time',
   'phone',
   'text',
   'url',

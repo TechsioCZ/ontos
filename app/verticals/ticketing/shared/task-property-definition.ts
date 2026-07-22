@@ -48,7 +48,7 @@ export const dateRangePropertyDefinitionSchema = Schema.Struct({
 });
 
 export const intrinsicPropertyDefinitionSchema = Schema.Struct({
-  datatype: Schema.Literals(['created_time', 'created_by', 'last_edited_time']),
+  datatype: Schema.Literals(['created_time', 'created_by', 'last_edited_time', 'last_edited_by']),
   hidden: Schema.Boolean,
   mandatory: Schema.Boolean,
   name: Schema.String,

@@ -116,7 +116,7 @@ const updateTaskContentActionHandler: ActionHandler<
       set
         canvas = ${serializedCanvas}::jsonb,
         last_edited_at = ${changedAt}::timestamptz,
-        last_edited_by_principal_id = ${services.context.principalId},
+        last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
         revision = task.revision + 1,
         title = ${input.title}
       where task.task_id = ${input.taskId}
@@ -136,7 +136,7 @@ const updateTaskContentActionHandler: ActionHandler<
       )
       select
         updated_task.last_edited_at,
-        ${services.context.principalId},
+        ${services.effectiveEditorPrincipalId},
         'content_changed',
         updated_task.revision,
         updated_task.task_id,

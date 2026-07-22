@@ -15,6 +15,7 @@ export type TaskPropertyDefinitionRow =
         | 'created_by'
         | 'created_time'
         | 'last_edited_time'
+        | 'last_edited_by'
         | 'date'
         | 'email'
         | 'files_media'

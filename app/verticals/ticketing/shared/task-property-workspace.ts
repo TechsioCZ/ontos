@@ -118,6 +118,13 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       filesMediaItems: Schema.Array(filesMediaItemSchema),
       idAssignment: Schema.optional(idAssignmentSchema),
       lastEditedAt: Schema.optional(Schema.String),
+      lastEditedBy: Schema.optional(
+        Schema.Struct({
+          displayName: Schema.String,
+          inactive: Schema.Boolean,
+          principalId: Schema.String,
+        }),
+      ),
       multiSelectValues: Schema.optional(Schema.Array(multiSelectPropertyValueSchema)),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),

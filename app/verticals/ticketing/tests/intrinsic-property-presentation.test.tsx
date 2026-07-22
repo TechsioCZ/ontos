@@ -3,6 +3,7 @@ import { afterEach, expect, test } from '@rstest/core';
 import {
   CreatedByPresentation,
   CreatedTimePresentation,
+  LastEditedByPresentation,
   LastEditedTimePresentation,
 } from '../src/components/intrinsic-property-presentation';
 
@@ -45,6 +46,14 @@ test('Created by shows the current display name and inactive state', () => {
     />,
   );
   expect(getByText('Rear Admiral Hopper')).not.toBeNull();
+});
+
+test('Last edited by shows the current display name and retained inactive state', () => {
+  const { getByText } = render(
+    <LastEditedByPresentation displayName="Former editor" inactive inactiveLabel="inactive" />,
+  );
+
+  expect(getByText('Former editor (inactive)')).not.toBeNull();
 });
 
 test('Last edited time uses the same viewer-local minute and detail-second presentation', () => {

@@ -107,6 +107,11 @@
         "details": "Podrobnosti",
         "name": "Čas poslední úpravy"
       },
+      "last_edited_by": {
+        "create": "Přidat vlastnost Naposledy upravil(a)",
+        "creating": "Přidávání vlastnosti Naposledy upravil(a)",
+        "name": "Naposledy upravil(a)"
+      },
       "inactive": "neaktivní"
     },
     "phone": {

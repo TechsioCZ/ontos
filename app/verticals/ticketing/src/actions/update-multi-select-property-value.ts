@@ -178,7 +178,7 @@ const handler: ActionHandler<
     ), updated_task as (
       update ticketing.tasks as task
       set last_edited_at = statement_timestamp(),
-          last_edited_by_principal_id = ${services.context.principalId},
+          last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
           revision = task.revision + 1
       from changed_value
       where task.task_id = changed_value.task_id and task.tenant_id = ${services.context.tenantId}
@@ -187,7 +187,7 @@ const handler: ActionHandler<
       insert into ticketing.task_revisions (
         changed_at, changed_by_principal_id, reason, revision, task_id, tenant_id
       )
-      select updated_task.last_edited_at, ${services.context.principalId}, 'multi_select_value_changed', updated_task.revision, updated_task.task_id, ${services.context.tenantId}
+      select updated_task.last_edited_at, ${services.effectiveEditorPrincipalId}, 'multi_select_value_changed', updated_task.revision, updated_task.task_id, ${services.context.tenantId}
       from updated_task
       returning task_id
     )

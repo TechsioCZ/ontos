@@ -195,7 +195,7 @@ const handler: ActionHandler<
   const taskResult = await services.tx.execute(sql`
     update ticketing.tasks
     set last_edited_at = statement_timestamp(),
-      last_edited_by_principal_id = ${services.context.principalId},
+      last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
       revision = revision + 1
     where task_id = ${input.taskId} and tenant_id = ${services.context.tenantId}
     returning last_edited_at as "changedAt", revision as "taskRevision"
@@ -211,7 +211,7 @@ const handler: ActionHandler<
     insert into ticketing.task_revisions (
       changed_at, changed_by_principal_id, reason, revision, task_id, tenant_id
     ) values (
-      ${updatedTask.changedAt}, ${services.context.principalId}, 'date_range_value_changed',
+      ${updatedTask.changedAt}, ${services.effectiveEditorPrincipalId}, 'date_range_value_changed',
       ${updatedTask.taskRevision}, ${input.taskId}, ${services.context.tenantId}
     )
   `);

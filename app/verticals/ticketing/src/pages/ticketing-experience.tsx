@@ -49,6 +49,7 @@ import { PhonePropertyEditor } from '../components/phone-property-editor';
 import {
   CreatedByPresentation,
   CreatedTimePresentation,
+  LastEditedByPresentation,
   LastEditedTimePresentation,
 } from '../components/intrinsic-property-presentation';
 import { TextPropertyEditor } from '../components/text-property-editor';
@@ -149,12 +150,13 @@ export const TicketingExperience = () => {
   );
   const [isCreatingUrlDefinition, setIsCreatingUrlDefinition] = useState(false);
   const [creatingIntrinsicDatatype, setCreatingIntrinsicDatatype] = useState<
-    'created_by' | 'created_time' | 'last_edited_time'
+    'created_by' | 'created_time' | 'last_edited_time' | 'last_edited_by'
   >();
   const [intrinsicDefinitionIdempotencyKeys, setIntrinsicDefinitionIdempotencyKeys] = useState(
     () => ({
       created_by: crypto.randomUUID(),
       created_time: crypto.randomUUID(),
+      last_edited_by: crypto.randomUUID(),
       last_edited_time: crypto.randomUUID(),
     }),
   );
@@ -688,7 +690,7 @@ export const TicketingExperience = () => {
   };
 
   const handleCreateIntrinsicDefinition = async (
-    datatype: 'created_by' | 'created_time' | 'last_edited_time',
+    datatype: 'created_by' | 'created_time' | 'last_edited_time' | 'last_edited_by',
   ) => {
     if (openedTaskPropertyWorkspace === undefined) {
       return;
@@ -924,18 +926,20 @@ export const TicketingExperience = () => {
             </Button>
           </div>
           <div className="ticketing:mt-4 ticketing:flex ticketing:flex-wrap ticketing:gap-3">
-            {(['created_time', 'created_by', 'last_edited_time'] as const).map((datatype) => (
-              <Button
-                isLoading={creatingIntrinsicDatatype === datatype}
-                key={datatype}
-                loadingText={t(`ticketing.intrinsic.${datatype}.creating`)}
-                onClick={() => void handleCreateIntrinsicDefinition(datatype)}
-                type="button"
-                variant="secondary"
-              >
-                {t(`ticketing.intrinsic.${datatype}.create`)}
-              </Button>
-            ))}
+            {(['created_time', 'created_by', 'last_edited_time', 'last_edited_by'] as const).map(
+              (datatype) => (
+                <Button
+                  isLoading={creatingIntrinsicDatatype === datatype}
+                  key={datatype}
+                  loadingText={t(`ticketing.intrinsic.${datatype}.creating`)}
+                  onClick={() => void handleCreateIntrinsicDefinition(datatype)}
+                  type="button"
+                  variant="secondary"
+                >
+                  {t(`ticketing.intrinsic.${datatype}.create`)}
+                </Button>
+              ),
+            )}
           </div>
           {openedTaskPropertyWorkspace === undefined ? null : (
             <div className="ticketing:mt-6 ticketing:grid ticketing:gap-4">
@@ -1151,6 +1155,18 @@ export const TicketingExperience = () => {
                           timeZone={openedTaskPropertyWorkspace.effectiveTimeZone.timeZone}
                         />
                       </details>
+                    </div>
+                  );
+                }
+                if (definition.datatype === 'last_edited_by') {
+                  return task.lastEditedBy === undefined ? null : (
+                    <div key={definition.propertyDefinitionId}>
+                      <span className="ticketing:font-bold">{definition.name}: </span>
+                      <LastEditedByPresentation
+                        displayName={task.lastEditedBy.displayName}
+                        inactive={task.lastEditedBy.inactive}
+                        inactiveLabel={t('ticketing.intrinsic.inactive')}
+                      />
                     </div>
                   );
                 }

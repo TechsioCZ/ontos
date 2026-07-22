@@ -204,6 +204,7 @@ export interface ActionAuthorizationRequirement<TInput = unknown> {
 export interface ActionExecutionServices<TAction> {
   readonly clock: OperationClock;
   readonly context: OperationContext<TAction>;
+  readonly effectiveEditorPrincipalId: string;
   readonly markNoOp: () => void;
   readonly tx: CoreTransaction;
 }
@@ -472,11 +473,34 @@ const validateActionActor = async <TAction>(
     )
     .limit(1);
 
-  return actor.length === 1
+  if (actor.length !== 1) {
+    return {
+      _tag: 'OperationContextInvalid',
+      message: 'The operation Actor must be an active Principal in its tenant.',
+    };
+  }
+
+  if (context.originatingPrincipalId === undefined) {
+    return context;
+  }
+
+  const origin = await db
+    .select({ principalId: principals.principalId })
+    .from(principals)
+    .where(
+      and(
+        eq(principals.principalId, context.originatingPrincipalId),
+        eq(principals.tenantId, context.tenantId),
+        eq(principals.kind, 'human'),
+      ),
+    )
+    .limit(1);
+
+  return origin.length === 1
     ? context
     : {
         _tag: 'OperationContextInvalid',
-        message: 'The operation Actor must be an active Principal in its tenant.',
+        message: 'The Originating Principal must be a retained human Principal in the tenant.',
       };
 };
 
@@ -1338,6 +1362,8 @@ export const runAction = async <TAction, TResponse>({
             handlerOutboxMessages.push(message);
           },
         },
+        effectiveEditorPrincipalId:
+          policyCheckedContext.originatingPrincipalId ?? policyCheckedContext.principalId,
         markNoOp: () => {
           actionWasNoOp = true;
         },

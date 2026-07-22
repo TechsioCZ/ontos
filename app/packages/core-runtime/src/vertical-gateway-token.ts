@@ -3,6 +3,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 
 interface ResolvedOperationIdentity {
   readonly legalEntityId: string;
+  readonly originatingPrincipalId?: string;
   readonly principalId: string;
   readonly tenantId: string;
 }
@@ -89,6 +90,9 @@ export const createVerticalGatewayToken = ({
     iat: nowSeconds,
     jti: randomUUID(),
     legalEntityId: operationContext.legalEntityId,
+    ...(operationContext.originatingPrincipalId === undefined
+      ? {}
+      : { originatingPrincipalId: operationContext.originatingPrincipalId }),
     principalId: operationContext.principalId,
     tenantId: operationContext.tenantId,
   } satisfies VerticalGatewayTokenPayload);
@@ -158,6 +162,9 @@ export const resolveVerticalGatewayToken = ({
     _tag: 'Success',
     operationContext: {
       legalEntityId: decoded.legalEntityId,
+      ...(decoded.originatingPrincipalId === undefined
+        ? {}
+        : { originatingPrincipalId: decoded.originatingPrincipalId }),
       principalId: decoded.principalId,
       tenantId: decoded.tenantId,
     },

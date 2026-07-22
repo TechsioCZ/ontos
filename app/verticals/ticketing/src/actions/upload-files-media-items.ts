@@ -184,7 +184,7 @@ const handler: ActionHandler<
       update ticketing.tasks as task
       set
         last_edited_at = statement_timestamp(),
-        last_edited_by_principal_id = ${services.context.principalId},
+        last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
         revision = task.revision + 1
       where task.task_id = ${input.taskId}
         and task.tenant_id = ${services.context.tenantId}
@@ -196,7 +196,7 @@ const handler: ActionHandler<
       )
       select
         updated_task.last_edited_at,
-        ${services.context.principalId},
+        ${services.effectiveEditorPrincipalId},
         'files_media_value_changed',
         updated_task.revision,
         updated_task.task_id,

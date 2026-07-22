@@ -106,7 +106,7 @@ export const taskPropertyDefinitions = ticketingSchema.table(
     check('ticketing_task_property_definitions_name_ck', sql`btrim(${table.name}) <> ''`),
     check(
       'ticketing_task_property_definitions_datatype_ck',
-      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')`,
+      sql`${table.datatype} in ('title', 'checkbox', 'created_time', 'created_by', 'last_edited_time', 'last_edited_by', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')`,
     ),
     check(
       'ticketing_task_property_definitions_date_range_time_ck',

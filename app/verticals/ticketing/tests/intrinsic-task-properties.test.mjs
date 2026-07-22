@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { after, test } from 'node:test';
 
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
+import { createVerticalGatewayToken } from '../../../packages/core-runtime/src/vertical-gateway-token.ts';
 import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { resolveEffectiveTimeZone } from '../../../packages/core-runtime/src/principal-time-zone-preferences.ts';
 import { observeCoreActionEvidence } from '@app/core-runtime/testing/evidence-observer';
@@ -121,6 +122,25 @@ const runRegisteredAction = ({ clock, idempotencyKey, operationContext, payload,
     payload,
     registration,
     transport: { headers: new Headers({ 'Idempotency-Key': idempotencyKey ?? randomUUID() }) },
+  });
+
+const runSignedRegisteredAction = ({ clock, operationContext, payload, registration }) =>
+  runAction({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      ...(clock === undefined ? {} : { clock }),
+    },
+    payload,
+    registration,
+    transport: {
+      headers: new Headers({
+        'Idempotency-Key': randomUUID(),
+        'x-ontos-operation-context': createVerticalGatewayToken({
+          audience: registration.descriptor.gatewayAudience,
+          operationContext,
+        }),
+      }),
+    },
   });
 
 const configurePrincipalTimeZone = (operationContext, timeZone) =>
@@ -246,6 +266,264 @@ test('Last edited time initializes to the Task creation instant through its live
   assert.deepEqual(workspace.response.propertyDefinitions, [definition.response.definition]);
   assert.equal(workspace.response.tasks[0].createdAt, undefined);
   assert.equal(workspace.response.tasks[0].lastEditedAt, task.response.task.createdAt);
+});
+
+test('Last edited by initializes to the creator and projects the latest successful editor', async () => {
+  const creatorContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+
+  const initialWorkspace = await runRegisteredDataAccess({
+    operationContext: creatorContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(initialWorkspace._tag, 'OperationSucceeded', JSON.stringify(initialWorkspace));
+  assert.deepEqual(initialWorkspace.response.tasks[0].lastEditedBy, {
+    displayName: 'Ada Lovelace',
+    inactive: false,
+    principalId: creatorContext.principalId,
+  });
+
+  const [editor] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${creatorContext.tenantId}, ${'Grace Hopper'}, ${'human'}, ${'active'})
+    returning principal_id
+  `;
+  const editorContext = { ...creatorContext, principalId: editor.principal_id };
+  const edited = await runRegisteredAction({
+    operationContext: editorContext,
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 1,
+      taskId: task.response.task.taskId,
+      title: 'Edited by Grace',
+    },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
+
+  const editedWorkspace = await runRegisteredDataAccess({
+    operationContext: creatorContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(editedWorkspace._tag, 'OperationSucceeded', JSON.stringify(editedWorkspace));
+  assert.deepEqual(editedWorkspace.response.tasks[0].lastEditedBy, {
+    displayName: 'Grace Hopper',
+    inactive: false,
+    principalId: editorContext.principalId,
+  });
+
+  const noOp = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 2,
+      taskId: task.response.task.taskId,
+      title: 'Edited by Grace',
+    },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(noOp._tag, 'OperationSucceeded', JSON.stringify(noOp));
+  assert.equal(noOp.response.taskRevision, 2);
+  const stale = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 1,
+      taskId: task.response.task.taskId,
+      title: 'Stale edit',
+    },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(stale._tag, 'OperationDomainRejected', JSON.stringify(stale));
+  const finalSave = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 2,
+      taskId: task.response.task.taskId,
+      title: 'Creator commits last',
+    },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(finalSave._tag, 'OperationSucceeded', JSON.stringify(finalSave));
+
+  const finalWorkspace = await runRegisteredDataAccess({
+    operationContext: creatorContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(finalWorkspace._tag, 'OperationSucceeded', JSON.stringify(finalWorkspace));
+  assert.equal(
+    finalWorkspace.response.tasks[0].lastEditedBy.principalId,
+    creatorContext.principalId,
+  );
+  assert.equal(finalWorkspace.response.tasks[0].taskRevision, 3);
+});
+
+test('a user-driven automation attributes its successful Task mutation to the originating Principal', async () => {
+  const originContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext: originContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const [automation] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${originContext.tenantId}, ${'Task automation'}, ${'system'}, ${'active'})
+    returning principal_id
+  `;
+  await sqlClient`
+    update core.principals
+    set display_name = ${'Retained originating editor'}, status = ${'disabled'}
+    where principal_id = ${originContext.principalId}
+  `;
+  const automationContext = {
+    ...originContext,
+    originatingPrincipalId: originContext.principalId,
+    principalId: automation.principal_id,
+  };
+
+  const automated = await runSignedRegisteredAction({
+    operationContext: automationContext,
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 1,
+      taskId: task.response.task.taskId,
+      title: 'Updated by automation',
+    },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(automated._tag, 'OperationSucceeded', JSON.stringify(automated));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext: { ...automationContext, originatingPrincipalId: undefined },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].lastEditedBy, {
+    displayName: 'Retained originating editor',
+    inactive: true,
+    principalId: originContext.principalId,
+  });
+});
+
+test('property-value automation uses the originating Principal as the Effective Editor', async () => {
+  const originContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const checkbox = await runRegisteredAction({
+    operationContext: originContext,
+    payload: { collectionId, mandatory: false, name: 'Approved' },
+    registration: createCheckboxPropertyDefinitionActionRegistration,
+  });
+  assert.equal(checkbox._tag, 'OperationSucceeded', JSON.stringify(checkbox));
+  const lastEditedBy = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(lastEditedBy._tag, 'OperationSucceeded', JSON.stringify(lastEditedBy));
+  const task = await runRegisteredAction({
+    operationContext: originContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const [automation] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${originContext.tenantId}, ${'Property automation'}, ${'system'}, ${'active'})
+    returning principal_id
+  `;
+
+  const updated = await runRegisteredAction({
+    operationContext: {
+      ...originContext,
+      originatingPrincipalId: originContext.principalId,
+      principalId: automation.principal_id,
+    },
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      propertyDefinitionId: checkbox.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      value: true,
+    },
+    registration: updateCheckboxPropertyValueActionRegistration,
+  });
+  assert.equal(updated._tag, 'OperationSucceeded', JSON.stringify(updated));
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext: originContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks[0].lastEditedBy.principalId, originContext.principalId);
 });
 
 test('a successful actual property-value mutation advances Last edited time atomically', async () => {
@@ -464,10 +742,26 @@ test('archive and restore advance Last edited time while soft deletion does not'
     registration: createIntrinsicPropertyDefinitionActionRegistration,
   });
   assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
-  const transition = (clock, expectedRevision, retentionTransition) =>
+  const lastEditedBy = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(lastEditedBy._tag, 'OperationSucceeded', JSON.stringify(lastEditedBy));
+  const [systemPrincipal] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${operationContext.tenantId}, ${'Retention automation'}, ${'system'}, ${'active'})
+    returning principal_id
+  `;
+  const transition = (clock, expectedRevision, retentionTransition, transitionContext) =>
     runRegisteredAction({
       clock: { now: () => new Date(clock) },
-      operationContext,
+      operationContext: transitionContext,
       payload: {
         collectionId,
         expectedRevision,
@@ -477,11 +771,31 @@ test('archive and restore advance Last edited time while soft deletion does not'
       registration: transitionTaskRetentionActionRegistration,
     });
 
-  const archived = await transition('2026-07-21T09:00:00.125Z', 1, 'archive');
+  const automationContext = { ...operationContext, principalId: systemPrincipal.principal_id };
+  const archived = await transition('2026-07-21T09:00:00.125Z', 1, 'archive', {
+    ...automationContext,
+    originatingPrincipalId: operationContext.principalId,
+  });
   assert.equal(archived._tag, 'OperationSucceeded', JSON.stringify(archived));
-  const restored = await transition('2026-07-21T10:00:00.250Z', 2, 'restore');
+  const archivedWorkspace = await runRegisteredDataAccess({
+    operationContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(archivedWorkspace._tag, 'OperationSucceeded', JSON.stringify(archivedWorkspace));
+  assert.equal(
+    archivedWorkspace.response.tasks[0].lastEditedBy.principalId,
+    operationContext.principalId,
+  );
+  const restored = await transition('2026-07-21T10:00:00.250Z', 2, 'restore', automationContext);
   assert.equal(restored._tag, 'OperationSucceeded', JSON.stringify(restored));
-  const softDeleted = await transition('2026-07-21T11:00:00.375Z', 3, 'softDelete');
+  const softDeleted = await transition(
+    '2026-07-21T11:00:00.375Z',
+    3,
+    'softDelete',
+    operationContext,
+  );
   assert.equal(softDeleted._tag, 'OperationSucceeded', JSON.stringify(softDeleted));
 
   const workspace = await runRegisteredDataAccess({
@@ -492,6 +806,11 @@ test('archive and restore advance Last edited time while soft deletion does not'
   });
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.equal(workspace.response.tasks[0].lastEditedAt, '2026-07-21T10:00:00.250Z');
+  assert.deepEqual(workspace.response.tasks[0].lastEditedBy, {
+    displayName: 'Retention automation',
+    inactive: false,
+    principalId: systemPrincipal.principal_id,
+  });
   assert.equal(workspace.response.tasks[0].taskRevision, 4);
 });
 
@@ -621,6 +940,130 @@ test('duplicating Last edited time projects the live fact without copying values
   });
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.equal(workspace.response.tasks[0].lastEditedAt, task.response.task.lastEditedAt);
+});
+
+test('Last edited by definitions duplicate, remove, and re-add around one retained live fact', async () => {
+  const creatorContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const source = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: true,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(source._tag, 'OperationSucceeded', JSON.stringify(source));
+  const [editor] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${creatorContext.tenantId}, ${'Original editor name'}, ${'human'}, ${'active'})
+    returning principal_id
+  `;
+  const edited = await runRegisteredAction({
+    operationContext: { ...creatorContext, principalId: editor.principal_id },
+    payload: {
+      canvas: {},
+      collectionId,
+      expectedRevision: 1,
+      taskId: task.response.task.taskId,
+      title: 'Edited task',
+    },
+    registration: updateTaskContentActionRegistration,
+  });
+  assert.equal(edited._tag, 'OperationSucceeded', JSON.stringify(edited));
+
+  const duplicate = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      copyValues: true,
+      expectedRevision: 1,
+      propertyDefinitionId: source.response.definition.propertyDefinitionId,
+    },
+    registration: duplicateTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(duplicate._tag, 'OperationSucceeded', JSON.stringify(duplicate));
+  assert.equal(duplicate.response.definition.name, 'Last edited by Copy');
+  const duplicateEvidence =
+    duplicateTaskPropertyDefinitionActionRegistration.descriptor.auditEvent.evidence(
+      {
+        collectionId,
+        copyValues: true,
+        expectedRevision: 1,
+        propertyDefinitionId: source.response.definition.propertyDefinitionId,
+      },
+      duplicate.response,
+    );
+  assert.equal(duplicateEvidence.copiedValues, false);
+  assert.deepEqual(duplicateEvidence.changedComponents, ['definition']);
+
+  const impact = await runRegisteredDataAccess({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      propertyDefinitionId: source.response.definition.propertyDefinitionId,
+    },
+    registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+    resultCount: () => 1,
+  });
+  assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
+  assert.equal(impact.response.impactCount, 1);
+  const removed = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      confirmed: true,
+      expectedImpactCount: 1,
+      expectedRevision: 1,
+      propertyDefinitionId: source.response.definition.propertyDefinitionId,
+    },
+    registration: deleteTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(removed._tag, 'OperationSucceeded', JSON.stringify(removed));
+  const readded = await runRegisteredAction({
+    operationContext: creatorContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Current editor',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(readded._tag, 'OperationSucceeded', JSON.stringify(readded));
+  await sqlClient`
+    update core.principals
+    set display_name = ${'Current retained name'}, status = ${'disabled'}
+    where principal_id = ${editor.principal_id}
+  `;
+
+  const workspace = await runRegisteredDataAccess({
+    operationContext: creatorContext,
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].lastEditedBy, {
+    displayName: 'Current retained name',
+    inactive: true,
+    principalId: editor.principal_id,
+  });
+  assert.equal(workspace.response.tasks[0].taskRevision, 2);
 });
 
 test('removing and re-adding Created time preserves the intrinsic fact', async () => {
