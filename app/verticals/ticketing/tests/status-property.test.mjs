@@ -12,6 +12,7 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { deleteStatusOptionActionRegistration } from '../src/actions/delete-status-option.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { updateStatusPropertyValueActionRegistration } from '../src/actions/update-status-property-value.ts';
 import { updateStatusOptionActionRegistration } from '../src/actions/update-status-option.ts';
 import { getStatusOptionDeletionImpactDataAccessRegistration } from '../src/data-access/get-status-option-deletion-impact.ts';
@@ -524,6 +525,145 @@ test('confirmed non-default Status Option deletion replaces affected Tasks with 
       revision: 3,
     },
   ]);
+});
+
+test('Status Option deletion includes every retained Task and excludes hard-deleted Tasks', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const createdDefinition = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      initialColors: { complete: 'green', inProgress: 'blue', todo: 'gray' },
+      mandatory: false,
+      name: 'Workflow',
+    },
+    registration: createStatusPropertyDefinitionActionRegistration,
+  });
+  assert.equal(createdDefinition._tag, 'OperationSucceeded', JSON.stringify(createdDefinition));
+  const { definition } = createdDefinition.response;
+  const [
+    ,
+    {
+      options: [selectedOption],
+    },
+  ] = definition.groups;
+
+  const tasks = [];
+  for (let index = 0; index < 4; index += 1) {
+    // oxlint-disable-next-line no-await-in-loop -- Each Task is created through an independent action.
+    const created = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+    // oxlint-disable-next-line no-await-in-loop -- Each Status value is an independent public mutation.
+    const selected = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 1,
+        optionId: selectedOption.optionId,
+        propertyDefinitionId: definition.propertyDefinitionId,
+        taskId: created.response.task.taskId,
+      },
+      registration: updateStatusPropertyValueActionRegistration,
+    });
+    assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
+    tasks.push({
+      taskId: created.response.task.taskId,
+      taskRevision: selected.response.taskRevision,
+    });
+  }
+
+  for (const [selected, transition] of [
+    [tasks[1], 'archive'],
+    [tasks[2], 'softDelete'],
+    [tasks[3], 'hardDelete'],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Retention transitions have independent Task revisions.
+    const transitioned = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: selected.taskRevision,
+        taskId: selected.taskId,
+        transition,
+      },
+      registration: transitionTaskRetentionActionRegistration,
+    });
+    assert.equal(transitioned._tag, 'OperationSucceeded', JSON.stringify(transitioned));
+  }
+
+  const preview = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: {
+      collectionId,
+      optionId: selectedOption.optionId,
+      propertyDefinitionId: definition.propertyDefinitionId,
+    },
+    registration: getStatusOptionDeletionImpactDataAccessRegistration,
+    resultCount: ({ impactCount }) => impactCount,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(preview._tag, 'OperationSucceeded', JSON.stringify(preview));
+  assert.equal(preview.response.impactCount, 3);
+
+  const deleted = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      confirmed: true,
+      expectedDefinitionRevision: preview.response.definitionRevision,
+      expectedImpactCount: preview.response.impactCount,
+      expectedImpactToken: preview.response.impactToken,
+      expectedOptionRevision: preview.response.optionRevision,
+      optionId: selectedOption.optionId,
+      propertyDefinitionId: definition.propertyDefinitionId,
+    },
+    registration: deleteStatusOptionActionRegistration,
+  });
+  assert.equal(deleted._tag, 'OperationSucceeded', JSON.stringify(deleted));
+  assert.equal(deleted.response.impactCount, 3);
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(
+    workspace.response.tasks.map(({ statusValues }) => statusValues),
+    [
+      [
+        {
+          optionId: definition.defaultOptionId,
+          propertyDefinitionId: definition.propertyDefinitionId,
+          revision: 3,
+        },
+      ],
+      [
+        {
+          optionId: definition.defaultOptionId,
+          propertyDefinitionId: definition.propertyDefinitionId,
+          revision: 3,
+        },
+      ],
+      [
+        {
+          optionId: definition.defaultOptionId,
+          propertyDefinitionId: definition.propertyDefinitionId,
+          revision: 3,
+        },
+      ],
+    ],
+  );
 });
 
 test('the current Default Status Option remains protected from deletion', async () => {

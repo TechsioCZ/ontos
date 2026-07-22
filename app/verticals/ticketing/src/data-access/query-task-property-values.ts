@@ -382,6 +382,7 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
     transportRequestSchema: queryTaskPropertyValuesPayloadSchema,
     transportResponseSchema: queryTaskPropertyValuesResponseSchema,
   },
+  // oxlint-disable-next-line eslint/complexity -- Datatype query dispatch remains explicit at this public query boundary.
   handler: async (input, { context, db }) => {
     if (input.query.datatype === 'files_media') {
       const result = await db.execute(sql`

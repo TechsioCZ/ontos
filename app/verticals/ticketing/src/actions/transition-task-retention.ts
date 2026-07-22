@@ -137,6 +137,12 @@ const transitionTaskRetentionActionHandler: ActionHandler<
           and tenant_id = ${services.context.tenantId}
         returning task_id
       ),
+      deleted_status_values as (
+        delete from ticketing.task_status_values
+        where task_id = ${input.taskId}
+          and tenant_id = ${services.context.tenantId}
+        returning task_id
+      ),
       deleted_revisions as (
         delete from ticketing.task_revisions
         where task_id = ${input.taskId}

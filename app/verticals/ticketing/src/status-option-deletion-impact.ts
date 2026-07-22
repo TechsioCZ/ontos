@@ -2,24 +2,13 @@
 import { rowsFromResult } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import type { CoreReadonlyDbExecutor } from '@app/core-runtime/db/types';
+import { buildOptionDeletionImpactState } from './option-deletion-impact.ts';
+import type {
+  OptionDeletionImpactMember,
+  OptionDeletionImpactState,
+} from './option-deletion-impact.ts';
 
-interface StatusOptionImpactMemberRow {
-  readonly revision: number;
-  readonly taskId: string;
-}
-
-export interface StatusOptionDeletionImpactState {
-  readonly impactCount: number;
-  readonly impactToken: string;
-}
-
-const impactTokenFor = async (members: readonly StatusOptionImpactMemberRow[]) => {
-  const serializedMembers = members
-    .map(({ revision, taskId }) => `${taskId}:${revision}`)
-    .join('|');
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(serializedMembers));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-};
+export type StatusOptionDeletionImpactState = OptionDeletionImpactState;
 
 export const getStatusOptionDeletionImpactState = async ({
   db,
@@ -49,9 +38,6 @@ export const getStatusOptionDeletionImpactState = async ({
     order by value.task_id
     ${lockingClause}
   `);
-  const members = rowsFromResult<StatusOptionImpactMemberRow>(result);
-  return {
-    impactCount: members.length,
-    impactToken: await impactTokenFor(members),
-  };
+  const members = rowsFromResult<OptionDeletionImpactMember>(result);
+  return buildOptionDeletionImpactState(members);
 };
