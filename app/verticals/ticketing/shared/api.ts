@@ -6,6 +6,27 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  removeFilesMediaItemActionHeadersSchema,
+  removeFilesMediaItemActionFailureSchemas,
+  removeFilesMediaItemActionOutcomeSchema,
+  removeFilesMediaItemActionPayloadSchema,
+} from './actions/remove-files-media-item';
+
+import {
+  reorderFilesMediaItemsActionHeadersSchema,
+  reorderFilesMediaItemsActionFailureSchemas,
+  reorderFilesMediaItemsActionOutcomeSchema,
+  reorderFilesMediaItemsActionPayloadSchema,
+} from './actions/reorder-files-media-items';
+
+import {
+  addFilesMediaExternalItemActionHeadersSchema,
+  addFilesMediaExternalItemActionFailureSchemas,
+  addFilesMediaExternalItemActionOutcomeSchema,
+  addFilesMediaExternalItemActionPayloadSchema,
+} from './actions/add-files-media-external-item';
+
+import {
   retainTextCoreReferenceLabelActionHeadersSchema,
   retainTextCoreReferenceLabelActionFailureSchemas,
   retainTextCoreReferenceLabelActionOutcomeSchema,
@@ -392,6 +413,24 @@ import {
 } from './task-property-query';
 import { queryTaskUrlValuesPayloadSchema, queryTaskUrlValuesResponseSchema } from './url-query';
 
+export type {
+  AddFilesMediaExternalItemActionFailure,
+  AddFilesMediaExternalItemActionOutcome,
+  AddFilesMediaExternalItemActionPayload,
+  AddFilesMediaExternalItemActionResponse,
+} from './actions/add-files-media-external-item';
+export type {
+  RemoveFilesMediaItemActionFailure,
+  RemoveFilesMediaItemActionOutcome,
+  RemoveFilesMediaItemActionPayload,
+  RemoveFilesMediaItemActionResponse,
+} from './actions/remove-files-media-item';
+export type {
+  ReorderFilesMediaItemsActionFailure,
+  ReorderFilesMediaItemsActionOutcome,
+  ReorderFilesMediaItemsActionPayload,
+  ReorderFilesMediaItemsActionResponse,
+} from './actions/reorder-files-media-items';
 export type {
   DeleteSelectOptionActionFailure,
   DeleteSelectOptionActionOutcome,
@@ -1769,10 +1808,52 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: retainTextCoreReferenceLabelActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'addFilesMediaExternalItemAction',
+        '/ticketing/actions/add-files-media-external-item',
+        {
+          error: addFilesMediaExternalItemActionFailureSchemas,
+          headers: addFilesMediaExternalItemActionHeadersSchema,
+          payload: addFilesMediaExternalItemActionPayloadSchema,
+          success: addFilesMediaExternalItemActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'reorderFilesMediaItemsAction',
+        '/ticketing/actions/reorder-files-media-items',
+        {
+          error: reorderFilesMediaItemsActionFailureSchemas,
+          headers: reorderFilesMediaItemsActionHeadersSchema,
+          payload: reorderFilesMediaItemsActionPayloadSchema,
+          success: reorderFilesMediaItemsActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'removeFilesMediaItemAction',
+        '/ticketing/actions/remove-files-media-item',
+        {
+          error: removeFilesMediaItemActionFailureSchemas,
+          headers: removeFilesMediaItemActionHeadersSchema,
+          payload: removeFilesMediaItemActionPayloadSchema,
+          success: removeFilesMediaItemActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
 export const ticketingOperationContexts = {
+  addFilesMediaExternalItemAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:addFilesMediaExternalItemAction',
+    routePath: '/ticketing/actions/add-files-media-external-item',
+    source: 'generated-client',
+  },
   configureDateRangeTimeSupportAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureDateRangeTimeSupportAction',
@@ -2084,6 +2165,18 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:readiness',
     routePath: '/ticketing/readiness',
+    source: 'generated-client',
+  },
+  removeFilesMediaItemAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:removeFilesMediaItemAction',
+    routePath: '/ticketing/actions/remove-files-media-item',
+    source: 'generated-client',
+  },
+  reorderFilesMediaItemsAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:reorderFilesMediaItemsAction',
+    routePath: '/ticketing/actions/reorder-files-media-items',
     source: 'generated-client',
   },
   reorderMultiSelectOptionsAction: {

@@ -21,6 +21,7 @@ import type {
   StatusOption,
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
+import type { FilesMediaItem } from '../../shared/actions/upload-files-media-item.ts';
 import { dateRangeValueFromNullableFields } from '../date-range-value-projection.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
 import { statusDefinitionFromParts, statusGroupLabel } from '../status-property.ts';
@@ -273,19 +274,15 @@ interface ValueRow {
 }
 
 interface StoredFilesMediaItemRow {
+  readonly externalUrl: string | null;
   readonly itemId: string;
-  readonly mediaAssetId: string;
+  readonly mediaAssetId: string | null;
   readonly position: number;
   readonly propertyDefinitionId: string;
   readonly taskId: string;
 }
 
-interface FilesMediaItemRow extends StoredFilesMediaItemRow {
-  readonly access: 'download';
-  readonly byteSize: number;
-  readonly displayFilename: string;
-  readonly effectiveMimeType: string;
-}
+type FilesMediaItemRow = FilesMediaItem & { readonly taskId: string };
 
 interface TaskRow {
   readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
@@ -1053,6 +1050,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     `);
     const filesMediaResult = await db.execute(sql`
       select
+        item.external_url as "externalUrl",
         item.item_id as "itemId",
         item.media_asset_id as "mediaAssetId",
         item.position,
@@ -1091,7 +1089,9 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const storedFilesMediaRows = rowsFromResult<StoredFilesMediaItemRow>(filesMediaResult);
     const assetProjections = await getMediaAssetProjections(
       {
-        mediaAssetIds: storedFilesMediaRows.map(({ mediaAssetId }) => mediaAssetId),
+        mediaAssetIds: storedFilesMediaRows.flatMap(({ mediaAssetId }) =>
+          mediaAssetId === null ? [] : [mediaAssetId],
+        ),
         tenantId: context.tenantId,
       },
       { db },
@@ -1099,9 +1099,28 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
     const assetsById = new Map(assetProjections.map((asset) => [asset.mediaAssetId, asset]));
     const filesMediaRows: FilesMediaItemRow[] = [];
     for (const item of storedFilesMediaRows) {
-      const asset = assetsById.get(item.mediaAssetId);
-      if (asset !== undefined) {
-        filesMediaRows.push({ ...asset, ...item });
+      if (item.externalUrl !== null) {
+        filesMediaRows.push({
+          access: 'external',
+          externalUrl: item.externalUrl,
+          itemId: item.itemId,
+          position: item.position,
+          propertyDefinitionId: item.propertyDefinitionId,
+          taskId: item.taskId,
+        });
+        continue;
+      }
+      if (item.mediaAssetId !== null) {
+        const asset = assetsById.get(item.mediaAssetId);
+        if (asset !== undefined) {
+          filesMediaRows.push({
+            ...asset,
+            itemId: item.itemId,
+            position: item.position,
+            propertyDefinitionId: item.propertyDefinitionId,
+            taskId: item.taskId,
+          });
+        }
       }
     }
     const exposesCreatedTime = definitions.some(

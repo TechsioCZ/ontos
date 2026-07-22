@@ -16,7 +16,7 @@ export const uploadFilesMediaItemActionHeadersSchema = Schema.Struct({
   'x-ontos-operation-context': Schema.optional(Schema.String),
 });
 
-export const filesMediaItemSchema = Schema.Struct({
+export const uploadedFilesMediaItemSchema = Schema.Struct({
   access: Schema.Literal('download'),
   byteSize: Schema.Finite,
   displayFilename: Schema.String,
@@ -26,6 +26,19 @@ export const filesMediaItemSchema = Schema.Struct({
   position: Schema.Finite,
   propertyDefinitionId: Schema.String,
 });
+
+export const externalFilesMediaItemSchema = Schema.Struct({
+  access: Schema.Literal('external'),
+  externalUrl: Schema.String,
+  itemId: Schema.String,
+  position: Schema.Finite,
+  propertyDefinitionId: Schema.String,
+});
+
+export const filesMediaItemSchema = Schema.Union([
+  uploadedFilesMediaItemSchema,
+  externalFilesMediaItemSchema,
+]);
 
 export const uploadFilesMediaItemActionResponseSchema = Schema.Struct({
   item: filesMediaItemSchema,

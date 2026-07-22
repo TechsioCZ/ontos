@@ -10,10 +10,18 @@ import { runAction, runDataAccess } from '../../../packages/core-runtime/src/cor
 import { db, sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
+import { addFilesMediaExternalItemActionRegistration } from '../src/actions/add-files-media-external-item.ts';
 import { createFilesMediaPropertyDefinitionActionRegistration } from '../src/actions/create-files-media-property-definition.ts';
+import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
+import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { uploadFilesMediaItemActionRegistration } from '../src/actions/upload-files-media-item.ts';
 import { uploadFilesMediaItemsActionRegistration } from '../src/actions/upload-files-media-items.ts';
+import { reorderFilesMediaItemsActionRegistration } from '../src/actions/reorder-files-media-items.ts';
+import { removeFilesMediaItemActionRegistration } from '../src/actions/remove-files-media-item.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
+import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
+import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 
 const createdTenantIds = [];
 
@@ -172,6 +180,633 @@ test('an Editor uploads one generic download-only item through Ticketing and rea
   });
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
   assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [upload.response.item]);
+});
+
+test('uploaded and exact external items coexist in one committed order', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const uploaded = await runRegisteredAction({
+    operationContext,
+    payload: {
+      bytesBase64: Buffer.from('uploaded').toString('base64'),
+      collectionId,
+      filename: 'uploaded.txt',
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.equal(uploaded._tag, 'OperationSucceeded', JSON.stringify(uploaded));
+
+  const externalUrl = '  https://example.com/Media/%E2%9C%93?Case=Kept#Part  ';
+  const external = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: uploaded.response.taskRevision,
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      url: externalUrl,
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(external._tag, 'OperationSucceeded', JSON.stringify(external));
+  assert.deepEqual(external.response.item, {
+    access: 'external',
+    externalUrl: externalUrl.trim(),
+    itemId: external.response.item.itemId,
+    position: 1,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+  });
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [
+    uploaded.response.item,
+    external.response.item,
+  ]);
+});
+
+test('reordering a complete mixed Files & media value commits atomically', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const uploaded = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      bytesBase64: Buffer.from('first').toString('base64'),
+      filename: 'first.txt',
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.equal(uploaded._tag, 'OperationSucceeded', JSON.stringify(uploaded));
+  const external = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: uploaded.response.taskRevision,
+      url: 'https://example.com/external',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(external._tag, 'OperationSucceeded', JSON.stringify(external));
+
+  const reordered = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: external.response.taskRevision,
+      itemIds: [external.response.item.itemId, uploaded.response.item.itemId],
+    },
+    registration: reorderFilesMediaItemsActionRegistration,
+  });
+  assert.equal(reordered._tag, 'OperationSucceeded', JSON.stringify(reordered));
+  assert.equal(reordered.response.taskRevision, external.response.taskRevision + 1);
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(
+    workspace.response.tasks[0].filesMediaItems.map(({ itemId, position }) => ({
+      itemId,
+      position,
+    })),
+    [
+      { itemId: external.response.item.itemId, position: 0 },
+      { itemId: uploaded.response.item.itemId, position: 1 },
+    ],
+  );
+});
+
+test('removing one Files & media item needs no confirmation and preserves compact order', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const first = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: task.response.task.revision,
+      url: 'https://example.com/duplicate',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(first._tag, 'OperationSucceeded', JSON.stringify(first));
+  const duplicate = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: first.response.taskRevision,
+      url: 'https://example.com/duplicate',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(duplicate._tag, 'OperationSucceeded', JSON.stringify(duplicate));
+
+  const removed = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: duplicate.response.taskRevision,
+      itemId: first.response.item.itemId,
+    },
+    registration: removeFilesMediaItemActionRegistration,
+  });
+  assert.equal(removed._tag, 'OperationSucceeded', JSON.stringify(removed));
+  assert.deepEqual(removed.response, {
+    removedItemId: first.response.item.itemId,
+    taskRevision: duplicate.response.taskRevision + 1,
+  });
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [
+    { ...duplicate.response.item, position: 0 },
+  ]);
+});
+
+test('copying a Files & media value creates new item identities and shares uploaded assets', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const uploaded = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      bytesBase64: Buffer.from('shared bytes').toString('base64'),
+      filename: 'shared.bin',
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.equal(uploaded._tag, 'OperationSucceeded', JSON.stringify(uploaded));
+  const external = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: uploaded.response.taskRevision,
+      url: 'https://example.com/exact?Value=Kept',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(external._tag, 'OperationSucceeded', JSON.stringify(external));
+
+  const duplicated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      copyValues: true,
+      expectedRevision: definition.response.definition.revision,
+      propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    },
+    registration: duplicateTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(duplicated._tag, 'OperationSucceeded', JSON.stringify(duplicated));
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  const copiedItems = workspace.response.tasks[0].filesMediaItems.filter(
+    ({ propertyDefinitionId }) =>
+      propertyDefinitionId === duplicated.response.definition.propertyDefinitionId,
+  );
+  assert.equal(copiedItems.length, 2);
+  assert.deepEqual(
+    copiedItems.map(({ access, position }) => ({ access, position })),
+    [
+      { access: 'download', position: 0 },
+      { access: 'external', position: 1 },
+    ],
+  );
+  assert.notEqual(copiedItems[0].itemId, uploaded.response.item.itemId);
+  assert.equal(copiedItems[0].mediaAssetId, uploaded.response.item.mediaAssetId);
+  assert.notEqual(copiedItems[1].itemId, external.response.item.itemId);
+  assert.equal(copiedItems[1].externalUrl, external.response.item.externalUrl);
+  assert.equal(workspace.response.tasks[0].taskRevision, external.response.taskRevision);
+
+  const removedSource = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: external.response.taskRevision,
+      itemId: uploaded.response.item.itemId,
+    },
+    registration: removeFilesMediaItemActionRegistration,
+  });
+  assert.equal(removedSource._tag, 'OperationSucceeded', JSON.stringify(removedSource));
+  const retainedAsset = await getAuthorizedMediaDownload(
+    { mediaAssetId: uploaded.response.item.mediaAssetId, tenantId: operationContext.tenantId },
+    { authorize: () => true, db },
+  );
+  assert.equal(retainedAsset._tag, 'MediaDownloadReady');
+});
+
+test('external items reuse the exact URL contract without reachability or content checks', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const target = {
+    collectionId,
+    expectedRevision: task.response.task.revision,
+    propertyDefinitionId: definition.response.definition.propertyDefinitionId,
+    taskId: task.response.task.taskId,
+  };
+  const unreachableButValid = await runRegisteredAction({
+    operationContext,
+    payload: { ...target, url: '  https://never-resolves.invalid/Exact%2FPath  ' },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(unreachableButValid._tag, 'OperationSucceeded', JSON.stringify(unreachableButValid));
+  assert.equal(
+    unreachableButValid.response.item.externalUrl,
+    'https://never-resolves.invalid/Exact%2FPath',
+  );
+
+  const invalid = await runRegisteredAction({
+    operationContext,
+    payload: {
+      ...target,
+      expectedRevision: unreachableButValid.response.taskRevision,
+      url: 'https://user:secret@example.com/file',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(invalid._tag, 'OperationDomainRejected');
+  assert.equal(invalid.code, 'ticketing.updateUrlPropertyValue.invalid_url');
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [
+    unreachableButValid.response.item,
+  ]);
+  assert.equal(workspace.response.tasks[0].taskRevision, unreachableButValid.response.taskRevision);
+});
+
+test('Files & media deletion counts distinct committed Tasks and rejects stale impact', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const first = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: task.response.task.revision,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      url: 'https://example.com/one',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(first._tag, 'OperationSucceeded', JSON.stringify(first));
+  const secondItemSameTask = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: first.response.taskRevision,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      url: 'https://example.com/two',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(secondItemSameTask._tag, 'OperationSucceeded', JSON.stringify(secondItemSameTask));
+
+  const impact = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, propertyDefinitionId },
+    registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
+  assert.equal(impact.response.impactCount, 1);
+
+  const otherTask = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(otherTask._tag, 'OperationSucceeded', JSON.stringify(otherTask));
+  const otherItem = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: otherTask.response.task.revision,
+      propertyDefinitionId,
+      taskId: otherTask.response.task.taskId,
+      url: 'https://example.com/other',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(otherItem._tag, 'OperationSucceeded', JSON.stringify(otherItem));
+
+  const staleDeletion = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      confirmed: true,
+      expectedImpactCount: impact.response.impactCount,
+      expectedRevision: impact.response.revision,
+      propertyDefinitionId,
+    },
+    registration: deleteTaskPropertyDefinitionActionRegistration,
+  });
+  assert.deepEqual(staleDeletion, {
+    _tag: 'OperationDomainRejected',
+    code: 'ticketing.deleteTaskPropertyDefinition.stale_impact',
+    message: 'The number of affected retained Tasks changed. Review the impact and confirm again.',
+  });
+});
+
+test('Files & media deletion impact includes archived and soft-deleted Tasks but excludes hard-deleted Tasks', async () => {
+  const operationContext = await createOperationIdentity();
+  const {
+    collectionId,
+    definition,
+    task: activeTask,
+  } = await createCollectionTaskAndDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const createTask = async () => {
+    const created = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+    return created;
+  };
+  const softDeletedTask = await createTask();
+  const hardDeletedTask = await createTask();
+  const addItem = async (task, suffix) => {
+    const added = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: task.response.task.revision,
+        propertyDefinitionId,
+        taskId: task.response.task.taskId,
+        url: `https://example.com/${suffix}`,
+      },
+      registration: addFilesMediaExternalItemActionRegistration,
+    });
+    assert.equal(added._tag, 'OperationSucceeded', JSON.stringify(added));
+    return added;
+  };
+  const activeItem = await addItem(activeTask, 'archived');
+  const softDeletedItem = await addItem(softDeletedTask, 'soft-deleted');
+  const hardDeletedItem = await addItem(hardDeletedTask, 'hard-deleted');
+  const archive = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: activeItem.response.taskRevision,
+      taskId: activeTask.response.task.taskId,
+      transition: 'archive',
+    },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+  assert.equal(archive._tag, 'OperationSucceeded', JSON.stringify(archive));
+  const softDelete = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: softDeletedItem.response.taskRevision,
+      taskId: softDeletedTask.response.task.taskId,
+      transition: 'softDelete',
+    },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+  assert.equal(softDelete._tag, 'OperationSucceeded', JSON.stringify(softDelete));
+  const hardDelete = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: hardDeletedItem.response.taskRevision,
+      taskId: hardDeletedTask.response.task.taskId,
+      transition: 'hardDelete',
+    },
+    registration: transitionTaskRetentionActionRegistration,
+  });
+  assert.equal(hardDelete._tag, 'OperationSucceeded', JSON.stringify(hardDelete));
+
+  const impact = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, propertyDefinitionId },
+    registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
+  assert.equal(impact.response.impactCount, 2);
+});
+
+test('Files & media search matches uploaded filenames and exact external URLs', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const uploaded = await runRegisteredAction({
+    operationContext,
+    payload: {
+      bytesBase64: Buffer.from('searchable').toString('base64'),
+      collectionId,
+      filename: 'Résumé.txt',
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.equal(uploaded._tag, 'OperationSucceeded', JSON.stringify(uploaded));
+  const external = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: uploaded.response.taskRevision,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      url: 'https://example.com/Media?Exact=Yes',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(external._tag, 'OperationSucceeded', JSON.stringify(external));
+
+  const search = (query) =>
+    runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'files_media', operation: { query, type: 'search' } },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: (response) => response.taskIds.length,
+      transport: { headers: new Headers() },
+    });
+  const filenameResult = await search('RÉSUMÉ');
+  assert.equal(filenameResult._tag, 'OperationSucceeded', JSON.stringify(filenameResult));
+  assert.deepEqual(filenameResult.response.taskIds, [task.response.task.taskId]);
+  const urlResult = await search('EXACT=YES');
+  assert.equal(urlResult._tag, 'OperationSucceeded', JSON.stringify(urlResult));
+  assert.deepEqual(urlResult.response.taskIds, [task.response.task.taskId]);
+  const accentSensitive = await search('resume');
+  assert.equal(accentSensitive._tag, 'OperationSucceeded', JSON.stringify(accentSensitive));
+  assert.deepEqual(accentSensitive.response.taskIds, []);
+});
+
+test('Files & media filters, stored-order sorting, and locale-equal fan-out grouping are observable', async () => {
+  const operationContext = await createOperationIdentity();
+  const {
+    collectionId,
+    definition,
+    task: taskA,
+  } = await createCollectionTaskAndDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const createTask = async () => {
+    const created = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(created._tag, 'OperationSucceeded', JSON.stringify(created));
+    return created;
+  };
+  const taskB = await createTask();
+  const taskC = await createTask();
+  const addUrls = async (task, urls) => {
+    const { taskId } = task.response.task;
+    let { revision } = task.response.task;
+    for (const url of urls) {
+      // oxlint-disable-next-line no-await-in-loop -- Each append uses the prior committed Task revision.
+      const added = await runRegisteredAction({
+        operationContext,
+        payload: {
+          collectionId,
+          expectedRevision: revision,
+          propertyDefinitionId,
+          taskId,
+          url,
+        },
+        registration: addFilesMediaExternalItemActionRegistration,
+      });
+      assert.equal(added._tag, 'OperationSucceeded', JSON.stringify(added));
+      revision = added.response.taskRevision;
+    }
+  };
+  await addUrls(taskA, ['https://example.com/Zulu', 'https://example.com/alpha']);
+  await addUrls(taskB, ['https://example.com/Alpha', 'https://example.com/ALPHA']);
+
+  const query = (operation) =>
+    runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'files_media', operation },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: (response) => response.taskIds.length,
+      transport: { headers: new Headers() },
+    });
+  const aId = taskA.response.task.taskId;
+  const bId = taskB.response.task.taskId;
+  const cId = taskC.response.task.taskId;
+
+  const contains = await query({ operator: 'contains', type: 'filter', value: '/ALPHA' });
+  assert.equal(contains._tag, 'OperationSucceeded', JSON.stringify(contains));
+  assert.deepEqual(contains.response.taskIds, [aId, bId].toSorted());
+  const negative = await query({ operator: 'doesNotContain', type: 'filter', value: 'zulu' });
+  assert.equal(negative._tag, 'OperationSucceeded', JSON.stringify(negative));
+  assert.deepEqual(negative.response.taskIds, [bId, cId].toSorted());
+  const empty = await query({ operator: 'isEmpty', type: 'filter' });
+  assert.equal(empty._tag, 'OperationSucceeded', JSON.stringify(empty));
+  assert.deepEqual(empty.response.taskIds, [cId]);
+
+  const ascending = await query({ direction: 'ascending', type: 'sort' });
+  assert.equal(ascending._tag, 'OperationSucceeded', JSON.stringify(ascending));
+  assert.deepEqual(ascending.response.taskIds, [bId, aId, cId]);
+  const descending = await query({ direction: 'descending', type: 'sort' });
+  assert.equal(descending._tag, 'OperationSucceeded', JSON.stringify(descending));
+  assert.deepEqual(descending.response.taskIds, [aId, bId, cId]);
+
+  const grouped = await query({ type: 'group' });
+  assert.equal(grouped._tag, 'OperationSucceeded', JSON.stringify(grouped));
+  const alphaGroup = grouped.response.groups.find(
+    ({ heading }) => heading !== null && heading.toLowerCase().endsWith('/alpha'),
+  );
+  assert.deepEqual(alphaGroup.taskIds, [aId, bId].toSorted());
+  assert.deepEqual(grouped.response.groups.find(({ heading }) => heading === null)?.taskIds, [cId]);
 });
 
 test('bulk upload reports every file independently and appends successful items in submitted order', async () => {

@@ -342,6 +342,54 @@ const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const filesMediaLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    if (!copyValues) {
+      return;
+    }
+    await tx.execute(sql`
+      insert into ticketing.task_files_media_items (
+        external_url,
+        media_asset_id,
+        position,
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        source_item.external_url,
+        source_item.media_asset_id,
+        source_item.position,
+        ${target.propertyDefinitionId},
+        source_item.task_id,
+        source_item.tenant_id
+      from ticketing.task_files_media_items as source_item
+      where source_item.property_definition_id = ${source.propertyDefinitionId}
+        and source_item.tenant_id = ${source.tenantId}
+      order by source_item.task_id, source_item.position
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_files_media_items
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(distinct item.task_id)::integer as "impactCount"
+      from ticketing.task_files_media_items as item
+      inner join ticketing.tasks as task
+        on task.task_id = item.task_id
+        and task.tenant_id = item.tenant_id
+      where item.property_definition_id = ${target.propertyDefinitionId}
+        and item.tenant_id = ${target.tenantId}
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const phoneLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     if (!copyValues) {
@@ -617,6 +665,7 @@ const lifecycleAdapters = {
   date: dateLifecycleAdapter,
   date_range: dateRangeLifecycleAdapter,
   email: emailLifecycleAdapter,
+  files_media: filesMediaLifecycleAdapter,
   id: idLifecycleAdapter,
   last_edited_time: intrinsicLifecycleAdapter,
   number: numberLifecycleAdapter,
@@ -768,6 +817,39 @@ const normalizeSelectPropertySchemaPositions = async ({
       and sibling.tenant_id = ${source.tenantId}
   `);
 };
+
+type SimpleDuplicatedDatatype = Extract<
+  TaskPropertyDefinition,
+  {
+    readonly datatype:
+      | 'created_by'
+      | 'created_time'
+      | 'date'
+      | 'email'
+      | 'files_media'
+      | 'last_edited_time'
+      | 'phone'
+      | 'text'
+      | 'url';
+  }
+>['datatype'];
+
+const simpleDuplicatedDatatypes = new Set<SimpleDuplicatedDatatype>([
+  'created_by',
+  'created_time',
+  'date',
+  'email',
+  'files_media',
+  'last_edited_time',
+  'phone',
+  'text',
+  'url',
+]);
+
+const isSimpleDuplicatedDatatype = (
+  datatype: TaskPropertyDefinition['datatype'],
+): datatype is SimpleDuplicatedDatatype =>
+  simpleDuplicatedDatatypes.has(datatype as SimpleDuplicatedDatatype);
 
 export const duplicateTaskPropertyDefinition = async ({
   copyValues,
@@ -954,16 +1036,7 @@ export const duplicateTaskPropertyDefinition = async ({
     await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
-  if (
-    target.datatype === 'date' ||
-    target.datatype === 'created_by' ||
-    target.datatype === 'created_time' ||
-    target.datatype === 'last_edited_time' ||
-    target.datatype === 'email' ||
-    target.datatype === 'phone' ||
-    target.datatype === 'text' ||
-    target.datatype === 'url'
-  ) {
+  if (isSimpleDuplicatedDatatype(target.datatype)) {
     const definition: TaskPropertyDefinition = {
       datatype: target.datatype,
       hidden: target.hidden,
