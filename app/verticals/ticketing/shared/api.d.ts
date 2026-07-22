@@ -36,6 +36,24 @@ export type {
   UpdateStatusPropertyValueActionResponse,
 } from './actions/update-status-property-value';
 export type {
+  ConfigureDateRangeTimeSupportActionFailure,
+  ConfigureDateRangeTimeSupportActionOutcome,
+  ConfigureDateRangeTimeSupportActionPayload,
+  ConfigureDateRangeTimeSupportActionResponse,
+} from './actions/configure-date-range-time-support';
+export type {
+  UpdateDateRangePropertyValueActionFailure,
+  UpdateDateRangePropertyValueActionOutcome,
+  UpdateDateRangePropertyValueActionPayload,
+  UpdateDateRangePropertyValueActionResponse,
+} from './actions/update-date-range-property-value';
+export type {
+  CreateDateRangePropertyDefinitionActionFailure,
+  CreateDateRangePropertyDefinitionActionOutcome,
+  CreateDateRangePropertyDefinitionActionPayload,
+  CreateDateRangePropertyDefinitionActionResponse,
+} from './actions/create-date-range-property-definition';
+export type {
   ConfigureIdPropertyPrefixActionFailure,
   ConfigureIdPropertyPrefixActionOutcome,
   ConfigureIdPropertyPrefixActionPayload,
@@ -259,7 +277,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
-export type { TaskPropertyEditCapability } from './task-property-edit-capability';
+export type {
+  TaskPropertyDefinitionEditCapability,
+  TaskPropertyEditCapability,
+} from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
@@ -326,6 +347,10 @@ export type {
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 export type { GroupTaskDateValuesPayload, GroupTaskDateValuesResponse } from './date-grouping';
+export type {
+  GroupTaskDateRangeValuesPayload,
+  GroupTaskDateRangeValuesResponse,
+} from './date-range-grouping';
 export type { QueryTaskPersonValuesPayload, QueryTaskPersonValuesResponse } from './person-query';
 export type {
   SearchEligiblePeoplePayload,
@@ -382,6 +407,104 @@ export declare const ticketingApi: HttpApi.HttpApi<
   'TicketingApi',
   HttpApiGroup.HttpApiGroup<
     'ticketing',
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'configureDateRangeTimeSupportAction',
+        'POST',
+        '/ticketing/actions/configure-date-range-time-support',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly confirmed: Schema.Boolean;
+            readonly expectedAffectedValueCount: Schema.Finite;
+            readonly expectedRevision: Schema.Finite;
+            readonly propertyDefinitionId: Schema.String;
+            readonly timeEnabled: Schema.Boolean;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly affectedValueCount: Schema.Finite;
+              readonly definition: Schema.Struct<{
+                readonly datatype: Schema.Literal<'date_range'>;
+                readonly hidden: Schema.Boolean;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+                readonly timeEnabled: Schema.Boolean;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
     | HttpApiEndpoint.HttpApiEndpoint<
         'configureIdPropertyPrefixAction',
         'POST',
@@ -1042,6 +1165,15 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'date_range'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly timeEnabled: Schema.Boolean;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'email'>;
                     readonly hidden: Schema.Boolean;
                     readonly mandatory: Schema.Boolean;
@@ -1354,6 +1486,100 @@ export declare const ticketingApi: HttpApi.HttpApi<
                 readonly name: Schema.String;
                 readonly propertyDefinitionId: Schema.String;
                 readonly revision: Schema.Finite;
+              }>;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'createDateRangePropertyDefinitionAction',
+        'POST',
+        '/ticketing/actions/create-date-range-property-definition',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly mandatory: Schema.Boolean;
+            readonly name: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly definition: Schema.Struct<{
+                readonly datatype: Schema.Literal<'date_range'>;
+                readonly hidden: Schema.Boolean;
+                readonly mandatory: Schema.Boolean;
+                readonly name: Schema.String;
+                readonly propertyDefinitionId: Schema.String;
+                readonly revision: Schema.Finite;
+                readonly timeEnabled: Schema.Boolean;
               }>;
             }>;
           }>
@@ -3193,6 +3419,15 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly revision: Schema.Finite;
                   }>,
                   Schema.Struct<{
+                    readonly datatype: Schema.Literal<'date_range'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly timeEnabled: Schema.Boolean;
+                  }>,
+                  Schema.Struct<{
                     readonly datatype: Schema.Literal<'email'>;
                     readonly hidden: Schema.Boolean;
                     readonly mandatory: Schema.Boolean;
@@ -3749,6 +3984,85 @@ export declare const ticketingApi: HttpApi.HttpApi<
         never
       >
     | HttpApiEndpoint.HttpApiEndpoint<
+        'getTaskPropertyDefinitionEditCapability',
+        'GET',
+        '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly canEditDefinitions: Schema.Literal<true>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
         'getTaskPropertyWorkspace',
         'GET',
         '/ticketing/task-collections/:collectionId/properties',
@@ -3804,6 +4118,15 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly name: Schema.String;
                     readonly propertyDefinitionId: Schema.String;
                     readonly revision: Schema.Finite;
+                  }>,
+                  Schema.Struct<{
+                    readonly datatype: Schema.Literal<'date_range'>;
+                    readonly hidden: Schema.Boolean;
+                    readonly mandatory: Schema.Boolean;
+                    readonly name: Schema.String;
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly timeEnabled: Schema.Boolean;
                   }>,
                   Schema.Struct<{
                     readonly datatype: Schema.Literal<'email'>;
@@ -3956,6 +4279,20 @@ export declare const ticketingApi: HttpApi.HttpApi<
                     readonly propertyDefinitionId: Schema.String;
                     readonly revision: Schema.Finite;
                     readonly value: Schema.NullOr<Schema.String>;
+                  }>
+                >;
+                readonly dateRangeValues: Schema.$Array<
+                  Schema.Struct<{
+                    readonly propertyDefinitionId: Schema.String;
+                    readonly revision: Schema.Finite;
+                    readonly value: Schema.NullOr<
+                      Schema.Struct<{
+                        readonly endDate: Schema.String;
+                        readonly endTime: Schema.NullOr<Schema.String>;
+                        readonly startDate: Schema.String;
+                        readonly startTime: Schema.NullOr<Schema.String>;
+                      }>
+                    >;
                   }>
                 >;
                 readonly emailValues: Schema.$Array<
@@ -4123,6 +4460,98 @@ export declare const ticketingApi: HttpApi.HttpApi<
                       readonly value: Schema.NullOr<Schema.String>;
                     }>
                   >
+                >;
+              }>
+            >;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'groupTaskDateRangeValues',
+        'GET',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-range-groups',
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            collectionId: Schema.String;
+            propertyDefinitionId: Schema.String;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly groups: Schema.$Array<
+              Schema.Struct<{
+                readonly taskIds: Schema.$Array<Schema.String>;
+                readonly value: Schema.NullOr<
+                  Schema.Struct<{
+                    readonly endDate: Schema.String;
+                    readonly endTime: Schema.NullOr<Schema.String>;
+                    readonly startDate: Schema.String;
+                    readonly startTime: Schema.NullOr<Schema.String>;
+                  }>
                 >;
               }>
             >;
@@ -5289,6 +5718,115 @@ export declare const ticketingApi: HttpApi.HttpApi<
                   readonly propertyDefinitionId: Schema.String;
                   readonly revision: Schema.Finite;
                   readonly value: Schema.NullOr<Schema.String>;
+                }>
+              >;
+            }>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<readonly ['OperationIdempotencyKeyRequired']>;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthRequired', 'OperationContextInvalid']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationAuthorizationDenied', 'OperationModuleStateDenied']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly ['OperationExecutionFailed', 'OperationPersistenceFailed']
+              >;
+            }>
+          | Schema.Struct<{
+              readonly code: Schema.optional<Schema.String>;
+              readonly httpStatus: Schema.Finite;
+              readonly message: Schema.String;
+              readonly ok: Schema.Literal<false>;
+              readonly state: Schema.optional<Schema.Codec<Schema.Json, Schema.Json, never, never>>;
+              readonly errorTag: Schema.Literals<
+                readonly [
+                  'OperationDomainRejected',
+                  'OperationIdempotencyConflict',
+                  'OperationIdempotencyReplayUnavailable',
+                  'OperationPolicyDenied',
+                ]
+              >;
+            }>
+        >,
+        never,
+        never
+      >
+    | HttpApiEndpoint.HttpApiEndpoint<
+        'updateDateRangePropertyValueAction',
+        'POST',
+        '/ticketing/actions/update-date-range-property-value',
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.StringTree<never>,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly collectionId: Schema.String;
+            readonly expectedRevision: Schema.Finite;
+            readonly propertyDefinitionId: Schema.String;
+            readonly taskId: Schema.String;
+            readonly value: Schema.NullOr<
+              Schema.Struct<{
+                readonly endDate: Schema.String;
+                readonly endTime: Schema.NullOr<Schema.String>;
+                readonly startDate: Schema.String;
+                readonly startTime: Schema.NullOr<Schema.String>;
+              }>
+            >;
+          }>
+        >,
+        HttpApiEndpoint.StringTree<
+          Schema.Struct<{
+            readonly 'Idempotency-Key': Schema.optional<Schema.String>;
+            readonly 'x-ontos-operation-context': Schema.optional<Schema.String>;
+          }>
+        >,
+        HttpApiEndpoint.Json<
+          Schema.Struct<{
+            readonly actionInvocationId: Schema.optional<Schema.String>;
+            readonly ok: Schema.Literal<true>;
+            readonly response: Schema.Struct<{
+              readonly taskRevision: Schema.Finite;
+              readonly value: Schema.NullOr<
+                Schema.Struct<{
+                  readonly propertyDefinitionId: Schema.String;
+                  readonly revision: Schema.Finite;
+                  readonly value: Schema.NullOr<
+                    Schema.Struct<{
+                      readonly endDate: Schema.String;
+                      readonly endTime: Schema.NullOr<Schema.String>;
+                      readonly startDate: Schema.String;
+                      readonly startTime: Schema.NullOr<Schema.String>;
+                    }>
+                  >;
                 }>
               >;
             }>;
@@ -6528,6 +7066,24 @@ export declare const ticketingApi: HttpApi.HttpApi<
   >
 >;
 export declare const ticketingOperationContexts: {
+  configureDateRangeTimeSupportAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  updateDateRangePropertyValueAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  createDateRangePropertyDefinitionAction: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   configureIdPropertyPrefixAction: {
     method: string;
     operationId: string;
@@ -6720,6 +7276,12 @@ export declare const ticketingOperationContexts: {
     routePath: string;
     source: 'generated-client';
   };
+  getTaskPropertyDefinitionEditCapability: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
   getTaskPropertyEditCapability: {
     method: string;
     operationId: string;
@@ -6733,6 +7295,12 @@ export declare const ticketingOperationContexts: {
     source: 'generated-client';
   };
   groupTaskDateValues: {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'generated-client';
+  };
+  groupTaskDateRangeValues: {
     method: string;
     operationId: string;
     routePath: string;

@@ -10,6 +10,18 @@ export declare const datePropertyValueSchema: Schema.Struct<{
   readonly revision: Schema.Finite;
   readonly value: Schema.NullOr<Schema.String>;
 }>;
+export declare const dateRangePropertyValueSchema: Schema.Struct<{
+  readonly propertyDefinitionId: Schema.String;
+  readonly revision: Schema.Finite;
+  readonly value: Schema.NullOr<
+    Schema.Struct<{
+      readonly endDate: Schema.String;
+      readonly endTime: Schema.NullOr<Schema.String>;
+      readonly startDate: Schema.String;
+      readonly startTime: Schema.NullOr<Schema.String>;
+    }>
+  >;
+}>;
 export declare const idAssignmentSchema: Schema.Struct<{
   readonly displayValue: Schema.String;
   readonly number: Schema.String;
@@ -98,6 +110,15 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly name: Schema.String;
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
+        }>,
+        Schema.Struct<{
+          readonly datatype: Schema.Literal<'date_range'>;
+          readonly hidden: Schema.Boolean;
+          readonly mandatory: Schema.Boolean;
+          readonly name: Schema.String;
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly timeEnabled: Schema.Boolean;
         }>,
         Schema.Struct<{
           readonly datatype: Schema.Literal<'email'>;
@@ -246,6 +267,20 @@ export declare const taskPropertyWorkspaceSchema: Schema.Struct<{
           readonly propertyDefinitionId: Schema.String;
           readonly revision: Schema.Finite;
           readonly value: Schema.NullOr<Schema.String>;
+        }>
+      >;
+      readonly dateRangeValues: Schema.$Array<
+        Schema.Struct<{
+          readonly propertyDefinitionId: Schema.String;
+          readonly revision: Schema.Finite;
+          readonly value: Schema.NullOr<
+            Schema.Struct<{
+              readonly endDate: Schema.String;
+              readonly endTime: Schema.NullOr<Schema.String>;
+              readonly startDate: Schema.String;
+              readonly startTime: Schema.NullOr<Schema.String>;
+            }>
+          >;
         }>
       >;
       readonly emailValues: Schema.$Array<

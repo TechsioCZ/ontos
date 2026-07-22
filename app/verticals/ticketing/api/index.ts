@@ -12,6 +12,9 @@ import { createStatusOptionActionRegistration } from '../src/actions/create-stat
 import { updateStatusPropertyValueActionRegistration } from '../src/actions/update-status-property-value.ts';
 import { configureStatusDefaultActionRegistration } from '../src/actions/configure-status-default.ts';
 import { createStatusPropertyDefinitionActionRegistration } from '../src/actions/create-status-property-definition.ts';
+import { configureDateRangeTimeSupportActionRegistration } from '../src/actions/configure-date-range-time-support.ts';
+import { updateDateRangePropertyValueActionRegistration } from '../src/actions/update-date-range-property-value.ts';
+import { createDateRangePropertyDefinitionActionRegistration } from '../src/actions/create-date-range-property-definition.ts';
 import { configureIdPropertyPrefixActionRegistration } from '../src/actions/configure-id-property-prefix.ts';
 import { createIdPropertyDefinitionActionRegistration } from '../src/actions/create-id-property-definition.ts';
 import { duplicateTaskActionRegistration } from '../src/actions/duplicate-task.ts';
@@ -1181,6 +1184,72 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         .pipe(
           Effect.withSpan('ultramodern.api.ticketing.updateStatusOptionAction', {
             attributes: operationAttributes(ticketingOperationContexts.updateStatusOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('createDateRangePropertyDefinitionAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: createDateRangePropertyDefinitionActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.createDateRangePropertyDefinitionAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.createDateRangePropertyDefinitionAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('updateDateRangePropertyValueAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: updateDateRangePropertyValueActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.updateDateRangePropertyValueAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.updateDateRangePropertyValueAction,
+            ),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('configureDateRangeTimeSupportAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: configureDateRangeTimeSupportActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.configureDateRangeTimeSupportAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.configureDateRangeTimeSupportAction,
+            ),
             kind: 'server',
           }),
         ),

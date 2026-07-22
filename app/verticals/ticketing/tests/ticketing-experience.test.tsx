@@ -26,6 +26,8 @@ const mocks = rs.hoisted(() => ({
   capabilityAllowed: true,
   capabilityAttempts: 0,
   collectionCalls: [] as BoundaryCall<Record<string, never>>[],
+  definitionCapabilityAllowed: true,
+  definitionCapabilityAttempts: 0,
   intrinsicCalls: [] as BoundaryCall<{
     readonly collectionId: string;
     readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
@@ -79,6 +81,7 @@ test('Ticketing API publishes the CoreSDK failure status classes', () => {
     'filterTaskCheckboxValues',
     'getTaskCollection',
     'getTaskPropertyEditCapability',
+    'getTaskPropertyDefinitionEditCapability',
     'getTaskPropertyWorkspace',
     'groupTaskDateValues',
     'queryIntrinsicTaskProperties',
@@ -106,6 +109,13 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.date.definitionCreating': 'Creating Date property',
         'ticketing.date.definitionName': 'Date property name',
         'ticketing.date.empty': 'Empty',
+        'ticketing.dateRange.definitionCreate': 'Create Date Range property',
+        'ticketing.dateRange.definitionCreating': 'Creating Date Range property',
+        'ticketing.dateRange.definitionName': 'Date Range property name',
+        'ticketing.dateRange.endDate': 'End date',
+        'ticketing.dateRange.save': 'Save range',
+        'ticketing.dateRange.startDate': 'Start date',
+        'ticketing.dateRange.timeSupport': 'Include time',
         'ticketing.email.definitionCreate': 'Create Email property',
         'ticketing.email.definitionCreating': 'Creating Email property',
         'ticketing.email.definitionName': 'Email property name',
@@ -247,6 +257,12 @@ rs.mock('../src/api/ticketing-client', () => {
       }
       return success(aggregate);
     },
+    getTaskPropertyDefinitionEditCapability: () => {
+      mocks.definitionCapabilityAttempts += 1;
+      return mocks.definitionCapabilityAllowed
+        ? success({ canEditDefinitions: true })
+        : failure({ httpStatus: 403, message: 'User cannot change the schema.', ok: false });
+    },
     getTaskPropertyEditCapability: () => {
       mocks.capabilityAttempts += 1;
       return mocks.capabilityAllowed
@@ -280,6 +296,7 @@ rs.mock('../src/api/ticketing-client', () => {
             canvas: {},
             checkboxValues: [],
             createdAt: aggregate.task.createdAt,
+            dateRangeValues: [],
             dateValues: [],
             emailValues: [],
             lastEditedAt: aggregate.task.lastEditedAt,
@@ -308,6 +325,25 @@ rs.mock('../src/api/ticketing-client', () => {
             name: payload.name,
             propertyDefinitionId: 'date-property-1',
             revision: 1,
+          },
+        },
+      }),
+    runCreateDateRangePropertyDefinitionAction: (payload: {
+      readonly collectionId: string;
+      readonly mandatory: boolean;
+      readonly name: string;
+      readonly timeEnabled: boolean;
+    }) =>
+      success({
+        response: {
+          definition: {
+            datatype: 'date_range',
+            hidden: false,
+            mandatory: payload.mandatory,
+            name: payload.name,
+            propertyDefinitionId: 'date-range-property-1',
+            revision: 1,
+            timeEnabled: payload.timeEnabled,
           },
         },
       }),
@@ -448,6 +484,8 @@ rs.mock('../src/api/ticketing-client', () => {
 beforeEach(() => {
   mocks.capabilityAllowed = true;
   mocks.capabilityAttempts = 0;
+  mocks.definitionCapabilityAllowed = true;
+  mocks.definitionCapabilityAttempts = 0;
   mocks.collectionCalls.length = 0;
   mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
@@ -671,4 +709,22 @@ test('wires a denied value-edit capability to read-only property editors', async
   const phone = await screen.findByRole('textbox', { name: 'Direct line' });
   expect(phone).toHaveAttribute('readonly');
   expect(screen.queryByRole('button', { name: 'Save Phone' })).not.toBeInTheDocument();
+});
+
+test('keeps Date Range values editable while schema controls require definition permission', async () => {
+  mocks.definitionCapabilityAllowed = false;
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+  await waitFor(() => expect(mocks.definitionCapabilityAttempts).toBe(1));
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Date Range property name' }), {
+    target: { value: 'Delivery window' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Create Date Range property' }));
+
+  expect(await screen.findByRole('checkbox', { name: 'Include time' })).toBeDisabled();
+  expect(screen.getByRole('group', { name: 'Delivery window' })).not.toBeDisabled();
 });

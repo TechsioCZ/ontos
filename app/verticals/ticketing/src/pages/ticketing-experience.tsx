@@ -7,9 +7,12 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import {
   Effect,
+  getTaskPropertyDefinitionEditCapability,
   getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateDatePropertyDefinitionAction,
+  runCreateDateRangePropertyDefinitionAction,
+  runConfigureDateRangeTimeSupportAction,
   getTaskPropertyWorkspace,
   runCreateCheckboxPropertyDefinitionAction,
   runCreateEmailPropertyDefinitionAction,
@@ -24,6 +27,7 @@ import {
   runEffectRequest,
   runUpdateCheckboxPropertyValueAction,
   runUpdateDatePropertyValueAction,
+  runUpdateDateRangePropertyValueAction,
   runUpdateEmailPropertyValueAction,
   runUpdateNumberPropertyValueAction,
   runUpdatePhonePropertyValueAction,
@@ -33,6 +37,10 @@ import {
 import { ultramodernUiMarker } from '../ultramodern-build';
 import { CheckboxPropertyEditor } from '../components/checkbox-property-editor';
 import { DatePropertyEditor } from '../components/date-property-editor';
+import {
+  DateRangePropertyEditor,
+  DateRangeTimeSupportControl,
+} from '../components/date-range-property-editor';
 import { EmailPropertyEditor } from '../components/email-property-editor';
 import { NumberPropertyEditor } from '../components/number-property-editor';
 import { PhonePropertyEditor } from '../components/phone-property-editor';
@@ -106,12 +114,18 @@ export const TicketingExperience = () => {
     crypto.randomUUID(),
   );
   const [isCreatingDateDefinition, setIsCreatingDateDefinition] = useState(false);
+  const [dateRangeDefinitionName, setDateRangeDefinitionName] = useState('');
+  const [dateRangeDefinitionIdempotencyKey, setDateRangeDefinitionIdempotencyKey] = useState(() =>
+    crypto.randomUUID(),
+  );
+  const [isCreatingDateRangeDefinition, setIsCreatingDateRangeDefinition] = useState(false);
   const [emailDefinitionName, setEmailDefinitionName] = useState('');
   const [emailDefinitionIdempotencyKey, setEmailDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
   );
   const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
   const [canEditTaskPropertyValues, setCanEditTaskPropertyValues] = useState(false);
+  const [canEditTaskPropertyDefinitions, setCanEditTaskPropertyDefinitions] = useState(false);
   const [textDefinitionName, setTextDefinitionName] = useState('');
   const [textDefinitionIdempotencyKey, setTextDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
@@ -207,6 +221,8 @@ export const TicketingExperience = () => {
               setCheckboxDefinitionIdempotencyKey(crypto.randomUUID());
               setDateDefinitionName('');
               setDateDefinitionIdempotencyKey(crypto.randomUUID());
+              setDateRangeDefinitionName('');
+              setDateRangeDefinitionIdempotencyKey(crypto.randomUUID());
               setEmailDefinitionName('');
               setEmailDefinitionIdempotencyKey(crypto.randomUUID());
               setNumberDefinitionName('');
@@ -222,6 +238,7 @@ export const TicketingExperience = () => {
                 tasks: [
                   {
                     checkboxValues: [],
+                    dateRangeValues: [],
                     dateValues: [],
                     emailValues: [],
                     filesMediaItems: [],
@@ -245,6 +262,15 @@ export const TicketingExperience = () => {
               )
                 .then(({ canEdit }) => setCanEditTaskPropertyValues(canEdit))
                 .catch(() => setCanEditTaskPropertyValues(false));
+              void runEffectRequest(
+                getTaskPropertyDefinitionEditCapability(taskCollection.collection.collectionId, {
+                  headers,
+                }),
+              )
+                .then(({ canEditDefinitions }) =>
+                  setCanEditTaskPropertyDefinitions(canEditDefinitions),
+                )
+                .catch(() => setCanEditTaskPropertyDefinitions(false));
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),
@@ -615,6 +641,50 @@ export const TicketingExperience = () => {
     }
   };
 
+  const handleCreateDateRangeDefinition = async () => {
+    if (openedTaskPropertyWorkspace === undefined || dateRangeDefinitionName.trim().length === 0) {
+      return;
+    }
+    setIsCreatingDateRangeDefinition(true);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runCreateDateRangePropertyDefinitionAction(
+          {
+            collectionId: openedTaskPropertyWorkspace.collectionId,
+            mandatory: false,
+            name: dateRangeDefinitionName,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: dateRangeDefinitionIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              propertyDefinitions: [...current.propertyDefinitions, outcome.response.definition],
+            },
+      );
+      setDateRangeDefinitionName('');
+      setDateRangeDefinitionIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toaster.create({
+        description:
+          error instanceof Error
+            ? error.message
+            : t('ticketing.dateRange.definitionCreateFailedDescription'),
+        title: t('ticketing.dateRange.definitionCreateFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsCreatingDateRangeDefinition(false);
+    }
+  };
+
   const handleCreateIntrinsicDefinition = async (
     datatype: 'created_by' | 'created_time' | 'last_edited_time',
   ) => {
@@ -747,6 +817,23 @@ export const TicketingExperience = () => {
               variant="secondary"
             >
               {t('ticketing.date.definitionCreate')}
+            </Button>
+            <FormInput
+              id="date-range-property-name"
+              label={t('ticketing.dateRange.definitionName')}
+              name="date-range-property-name"
+              onChange={(event) => setDateRangeDefinitionName(event.currentTarget.value)}
+              value={dateRangeDefinitionName}
+            />
+            <Button
+              disabled={dateRangeDefinitionName.trim().length === 0}
+              isLoading={isCreatingDateRangeDefinition}
+              loadingText={t('ticketing.dateRange.definitionCreating')}
+              onClick={() => void handleCreateDateRangeDefinition()}
+              type="button"
+              variant="secondary"
+            >
+              {t('ticketing.dateRange.definitionCreate')}
             </Button>
             <FormInput
               id="email-property-name"
@@ -910,6 +997,101 @@ export const TicketingExperience = () => {
                       taskId={task.taskId}
                       value={value?.value ?? null}
                     />
+                  );
+                }
+                if (definition.datatype === 'date_range') {
+                  const value = task.dateRangeValues.find(
+                    (candidate) =>
+                      candidate.propertyDefinitionId === definition.propertyDefinitionId,
+                  );
+                  const affectedValueCount = openedTaskPropertyWorkspace.tasks.filter(
+                    (candidate) => {
+                      const range = candidate.dateRangeValues.find(
+                        (dateRangeValue) =>
+                          dateRangeValue.propertyDefinitionId === definition.propertyDefinitionId,
+                      )?.value;
+                      return range?.startTime !== null && range?.startTime !== undefined;
+                    },
+                  ).length;
+                  return (
+                    <div key={definition.propertyDefinitionId}>
+                      <DateRangeTimeSupportControl
+                        affectedValueCount={affectedValueCount}
+                        disabled={!canEditTaskPropertyDefinitions}
+                        onConfigure={async (timeEnabled, confirmed, expectedAffectedValueCount) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const headers = {
+                            'x-ontos-operation-context': operationContextToken,
+                          };
+                          await runEffectRequest(
+                            runConfigureDateRangeTimeSupportAction(
+                              {
+                                collectionId: openedTaskPropertyWorkspace.collectionId,
+                                confirmed,
+                                expectedAffectedValueCount,
+                                expectedRevision: definition.revision,
+                                propertyDefinitionId: definition.propertyDefinitionId,
+                                timeEnabled,
+                              },
+                              { headers, idempotencyKey: crypto.randomUUID() },
+                            ),
+                          );
+                          setOpenedTaskPropertyWorkspace(
+                            await runEffectRequest(
+                              getTaskPropertyWorkspace(openedTaskPropertyWorkspace.collectionId, {
+                                headers,
+                              }),
+                            ),
+                          );
+                        }}
+                        timeEnabled={definition.timeEnabled}
+                      />
+                      <DateRangePropertyEditor
+                        collectionId={openedTaskPropertyWorkspace.collectionId}
+                        label={definition.name}
+                        onSave={async (draft, idempotencyKey) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const outcome = await runEffectRequest(
+                            runUpdateDateRangePropertyValueAction(draft, {
+                              headers: { 'x-ontos-operation-context': operationContextToken },
+                              idempotencyKey,
+                            }),
+                          );
+                          setOpenedTaskPropertyWorkspace((current) =>
+                            current === undefined
+                              ? current
+                              : {
+                                  ...current,
+                                  tasks: current.tasks.map((candidate) => {
+                                    if (candidate.taskId !== draft.taskId) {
+                                      return candidate;
+                                    }
+                                    const withoutCurrent = candidate.dateRangeValues.filter(
+                                      (dateRangeValue) =>
+                                        dateRangeValue.propertyDefinitionId !==
+                                        draft.propertyDefinitionId,
+                                    );
+                                    return {
+                                      ...candidate,
+                                      dateRangeValues:
+                                        outcome.response.value === null
+                                          ? withoutCurrent
+                                          : [...withoutCurrent, outcome.response.value],
+                                      taskRevision: outcome.response.taskRevision,
+                                    };
+                                  }),
+                                },
+                          );
+                          return outcome.response;
+                        }}
+                        propertyDefinitionId={definition.propertyDefinitionId}
+                        readOnly={!canEditTaskPropertyValues}
+                        revision={value?.revision ?? 0}
+                        taskId={task.taskId}
+                        timeEnabled={definition.timeEnabled}
+                        value={value?.value ?? null}
+                      />
+                    </div>
                   );
                 }
                 if (definition.datatype === 'created_time') {

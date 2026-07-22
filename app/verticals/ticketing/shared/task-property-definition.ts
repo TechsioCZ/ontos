@@ -37,6 +37,16 @@ export const datePropertyDefinitionSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const dateRangePropertyDefinitionSchema = Schema.Struct({
+  datatype: Schema.Literal('date_range'),
+  hidden: Schema.Boolean,
+  mandatory: Schema.Boolean,
+  name: Schema.String,
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+  timeEnabled: Schema.Boolean,
+});
+
 export const intrinsicPropertyDefinitionSchema = Schema.Struct({
   datatype: Schema.Literals(['created_time', 'created_by', 'last_edited_time']),
   hidden: Schema.Boolean,
@@ -159,6 +169,7 @@ export const personPropertyDefinitionSchema = Schema.Struct({
 export const taskPropertyDefinitionSchema = Schema.Union([
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
+  dateRangePropertyDefinitionSchema,
   emailPropertyDefinitionSchema,
   filesMediaPropertyDefinitionSchema,
   idPropertyDefinitionSchema,
@@ -174,6 +185,7 @@ export const taskPropertyDefinitionSchema = Schema.Union([
 
 export type CheckboxPropertyDefinition = typeof checkboxPropertyDefinitionSchema.Type;
 export type DatePropertyDefinition = typeof datePropertyDefinitionSchema.Type;
+export type DateRangePropertyDefinition = typeof dateRangePropertyDefinitionSchema.Type;
 export type EmailPropertyDefinition = typeof emailPropertyDefinitionSchema.Type;
 export type FilesMediaPropertyDefinition = typeof filesMediaPropertyDefinitionSchema.Type;
 export type IdPropertyDefinition = typeof idPropertyDefinitionSchema.Type;

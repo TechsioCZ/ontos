@@ -152,6 +152,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
       collection.locale as "collectionLocale",
       person_configuration.cardinality,
       definition.datatype,
+      definition.date_range_time_enabled as "timeEnabled",
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,
@@ -230,6 +231,7 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
           and person_configuration.tenant_id = definition.tenant_id
       ) as cardinality,
       definition.datatype,
+      definition.date_range_time_enabled as "timeEnabled",
       definition.number_format as format,
       definition.hidden,
       definition.mandatory,

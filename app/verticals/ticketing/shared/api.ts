@@ -45,6 +45,26 @@ import {
   createStatusPropertyDefinitionActionOutcomeSchema,
   createStatusPropertyDefinitionActionPayloadSchema,
 } from './actions/create-status-property-definition';
+import {
+  configureDateRangeTimeSupportActionHeadersSchema,
+  configureDateRangeTimeSupportActionFailureSchemas,
+  configureDateRangeTimeSupportActionOutcomeSchema,
+  configureDateRangeTimeSupportActionPayloadSchema,
+} from './actions/configure-date-range-time-support';
+
+import {
+  updateDateRangePropertyValueActionHeadersSchema,
+  updateDateRangePropertyValueActionFailureSchemas,
+  updateDateRangePropertyValueActionOutcomeSchema,
+  updateDateRangePropertyValueActionPayloadSchema,
+} from './actions/update-date-range-property-value';
+
+import {
+  createDateRangePropertyDefinitionActionHeadersSchema,
+  createDateRangePropertyDefinitionActionFailureSchemas,
+  createDateRangePropertyDefinitionActionOutcomeSchema,
+  createDateRangePropertyDefinitionActionPayloadSchema,
+} from './actions/create-date-range-property-definition';
 
 import {
   duplicateTaskActionFailureSchemas,
@@ -278,6 +298,7 @@ import {
 } from './actions/update-checkbox-property-value';
 import { filterTaskCheckboxValuesResponseSchema } from './checkbox-filter';
 import { groupTaskDateValuesResponseSchema } from './date-grouping';
+import { groupTaskDateRangeValuesResponseSchema } from './date-range-grouping';
 import { emailQueryOperationSchema, queryTaskEmailValuesResponseSchema } from './email-query';
 import {
   queryIntrinsicTaskPropertiesPayloadSchema,
@@ -290,7 +311,10 @@ import {
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
-import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
+import {
+  taskPropertyDefinitionEditCapabilitySchema,
+  taskPropertyEditCapabilitySchema,
+} from './task-property-edit-capability';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 import {
   queryTaskPropertyValuesPayloadSchema,
@@ -334,6 +358,24 @@ export type {
   UpdateStatusPropertyValueActionPayload,
   UpdateStatusPropertyValueActionResponse,
 } from './actions/update-status-property-value';
+export type {
+  ConfigureDateRangeTimeSupportActionFailure,
+  ConfigureDateRangeTimeSupportActionOutcome,
+  ConfigureDateRangeTimeSupportActionPayload,
+  ConfigureDateRangeTimeSupportActionResponse,
+} from './actions/configure-date-range-time-support';
+export type {
+  CreateDateRangePropertyDefinitionActionFailure,
+  CreateDateRangePropertyDefinitionActionOutcome,
+  CreateDateRangePropertyDefinitionActionPayload,
+  CreateDateRangePropertyDefinitionActionResponse,
+} from './actions/create-date-range-property-definition';
+export type {
+  UpdateDateRangePropertyValueActionFailure,
+  UpdateDateRangePropertyValueActionOutcome,
+  UpdateDateRangePropertyValueActionPayload,
+  UpdateDateRangePropertyValueActionResponse,
+} from './actions/update-date-range-property-value';
 export type {
   ConfigureIdPropertyPrefixActionFailure,
   ConfigureIdPropertyPrefixActionOutcome,
@@ -558,7 +600,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
-export type { TaskPropertyEditCapability } from './task-property-edit-capability';
+export type {
+  TaskPropertyDefinitionEditCapability,
+  TaskPropertyEditCapability,
+} from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
@@ -625,6 +670,10 @@ export type {
 export type { QueryTaskUrlValuesPayload, QueryTaskUrlValuesResponse } from './url-query';
 export type { QueryTaskEmailValuesPayload, QueryTaskEmailValuesResponse } from './email-query';
 export type { GroupTaskDateValuesPayload, GroupTaskDateValuesResponse } from './date-grouping';
+export type {
+  GroupTaskDateRangeValuesPayload,
+  GroupTaskDateRangeValuesResponse,
+} from './date-range-grouping';
 export type { QueryTaskPersonValuesPayload, QueryTaskPersonValuesResponse } from './person-query';
 export type {
   SearchEligiblePeoplePayload,
@@ -823,6 +872,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.get(
+        'getTaskPropertyDefinitionEditCapability',
+        '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          success: taskPropertyDefinitionEditCapabilitySchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.post('queryTaskPropertyValues', '/ticketing/task-properties/query', {
         error: coreSdkOperationFailureSchemas,
         headers: operationContextHeadersSchema,
@@ -916,6 +977,21 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: groupTaskDateValuesResponseSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'groupTaskDateRangeValues',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-range-groups',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: groupTaskDateRangeValuesResponseSchema,
         },
       ),
     )
@@ -1369,6 +1445,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
     )
     .add(
       HttpApiEndpoint.post(
+        'createDateRangePropertyDefinitionAction',
+        '/ticketing/actions/create-date-range-property-definition',
+        {
+          error: createDateRangePropertyDefinitionActionFailureSchemas,
+          headers: createDateRangePropertyDefinitionActionHeadersSchema,
+          payload: createDateRangePropertyDefinitionActionPayloadSchema,
+          success: createDateRangePropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
         'configureStatusDefaultAction',
         '/ticketing/actions/configure-status-default',
         {
@@ -1376,6 +1464,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           headers: configureStatusDefaultActionHeadersSchema,
           payload: configureStatusDefaultActionPayloadSchema,
           success: configureStatusDefaultActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateDateRangePropertyValueAction',
+        '/ticketing/actions/update-date-range-property-value',
+        {
+          error: updateDateRangePropertyValueActionFailureSchemas,
+          headers: updateDateRangePropertyValueActionHeadersSchema,
+          payload: updateDateRangePropertyValueActionPayloadSchema,
+          success: updateDateRangePropertyValueActionOutcomeSchema,
         },
       ),
     )
@@ -1406,10 +1506,28 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: updateStatusOptionActionPayloadSchema,
         success: updateStatusOptionActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureDateRangeTimeSupportAction',
+        '/ticketing/actions/configure-date-range-time-support',
+        {
+          error: configureDateRangeTimeSupportActionFailureSchemas,
+          headers: configureDateRangeTimeSupportActionHeadersSchema,
+          payload: configureDateRangeTimeSupportActionPayloadSchema,
+          success: configureDateRangeTimeSupportActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
 export const ticketingOperationContexts = {
+  configureDateRangeTimeSupportAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureDateRangeTimeSupportAction',
+    routePath: '/ticketing/actions/configure-date-range-time-support',
+    source: 'generated-client',
+  },
   configureIdPropertyPrefixAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureIdPropertyPrefixAction',
@@ -1462,6 +1580,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createDatePropertyDefinitionAction',
     routePath: '/ticketing/actions/create-date-property-definition',
+    source: 'generated-client',
+  },
+  createDateRangePropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createDateRangePropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-date-range-property-definition',
     source: 'generated-client',
   },
   createEmailPropertyDefinitionAction: {
@@ -1597,6 +1721,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/task-collections/:collectionId',
     source: 'generated-client',
   },
+  getTaskPropertyDefinitionEditCapability: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyDefinitionEditCapability',
+    routePath: '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
+    source: 'generated-client',
+  },
   getTaskPropertyDeletionImpact: {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskPropertyDeletionImpact',
@@ -1614,6 +1744,13 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskPropertyWorkspace',
     routePath: '/ticketing/task-collections/:collectionId/properties',
+    source: 'generated-client',
+  },
+  groupTaskDateRangeValues: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:groupTaskDateRangeValues',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/date-range-groups',
     source: 'generated-client',
   },
   groupTaskDateValues: {
@@ -1689,6 +1826,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateDatePropertyValueAction',
     routePath: '/ticketing/actions/update-date-property-value',
+    source: 'generated-client',
+  },
+  updateDateRangePropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateDateRangePropertyValueAction',
+    routePath: '/ticketing/actions/update-date-range-property-value',
     source: 'generated-client',
   },
   updateEmailPropertyValueAction: {

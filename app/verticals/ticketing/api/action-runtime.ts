@@ -73,11 +73,7 @@ export const runCoreSdkAction = async <TAction, TResponse>({
   readonly payload: TAction;
   readonly registration: ActionRegistration<TAction, TResponse>;
 }): Promise<CoreSdkOperationTransportOutcome<TResponse>> => {
-  const result = await runAction({
-    payload,
-    registration,
-    transport: { headers },
-  });
+  const result = await runAction({ payload, registration, transport: { headers } });
   return toCoreSdkTransportOutcome(result);
 };
 
