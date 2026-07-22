@@ -369,6 +369,55 @@ test('a resolved reference refreshes its clickable label and authorizes every op
   });
 });
 
+test('editing after reference resolution preserves the complete refreshed envelope', async () => {
+  const reference = {
+    entityId: 'entity-42',
+    entityType: 'customer',
+    kind: 'mention',
+    lastResolvedLabel: '@Ada',
+    ownerModuleKey: 'crm',
+    targetTenantId: 'tenant-2',
+    token: 'opaque-reference-token',
+  } as const;
+  const refreshedReference = { ...reference, lastResolvedLabel: '@Ada Lovelace' };
+  const save = rs.fn((draft) =>
+    Promise.resolve({
+      taskRevision: 2,
+      value: {
+        document: draft.document,
+        propertyDefinitionId: 'property-1',
+        readableText: '@Ada Lovelace',
+        revision: 2,
+      },
+    }),
+  );
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={{ content: [{ reference, type: 'reference' }], type: 'textDocument' }}
+      label={propertyLabel}
+      onOpenReference={() => Promise.resolve({ _tag: 'CoreReferenceOpened' })}
+      onResolveReference={() =>
+        Promise.resolve({ _tag: 'CoreReferenceActive', reference: refreshedReference })
+      }
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  await screen.findByRole('button', { name: '@Ada Lovelace' });
+  fireEvent.input(screen.getByRole('textbox', { name: propertyLabel }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save Text' }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0]?.[0].document).toEqual({
+    content: [{ reference: refreshedReference, type: 'reference' }],
+    type: 'textDocument',
+  });
+});
+
 test('federated discovery inserts the selected opaque reference through the public handlers', async () => {
   const candidate = {
     entityId: 'entity-42',

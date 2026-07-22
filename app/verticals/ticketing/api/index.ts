@@ -6,6 +6,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { retainTextCoreReferenceLabelActionRegistration } from '../src/actions/retain-text-core-reference-label.ts';
 import { deleteSelectOptionActionRegistration } from '../src/actions/delete-select-option.ts';
 import { createMultiSelectOptionAndSelectActionRegistration } from '../src/actions/create-multi-select-option-and-select.ts';
 import { reorderMultiSelectOptionsActionRegistration } from '../src/actions/reorder-multi-select-options.ts';
@@ -1471,6 +1472,28 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         .pipe(
           Effect.withSpan('ultramodern.api.ticketing.deleteSelectOptionAction', {
             attributes: operationAttributes(ticketingOperationContexts.deleteSelectOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('retainTextCoreReferenceLabelAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: retainTextCoreReferenceLabelActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.retainTextCoreReferenceLabelAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.retainTextCoreReferenceLabelAction,
+            ),
             kind: 'server',
           }),
         ),

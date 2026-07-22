@@ -228,6 +228,56 @@ test('deleted or unavailable targets fall back to their retained label and can r
   });
 });
 
+test('Mention and Relation fallbacks retain their own kind for the same target', async () => {
+  const target = {
+    deepLink: 'https://ontos.test/r/crm/customer/shared',
+    discoverable: false,
+    entityId: 'customer-shared',
+    entityType: 'customer',
+    label: 'Shared target',
+    openRequest: {},
+    targetTenantId: 'tenant-crm',
+    token: 'crm:opaque:customer-shared',
+  };
+  let available = true;
+  const registry = createCoreReferenceRegistry([
+    {
+      ...provider({ moduleKey: 'crm', targets: [target] }),
+      resolve: () => (available ? target : null),
+    },
+  ]);
+  const mention = await registry.insert({
+    context: viewer,
+    kind: 'mention',
+    source: { type: 'opaqueToken', value: target.token },
+  });
+  const relation = await registry.insert({
+    context: viewer,
+    kind: 'relation',
+    source: { type: 'opaqueToken', value: target.token },
+  });
+  assert.equal(mention._tag, 'CoreReferenceInserted');
+  assert.equal(relation._tag, 'CoreReferenceInserted');
+  target.label = 'Renamed shared target';
+  const resolvedMention = await registry.resolve({ context: viewer, reference: mention.reference });
+  const resolvedRelation = await registry.resolve({
+    context: viewer,
+    reference: relation.reference,
+  });
+  assert.equal(resolvedMention._tag, 'CoreReferenceActive');
+  assert.equal(resolvedRelation._tag, 'CoreReferenceActive');
+
+  available = false;
+  assert.deepEqual(
+    await registry.resolve({ context: viewer, reference: resolvedMention.reference }),
+    { _tag: 'CoreReferenceFallback', reference: resolvedMention.reference },
+  );
+  assert.deepEqual(
+    await registry.resolve({ context: viewer, reference: resolvedRelation.reference }),
+    { _tag: 'CoreReferenceFallback', reference: resolvedRelation.reference },
+  );
+});
+
 test('the shared Core registry exposes provider registration to consuming verticals', async () => {
   const target = {
     deepLink: 'https://ontos.test/r/crm/customer/registered',

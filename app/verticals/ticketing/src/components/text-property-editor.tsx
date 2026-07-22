@@ -139,14 +139,17 @@ const TextCoreReference = ({
 
   if (resolution._tag === 'CoreReferenceFallback') {
     return (
-      <span data-core-reference-fallback={reference.token}>
+      <span
+        data-core-reference={JSON.stringify(resolution.reference)}
+        data-core-reference-fallback={resolution.reference.token}
+      >
         {resolution.reference.lastResolvedLabel}
       </span>
     );
   }
 
   const open = async () => {
-    const result = await onOpen(reference).catch(
+    const result = await onOpen(resolution.reference).catch(
       (): CoreReferenceOpenResult => ({ _tag: 'CoreReferenceOpenUnavailable' }),
     );
     if (result._tag === 'CoreReferenceOpenDenied') {
@@ -167,7 +170,7 @@ const TextCoreReference = ({
 
   return (
     <Button
-      data-core-reference={reference.token}
+      data-core-reference={JSON.stringify(resolution.reference)}
       onClick={() => void open()}
       size="current"
       theme="unstyled"
@@ -206,7 +209,7 @@ const renderNode = (
       if (referenceHandlers !== undefined) {
         return (
           <TextCoreReference
-            key={node.reference.token}
+            key={`${node.reference.kind}:${node.reference.token}`}
             onOpen={referenceHandlers.onOpen}
             onResolved={referenceHandlers.onResolved}
             onResolve={referenceHandlers.onResolve}

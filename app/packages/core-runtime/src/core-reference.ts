@@ -122,20 +122,10 @@ const targetMatchesReference = (
   target.targetTenantId === reference.targetTenantId &&
   target.token === reference.token;
 
-const referenceIdentityKey = (reference: CoreReference): string =>
-  JSON.stringify([
-    reference.ownerModuleKey,
-    reference.targetTenantId,
-    reference.entityType,
-    reference.entityId,
-    reference.token,
-  ]);
-
 export const createCoreReferenceRegistry = (
   providers: readonly CoreReferenceProvider[] = [],
 ): CoreReferenceRegistry => {
   const providerByModuleKey = new Map(providers.map((provider) => [provider.moduleKey, provider]));
-  const lastResolvedReferenceByIdentity = new Map<string, CoreReference>();
   const resolveTarget = async (input: {
     readonly context: CoreReferenceContext;
     readonly reference: CoreReference;
@@ -211,7 +201,6 @@ export const createCoreReferenceRegistry = (
         targetTenantId: target.targetTenantId,
         token: target.token,
       };
-      lastResolvedReferenceByIdentity.set(referenceIdentityKey(reference), reference);
       return {
         _tag: 'CoreReferenceInserted',
         reference,
@@ -259,13 +248,10 @@ export const createCoreReferenceRegistry = (
       if (resolved === null) {
         return {
           _tag: 'CoreReferenceFallback',
-          reference:
-            lastResolvedReferenceByIdentity.get(referenceIdentityKey(input.reference)) ??
-            input.reference,
+          reference: input.reference,
         };
       }
       const reference = { ...input.reference, lastResolvedLabel: resolved.target.label };
-      lastResolvedReferenceByIdentity.set(referenceIdentityKey(reference), reference);
       return { _tag: 'CoreReferenceActive', reference };
     },
   };

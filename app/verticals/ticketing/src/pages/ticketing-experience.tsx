@@ -26,6 +26,7 @@ import {
   runCreateUrlPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
+  runRetainTextCoreReferenceLabelAction,
   runUpdateCheckboxPropertyValueAction,
   runUpdateDatePropertyValueAction,
   runUpdateDateRangePropertyValueAction,
@@ -1391,6 +1392,27 @@ export const TicketingExperience = () => {
                           if (response.operation !== 'resolve') {
                             throw new Error(
                               'Core Reference resolution returned an invalid response.',
+                            );
+                          }
+                          if (
+                            response.result._tag === 'CoreReferenceActive' &&
+                            response.result.reference.lastResolvedLabel !==
+                              reference.lastResolvedLabel
+                          ) {
+                            await runEffectRequest(
+                              runRetainTextCoreReferenceLabelAction(
+                                {
+                                  collectionId: openedTaskPropertyWorkspace.collectionId,
+                                  propertyDefinitionId: definition.propertyDefinitionId,
+                                  reference,
+                                  taskId: task.taskId,
+                                },
+                                {
+                                  headers: {
+                                    'x-ontos-operation-context': operationContextToken,
+                                  },
+                                },
+                              ),
                             );
                           }
                           return response.result;

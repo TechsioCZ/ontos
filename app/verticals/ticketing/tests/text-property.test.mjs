@@ -10,6 +10,7 @@ import { createTaskCollectionActionRegistration } from '../src/actions/create-ta
 import { createTextPropertyDefinitionActionRegistration } from '../src/actions/create-text-property-definition.ts';
 import { configureTaskPropertyDefinitionActionRegistration } from '../src/actions/configure-task-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
+import { retainTextCoreReferenceLabelActionRegistration } from '../src/actions/retain-text-core-reference-label.ts';
 import { updateTextPropertyValueActionRegistration } from '../src/actions/update-text-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 
@@ -438,6 +439,13 @@ test('Text reads and search use the current Core label and retain it through pro
   assert.equal(saved._tag, 'OperationSucceeded', JSON.stringify(saved));
 
   target.label = 'Renamed label';
+  const retainedLabel = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, propertyDefinitionId, reference, taskId },
+    registration: retainTextCoreReferenceLabelActionRegistration,
+  });
+  assert.equal(retainedLabel._tag, 'OperationSucceeded', JSON.stringify(retainedLabel));
+  assert.equal(retainedLabel.response.changed, true);
   const query = () =>
     runDataAccess({
       options: {
@@ -462,6 +470,15 @@ test('Text reads and search use the current Core label and retain it through pro
     'Renamed label',
   );
   assert.equal(workspace.response.tasks[0].textValues[0].readableText, 'Renamed label');
+  const [retainedProjection] = await sqlClient`
+    select document, readable_text
+    from ticketing.task_text_values
+    where task_id = ${taskId}
+      and property_definition_id = ${propertyDefinitionId}
+      and tenant_id = ${operationContext.tenantId}
+  `;
+  assert.equal(retainedProjection.document.content[0].reference.lastResolvedLabel, 'Renamed label');
+  assert.equal(retainedProjection.readable_text, 'Renamed label');
 
   available = false;
   const unavailable = await query();
