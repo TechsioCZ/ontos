@@ -104,7 +104,7 @@ test('a new Status definition exposes its fixed groups and leaves existing Tasks
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -161,7 +161,7 @@ test('new Tasks receive the current Default while existing and explicitly Empty 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -264,7 +264,7 @@ test('Status Option presentation changes preserve identity and use group-local o
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -433,7 +433,7 @@ test('confirmed non-default Status Option deletion replaces affected Tasks with 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -531,7 +531,7 @@ test('Status Option deletion includes every retained Task and excludes hard-dele
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -670,7 +670,7 @@ test('the current Default Status Option remains protected from deletion', async 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -732,7 +732,7 @@ test('Status Option deletion rejects a stale retained-Task impact even when the 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -885,7 +885,7 @@ test('Status duplication creates independent option identities and remaps values
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -987,7 +987,7 @@ test('Status duplication without values stays independent and gives future Tasks
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1082,7 +1082,7 @@ test('Status search matches option names and grouping uses stable option identit
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

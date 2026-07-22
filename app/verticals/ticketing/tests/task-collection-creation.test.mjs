@@ -93,7 +93,7 @@ const runCollectionCreation = (operationContext, idempotencyKey = randomUUID(), 
       ...options,
       operationContextResolver: operationContextResolver(operationContext),
     },
-    payload: {},
+    payload: { name: '  Support Requests  ' },
     registration: createTaskCollectionActionRegistration,
     transport: { headers: new Headers({ 'Idempotency-Key': idempotencyKey }) },
   });
@@ -131,6 +131,7 @@ test('separate standard Actions create a server-identified collection and then i
 
   assert.equal(createdCollection._tag, 'OperationSucceeded', JSON.stringify(createdCollection));
   assert.notEqual(createdCollection.response.collection.collectionId, collectionIdempotencyKey);
+  assert.equal(createdCollection.response.collection.name, 'Support Requests');
   assert.equal(
     createdCollection.response.schema.collectionId,
     createdCollection.response.collection.collectionId,
@@ -187,6 +188,19 @@ test('separate standard Actions create a server-identified collection and then i
   assert.deepEqual(authorizationChecks, []);
 });
 
+test('Task Collection creation rejects a blank name', async () => {
+  const operationContext = await createOperationIdentity();
+  const rejected = await runAction({
+    options: { operationContextResolver: operationContextResolver(operationContext) },
+    payload: { name: '   ' },
+    registration: createTaskCollectionActionRegistration,
+    transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
+  });
+
+  assert.equal(rejected._tag, 'OperationDomainRejected', JSON.stringify(rejected));
+  assert.equal(rejected.code, 'ticketing.createTaskCollection.name_required');
+});
+
 test('successful Action retries are unavailable and never execute creation twice', async () => {
   const operationContext = await createOperationIdentity();
   const collectionKey = randomUUID();
@@ -201,7 +215,7 @@ test('successful Action retries are unavailable and never execute creation twice
   const createCollection = () =>
     runAction({
       options: { operationContextResolver: operationContextResolver(operationContext) },
-      payload: {},
+      payload: { name: 'Support Requests' },
       registration: collectionRegistration,
       transport: { headers: new Headers({ 'Idempotency-Key': collectionKey }) },
     });
@@ -334,7 +348,7 @@ test('the trusted system context is the Actor and payload overrides are ignored'
 
 test('Actions fail without a trusted Actor context', async () => {
   const result = await runAction({
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
     transport: { headers: new Headers({ 'Idempotency-Key': randomUUID() }) },
   });

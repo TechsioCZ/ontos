@@ -110,7 +110,7 @@ const runRegisteredAction = ({ clock, operationContext, payload, policyChecks, r
 const createCollection = async (operationContext) => {
   const result = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(result._tag, 'OperationSucceeded', JSON.stringify(result));

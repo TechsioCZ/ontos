@@ -102,7 +102,7 @@ test('a complete timezone-free Date Range persists through the public Ticketing 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -200,7 +200,7 @@ test('time support is per definition and disabling removes only confirmed comple
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -318,7 +318,7 @@ test('Date Range duplication always copies configuration and values into an inde
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -436,7 +436,7 @@ test('Date Range grouping uses the exact complete range and keeps Empty separate
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -515,7 +515,7 @@ test('invalid Date Range drafts never replace the committed value', async () => 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');

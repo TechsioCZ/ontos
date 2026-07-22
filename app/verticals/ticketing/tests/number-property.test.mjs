@@ -129,7 +129,7 @@ test('an Editor creates Number and stores exact zero distinctly from Empty', asy
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -210,7 +210,7 @@ test('invalid and out-of-bound decimals are rejected atomically without replacin
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -286,7 +286,7 @@ test('a Mandatory Number rejects clearing and leaves its committed value and rev
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -348,7 +348,7 @@ test('Number queries use canonical search, mathematical comparisons, numeric sor
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -467,7 +467,7 @@ test('display format changes do not rewrite values and duplication optionally sn
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -570,7 +570,7 @@ test('clearing Number preserves a revision that rejects a stale overwrite and ac
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -620,7 +620,7 @@ test('Number deletion counts non-empty values across retained lifecycle states a
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -734,7 +734,7 @@ test('Number schema, format, value, and query operations enforce the collection 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

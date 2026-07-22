@@ -136,7 +136,7 @@ test('a valid Email is trimmed, case-preserved, and readable through the public 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -181,7 +181,7 @@ test('Email search matches a case-insensitive literal substring through the publ
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -345,7 +345,7 @@ test('Email sorting and grouping use the Task Collection locale', async () => {
   const operationContext = await createOperationIdentity('cs-CZ');
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -410,7 +410,7 @@ test('Email edits reject invalid, Mandatory-empty, and stale drafts without repl
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -539,7 +539,7 @@ test('every ordinary integrated Task value save is rejected while a Mandatory Em
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');
@@ -655,7 +655,7 @@ test('Email duplication and confirmed deletion preserve generic retained-Task li
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');

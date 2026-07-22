@@ -39,6 +39,7 @@ export const taskCollections = ticketingSchema.table(
     collectionId: uuid('collection_id').defaultRandom().primaryKey(),
     createdAt: createdAt(),
     locale: text('locale').notNull(),
+    name: text('name').notNull(),
     tenantId: tenantId(),
   },
   (table) => [

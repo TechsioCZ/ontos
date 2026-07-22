@@ -215,12 +215,14 @@
     "title": "Ticketing Vertical",
     "taskCollection": {
       "create": "Create Task Collection",
-      "createFailed": "Task creation failed",
-      "createRejected": "Task creation rejected",
-      "createRequestFailed": "Task creation request failed.",
+      "createFailed": "Task Collection creation failed",
+      "createRejected": "Task Collection creation rejected",
+      "createRequestFailed": "The Task Collection could not be created.",
       "createdDescription": "The durable blank Task is ready.",
       "createdTitle": "Task Collection created",
-      "creating": "Creating Task",
+      "creating": "Creating Task Collection",
+      "name": "Collection name",
+      "nameHelp": "Set once when the Collection is created.",
       "openedTask": "Opened Task",
       "title": "Title"
     },

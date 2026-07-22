@@ -105,7 +105,7 @@ const readWorkspace = (operationContext, collectionId) =>
 const createCollectionTaskAndTextDefinition = async (operationContext, name = 'Notes') => {
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -129,7 +129,7 @@ test('an Editor creates Text and a User saves formatted multiline content throug
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -967,7 +967,7 @@ test('a submitted edit rejects an Empty Mandatory Text value without changing co
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

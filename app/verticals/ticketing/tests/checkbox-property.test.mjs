@@ -118,7 +118,7 @@ const runRegisteredAction = ({ operationContext, payload, registration }) =>
 const createCollectionAndTask = async (operationContext) => {
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -273,7 +273,7 @@ test('concurrent Task and Checkbox definition creation still resolves the value 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded');

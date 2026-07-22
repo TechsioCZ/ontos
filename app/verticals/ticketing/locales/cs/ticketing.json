@@ -215,12 +215,14 @@
     "title": "Ticketing Vertical",
     "taskCollection": {
       "create": "Vytvořit kolekci úkolů",
-      "createFailed": "Vytvoření úkolu selhalo",
-      "createRejected": "Vytvoření úkolu bylo zamítnuto",
-      "createRequestFailed": "Požadavek na vytvoření úkolu selhal.",
+      "createFailed": "Vytvoření kolekce úkolů selhalo",
+      "createRejected": "Vytvoření kolekce úkolů bylo zamítnuto",
+      "createRequestFailed": "Kolekci úkolů se nepodařilo vytvořit.",
       "createdDescription": "Trvalý prázdný úkol je připraven.",
       "createdTitle": "Kolekce úkolů byla vytvořena",
-      "creating": "Vytváření úkolu",
+      "creating": "Vytváření kolekce úkolů",
+      "name": "Název kolekce",
+      "nameHelp": "Nastaví se jednou při vytvoření kolekce.",
       "openedTask": "Otevřený úkol",
       "title": "Název"
     },

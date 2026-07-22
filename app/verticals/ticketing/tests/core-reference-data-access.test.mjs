@@ -48,8 +48,8 @@ test('the governed Core Reference seam exposes the registered Ticketing provider
     values (${tenant.tenant_id}, 'ticketing', 'active')
   `;
   const [collection] = await sqlClient`
-    insert into ticketing.task_collections (locale, tenant_id)
-    values ('en-GB', ${tenant.tenant_id})
+    insert into ticketing.task_collections (locale, name, tenant_id)
+    values ('en-GB', 'Reference Collection', ${tenant.tenant_id})
     returning collection_id
   `;
   const [task] = await sqlClient`

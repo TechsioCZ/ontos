@@ -5,7 +5,7 @@ Ticketing manages Tasks whose structured fields are defined by a shared schema o
 ## Language
 
 **Task Collection**:
-A collection of Tasks that owns exactly one non-reusable Task Property schema and, while an ID Task Property exists, its collection-scoped ID sequence.
+A durably named collection of Tasks. Its immutable name is assigned at creation. It owns exactly one non-reusable Task Property schema and, while an ID Task Property exists, its collection-scoped ID sequence.
 
 **Task Property Definition**:
 A schema-level field definition shared by every Task in one Task Collection.

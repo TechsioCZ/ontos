@@ -36,14 +36,22 @@ const createTaskCollectionDomainEvent = {
 const createTaskCollectionActionHandler: ActionHandler<
   CreateTaskCollectionActionPayload,
   CreateTaskCollectionActionResponse
-> = async (_input, services) => {
+> = async (input, services) => {
+  const name = input.name.trim();
+  if (name.length === 0) {
+    throw rejectAction({
+      code: 'ticketing.createTaskCollection.name_required',
+      message: 'A Task Collection name is required.',
+    });
+  }
+
   const creationResult = await services.tx.execute(sql`
     with created_collection as (
-      insert into ticketing.task_collections (locale, tenant_id)
-      select tenant.default_locale, tenant.tenant_id
+      insert into ticketing.task_collections (locale, name, tenant_id)
+      select tenant.default_locale, ${name}, tenant.tenant_id
       from core.tenants as tenant
       where tenant.tenant_id = ${services.context.tenantId}
-      returning collection_id, created_at
+      returning collection_id, created_at, name
     ),
     created_schema as (
       insert into ticketing.task_schemas (collection_id, tenant_id)
@@ -69,6 +77,7 @@ const createTaskCollectionActionHandler: ActionHandler<
         created_collection.created_at at time zone 'UTC',
         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
       ) as "collectionCreatedAt",
+      created_collection.name as "collectionName",
       created_schema.schema_id as "schemaId",
       created_title_definition.datatype as "datatype",
       created_title_definition.mandatory as "mandatory",

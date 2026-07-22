@@ -9,7 +9,9 @@ import type { TaskCollectionCreation } from '../task-collection.ts';
 
 export const createTaskCollectionActionKey = 'ticketing.createTaskCollection' as const;
 
-export const createTaskCollectionActionPayloadSchema = Schema.Struct({});
+export const createTaskCollectionActionPayloadSchema = Schema.Struct({
+  name: Schema.String,
+});
 
 export const createTaskCollectionActionHeadersSchema = idempotentActionHeadersSchema;
 

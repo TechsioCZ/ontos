@@ -97,7 +97,7 @@ const createOperationIdentity = async () => {
 const createCollectionTaskAndDefinition = async (operationContext) => {
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

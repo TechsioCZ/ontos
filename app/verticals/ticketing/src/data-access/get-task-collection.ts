@@ -40,6 +40,7 @@ export const getTaskCollectionDataAccessRegistration: DataAccessRegistration<
           collection.created_at at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
         ) as "collectionCreatedAt",
+        collection.name as "collectionName",
         schema.schema_id as "schemaId",
         definition.datatype as "datatype",
         definition.mandatory as "mandatory",

@@ -25,7 +25,8 @@ interface FakeEffect<T> {
 const mocks = rs.hoisted(() => ({
   capabilityAllowed: true,
   capabilityAttempts: 0,
-  collectionCalls: [] as BoundaryCall<Record<string, never>>[],
+  collectionCalls: [] as BoundaryCall<{ readonly name: string }>[],
+  collectionFailuresRemaining: 0,
   definitionCapabilityAllowed: true,
   definitionCapabilityAttempts: 0,
   deleteDefinitionCalls: [] as BoundaryCall<{
@@ -197,13 +198,15 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.propertyDefinition.types.text': 'Text',
         'ticketing.propertyDefinition.types.url': 'URL',
         'ticketing.role': 'Ticketing',
-        'ticketing.taskCollection.create': 'Create Task',
-        'ticketing.taskCollection.createFailed': 'Task creation failed',
-        'ticketing.taskCollection.createRejected': 'Task creation rejected',
-        'ticketing.taskCollection.createRequestFailed': 'The Task could not be created.',
+        'ticketing.taskCollection.create': 'Create Task Collection',
+        'ticketing.taskCollection.createFailed': 'Task Collection creation failed',
+        'ticketing.taskCollection.createRejected': 'Task Collection creation rejected',
+        'ticketing.taskCollection.createRequestFailed': 'The Task Collection could not be created.',
         'ticketing.taskCollection.createdDescription': 'A blank Task is ready.',
-        'ticketing.taskCollection.createdTitle': 'Task created',
-        'ticketing.taskCollection.creating': 'Creating Task',
+        'ticketing.taskCollection.createdTitle': 'Task Collection created',
+        'ticketing.taskCollection.creating': 'Creating Task Collection',
+        'ticketing.taskCollection.name': 'Collection name',
+        'ticketing.taskCollection.nameHelp': 'Set once when the collection is created.',
         'ticketing.taskCollection.openedTask': 'Opened Task',
         'ticketing.taskCollection.title': 'Title',
         'ticketing.title': 'Ticketing',
@@ -252,6 +255,7 @@ rs.mock('../src/api/ticketing-client', () => {
     collection: {
       collectionId,
       createdAt: '2026-07-20T12:00:00.000Z',
+      name: 'Support Requests',
       schemaId: 'schema-1',
     },
     schema: {
@@ -559,10 +563,19 @@ rs.mock('../src/api/ticketing-client', () => {
       return success({ response: { task: aggregate.task } });
     },
     runCreateTaskCollectionAction: (
-      payload: Record<string, never>,
+      payload: { readonly name: string },
       options: { readonly idempotencyKey?: string },
     ) => {
       mocks.collectionCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      if (mocks.collectionFailuresRemaining > 0) {
+        mocks.collectionFailuresRemaining -= 1;
+        return failure({
+          errorTag: 'OperationExecutionFailed',
+          httpStatus: 500,
+          message: 'Controlled Collection failure',
+          ok: false,
+        });
+      }
       return success({
         response: { collection: aggregate.collection, schema: aggregate.schema },
       });
@@ -671,6 +684,7 @@ beforeEach(() => {
   mocks.deletionImpactCalls.length = 0;
   mocks.duplicateDefinitionCalls.length = 0;
   mocks.collectionCalls.length = 0;
+  mocks.collectionFailuresRemaining = 0;
   mocks.intrinsicCalls.length = 0;
   mocks.readCalls.length = 0;
   mocks.readFailuresRemaining = 0;
@@ -707,19 +721,29 @@ const selectFieldType = async (value: string, label: string) => {
   );
 };
 
+const enterCollectionName = (name = 'Support Requests') => {
+  fireEvent.change(screen.getByRole('textbox', { name: /Collection name/u }), {
+    target: { value: name },
+  });
+};
+
 test('uses one form-scoped idempotency key and rotates it after complete success', async () => {
   render(<TicketingExperience />);
 
-  const createButton = screen.getByRole('button', { name: 'Create Task' });
+  const createButton = screen.getByRole('button', { name: 'Create Task Collection' });
+  expect(createButton).toBeDisabled();
+  enterCollectionName();
+  expect(createButton).toBeEnabled();
   fireEvent.click(createButton);
 
   await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(1));
   expect(mocks.toastCreate).toHaveBeenNthCalledWith(1, {
     description: 'Controlled Task failure',
-    title: 'Task creation rejected',
+    title: 'Task Collection creation rejected',
     type: 'error',
   });
   expect(mocks.collectionCalls).toHaveLength(1);
+  expect(mocks.collectionCalls[0]?.payload).toEqual({ name: 'Support Requests' });
   expect(mocks.collectionCalls[0]?.idempotencyKey).toEqual(expect.any(String));
   expect(mocks.taskCalls).toHaveLength(1);
   expect(mocks.taskCalls[0]?.idempotencyKey).toBe(mocks.collectionCalls[0]?.idempotencyKey);
@@ -740,13 +764,15 @@ test('uses one form-scoped idempotency key and rotates it after complete success
     'collection-1',
   ]);
   expect(mocks.readCalls).toEqual(['collection-1']);
+  expect(screen.getByRole('heading', { name: 'Support Requests' })).toBeDefined();
   expect(openedTask.querySelector('input')?.getAttribute('value')).toBe('');
   expect(mocks.toastCreate).toHaveBeenNthCalledWith(2, {
     description: 'A blank Task is ready.',
-    title: 'Task created',
+    title: 'Task Collection created',
     type: 'success',
   });
 
+  enterCollectionName();
   fireEvent.click(createButton);
   await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(3));
 
@@ -760,12 +786,37 @@ test('uses one form-scoped idempotency key and rotates it after complete success
   expect(mocks.readCalls).toEqual(['collection-1', 'collection-1']);
 });
 
+test('starts a new idempotent attempt when a failed Collection name changes', async () => {
+  mocks.collectionFailuresRemaining = 1;
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  const createButton = screen.getByRole('button', { name: 'Create Task Collection' });
+  enterCollectionName();
+  fireEvent.click(createButton);
+  await waitFor(() => expect(mocks.collectionCalls).toHaveLength(1));
+  await waitFor(() => expect(createButton).toBeEnabled());
+
+  enterCollectionName('Billing Requests');
+  fireEvent.click(createButton);
+  await waitFor(() => expect(mocks.collectionCalls).toHaveLength(2));
+
+  expect(mocks.collectionCalls.map(({ payload }) => payload)).toEqual([
+    { name: 'Support Requests' },
+    { name: 'Billing Requests' },
+  ]);
+  expect(mocks.collectionCalls[1]?.idempotencyKey).not.toBe(
+    mocks.collectionCalls[0]?.idempotencyKey,
+  );
+});
+
 test('retries only the governed read after both Actions succeed', async () => {
   mocks.taskFailuresRemaining = 0;
   mocks.readFailuresRemaining = 1;
   render(<TicketingExperience />);
 
-  const createButton = screen.getByRole('button', { name: 'Create Task' });
+  const createButton = screen.getByRole('button', { name: 'Create Task Collection' });
+  enterCollectionName();
   fireEvent.click(createButton);
 
   await waitFor(() => expect(mocks.toastCreate).toHaveBeenCalledTimes(1));
@@ -775,7 +826,7 @@ test('retries only the governed read after both Actions succeed', async () => {
   expect(mocks.readCalls).toEqual(['collection-1']);
   expect(mocks.toastCreate).toHaveBeenNthCalledWith(1, {
     description: 'Controlled governed-read failure',
-    title: 'Task creation failed',
+    title: 'Task Collection creation failed',
     type: 'error',
   });
   await waitFor(() => expect(createButton.hasAttribute('disabled')).toBe(false));
@@ -793,7 +844,8 @@ test('creates and renders an intrinsic property through the application path', a
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
   await screen.findByRole('region', { name: 'Opened Task' });
   await selectFieldType('created_time', 'Created time');
   fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
@@ -820,7 +872,8 @@ test('creates a Last edited time definition through the existing UI-kit action p
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
   await screen.findByRole('region', { name: 'Opened Task' });
   await selectFieldType('last_edited_time', 'Last edited time');
   fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
@@ -843,7 +896,8 @@ test('creates, edits, and opens a URL through the public Ticketing surface', asy
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
   await screen.findByRole('region', { name: 'Opened Task' });
 
   await selectFieldType('url', 'URL');
@@ -895,7 +949,8 @@ test('duplicates and deletes a rendered field through governed page actions', as
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
   await screen.findByRole('region', { name: 'Opened Task' });
   await selectFieldType('url', 'URL');
   fireEvent.change(screen.getByRole('textbox', { name: 'Field name' }), {
@@ -951,7 +1006,8 @@ test('wires a denied value-edit capability to read-only property editors', async
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
   await screen.findByRole('region', { name: 'Opened Task' });
   await waitFor(() => expect(mocks.capabilityAttempts).toBe(1));
 
@@ -998,7 +1054,8 @@ test('keeps Date Range values editable while schema controls require definition 
   mocks.taskFailuresRemaining = 0;
   render(<TicketingExperience />);
 
-  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }));
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
   await screen.findByRole('region', { name: 'Opened Task' });
   await waitFor(() => expect(mocks.definitionCapabilityAttempts).toBe(1));
 

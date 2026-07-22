@@ -234,7 +234,7 @@ test('Created time definitions project the original intrinsic Task creation inst
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -305,7 +305,7 @@ test('Last edited time initializes to the Task creation instant through its live
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -340,7 +340,7 @@ test('Last edited by initializes to the creator and projects the latest successf
   const creatorContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext: creatorContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -497,7 +497,7 @@ test('a user-driven automation attributes its successful Task mutation to the or
   const originContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext: originContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -566,7 +566,7 @@ test('a two-hop outbox automation chain retains its originating Principal', asyn
   const originContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext: originContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -712,7 +712,7 @@ test('property-value automation uses the originating Principal as the Effective 
   const originContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext: originContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -777,7 +777,7 @@ test('a successful actual property-value mutation advances Last edited time atom
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -833,7 +833,7 @@ test('one actual Title and canvas save advances Last edited time once while a no
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -971,7 +971,7 @@ test('archive and restore advance Last edited time while soft deletion does not'
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1065,7 +1065,7 @@ test('duplicating an intrinsic definition needs no value-copy choice and project
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1134,7 +1134,7 @@ test('duplicating Last edited time projects the live fact without copying values
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1193,7 +1193,7 @@ test('Last edited by definitions duplicate, remove, and re-add around one retain
   const creatorContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext: creatorContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1317,7 +1317,7 @@ test('removing and re-adding Created time preserves the intrinsic fact', async (
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1378,7 +1378,7 @@ test('every collection role is rejected when forging an intrinsic value write', 
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1491,7 +1491,7 @@ test('Created by queries current Principal presentation through stable identitie
   const creatorContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext: creatorContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1585,7 +1585,7 @@ test('an exposed intrinsic definition queries as empty before the collection has
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1618,7 +1618,7 @@ test('Created time queries absolute milliseconds through the configured viewer z
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -1798,7 +1798,7 @@ test('Last edited time reuses absolute temporal search, filter, sort, and local-
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

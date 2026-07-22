@@ -124,7 +124,7 @@ const readWorkspace = (operationContext, collectionId, locale = 'en-GB') =>
 const createCollectionAndTask = async (operationContext) => {
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

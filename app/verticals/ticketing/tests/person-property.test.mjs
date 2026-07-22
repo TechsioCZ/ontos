@@ -195,7 +195,7 @@ const readWorkspace = (operationContext, collectionId) =>
 const createCollectionTaskAndPersonDefinition = async (operationContext, name = 'Assignees') => {
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -242,7 +242,7 @@ test('an eligible tenant member can be assigned through the Person action and pu
   });
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -359,7 +359,7 @@ test('eligible-person search is governed by the authenticated viewer and per-fie
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

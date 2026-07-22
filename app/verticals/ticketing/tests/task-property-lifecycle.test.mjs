@@ -123,7 +123,7 @@ const runRegisteredDataAccess = ({ operationContext, payload, registration, resu
 const createCollectionTaskAndDefinition = async (operationContext) => {
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
@@ -864,7 +864,7 @@ test('deleting a zero-impact Checkbox still requires explicit confirmation', asy
   const operationContext = await createOperationIdentity();
   const collection = await runRegisteredAction({
     operationContext,
-    payload: {},
+    payload: { name: 'Test Collection' },
     registration: createTaskCollectionActionRegistration,
   });
   assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));

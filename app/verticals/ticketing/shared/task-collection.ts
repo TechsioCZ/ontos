@@ -10,6 +10,7 @@ export const taskPropertyDefinitionSchema = Schema.Struct({
 export const taskCollectionRecordSchema = Schema.Struct({
   collectionId: Schema.String,
   createdAt: Schema.String,
+  name: Schema.String,
   schemaId: Schema.String,
 });
 

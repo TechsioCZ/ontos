@@ -126,6 +126,7 @@ const isCreateActionFailure = (
 
 export const TicketingExperience = () => {
   const { language, supportedLanguages, t } = useModernI18n();
+  const [collectionName, setCollectionName] = useState('');
   const [formIdempotencyKey, setFormIdempotencyKey] = useState(() => crypto.randomUUID());
   const [pendingTaskCollection, setPendingTaskCollection] = useState<TaskCollectionCreation>();
   const [pendingTaskCollectionReadId, setPendingTaskCollectionReadId] = useState<string>();
@@ -146,6 +147,9 @@ export const TicketingExperience = () => {
     }));
 
   const handleCreateTask = async () => {
+    if (pendingTaskCollection === undefined && collectionName.trim().length === 0) {
+      return;
+    }
     setIsCreatingTask(true);
 
     try {
@@ -162,7 +166,7 @@ export const TicketingExperience = () => {
         pendingTaskCollectionReadId === undefined
           ? (pendingTaskCollection === undefined
               ? runCreateTaskCollectionAction(
-                  {},
+                  { name: collectionName },
                   {
                     headers,
                     idempotencyKey: formIdempotencyKey,
@@ -232,6 +236,7 @@ export const TicketingExperience = () => {
               });
               setPendingTaskCollection(undefined);
               setPendingTaskCollectionReadId(undefined);
+              setCollectionName('');
               setFormIdempotencyKey(crypto.randomUUID());
               void runEffectRequest(
                 getTaskPropertyEditCapability(taskCollection.collection.collectionId, { headers }),
@@ -685,21 +690,47 @@ export const TicketingExperience = () => {
       >
         {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
       </p>
-      <div className="ticketing:mt-8">
+      <form
+        className="ticketing:mt-8 ticketing:grid ticketing:max-w-md ticketing:gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleCreateTask();
+        }}
+      >
+        <FormInput
+          disabled={
+            isCreatingTask ||
+            pendingTaskCollection !== undefined ||
+            pendingTaskCollectionReadId !== undefined
+          }
+          helpText={t('ticketing.taskCollection.nameHelp')}
+          id="task-collection-name"
+          label={t('ticketing.taskCollection.name')}
+          name="task-collection-name"
+          onChange={(event) => {
+            setCollectionName(event.target.value);
+            setFormIdempotencyKey(crypto.randomUUID());
+          }}
+          required
+          value={collectionName}
+        />
         <Button
+          disabled={collectionName.trim().length === 0 || isCreatingTask}
           isLoading={isCreatingTask}
           loadingText={t('ticketing.taskCollection.creating')}
-          onClick={() => void handleCreateTask()}
-          type="button"
+          type="submit"
         >
           {t('ticketing.taskCollection.create')}
         </Button>
-      </div>
+      </form>
       {openedTaskCollection === undefined ? null : (
         <section
           aria-label={t('ticketing.taskCollection.openedTask')}
           className="ticketing:mt-8 ticketing:max-w-2xl ticketing:rounded-2xl ticketing:bg-white ticketing:p-6 ticketing:shadow-xl ticketing:shadow-stone-900/10"
         >
+          <h2 className="ticketing:mb-6 ticketing:text-2xl ticketing:font-bold">
+            {openedTaskCollection.collection.name}
+          </h2>
           <FormInput
             disabled
             id={`task-title-${openedTaskCollection.task.taskId}`}

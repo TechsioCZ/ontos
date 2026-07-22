@@ -7,6 +7,7 @@ import type {
 export interface TaskCollectionCreationRow {
   readonly collectionCreatedAt: string;
   readonly collectionId: string;
+  readonly collectionName: string;
   readonly datatype: 'title';
   readonly mandatory: boolean;
   readonly name: string;
@@ -34,6 +35,7 @@ export const taskCollectionCreationFromRow = (
   collection: {
     collectionId: row.collectionId,
     createdAt: row.collectionCreatedAt,
+    name: row.collectionName,
     schemaId: row.schemaId,
   },
   schema: {
