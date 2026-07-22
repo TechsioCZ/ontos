@@ -369,48 +369,42 @@ type MultiSelectQueryOperation = Extract<
   { readonly datatype: 'multi_select' }
 >['operation'];
 
-const multiSelectFilterPredicate = (
-  operation: Extract<MultiSelectQueryOperation, { readonly type: 'filter' }>,
-) => {
-  if (operation.operator === 'isEmpty') {
-    return sql`not exists (
-      select 1
-      from ticketing.task_multi_select_selections as selection
-      where selection.task_id = task.task_id
-        and selection.property_definition_id = definition.property_definition_id
-        and selection.tenant_id = task.tenant_id
-    )`;
-  }
-  if (operation.operator === 'isNotEmpty') {
-    return sql`exists (
-      select 1
-      from ticketing.task_multi_select_selections as selection
-      where selection.task_id = task.task_id
-        and selection.property_definition_id = definition.property_definition_id
-        and selection.tenant_id = task.tenant_id
-    )`;
-  }
-  if (!('optionId' in operation)) {
-    throw new Error('An option identity is required for this Multi-select filter.');
-  }
-  if (operation.operator === 'contains') {
-    return sql`exists (
-      select 1
-      from ticketing.task_multi_select_selections as selection
-      where selection.task_id = task.task_id
-        and selection.property_definition_id = definition.property_definition_id
-        and selection.option_id = ${operation.optionId}
-        and selection.tenant_id = task.tenant_id
-    )`;
-  }
-  return sql`not exists (
+const multiSelectMembershipPredicate = ({
+  expectedToExist,
+  optionId,
+}: {
+  readonly expectedToExist: boolean;
+  readonly optionId?: string;
+}) => {
+  const optionPredicate =
+    optionId === undefined ? sql`` : sql`and selection.option_id = ${optionId}`;
+  const membershipExists = sql`exists (
     select 1
     from ticketing.task_multi_select_selections as selection
     where selection.task_id = task.task_id
       and selection.property_definition_id = definition.property_definition_id
-      and selection.option_id = ${operation.optionId}
       and selection.tenant_id = task.tenant_id
+      ${optionPredicate}
   )`;
+  return expectedToExist ? membershipExists : sql`not (${membershipExists})`;
+};
+
+const multiSelectFilterPredicate = (
+  operation: Extract<MultiSelectQueryOperation, { readonly type: 'filter' }>,
+) => {
+  if (operation.operator === 'isEmpty') {
+    return multiSelectMembershipPredicate({ expectedToExist: false });
+  }
+  if (operation.operator === 'isNotEmpty') {
+    return multiSelectMembershipPredicate({ expectedToExist: true });
+  }
+  if (!('optionId' in operation)) {
+    throw new Error('An option identity is required for this Multi-select filter.');
+  }
+  return multiSelectMembershipPredicate({
+    expectedToExist: operation.operator === 'contains',
+    optionId: operation.optionId,
+  });
 };
 
 export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistration<
