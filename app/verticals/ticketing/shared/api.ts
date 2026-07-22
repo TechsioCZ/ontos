@@ -25,6 +25,12 @@ import {
   addFilesMediaExternalItemActionOutcomeSchema,
   addFilesMediaExternalItemActionPayloadSchema,
 } from './actions/add-files-media-external-item';
+import {
+  deleteStatusOptionActionHeadersSchema,
+  deleteStatusOptionActionFailureSchemas,
+  deleteStatusOptionActionOutcomeSchema,
+  deleteStatusOptionActionPayloadSchema,
+} from './actions/delete-status-option';
 
 import {
   retainTextCoreReferenceLabelActionHeadersSchema,
@@ -400,6 +406,7 @@ import {
 import { coreReferenceRequestSchema, coreReferenceResponseSchema } from './core-reference';
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { selectOptionDeletionImpactSchema } from './select-option-deletion-impact';
+import { statusOptionDeletionImpactSchema } from './status-option-deletion-impact';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import {
@@ -437,6 +444,12 @@ export type {
   DeleteSelectOptionActionPayload,
   DeleteSelectOptionActionResponse,
 } from './actions/delete-select-option';
+export type {
+  DeleteStatusOptionActionFailure,
+  DeleteStatusOptionActionOutcome,
+  DeleteStatusOptionActionPayload,
+  DeleteStatusOptionActionResponse,
+} from './actions/delete-status-option';
 export type {
   CreateMultiSelectOptionAndSelectActionFailure,
   CreateMultiSelectOptionAndSelectActionOutcome,
@@ -761,6 +774,10 @@ export type {
   GetSelectOptionDeletionImpactPayload,
   SelectOptionDeletionImpact,
 } from './select-option-deletion-impact';
+export type {
+  GetStatusOptionDeletionImpactPayload,
+  StatusOptionDeletionImpact,
+} from './status-option-deletion-impact';
 export type {
   TaskPropertyDefinitionEditCapability,
   TaskPropertyEditCapability,
@@ -1148,6 +1165,22 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: selectOptionDeletionImpactSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'getStatusOptionDeletionImpact',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/status-options/:optionId/deletion-impact',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            optionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: statusOptionDeletionImpactSchema,
         },
       ),
     )
@@ -1844,6 +1877,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           success: removeFilesMediaItemActionOutcomeSchema,
         },
       ),
+    )
+    .add(
+      HttpApiEndpoint.post('deleteStatusOptionAction', '/ticketing/actions/delete-status-option', {
+        error: deleteStatusOptionActionFailureSchemas,
+        headers: deleteStatusOptionActionHeadersSchema,
+        payload: deleteStatusOptionActionPayloadSchema,
+        success: deleteStatusOptionActionOutcomeSchema,
+      }),
     ),
 );
 
@@ -2040,6 +2081,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/delete-select-option',
     source: 'generated-client',
   },
+  deleteStatusOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:deleteStatusOptionAction',
+    routePath: '/ticketing/actions/delete-status-option',
+    source: 'generated-client',
+  },
   deleteTaskPropertyDefinitionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:deleteTaskPropertyDefinitionAction',
@@ -2076,6 +2123,13 @@ export const ticketingOperationContexts = {
     operationId: 'TicketingApi:ticketing:getSelectOptionDeletionImpact',
     routePath:
       '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/options/:optionId/deletion-impact',
+    source: 'generated-client',
+  },
+  getStatusOptionDeletionImpact: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getStatusOptionDeletionImpact',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/status-options/:optionId/deletion-impact',
     source: 'generated-client',
   },
   getTaskCollection: {

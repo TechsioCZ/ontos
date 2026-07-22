@@ -20,6 +20,7 @@ import type {
   TaskCollectionAggregate,
   TaskPropertyDeletionImpact,
   SelectOptionDeletionImpact,
+  StatusOptionDeletionImpact,
   TaskPropertyEditCapability,
   TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
@@ -212,6 +213,9 @@ import type {
   RemoveFilesMediaItemActionFailure,
   RemoveFilesMediaItemActionOutcome,
   RemoveFilesMediaItemActionPayload,
+  DeleteStatusOptionActionFailure,
+  DeleteStatusOptionActionOutcome,
+  DeleteStatusOptionActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -229,6 +233,7 @@ export type TicketingClientError =
   | RemoveFilesMediaItemActionFailure
   | ReorderFilesMediaItemsActionFailure
   | AddFilesMediaExternalItemActionFailure
+  | DeleteStatusOptionActionFailure
   | RetainTextCoreReferenceLabelActionFailure
   | DeleteSelectOptionActionFailure
   | CreateMultiSelectOptionAndSelectActionFailure
@@ -671,6 +676,25 @@ export const getSelectOptionDeletionImpact = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.getSelectOptionDeletionImpact({
+        headers: options.headers ?? {},
+        params: { collectionId, optionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const getStatusOptionDeletionImpact = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  optionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<StatusOptionDeletionImpact> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.getStatusOptionDeletionImpact,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getStatusOptionDeletionImpact({
         headers: options.headers ?? {},
         params: { collectionId, optionId, propertyDefinitionId },
       }),
@@ -2016,6 +2040,33 @@ export const runRemoveFilesMediaItemAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.removeFilesMediaItemAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDeleteStatusOptionAction = (
+  payload: DeleteStatusOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<DeleteStatusOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.deleteStatusOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.deleteStatusOptionAction({
         headers: headers ?? {},
         payload,
       }),

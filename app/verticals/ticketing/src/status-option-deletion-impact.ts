@@ -8,9 +8,9 @@ import type {
   OptionDeletionImpactState,
 } from './option-deletion-impact.ts';
 
-export type SelectOptionDeletionImpactState = OptionDeletionImpactState;
+export type StatusOptionDeletionImpactState = OptionDeletionImpactState;
 
-export const getSelectOptionDeletionImpactState = async ({
+export const getStatusOptionDeletionImpactState = async ({
   db,
   lockAffectedValues = false,
   optionId,
@@ -22,13 +22,13 @@ export const getSelectOptionDeletionImpactState = async ({
   readonly optionId: string;
   readonly propertyDefinitionId: string;
   readonly tenantId: string;
-}): Promise<SelectOptionDeletionImpactState> => {
+}): Promise<StatusOptionDeletionImpactState> => {
   const lockingClause = lockAffectedValues ? sql`for update of value` : sql``;
   const result = await db.execute(sql`
     select
       value.revision,
       value.task_id as "taskId"
-    from ticketing.task_select_values as value
+    from ticketing.task_status_values as value
     inner join ticketing.tasks as task
       on task.task_id = value.task_id
       and task.tenant_id = value.tenant_id

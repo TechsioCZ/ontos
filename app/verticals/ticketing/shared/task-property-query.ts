@@ -1,6 +1,7 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { numberQueryOperationSchema } from './number-query.ts';
 import { selectQueryOperationSchema } from './select-query.ts';
+import { statusQueryOperationSchema } from './status-query.ts';
 import { textQueryOperationSchema } from './text-query.ts';
 import { filesMediaQueryOperationSchema } from './files-media-query.ts';
 
@@ -16,6 +17,10 @@ export const taskPropertyQuerySchema = Schema.Union([
   Schema.Struct({
     datatype: Schema.Literal('select'),
     operation: selectQueryOperationSchema,
+  }),
+  Schema.Struct({
+    datatype: Schema.Literal('status'),
+    operation: statusQueryOperationSchema,
   }),
   Schema.Struct({
     datatype: Schema.Literal('text'),
@@ -34,6 +39,7 @@ export const queryTaskPropertyValuesResponseSchema = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         heading: Schema.Union([Schema.Null, Schema.String]),
+        identity: Schema.optional(Schema.Union([Schema.Null, Schema.String])),
         taskIds: Schema.Array(Schema.String),
       }),
     ),
