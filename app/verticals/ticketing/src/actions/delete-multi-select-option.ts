@@ -1,0 +1,204 @@
+// @effect-diagnostics asyncFunction:off
+import { rejectAction, rowsFromResult } from '@app/core-runtime';
+import type {
+  ActionAuditEventDescriptor,
+  ActionDomainEventDescriptor,
+  ActionHandler,
+  ActionRegistration,
+} from '@app/core-runtime';
+import { sql } from '@app/core-runtime/db/sql';
+import {
+  deleteMultiSelectOptionActionKey,
+  deleteMultiSelectOptionActionPayloadSchema,
+  deleteMultiSelectOptionActionResponseSchema,
+} from '../../shared/actions/delete-multi-select-option.ts';
+import type {
+  DeleteMultiSelectOptionActionPayload,
+  DeleteMultiSelectOptionActionResponse,
+} from '../../shared/actions/delete-multi-select-option.ts';
+import { getMultiSelectOptionDeletionImpactState } from '../multi-select-option-deletion-impact.ts';
+
+interface LockedOptionRow {
+  readonly definitionRevision: number;
+  readonly optionRevision: number;
+}
+
+const evidence = (
+  input: DeleteMultiSelectOptionActionPayload,
+  response: DeleteMultiSelectOptionActionResponse,
+) => ({
+  changedComponents: ['optionCatalog', 'multiSelectValues'],
+  collectionId: input.collectionId,
+  datatype: 'multi_select',
+  impactCount: response.impactCount,
+  operation: 'option_deleted',
+  optionId: response.deletedOptionId,
+  propertyDefinitionId: input.propertyDefinitionId,
+  revision: response.definitionRevision,
+});
+
+const auditEvent = {
+  evidence,
+  targetModuleKey: 'ticketing',
+  targetResourceId: (_input, response) => response.deletedOptionId,
+  targetResourceType: 'multi_select_option',
+} satisfies ActionAuditEventDescriptor<
+  DeleteMultiSelectOptionActionPayload,
+  DeleteMultiSelectOptionActionResponse
+>;
+
+const domainEvent = {
+  eventType: 'ticketing.multiSelectOption.deleted',
+  payload: evidence,
+  producerModuleKey: 'ticketing',
+  subjectModuleKey: 'ticketing',
+  subjectResourceId: (_input, response) => response.deletedOptionId,
+  subjectResourceType: 'multi_select_option',
+} satisfies ActionDomainEventDescriptor<
+  DeleteMultiSelectOptionActionPayload,
+  DeleteMultiSelectOptionActionResponse
+>;
+
+const handler: ActionHandler<
+  DeleteMultiSelectOptionActionPayload,
+  DeleteMultiSelectOptionActionResponse
+> = async (input, services) => {
+  if (!input.confirmed) {
+    throw rejectAction({
+      code: 'ticketing.deleteMultiSelectOption.confirmation_required',
+      message: 'Multi-select Option deletion must be explicitly confirmed.',
+    });
+  }
+
+  const lockedResult = await services.tx.execute(sql`
+    select
+      definition.revision as "definitionRevision",
+      option.revision as "optionRevision"
+    from ticketing.multi_select_options as option
+    inner join ticketing.task_property_definitions as definition
+      on definition.property_definition_id = option.property_definition_id
+      and definition.tenant_id = option.tenant_id
+      and definition.datatype = 'multi_select'
+    inner join ticketing.task_schemas as schema
+      on schema.schema_id = definition.schema_id
+      and schema.tenant_id = definition.tenant_id
+    where option.option_id = ${input.optionId}
+      and option.property_definition_id = ${input.propertyDefinitionId}
+      and option.tenant_id = ${services.context.tenantId}
+      and schema.collection_id = ${input.collectionId}
+    for update of definition, option
+  `);
+  const locked = rowsFromResult<LockedOptionRow>(lockedResult).at(0);
+  if (
+    locked === undefined ||
+    locked.definitionRevision !== input.expectedDefinitionRevision ||
+    locked.optionRevision !== input.expectedOptionRevision
+  ) {
+    throw rejectAction({
+      code: 'ticketing.deleteMultiSelectOption.stale_or_missing',
+      message: 'The Multi-select Option changed elsewhere or is no longer available.',
+    });
+  }
+
+  const impact = await getMultiSelectOptionDeletionImpactState({
+    db: services.tx,
+    lockAffectedValues: true,
+    optionId: input.optionId,
+    propertyDefinitionId: input.propertyDefinitionId,
+    tenantId: services.context.tenantId,
+  });
+  if (
+    impact.impactCount !== input.expectedImpactCount ||
+    impact.impactToken !== input.expectedImpactToken
+  ) {
+    throw rejectAction({
+      code: 'ticketing.deleteMultiSelectOption.stale_impact',
+      message:
+        'The number of affected retained Tasks changed. Review the impact and confirm again.',
+    });
+  }
+
+  await services.tx.execute(sql`
+    update ticketing.task_multi_select_values as value
+    set revision = value.revision + 1,
+        updated_at = now()
+    where value.property_definition_id = ${input.propertyDefinitionId}
+      and value.tenant_id = ${services.context.tenantId}
+      and exists (
+        select 1
+        from ticketing.task_multi_select_selections as selection
+        where selection.task_id = value.task_id
+          and selection.property_definition_id = value.property_definition_id
+          and selection.option_id = ${input.optionId}
+          and selection.tenant_id = value.tenant_id
+      )
+  `);
+  await services.tx.execute(sql`
+    delete from ticketing.task_multi_select_selections
+    where property_definition_id = ${input.propertyDefinitionId}
+      and option_id = ${input.optionId}
+      and tenant_id = ${services.context.tenantId}
+  `);
+  const deletedResult = await services.tx.execute(sql`
+    delete from ticketing.multi_select_options
+    where option_id = ${input.optionId}
+      and property_definition_id = ${input.propertyDefinitionId}
+      and revision = ${input.expectedOptionRevision}
+      and tenant_id = ${services.context.tenantId}
+    returning option_id as "deletedOptionId"
+  `);
+  if (rowsFromResult(deletedResult).length !== 1) {
+    throw rejectAction({
+      code: 'ticketing.deleteMultiSelectOption.stale_or_missing',
+      message: 'The Multi-select Option changed elsewhere or is no longer available.',
+    });
+  }
+  const definitionResult = await services.tx.execute(sql`
+    update ticketing.task_property_definitions
+    set revision = revision + 1
+    where property_definition_id = ${input.propertyDefinitionId}
+      and revision = ${input.expectedDefinitionRevision}
+      and tenant_id = ${services.context.tenantId}
+    returning revision as "definitionRevision"
+  `);
+  const definitionRevision = rowsFromResult<{ readonly definitionRevision: number }>(
+    definitionResult,
+  ).at(0)?.definitionRevision;
+  if (definitionRevision === undefined) {
+    throw rejectAction({
+      code: 'ticketing.deleteMultiSelectOption.stale_or_missing',
+      message: 'The Multi-select Option changed elsewhere or is no longer available.',
+    });
+  }
+
+  return {
+    definitionRevision,
+    deletedOptionId: input.optionId,
+    impactCount: impact.impactCount,
+    propertyDefinitionId: input.propertyDefinitionId,
+  };
+};
+
+export const deleteMultiSelectOptionActionRegistration: ActionRegistration<
+  DeleteMultiSelectOptionActionPayload,
+  DeleteMultiSelectOptionActionResponse
+> = {
+  descriptor: {
+    actionKey: deleteMultiSelectOptionActionKey,
+    auditEvent,
+    auditProfile: 'standard',
+    authorization: {
+      permission: 'manage_property_definitions',
+      provider: 'spicedb',
+      resourceObjectId: (input) => input.collectionId,
+      resourceObjectType: 'task_collection',
+    },
+    domainEvent,
+    gatewayAudience: 'ticketing',
+    idempotency: 'required',
+    moduleStateAccess: 'mutate',
+    transportRequestSchema: deleteMultiSelectOptionActionPayloadSchema,
+    transportResponseSchema: deleteMultiSelectOptionActionResponseSchema,
+  },
+  handler,
+};

@@ -6,6 +6,19 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  deleteMultiSelectOptionActionHeadersSchema,
+  deleteMultiSelectOptionActionFailureSchemas,
+  deleteMultiSelectOptionActionOutcomeSchema,
+  deleteMultiSelectOptionActionPayloadSchema,
+} from './actions/delete-multi-select-option';
+
+export type {
+  DeleteMultiSelectOptionActionFailure,
+  DeleteMultiSelectOptionActionOutcome,
+  DeleteMultiSelectOptionActionPayload,
+  DeleteMultiSelectOptionActionResponse,
+} from './actions/delete-multi-select-option';
+import {
   removeFilesMediaItemActionHeadersSchema,
   removeFilesMediaItemActionFailureSchemas,
   removeFilesMediaItemActionOutcomeSchema,
@@ -404,6 +417,7 @@ import {
   operationContextHeadersSchema,
 } from './core-sdk-operation';
 import { coreReferenceRequestSchema, coreReferenceResponseSchema } from './core-reference';
+import { multiSelectOptionDeletionImpactSchema } from './multi-select-option-deletion-impact';
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { selectOptionDeletionImpactSchema } from './select-option-deletion-impact';
 import { statusOptionDeletionImpactSchema } from './status-option-deletion-impact';
@@ -770,6 +784,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export type {
+  GetMultiSelectOptionDeletionImpactPayload,
+  MultiSelectOptionDeletionImpact,
+} from './multi-select-option-deletion-impact';
 export type {
   GetSelectOptionDeletionImpactPayload,
   SelectOptionDeletionImpact,
@@ -1149,6 +1167,22 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: taskPropertyDeletionImpactSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'getMultiSelectOptionDeletionImpact',
+        '/ticketing/task-collections/:collectionId/multi-select-properties/:propertyDefinitionId/options/:optionId/deletion-impact',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            optionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: multiSelectOptionDeletionImpactSchema,
         },
       ),
     )
@@ -1823,6 +1857,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
       ),
     )
     .add(
+      HttpApiEndpoint.post(
+        'deleteMultiSelectOptionAction',
+        '/ticketing/actions/delete-multi-select-option',
+        {
+          error: deleteMultiSelectOptionActionFailureSchemas,
+          headers: deleteMultiSelectOptionActionHeadersSchema,
+          payload: deleteMultiSelectOptionActionPayloadSchema,
+          success: deleteMultiSelectOptionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
       HttpApiEndpoint.post('deleteSelectOptionAction', '/ticketing/actions/delete-select-option', {
         error: deleteSelectOptionActionFailureSchemas,
         headers: deleteSelectOptionActionHeadersSchema,
@@ -2075,6 +2121,12 @@ export const ticketingOperationContexts = {
     routePath: '/ticketing/actions/create-url-property-definition',
     source: 'generated-client',
   },
+  deleteMultiSelectOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:deleteMultiSelectOptionAction',
+    routePath: '/ticketing/actions/delete-multi-select-option',
+    source: 'generated-client',
+  },
   deleteSelectOptionAction: {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:deleteSelectOptionAction',
@@ -2116,6 +2168,13 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:get',
     routePath: '/ticketing/:id',
+    source: 'generated-client',
+  },
+  getMultiSelectOptionDeletionImpact: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getMultiSelectOptionDeletionImpact',
+    routePath:
+      '/ticketing/task-collections/:collectionId/multi-select-properties/:propertyDefinitionId/options/:optionId/deletion-impact',
     source: 'generated-client',
   },
   getSelectOptionDeletionImpact: {

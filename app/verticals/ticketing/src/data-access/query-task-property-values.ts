@@ -34,6 +34,12 @@ interface StatusQueryRow {
   readonly taskId: string;
 }
 
+interface MultiSelectSearchRow {
+  readonly locale: string;
+  readonly optionName: string;
+  readonly taskId: string;
+}
+
 interface TextCollation {
   readonly endsWith: (value: string, search: string) => boolean;
   readonly equals: (left: string, right: string) => boolean;
@@ -358,6 +364,49 @@ const selectFilterPredicate = (
   }
 };
 
+type MultiSelectQueryOperation = Extract<
+  TaskPropertyQuery,
+  { readonly datatype: 'multi_select' }
+>['operation'];
+
+const multiSelectMembershipPredicate = ({
+  expectedToExist,
+  optionId,
+}: {
+  readonly expectedToExist: boolean;
+  readonly optionId?: string;
+}) => {
+  const optionPredicate =
+    optionId === undefined ? sql`` : sql`and selection.option_id = ${optionId}`;
+  const membershipExists = sql`exists (
+    select 1
+    from ticketing.task_multi_select_selections as selection
+    where selection.task_id = task.task_id
+      and selection.property_definition_id = definition.property_definition_id
+      and selection.tenant_id = task.tenant_id
+      ${optionPredicate}
+  )`;
+  return expectedToExist ? membershipExists : sql`not (${membershipExists})`;
+};
+
+const multiSelectFilterPredicate = (
+  operation: Extract<MultiSelectQueryOperation, { readonly type: 'filter' }>,
+) => {
+  if (operation.operator === 'isEmpty') {
+    return multiSelectMembershipPredicate({ expectedToExist: false });
+  }
+  if (operation.operator === 'isNotEmpty') {
+    return multiSelectMembershipPredicate({ expectedToExist: true });
+  }
+  if (!('optionId' in operation)) {
+    throw new Error('An option identity is required for this Multi-select filter.');
+  }
+  return multiSelectMembershipPredicate({
+    expectedToExist: operation.operator === 'contains',
+    optionId: operation.optionId,
+  });
+};
+
 export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistration<
   QueryTaskPropertyValuesPayload,
   QueryTaskPropertyValuesResponse
@@ -384,6 +433,93 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
   },
   // oxlint-disable-next-line eslint/complexity -- Datatype query dispatch remains explicit at this public query boundary.
   handler: async (input, { context, db }) => {
+    if (input.query.datatype === 'multi_select') {
+      if (input.query.operation.type === 'search') {
+        const result = await db.execute(sql`
+          select
+            collection.locale,
+            option.name as "optionName",
+            task.task_id as "taskId"
+          from ticketing.tasks as task
+          inner join ticketing.task_schemas as schema
+            on schema.collection_id = task.collection_id
+            and schema.tenant_id = task.tenant_id
+          inner join ticketing.task_property_definitions as definition
+            on definition.schema_id = schema.schema_id
+            and definition.property_definition_id = ${input.propertyDefinitionId}
+            and definition.datatype = 'multi_select'
+            and definition.tenant_id = task.tenant_id
+          inner join ticketing.task_multi_select_selections as selection
+            on selection.task_id = task.task_id
+            and selection.property_definition_id = definition.property_definition_id
+            and selection.tenant_id = task.tenant_id
+          inner join ticketing.multi_select_options as option
+            on option.option_id = selection.option_id
+            and option.property_definition_id = selection.property_definition_id
+            and option.tenant_id = selection.tenant_id
+          inner join ticketing.task_collections as collection
+            on collection.collection_id = task.collection_id
+            and collection.tenant_id = task.tenant_id
+          where task.collection_id = ${input.collectionId}
+            and task.tenant_id = ${context.tenantId}
+          order by task.task_id, option.catalog_position, option.option_id
+        `);
+        const rows = rowsFromResult<MultiSelectSearchRow>(result);
+        const collation = textCollation(rows.at(0)?.locale ?? 'en-GB');
+        return {
+          taskIds: [
+            ...new Set(
+              rows
+                .filter(({ optionName }) =>
+                  collation.includes(optionName, input.query.operation.query),
+                )
+                .map(({ taskId }) => taskId),
+            ),
+          ].toSorted(),
+        };
+      }
+      if ('optionId' in input.query.operation) {
+        const optionResult = await db.execute(sql`
+          select option.option_id
+          from ticketing.multi_select_options as option
+          inner join ticketing.task_property_definitions as definition
+            on definition.property_definition_id = option.property_definition_id
+            and definition.tenant_id = option.tenant_id
+            and definition.datatype = 'multi_select'
+          inner join ticketing.task_schemas as schema
+            on schema.schema_id = definition.schema_id
+            and schema.tenant_id = definition.tenant_id
+          where option.option_id = ${input.query.operation.optionId}
+            and option.property_definition_id = ${input.propertyDefinitionId}
+            and option.tenant_id = ${context.tenantId}
+            and schema.collection_id = ${input.collectionId}
+        `);
+        if (rowsFromResult(optionResult).length !== 1) {
+          throw new Error('The Multi-select filter option is not in this property catalog.');
+        }
+      }
+      const predicate = multiSelectFilterPredicate(input.query.operation);
+      const result = await db.execute(sql`
+        select task.task_id as "taskId"
+        from ticketing.tasks as task
+        inner join ticketing.task_schemas as schema
+          on schema.collection_id = task.collection_id
+          and schema.tenant_id = task.tenant_id
+        inner join ticketing.task_property_definitions as definition
+          on definition.schema_id = schema.schema_id
+          and definition.property_definition_id = ${input.propertyDefinitionId}
+          and definition.datatype = 'multi_select'
+          and definition.tenant_id = task.tenant_id
+        where task.collection_id = ${input.collectionId}
+          and task.tenant_id = ${context.tenantId}
+          and ${predicate}
+        order by task.task_id
+      `);
+      return {
+        taskIds: rowsFromResult<{ readonly taskId: string }>(result).map(({ taskId }) => taskId),
+      };
+    }
+
     if (input.query.datatype === 'files_media') {
       const result = await db.execute(sql`
         select

@@ -19,6 +19,7 @@ import type {
   TicketingReadiness,
   TaskCollectionAggregate,
   TaskPropertyDeletionImpact,
+  MultiSelectOptionDeletionImpact,
   SelectOptionDeletionImpact,
   StatusOptionDeletionImpact,
   TaskPropertyEditCapability,
@@ -204,6 +205,9 @@ import type {
   RetainTextCoreReferenceLabelActionFailure,
   RetainTextCoreReferenceLabelActionOutcome,
   RetainTextCoreReferenceLabelActionPayload,
+  DeleteMultiSelectOptionActionFailure,
+  DeleteMultiSelectOptionActionOutcome,
+  DeleteMultiSelectOptionActionPayload,
   AddFilesMediaExternalItemActionFailure,
   AddFilesMediaExternalItemActionOutcome,
   AddFilesMediaExternalItemActionPayload,
@@ -230,6 +234,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | DeleteMultiSelectOptionActionFailure
   | RemoveFilesMediaItemActionFailure
   | ReorderFilesMediaItemsActionFailure
   | AddFilesMediaExternalItemActionFailure
@@ -676,6 +681,25 @@ export const getSelectOptionDeletionImpact = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.getSelectOptionDeletionImpact({
+        headers: options.headers ?? {},
+        params: { collectionId, optionId, propertyDefinitionId },
+      }),
+    ),
+  );
+
+export const getMultiSelectOptionDeletionImpact = (
+  collectionId: string,
+  propertyDefinitionId: string,
+  optionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<MultiSelectOptionDeletionImpact> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.getMultiSelectOptionDeletionImpact,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getMultiSelectOptionDeletionImpact({
         headers: options.headers ?? {},
         params: { collectionId, optionId, propertyDefinitionId },
       }),
@@ -2067,6 +2091,33 @@ export const runDeleteStatusOptionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.deleteStatusOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runDeleteMultiSelectOptionAction = (
+  payload: DeleteMultiSelectOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<DeleteMultiSelectOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.deleteMultiSelectOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.deleteMultiSelectOptionAction({
         headers: headers ?? {},
         payload,
       }),
