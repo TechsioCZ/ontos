@@ -6,7 +6,7 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { DateRangeValidationCode, DateRangeValue } from '../../shared/date-range-value.ts';
 import { validateDateRangeValue } from '../../shared/date-range-value.ts';
 
@@ -49,6 +49,12 @@ const emptyDraft = (): DateRangeValue => ({
   startTime: null,
 });
 
+const isStaleDateRangeFailure = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === 'ticketing.updateDateRangePropertyValue.stale_or_missing';
+
 export const DateRangePropertyEditor = ({
   collectionId,
   label,
@@ -66,11 +72,28 @@ export const DateRangePropertyEditor = ({
   const [validationCode, setValidationCode] = useState<DateRangeValidationCode | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const committedSnapshot = JSON.stringify({ revision, timeEnabled, value });
+  const lastCommittedSnapshot = useRef(committedSnapshot);
+
+  useEffect(() => {
+    if (lastCommittedSnapshot.current === committedSnapshot) {
+      return;
+    }
+
+    lastCommittedSnapshot.current = committedSnapshot;
+    setDraft(value ?? emptyDraft());
+    setCurrentRevision(revision);
+    setValidationCode(null);
+  }, [committedSnapshot, revision, value]);
 
   const updateDraft = (field: keyof DateRangeValue, nextValue: string) => {
+    let normalizedValue: string | null = nextValue;
+    if ((field === 'startTime' || field === 'endTime') && nextValue.length === 0) {
+      normalizedValue = null;
+    }
     setDraft((current) => ({
       ...current,
-      [field]: field === 'startTime' || field === 'endTime' ? nextValue || null : nextValue,
+      [field]: normalizedValue,
     }));
     setValidationCode(null);
   };
@@ -93,12 +116,23 @@ export const DateRangePropertyEditor = ({
       setIdempotencyKey(crypto.randomUUID());
       setValidationCode(null);
     } catch (error) {
-      toaster.create({
-        description:
-          error instanceof Error ? error.message : t('ticketing.dateRange.saveFailedDescription'),
-        title: t('ticketing.dateRange.saveFailedTitle'),
-        type: 'error',
-      });
+      const stale = isStaleDateRangeFailure(error);
+      toaster.create(
+        stale
+          ? {
+              description: t('ticketing.dateRange.staleDescription'),
+              title: t('ticketing.dateRange.staleTitle'),
+              type: 'warning',
+            }
+          : {
+              description:
+                error instanceof Error
+                  ? error.message
+                  : t('ticketing.dateRange.saveFailedDescription'),
+              title: t('ticketing.dateRange.saveFailedTitle'),
+              type: 'error',
+            },
+      );
     } finally {
       setIsSaving(false);
     }

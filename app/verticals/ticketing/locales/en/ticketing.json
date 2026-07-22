@@ -63,6 +63,8 @@
       "save": "Save range",
       "saveFailedDescription": "The Date Range could not be saved.",
       "saveFailedTitle": "Date Range save failed",
+      "staleDescription": "This Date Range changed elsewhere. Your draft is still here; reload before saving again.",
+      "staleTitle": "Date Range changed",
       "startDate": "Start date",
       "startTime": "Start time",
       "timeSupport": "Include time"

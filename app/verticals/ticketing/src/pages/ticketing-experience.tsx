@@ -7,6 +7,7 @@ import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { useState } from 'react';
 import {
   Effect,
+  getTaskPropertyDefinitionEditCapability,
   getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateDatePropertyDefinitionAction,
@@ -123,6 +124,7 @@ export const TicketingExperience = () => {
   );
   const [isCreatingEmailDefinition, setIsCreatingEmailDefinition] = useState(false);
   const [canEditTaskPropertyValues, setCanEditTaskPropertyValues] = useState(false);
+  const [canEditTaskPropertyDefinitions, setCanEditTaskPropertyDefinitions] = useState(false);
   const [textDefinitionName, setTextDefinitionName] = useState('');
   const [textDefinitionIdempotencyKey, setTextDefinitionIdempotencyKey] = useState(() =>
     crypto.randomUUID(),
@@ -254,6 +256,15 @@ export const TicketingExperience = () => {
               )
                 .then(({ canEdit }) => setCanEditTaskPropertyValues(canEdit))
                 .catch(() => setCanEditTaskPropertyValues(false));
+              void runEffectRequest(
+                getTaskPropertyDefinitionEditCapability(taskCollection.collection.collectionId, {
+                  headers,
+                }),
+              )
+                .then(({ canEditDefinitions }) =>
+                  setCanEditTaskPropertyDefinitions(canEditDefinitions),
+                )
+                .catch(() => setCanEditTaskPropertyDefinitions(false));
               toaster.create({
                 description: t('ticketing.taskCollection.createdDescription'),
                 title: t('ticketing.taskCollection.createdTitle'),
@@ -998,7 +1009,7 @@ export const TicketingExperience = () => {
                     <div key={definition.propertyDefinitionId}>
                       <DateRangeTimeSupportControl
                         affectedValueCount={affectedValueCount}
-                        disabled={!canEditTaskPropertyValues}
+                        disabled={!canEditTaskPropertyDefinitions}
                         onConfigure={async (timeEnabled, confirmed, expectedAffectedValueCount) => {
                           const operationContextToken = await loadTicketingOperationContextToken();
                           const headers = {

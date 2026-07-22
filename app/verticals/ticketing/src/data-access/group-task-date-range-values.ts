@@ -11,6 +11,7 @@ import type {
   GroupTaskDateRangeValuesResponse,
 } from '../../shared/date-range-grouping.ts';
 import type { DateRangeValue } from '../../shared/date-range-value.ts';
+import { dateRangeValueFromNullableFields } from '../date-range-value-projection.ts';
 
 interface GroupingRow {
   readonly endDate: string | null;
@@ -67,15 +68,7 @@ export const groupTaskDateRangeValuesDataAccessRegistration: DataAccessRegistrat
     `);
     const groups = new Map<string, { taskIds: string[]; value: DateRangeValue | null }>();
     for (const row of rowsFromResult<GroupingRow>(result)) {
-      const value =
-        row.startDate === null || row.endDate === null
-          ? null
-          : {
-              endDate: row.endDate,
-              endTime: row.endTime,
-              startDate: row.startDate,
-              startTime: row.startTime,
-            };
+      const value = dateRangeValueFromNullableFields(row);
       const key = JSON.stringify(value);
       const group = groups.get(key) ?? { taskIds: [], value };
       group.taskIds.push(row.taskId);

@@ -28,6 +28,9 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.dateRange.save': 'Save range',
         'ticketing.dateRange.saveFailedDescription': 'The Date Range could not be saved.',
         'ticketing.dateRange.saveFailedTitle': 'Date Range save failed',
+        'ticketing.dateRange.staleDescription':
+          'This Date Range changed elsewhere. Your draft is still here; reload before saving again.',
+        'ticketing.dateRange.staleTitle': 'Date Range changed',
         'ticketing.dateRange.startDate': 'Start date',
         'ticketing.dateRange.startTime': 'Start time',
         'ticketing.dateRange.timeSupport': 'Include time',
@@ -103,4 +106,116 @@ test('time disable previews the complete-pair impact and only confirms on the de
   fireEvent.click(screen.getByRole('checkbox', { name: 'Include time' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Remove times' }));
   await waitFor(() => expect(configure).toHaveBeenCalledWith(false, true, 2));
+});
+
+test('confirmed external changes replace the committed value and revision without remounting', async () => {
+  const save = rs.fn(() =>
+    Promise.resolve({
+      taskRevision: 8,
+      value: {
+        propertyDefinitionId: 'property-1',
+        revision: 8,
+        value: {
+          endDate: '2026-07-16',
+          endTime: null,
+          startDate: '2026-07-12',
+          startTime: null,
+        },
+      },
+    }),
+  );
+  const { rerender } = render(
+    <DateRangePropertyEditor
+      collectionId="collection-1"
+      label={propertyLabel}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={7}
+      taskId="task-1"
+      timeEnabled
+      value={{
+        endDate: '2026-07-15',
+        endTime: '17:00',
+        startDate: '2026-07-12',
+        startTime: '09:00',
+      }}
+    />,
+  );
+
+  rerender(
+    <DateRangePropertyEditor
+      collectionId="collection-1"
+      label={propertyLabel}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={8}
+      taskId="task-1"
+      timeEnabled={false}
+      value={{
+        endDate: '2026-07-15',
+        endTime: null,
+        startDate: '2026-07-12',
+        startTime: null,
+      }}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026-07-16' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save range' }));
+
+  await waitFor(() =>
+    expect(save).toHaveBeenCalledWith(
+      {
+        collectionId: 'collection-1',
+        expectedRevision: 8,
+        propertyDefinitionId: 'property-1',
+        taskId: 'task-1',
+        value: {
+          endDate: '2026-07-16',
+          endTime: null,
+          startDate: '2026-07-12',
+          startTime: null,
+        },
+      },
+      expect.any(String),
+    ),
+  );
+});
+
+test('stale writes show conflict guidance and preserve the visible draft', async () => {
+  const staleFailure = Object.assign(
+    new Error('The Date Range value changed before this write was applied.'),
+    { code: 'ticketing.updateDateRangePropertyValue.stale_or_missing' },
+  );
+  const save = rs.fn(() => Promise.reject(staleFailure));
+  render(
+    <DateRangePropertyEditor
+      collectionId="collection-1"
+      label={propertyLabel}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+      timeEnabled={false}
+      value={{
+        endDate: '2026-07-15',
+        endTime: null,
+        startDate: '2026-07-12',
+        startTime: null,
+      }}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026-07-16' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save range' }));
+
+  await waitFor(() =>
+    expect(mocks.toastCreate).toHaveBeenCalledWith({
+      description:
+        'This Date Range changed elsewhere. Your draft is still here; reload before saving again.',
+      title: 'Date Range changed',
+      type: 'warning',
+    }),
+  );
+  expect((screen.getByLabelText('End date') as HTMLInputElement).value).toBe('2026-07-16');
 });

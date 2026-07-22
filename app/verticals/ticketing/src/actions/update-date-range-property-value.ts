@@ -18,14 +18,15 @@ import type {
 } from '../../shared/actions/update-date-range-property-value.ts';
 import { validateDateRangeValue } from '../../shared/date-range-value.ts';
 import type { DateRangeValue } from '../../shared/date-range-value.ts';
+import { dateRangeValueFromNullableFields } from '../date-range-value-projection.ts';
 
 interface TargetRow {
-  readonly currentEndDate: string | null;
-  readonly currentEndTime: string | null;
   readonly currentRevision: number | null;
-  readonly currentStartDate: string | null;
-  readonly currentStartTime: string | null;
+  readonly endDate: string | null;
+  readonly endTime: string | null;
   readonly propertyDefinitionId: string;
+  readonly startDate: string | null;
+  readonly startTime: string | null;
   readonly taskRevision: number;
   readonly timeEnabled: boolean;
 }
@@ -42,24 +43,6 @@ interface UpdatedTaskRow {
   readonly taskRevision: number;
 }
 
-const asValue = (row: PersistedRow): DateRangeValue | null =>
-  row.startDate === null || row.endDate === null
-    ? null
-    : {
-        endDate: row.endDate,
-        endTime: row.endTime,
-        startDate: row.startDate,
-        startTime: row.startTime,
-      };
-const targetValue = (row: TargetRow): DateRangeValue | null =>
-  row.currentStartDate === null || row.currentEndDate === null
-    ? null
-    : {
-        endDate: row.currentEndDate,
-        endTime: row.currentEndTime,
-        startDate: row.currentStartDate,
-        startTime: row.currentStartTime,
-      };
 const sameValue = (left: DateRangeValue | null, right: DateRangeValue | null): boolean =>
   JSON.stringify(left) === JSON.stringify(right);
 
@@ -110,11 +93,11 @@ const handler: ActionHandler<
   }
   const currentResult = await services.tx.execute(sql`
     select
-      value.end_date::text as "currentEndDate",
-      to_char(value.end_time, 'HH24:MI') as "currentEndTime",
+      value.end_date::text as "endDate",
+      to_char(value.end_time, 'HH24:MI') as "endTime",
       value.revision as "currentRevision",
-      value.start_date::text as "currentStartDate",
-      to_char(value.start_time, 'HH24:MI') as "currentStartTime",
+      value.start_date::text as "startDate",
+      to_char(value.start_time, 'HH24:MI') as "startTime",
       definition.property_definition_id as "propertyDefinitionId",
       task.revision as "taskRevision",
       definition.date_range_time_enabled as "timeEnabled"
@@ -154,7 +137,7 @@ const handler: ActionHandler<
       });
     }
   }
-  if (sameValue(targetValue(current), input.value)) {
+  if (sameValue(dateRangeValueFromNullableFields(current), input.value)) {
     services.markNoOp();
     return {
       taskRevision: current.taskRevision,
@@ -164,7 +147,7 @@ const handler: ActionHandler<
           : {
               propertyDefinitionId: current.propertyDefinitionId,
               revision: currentRevision,
-              value: targetValue(current),
+              value: dateRangeValueFromNullableFields(current),
             },
     };
   }
@@ -237,7 +220,7 @@ const handler: ActionHandler<
     value: {
       propertyDefinitionId: persisted.propertyDefinitionId,
       revision: persisted.revision,
-      value: asValue(persisted),
+      value: dateRangeValueFromNullableFields(persisted),
     },
   };
 };

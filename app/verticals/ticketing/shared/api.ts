@@ -271,7 +271,10 @@ import {
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
-import { taskPropertyEditCapabilitySchema } from './task-property-edit-capability';
+import {
+  taskPropertyDefinitionEditCapabilitySchema,
+  taskPropertyEditCapabilitySchema,
+} from './task-property-edit-capability';
 import { taskPropertyWorkspaceSchema } from './task-property-workspace';
 import {
   queryTaskPropertyValuesPayloadSchema,
@@ -521,7 +524,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
-export type { TaskPropertyEditCapability } from './task-property-edit-capability';
+export type {
+  TaskPropertyDefinitionEditCapability,
+  TaskPropertyEditCapability,
+} from './task-property-edit-capability';
 export {
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
@@ -786,6 +792,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
           headers: operationContextHeadersSchema,
           params: { collectionId: Schema.String },
           success: taskPropertyEditCapabilitySchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'getTaskPropertyDefinitionEditCapability',
+        '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: { collectionId: Schema.String },
+          success: taskPropertyDefinitionEditCapabilitySchema,
         },
       ),
     )
@@ -1547,6 +1565,12 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:getTaskCollection',
     routePath: '/ticketing/task-collections/:collectionId',
+    source: 'generated-client',
+  },
+  getTaskPropertyDefinitionEditCapability: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getTaskPropertyDefinitionEditCapability',
+    routePath: '/ticketing/task-collections/:collectionId/properties/definition-edit-capability',
     source: 'generated-client',
   },
   getTaskPropertyDeletionImpact: {

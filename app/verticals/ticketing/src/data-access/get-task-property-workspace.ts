@@ -19,6 +19,7 @@ import type {
   SelectOptionOrderMode,
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
+import { dateRangeValueFromNullableFields } from '../date-range-value-projection.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
 
 interface DefinitionFields {
@@ -336,15 +337,7 @@ const appendDateRangeValues = (
     tasks.get(row.taskId)?.dateRangeValues.push({
       propertyDefinitionId: row.propertyDefinitionId,
       revision: row.revision,
-      value:
-        row.startDate === null || row.endDate === null
-          ? null
-          : {
-              endDate: row.endDate,
-              endTime: row.endTime,
-              startDate: row.startDate,
-              startTime: row.startTime,
-            },
+      value: dateRangeValueFromNullableFields(row),
     });
   }
 };

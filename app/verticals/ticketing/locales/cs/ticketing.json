@@ -63,6 +63,8 @@
       "save": "Uložit rozsah",
       "saveFailedDescription": "Date Range se nepodařilo uložit.",
       "saveFailedTitle": "Uložení Date Range selhalo",
+      "staleDescription": "Tento Date Range byl mezitím změněn. Váš koncept zůstal zachovaný; před dalším uložením načtěte aktuální data.",
+      "staleTitle": "Date Range byl změněn",
       "startDate": "Počáteční datum",
       "startTime": "Počáteční čas",
       "timeSupport": "Zahrnout čas"

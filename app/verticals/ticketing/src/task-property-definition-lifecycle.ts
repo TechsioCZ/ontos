@@ -36,6 +36,22 @@ interface TaskPropertyLifecycleAdapter {
   }) => Promise<number>;
 }
 
+export const shouldCopyTaskPropertyDefinitionValues = ({
+  datatype,
+  requestedCopyValues,
+}: {
+  readonly datatype: string;
+  readonly requestedCopyValues: boolean;
+}): boolean => {
+  if (datatype === 'date_range') {
+    return true;
+  }
+  if (datatype === 'created_by' || datatype === 'created_time' || datatype === 'text') {
+    return false;
+  }
+  return requestedCopyValues;
+};
+
 interface ImpactCountRow {
   readonly impactCount: number;
 }
@@ -641,6 +657,10 @@ export const duplicateTaskPropertyDefinition = async ({
   if (adapter === undefined) {
     return undefined;
   }
+  const effectiveCopyValues = shouldCopyTaskPropertyDefinitionValues({
+    datatype: source.datatype,
+    requestedCopyValues: copyValues,
+  });
   const result = await tx.execute(sql`
     with available_name as (
       select
@@ -712,7 +732,7 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (target.datatype === 'select') {
@@ -731,7 +751,7 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (target.datatype === 'date_range') {
@@ -747,7 +767,7 @@ export const duplicateTaskPropertyDefinition = async ({
       revision: target.revision,
       timeEnabled: source.dateRangeTimeEnabled,
     };
-    await adapter.copyValues({ copyValues: true, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (target.datatype === 'checkbox') {
@@ -759,7 +779,7 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   if (
@@ -779,7 +799,7 @@ export const duplicateTaskPropertyDefinition = async ({
       propertyDefinitionId: target.propertyDefinitionId,
       revision: target.revision,
     };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
   return undefined;

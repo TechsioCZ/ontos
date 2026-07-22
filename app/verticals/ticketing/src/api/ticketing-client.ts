@@ -19,6 +19,7 @@ import type {
   TicketingReadiness,
   TaskCollectionAggregate,
   TaskPropertyDeletionImpact,
+  TaskPropertyDefinitionEditCapability,
   TaskPropertyEditCapability,
   TaskPropertyWorkspace,
   CreateTaskCollectionActionFailure,
@@ -367,6 +368,24 @@ export const getTaskPropertyEditCapability = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.getTaskPropertyEditCapability({
+        headers: options.headers ?? {},
+        params: { collectionId },
+      }),
+    ),
+  );
+
+export const getTaskPropertyDefinitionEditCapability = (
+  collectionId: string,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<TaskPropertyDefinitionEditCapability> =>
+  createTicketingClient({
+    ...options,
+    operationContext:
+      options.operationContext ??
+      ticketingOperationContexts.getTaskPropertyDefinitionEditCapability,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.getTaskPropertyDefinitionEditCapability({
         headers: options.headers ?? {},
         params: { collectionId },
       }),

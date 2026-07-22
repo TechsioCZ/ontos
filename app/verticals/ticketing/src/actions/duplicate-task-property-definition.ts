@@ -19,6 +19,7 @@ import { lockTaskCollectionForPropertyInitialization } from '../task-collection-
 import {
   duplicateTaskPropertyDefinition,
   lockTaskPropertyDefinitionLifecycleTarget,
+  shouldCopyTaskPropertyDefinitionValues,
 } from '../task-property-definition-lifecycle.ts';
 
 const duplicatedDefinitionEvidence = (
@@ -30,12 +31,10 @@ const duplicatedDefinitionEvidence = (
       ? ['definition']
       : ['definition', 'propertyValues'],
   collectionId: input.collectionId,
-  copiedValues:
-    response.definition.datatype === 'date_range' ||
-    (response.definition.datatype !== 'created_by' &&
-      response.definition.datatype !== 'created_time' &&
-      response.definition.datatype !== 'text' &&
-      (input.copyValues ?? false)),
+  copiedValues: shouldCopyTaskPropertyDefinitionValues({
+    datatype: response.definition.datatype,
+    requestedCopyValues: input.copyValues ?? false,
+  }),
   datatype: response.definition.datatype,
   operation: 'duplicated',
   propertyDefinitionId: response.definition.propertyDefinitionId,
@@ -95,11 +94,7 @@ const duplicateTaskPropertyDefinitionActionHandler: ActionHandler<
   }
 
   const definition = await duplicateTaskPropertyDefinition({
-    copyValues:
-      source.datatype === 'date_range' ||
-      (source.datatype !== 'created_by' &&
-        source.datatype !== 'created_time' &&
-        (input.copyValues ?? false)),
+    copyValues: input.copyValues ?? false,
     source,
     tx: services.tx,
   });

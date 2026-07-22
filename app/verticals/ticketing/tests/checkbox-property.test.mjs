@@ -12,6 +12,7 @@ import { createTaskCollectionActionRegistration } from '../src/actions/create-ta
 import { updateCheckboxPropertyValueActionRegistration as updateCheckboxPropertyValueDescriptorRegistration } from '../src/actions/update-checkbox-property-value.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
+import { getTaskPropertyDefinitionEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-definition-edit-capability.ts';
 
 const createdTenantIds = [];
 
@@ -702,6 +703,29 @@ test('collection roles separate schema management, value editing, and read acces
     assert.equal(capabilityChecks[0].permission, 'edit_task_property_values');
     if (capability._tag === 'OperationSucceeded') {
       assert.deepEqual(capability.response, { canEdit: true });
+    }
+  }
+
+  for (const role of ['Editor', 'User']) {
+    const capabilityChecks = [];
+    // oxlint-disable-next-line no-await-in-loop -- The role responses are independently asserted.
+    const capability = await runDataAccess({
+      options: {
+        authorizationChecker: authorizationForRole(role, capabilityChecks),
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: { collectionId },
+      registration: getTaskPropertyDefinitionEditCapabilityDataAccessRegistration,
+      resultCount: () => 1,
+      transport: { headers: new Headers() },
+    });
+    assert.equal(
+      capability._tag,
+      role === 'Editor' ? 'OperationSucceeded' : 'OperationAuthorizationDenied',
+    );
+    assert.equal(capabilityChecks[0].permission, 'manage_property_definitions');
+    if (capability._tag === 'OperationSucceeded') {
+      assert.deepEqual(capability.response, { canEditDefinitions: true });
     }
   }
 });

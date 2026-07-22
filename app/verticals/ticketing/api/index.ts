@@ -50,6 +50,7 @@ import { runCoreSdkAction, runCoreSdkDataAccess } from './action-runtime.ts';
 import { getTaskCollectionDataAccessRegistration } from '../src/data-access/get-task-collection.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
 import { getTaskPropertyEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-edit-capability.ts';
+import { getTaskPropertyDefinitionEditCapabilityDataAccessRegistration } from '../src/data-access/get-task-property-definition-edit-capability.ts';
 import { getTaskPropertyDeletionImpactDataAccessRegistration } from '../src/data-access/get-task-property-deletion-impact.ts';
 import { filterTaskCheckboxValuesDataAccessRegistration } from '../src/data-access/filter-task-checkbox-values.ts';
 import { groupTaskDateValuesDataAccessRegistration } from '../src/data-access/group-task-date-values.ts';
@@ -265,6 +266,26 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         ),
         Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyEditCapability', {
           attributes: operationAttributes(ticketingOperationContexts.getTaskPropertyEditCapability),
+          kind: 'server',
+        }),
+      ),
+    )
+    .handle('getTaskPropertyDefinitionEditCapability', ({ params, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload: { collectionId: params.collectionId },
+          registration: getTaskPropertyDefinitionEditCapabilityDataAccessRegistration,
+          resultCount: () => 1,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.getTaskPropertyDefinitionEditCapability', {
+          attributes: operationAttributes(
+            ticketingOperationContexts.getTaskPropertyDefinitionEditCapability,
+          ),
           kind: 'server',
         }),
       ),
