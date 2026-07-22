@@ -364,6 +364,7 @@ import {
   operationContextHeadersSchema,
 } from './core-sdk-operation';
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
+import { selectOptionDeletionImpactSchema } from './select-option-deletion-impact';
 import { taskCollectionAggregateSchema } from './task-collection';
 import { taskPropertyDeletionImpactSchema } from './task-property-deletion-impact';
 import {
@@ -703,6 +704,10 @@ export type {
 } from './actions/update-select-property-value';
 export type { TaskCollectionAggregate } from './task-collection';
 export type { TaskPropertyDeletionImpact } from './task-property-deletion-impact';
+export type {
+  GetSelectOptionDeletionImpactPayload,
+  SelectOptionDeletionImpact,
+} from './select-option-deletion-impact';
 export type {
   TaskPropertyDefinitionEditCapability,
   TaskPropertyEditCapability,
@@ -1065,6 +1070,22 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
             propertyDefinitionId: Schema.String,
           },
           success: taskPropertyDeletionImpactSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.get(
+        'getSelectOptionDeletionImpact',
+        '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/options/:optionId/deletion-impact',
+        {
+          error: coreSdkOperationFailureSchemas,
+          headers: operationContextHeadersSchema,
+          params: {
+            collectionId: Schema.String,
+            optionId: Schema.String,
+            propertyDefinitionId: Schema.String,
+          },
+          success: selectOptionDeletionImpactSchema,
         },
       ),
     )
@@ -1932,6 +1953,13 @@ export const ticketingOperationContexts = {
     method: 'GET',
     operationId: 'TicketingApi:ticketing:get',
     routePath: '/ticketing/:id',
+    source: 'generated-client',
+  },
+  getSelectOptionDeletionImpact: {
+    method: 'GET',
+    operationId: 'TicketingApi:ticketing:getSelectOptionDeletionImpact',
+    routePath:
+      '/ticketing/task-collections/:collectionId/properties/:propertyDefinitionId/options/:optionId/deletion-impact',
     source: 'generated-client',
   },
   getTaskCollection: {

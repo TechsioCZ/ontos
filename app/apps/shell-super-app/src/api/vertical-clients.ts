@@ -51,6 +51,7 @@ export {
   runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
+  getSelectOptionDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,
   runConfigureTaskPropertyDefinitionAction,
