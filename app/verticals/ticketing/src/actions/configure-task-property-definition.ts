@@ -22,6 +22,7 @@ import type {
   TaskPropertyDefinition,
 } from '../../shared/task-property-definition.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
+import { getStatusDefinition } from '../status-property.ts';
 import { taskPropertyDefinitionFromRow } from '../task-property-definition-projection.ts';
 import type { TaskPropertyDefinitionRow } from '../task-property-definition-projection.ts';
 
@@ -36,7 +37,20 @@ interface SelectDefinitionRow {
   readonly revision: number;
 }
 
-type ConfigurableDefinitionRow = SelectDefinitionRow | TaskPropertyDefinitionRow;
+interface StatusDefinitionRow {
+  readonly collectionLocale: string;
+  readonly datatype: 'status';
+  readonly hidden: boolean;
+  readonly mandatory: boolean;
+  readonly name: string;
+  readonly propertyDefinitionId: string;
+  readonly revision: number;
+}
+
+type ConfigurableDefinitionRow =
+  | SelectDefinitionRow
+  | StatusDefinitionRow
+  | TaskPropertyDefinitionRow;
 
 const configuredDefinitionEvidence = (
   input: ConfigureTaskPropertyDefinitionActionPayload,
@@ -79,6 +93,22 @@ const configureTaskPropertyDefinitionActionHandler: ActionHandler<
   const projectDefinition = async (
     row: ConfigurableDefinitionRow,
   ): Promise<TaskPropertyDefinition> => {
+    if (row.datatype === 'status') {
+      const definition = await getStatusDefinition({
+        collectionId: input.collectionId,
+        db: services.tx,
+        locale: row.collectionLocale,
+        propertyDefinitionId: row.propertyDefinitionId,
+        tenantId: services.context.tenantId,
+      });
+      if (definition === undefined) {
+        throw rejectAction({
+          code: 'ticketing.configureTaskPropertyDefinition.status_configuration_missing',
+          message: 'The Status configuration is unavailable.',
+        });
+      }
+      return definition;
+    }
     if (row.datatype !== 'select') {
       return taskPropertyDefinitionFromRow(row);
     }

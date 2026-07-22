@@ -11,6 +11,40 @@ import {
   updateTaskContentActionOutcomeSchema,
   updateTaskContentActionPayloadSchema,
 } from './actions/update-task-content';
+import {
+  updateStatusOptionActionHeadersSchema,
+  updateStatusOptionActionFailureSchemas,
+  updateStatusOptionActionOutcomeSchema,
+  updateStatusOptionActionPayloadSchema,
+} from './actions/update-status-option';
+
+import {
+  createStatusOptionActionHeadersSchema,
+  createStatusOptionActionFailureSchemas,
+  createStatusOptionActionOutcomeSchema,
+  createStatusOptionActionPayloadSchema,
+} from './actions/create-status-option';
+
+import {
+  updateStatusPropertyValueActionHeadersSchema,
+  updateStatusPropertyValueActionFailureSchemas,
+  updateStatusPropertyValueActionOutcomeSchema,
+  updateStatusPropertyValueActionPayloadSchema,
+} from './actions/update-status-property-value';
+
+import {
+  configureStatusDefaultActionHeadersSchema,
+  configureStatusDefaultActionFailureSchemas,
+  configureStatusDefaultActionOutcomeSchema,
+  configureStatusDefaultActionPayloadSchema,
+} from './actions/configure-status-default';
+
+import {
+  createStatusPropertyDefinitionActionHeadersSchema,
+  createStatusPropertyDefinitionActionFailureSchemas,
+  createStatusPropertyDefinitionActionOutcomeSchema,
+  createStatusPropertyDefinitionActionPayloadSchema,
+} from './actions/create-status-property-definition';
 
 import {
   duplicateTaskActionFailureSchemas,
@@ -270,6 +304,36 @@ export type {
   UpdateTaskContentActionPayload,
   UpdateTaskContentActionResponse,
 } from './actions/update-task-content';
+export type {
+  ConfigureStatusDefaultActionFailure,
+  ConfigureStatusDefaultActionOutcome,
+  ConfigureStatusDefaultActionPayload,
+  ConfigureStatusDefaultActionResponse,
+} from './actions/configure-status-default';
+export type {
+  CreateStatusOptionActionFailure,
+  CreateStatusOptionActionOutcome,
+  CreateStatusOptionActionPayload,
+  CreateStatusOptionActionResponse,
+} from './actions/create-status-option';
+export type {
+  CreateStatusPropertyDefinitionActionFailure,
+  CreateStatusPropertyDefinitionActionOutcome,
+  CreateStatusPropertyDefinitionActionPayload,
+  CreateStatusPropertyDefinitionActionResponse,
+} from './actions/create-status-property-definition';
+export type {
+  UpdateStatusOptionActionFailure,
+  UpdateStatusOptionActionOutcome,
+  UpdateStatusOptionActionPayload,
+  UpdateStatusOptionActionResponse,
+} from './actions/update-status-option';
+export type {
+  UpdateStatusPropertyValueActionFailure,
+  UpdateStatusPropertyValueActionOutcome,
+  UpdateStatusPropertyValueActionPayload,
+  UpdateStatusPropertyValueActionResponse,
+} from './actions/update-status-property-value';
 export type {
   ConfigureIdPropertyPrefixActionFailure,
   ConfigureIdPropertyPrefixActionOutcome,
@@ -1290,6 +1354,58 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: updateTaskContentActionPayloadSchema,
         success: updateTaskContentActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'createStatusPropertyDefinitionAction',
+        '/ticketing/actions/create-status-property-definition',
+        {
+          error: createStatusPropertyDefinitionActionFailureSchemas,
+          headers: createStatusPropertyDefinitionActionHeadersSchema,
+          payload: createStatusPropertyDefinitionActionPayloadSchema,
+          success: createStatusPropertyDefinitionActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'configureStatusDefaultAction',
+        '/ticketing/actions/configure-status-default',
+        {
+          error: configureStatusDefaultActionFailureSchemas,
+          headers: configureStatusDefaultActionHeadersSchema,
+          payload: configureStatusDefaultActionPayloadSchema,
+          success: configureStatusDefaultActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'updateStatusPropertyValueAction',
+        '/ticketing/actions/update-status-property-value',
+        {
+          error: updateStatusPropertyValueActionFailureSchemas,
+          headers: updateStatusPropertyValueActionHeadersSchema,
+          payload: updateStatusPropertyValueActionPayloadSchema,
+          success: updateStatusPropertyValueActionOutcomeSchema,
+        },
+      ),
+    )
+    .add(
+      HttpApiEndpoint.post('createStatusOptionAction', '/ticketing/actions/create-status-option', {
+        error: createStatusOptionActionFailureSchemas,
+        headers: createStatusOptionActionHeadersSchema,
+        payload: createStatusOptionActionPayloadSchema,
+        success: createStatusOptionActionOutcomeSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('updateStatusOptionAction', '/ticketing/actions/update-status-option', {
+        error: updateStatusOptionActionFailureSchemas,
+        headers: updateStatusOptionActionHeadersSchema,
+        payload: updateStatusOptionActionPayloadSchema,
+        success: updateStatusOptionActionOutcomeSchema,
+      }),
     ),
 );
 
@@ -1322,6 +1438,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:configureSelectOptionOrderAction',
     routePath: '/ticketing/actions/configure-select-option-order',
+    source: 'generated-client',
+  },
+  configureStatusDefaultAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:configureStatusDefaultAction',
+    routePath: '/ticketing/actions/configure-status-default',
     source: 'generated-client',
   },
   configureTaskPropertyDefinitionAction: {
@@ -1400,6 +1522,18 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:createSelectPropertyDefinitionAction',
     routePath: '/ticketing/actions/create-select-property-definition',
+    source: 'generated-client',
+  },
+  createStatusOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createStatusOptionAction',
+    routePath: '/ticketing/actions/create-status-option',
+    source: 'generated-client',
+  },
+  createStatusPropertyDefinitionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:createStatusPropertyDefinitionAction',
+    routePath: '/ticketing/actions/create-status-property-definition',
     source: 'generated-client',
   },
   createTaskAction: {
@@ -1591,6 +1725,18 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:updateSelectPropertyValueAction',
     routePath: '/ticketing/actions/update-select-property-value',
+    source: 'generated-client',
+  },
+  updateStatusOptionAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateStatusOptionAction',
+    routePath: '/ticketing/actions/update-status-option',
+    source: 'generated-client',
+  },
+  updateStatusPropertyValueAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:updateStatusPropertyValueAction',
+    routePath: '/ticketing/actions/update-status-property-value',
     source: 'generated-client',
   },
   updateTaskContentAction: {

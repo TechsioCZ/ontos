@@ -182,6 +182,7 @@ test('Created time definitions project the original intrinsic Task creation inst
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
+      statusValues: [],
       taskId: task.response.task.taskId,
       taskRevision: 1,
       title: '',

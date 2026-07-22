@@ -1,5 +1,10 @@
 export {
   runUpdateTaskContentAction,
+  runUpdateStatusOptionAction,
+  runCreateStatusOptionAction,
+  runUpdateStatusPropertyValueAction,
+  runConfigureStatusDefaultAction,
+  runCreateStatusPropertyDefinitionAction,
   runConfigureIdPropertyPrefixAction,
   runCreateIdPropertyDefinitionAction,
   runDuplicateTaskAction,

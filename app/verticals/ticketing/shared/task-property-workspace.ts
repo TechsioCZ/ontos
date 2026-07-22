@@ -27,6 +27,12 @@ export const selectPropertyValueSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const statusPropertyValueSchema = Schema.Struct({
+  optionId: Schema.optional(Schema.String),
+  propertyDefinitionId: Schema.String,
+  revision: Schema.Finite,
+});
+
 export const numberPropertyValueSchema = Schema.Struct({
   propertyDefinitionId: Schema.String,
   revision: Schema.Finite,
@@ -101,6 +107,7 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),
       phoneValues: Schema.Array(phonePropertyValueSchema),
       selectValues: Schema.optional(Schema.Array(selectPropertyValueSchema)),
+      statusValues: Schema.Array(statusPropertyValueSchema),
       taskId: Schema.String,
       taskRevision: Schema.Finite,
       textValues: Schema.optional(Schema.Array(textPropertyValueSchema)),

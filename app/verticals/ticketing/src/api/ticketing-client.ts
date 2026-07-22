@@ -148,6 +148,21 @@ import type {
   UpdateTaskContentActionFailure,
   UpdateTaskContentActionOutcome,
   UpdateTaskContentActionPayload,
+  CreateStatusPropertyDefinitionActionFailure,
+  CreateStatusPropertyDefinitionActionOutcome,
+  CreateStatusPropertyDefinitionActionPayload,
+  ConfigureStatusDefaultActionFailure,
+  ConfigureStatusDefaultActionOutcome,
+  ConfigureStatusDefaultActionPayload,
+  UpdateStatusPropertyValueActionFailure,
+  UpdateStatusPropertyValueActionOutcome,
+  UpdateStatusPropertyValueActionPayload,
+  CreateStatusOptionActionFailure,
+  CreateStatusOptionActionOutcome,
+  CreateStatusOptionActionPayload,
+  UpdateStatusOptionActionFailure,
+  UpdateStatusOptionActionOutcome,
+  UpdateStatusOptionActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -163,6 +178,11 @@ export type TicketingClient = HttpApiClient.Client<
 
 export type TicketingClientError =
   | UpdateTaskContentActionFailure
+  | UpdateStatusOptionActionFailure
+  | CreateStatusOptionActionFailure
+  | UpdateStatusPropertyValueActionFailure
+  | ConfigureStatusDefaultActionFailure
+  | CreateStatusPropertyDefinitionActionFailure
   | DuplicateTaskActionFailure
   | ConfigureIdPropertyPrefixActionFailure
   | CreateIdPropertyDefinitionActionFailure
@@ -1318,6 +1338,141 @@ export const runUpdateTaskContentAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.updateTaskContentAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateStatusPropertyDefinitionAction = (
+  payload: CreateStatusPropertyDefinitionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateStatusPropertyDefinitionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createStatusPropertyDefinitionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createStatusPropertyDefinitionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runConfigureStatusDefaultAction = (
+  payload: ConfigureStatusDefaultActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<ConfigureStatusDefaultActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.configureStatusDefaultAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.configureStatusDefaultAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateStatusPropertyValueAction = (
+  payload: UpdateStatusPropertyValueActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateStatusPropertyValueActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateStatusPropertyValueAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateStatusPropertyValueAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runCreateStatusOptionAction = (
+  payload: CreateStatusOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<CreateStatusOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.createStatusOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.createStatusOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runUpdateStatusOptionAction = (
+  payload: UpdateStatusOptionActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<UpdateStatusOptionActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.updateStatusOptionAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.updateStatusOptionAction({
         headers: headers ?? {},
         payload,
       }),
