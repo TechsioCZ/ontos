@@ -381,6 +381,24 @@ test('catalog rename, recolor, and reorder change display without changing membe
     registration: updateMultiSelectOptionActionRegistration,
   });
   assert.equal(renamed._tag, 'OperationSucceeded', JSON.stringify(renamed));
+  const noOpRename = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'cyan',
+      expectedRevision: renamed.response.option.revision,
+      name: ' API ',
+      optionId: backend.response.option.optionId,
+      propertyDefinitionId,
+    },
+    registration: updateMultiSelectOptionActionRegistration,
+  });
+  assert.equal(noOpRename._tag, 'OperationSucceeded', JSON.stringify(noOpRename));
+  assert.equal(
+    noOpRename.context.auditEvents?.some(({ eventType }) => eventType === 'action.succeeded'),
+    false,
+  );
+  assert.deepEqual(noOpRename.response, renamed.response);
   const reordered = await runRegisteredAction({
     operationContext,
     payload: {
@@ -392,6 +410,16 @@ test('catalog rename, recolor, and reorder change display without changing membe
     registration: reorderMultiSelectOptionsActionRegistration,
   });
   assert.equal(reordered._tag, 'OperationSucceeded', JSON.stringify(reordered));
+  assert.deepEqual(
+    reordered.response.definition.options.map(({ optionId, revision }) => ({ optionId, revision })),
+    [
+      { optionId: bug.response.option.optionId, revision: bug.response.option.revision + 1 },
+      {
+        optionId: backend.response.option.optionId,
+        revision: renamed.response.option.revision + 1,
+      },
+    ],
+  );
 
   const workspace = await readWorkspace(operationContext, collectionId);
   assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
