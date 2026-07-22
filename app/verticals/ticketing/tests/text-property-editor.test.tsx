@@ -18,6 +18,15 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.text.italic': 'Italic',
         'ticketing.text.link': 'Link URL',
         'ticketing.text.linkApply': 'Apply link',
+        'ticketing.text.mention': 'Mention',
+        'ticketing.text.referenceDeniedDescription':
+          'The owning app denied access. The reference was not changed.',
+        'ticketing.text.referenceDeniedTitle': 'Reference access denied',
+        'ticketing.text.referenceInsertKnown': 'Insert known reference',
+        'ticketing.text.referencePicker': 'Mention or relation',
+        'ticketing.text.referenceQueryPlaceholder': 'Search, paste a token, or paste a deep link',
+        'ticketing.text.referenceSearch': 'Search references',
+        'ticketing.text.relation': 'Relation',
         'ticketing.text.save': 'Save Text',
         'ticketing.text.saveFailedDescription': 'The Text value could not be saved.',
         'ticketing.text.saveFailedTitle': 'Text save failed',
@@ -303,4 +312,215 @@ test('a pasted opaque Core Reference remains a reference node when saved', async
     content: [{ reference, type: 'reference' }],
     type: 'textDocument',
   });
+});
+
+test('a resolved reference refreshes its clickable label and authorizes every open attempt', async () => {
+  const reference = {
+    entityId: 'entity-42',
+    entityType: 'customer',
+    kind: 'mention',
+    lastResolvedLabel: '@Ada',
+    ownerModuleKey: 'crm',
+    targetTenantId: 'tenant-2',
+    token: 'opaque-reference-token',
+  } as const;
+  const resolveReference = rs.fn(() =>
+    Promise.resolve({
+      _tag: 'CoreReferenceActive' as const,
+      reference: { ...reference, lastResolvedLabel: '@Ada Lovelace' },
+    }),
+  );
+  const openReference = rs.fn(() => Promise.resolve({ _tag: 'CoreReferenceOpenDenied' as const }));
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={{ content: [{ reference, type: 'reference' }], type: 'textDocument' }}
+      label={propertyLabel}
+      onOpenReference={openReference}
+      onResolveReference={resolveReference}
+      onSave={rs.fn()}
+      propertyDefinitionId="property-1"
+      readOnly
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  const activeReference = await screen.findByRole('button', { name: '@Ada Lovelace' });
+  expect(resolveReference).toHaveBeenCalledWith(reference);
+  fireEvent.click(activeReference);
+  fireEvent.click(activeReference);
+
+  await waitFor(() => expect(openReference).toHaveBeenCalledTimes(2));
+  expect(openReference).toHaveBeenNthCalledWith(1, {
+    ...reference,
+    lastResolvedLabel: '@Ada Lovelace',
+  });
+  expect(openReference).toHaveBeenNthCalledWith(2, {
+    ...reference,
+    lastResolvedLabel: '@Ada Lovelace',
+  });
+  expect(screen.getByRole('button', { name: '@Ada Lovelace' })).toBeDefined();
+  expect(mocks.toastCreate).toHaveBeenCalledTimes(2);
+  expect(mocks.toastCreate).toHaveBeenLastCalledWith({
+    description: 'The owning app denied access. The reference was not changed.',
+    title: 'Reference access denied',
+    type: 'warning',
+  });
+});
+
+test('editing after reference resolution preserves the complete refreshed envelope', async () => {
+  const reference = {
+    entityId: 'entity-42',
+    entityType: 'customer',
+    kind: 'mention',
+    lastResolvedLabel: '@Ada',
+    ownerModuleKey: 'crm',
+    targetTenantId: 'tenant-2',
+    token: 'opaque-reference-token',
+  } as const;
+  const refreshedReference = { ...reference, lastResolvedLabel: '@Ada Lovelace' };
+  const save = rs.fn((draft) =>
+    Promise.resolve({
+      taskRevision: 2,
+      value: {
+        document: draft.document,
+        propertyDefinitionId: 'property-1',
+        readableText: '@Ada Lovelace',
+        revision: 2,
+      },
+    }),
+  );
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={{ content: [{ reference, type: 'reference' }], type: 'textDocument' }}
+      label={propertyLabel}
+      onOpenReference={() => Promise.resolve({ _tag: 'CoreReferenceOpened' })}
+      onResolveReference={() =>
+        Promise.resolve({ _tag: 'CoreReferenceActive', reference: refreshedReference })
+      }
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  await screen.findByRole('button', { name: '@Ada Lovelace' });
+  fireEvent.input(screen.getByRole('textbox', { name: propertyLabel }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save Text' }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(save.mock.calls[0]?.[0].document).toEqual({
+    content: [{ reference: refreshedReference, type: 'reference' }],
+    type: 'textDocument',
+  });
+});
+
+test('federated discovery inserts the selected opaque reference through the public handlers', async () => {
+  const candidate = {
+    entityId: 'entity-42',
+    entityType: 'customer',
+    label: '@Ada',
+    ownerModuleKey: 'crm',
+    targetTenantId: 'tenant-2',
+    token: 'opaque-reference-token',
+  } as const;
+  const reference = {
+    entityId: candidate.entityId,
+    entityType: candidate.entityType,
+    kind: 'mention' as const,
+    lastResolvedLabel: candidate.label,
+    ownerModuleKey: candidate.ownerModuleKey,
+    targetTenantId: candidate.targetTenantId,
+    token: candidate.token,
+  };
+  const discover = rs.fn(() => Promise.resolve([candidate]));
+  const insert = rs.fn(() =>
+    Promise.resolve({ _tag: 'CoreReferenceInserted' as const, reference }),
+  );
+  const save = rs.fn(() =>
+    Promise.resolve({
+      taskRevision: 2,
+      value: {
+        document: null,
+        propertyDefinitionId: 'property-1',
+        readableText: '@Ada',
+        revision: 2,
+      },
+    }),
+  );
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={null}
+      label={propertyLabel}
+      onDiscoverReferences={discover}
+      onInsertReference={insert}
+      onSave={save}
+      propertyDefinitionId="property-1"
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText('Mention or relation'), {
+    target: { value: 'ada' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Search references' }));
+  const result = await screen.findByRole('button', { name: '@Ada' });
+  fireEvent.click(result);
+  await screen.findByText('@Ada');
+  fireEvent.click(screen.getByRole('button', { name: 'Save Text' }));
+
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+  expect(discover).toHaveBeenCalledWith('ada');
+  expect(insert).toHaveBeenCalledWith({
+    kind: 'mention',
+    source: { type: 'opaqueToken', value: candidate.token },
+  });
+  expect(save.mock.calls[0]?.[0].document).toEqual({
+    content: [{ reference, type: 'reference' }],
+    type: 'textDocument',
+  });
+});
+
+test('an unavailable open retains the last label resolved in this editor session', async () => {
+  const reference = {
+    entityId: 'entity-42',
+    entityType: 'customer',
+    kind: 'relation',
+    lastResolvedLabel: 'Old label',
+    ownerModuleKey: 'crm',
+    targetTenantId: 'tenant-2',
+    token: 'opaque-reference-token',
+  } as const;
+  render(
+    <TextPropertyEditor
+      collectionId="collection-1"
+      document={{ content: [{ reference, type: 'reference' }], type: 'textDocument' }}
+      label={propertyLabel}
+      onOpenReference={() => Promise.resolve({ _tag: 'CoreReferenceOpenUnavailable' })}
+      onResolveReference={() =>
+        Promise.resolve({
+          _tag: 'CoreReferenceActive',
+          reference: { ...reference, lastResolvedLabel: 'Current label' },
+        })
+      }
+      onSave={rs.fn()}
+      propertyDefinitionId="property-1"
+      readOnly
+      revision={1}
+      taskId="task-1"
+    />,
+  );
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Current label' }));
+  await waitFor(() =>
+    expect(screen.getByText('Current label')).toHaveAttribute(
+      'data-core-reference-fallback',
+      reference.token,
+    ),
+  );
 });

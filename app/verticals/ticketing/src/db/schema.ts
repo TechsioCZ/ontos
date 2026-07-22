@@ -278,6 +278,7 @@ export const tasks = ticketingSchema.table(
     collectionId: uuid('collection_id')
       .notNull()
       .references(() => taskCollections.collectionId, { onDelete: 'restrict' }),
+    coreReferenceToken: uuid('core_reference_token').defaultRandom().notNull(),
     createdAt: createdAt(),
     createdByPrincipalId: uuid('created_by_principal_id')
       .notNull()
@@ -302,6 +303,7 @@ export const tasks = ticketingSchema.table(
       table.taskId,
     ),
     index('ticketing_tasks_collection_idx').on(table.tenantId, table.collectionId),
+    uniqueIndex('ticketing_tasks_core_reference_token_uk').on(table.coreReferenceToken),
     index('ticketing_tasks_created_by_idx').on(table.tenantId, table.createdByPrincipalId),
     check('ticketing_tasks_revision_ck', sql`${table.revision} >= 1`),
     check(

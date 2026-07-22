@@ -44,6 +44,26 @@ export type {
 } from './operation-context.ts';
 export type { OutboxMessage } from './outbox-message.ts';
 export type { CoreReadonlyDbExecutor } from './db/types.ts';
+export {
+  coreReferenceRegistry,
+  createCoreReferenceRegistry,
+  registerCoreReferenceProvider,
+} from './core-reference.ts';
+export type {
+  CoreReference,
+  CoreReferenceContext,
+  CoreReferenceInsertionResult,
+  CoreReferenceKind,
+  CoreReferenceNavigation,
+  CoreReferenceOpenResult,
+  CoreReferenceProvider,
+  CoreReferenceProviderCandidate,
+  CoreReferenceProviderTarget,
+  CoreReferenceRegistry,
+  CoreReferenceResolutionResult,
+  CoreReferenceSource,
+  DiscoveredCoreReference,
+} from './core-reference.ts';
 export { checkOutboxWorkerModuleStateAccess } from './outbox-worker.ts';
 export type {
   OutboxWorkerModuleStateAccessDecision,
@@ -59,6 +79,10 @@ export type {
 } from './outbox-worker.ts';
 export { allowPolicy, denyPolicy } from './policy.ts';
 export { resolveEffectiveTimeZone } from './principal-time-zone-preferences.ts';
+export {
+  createTenantScopedSpiceDbPermissionCheck,
+  spiceDbAuthorizationChecker,
+} from './spicedb-authorization.ts';
 export type { EffectiveTimeZone } from './principal-time-zone-preferences.ts';
 export type {
   PolicyAllowed,

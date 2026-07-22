@@ -1,4 +1,5 @@
 export {
+  runRetainTextCoreReferenceLabelAction,
   runDeleteSelectOptionAction,
   runCreateMultiSelectOptionAndSelectAction,
   runReorderMultiSelectOptionsAction,

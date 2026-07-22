@@ -12,6 +12,8 @@ import type {
   TaskPropertyQuery,
 } from '../../shared/task-property-query.ts';
 import { canonicalizeNumberValue } from '../../shared/number-value.ts';
+import type { TextDocument } from '../../shared/text-property.ts';
+import { resolveTextDocumentProjection } from '../core-reference-text-projection.ts';
 
 interface NumberQueryRow {
   readonly taskId: string;
@@ -19,6 +21,7 @@ interface NumberQueryRow {
 }
 
 interface TextQueryRow {
+  readonly document: TextDocument | null;
   readonly locale: string;
   readonly readableText: string | null;
   readonly taskId: string;
@@ -353,6 +356,7 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
     const result = await db.execute(sql`
       select
         collection.locale,
+        value.document,
         value.readable_text as "readableText",
         task.task_id as "taskId"
       from ticketing.task_text_values as value
@@ -370,7 +374,15 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
         and value.property_definition_id = ${input.propertyDefinitionId}
         and value.tenant_id = ${context.tenantId}
     `);
-    const rows = rowsFromResult<TextQueryRow>(result);
+    const rows = await Promise.all(
+      rowsFromResult<TextQueryRow>(result).map(async (row) => ({
+        ...row,
+        ...(await resolveTextDocumentProjection({
+          context: { principalId: context.principalId, tenantId: context.tenantId },
+          document: row.document,
+        })),
+      })),
+    );
     const locale = rows.at(0)?.locale ?? 'en-GB';
     const collation = textCollation(locale);
     const { operation } = input.query;

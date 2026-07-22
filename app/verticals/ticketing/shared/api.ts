@@ -6,6 +6,19 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import {
+  retainTextCoreReferenceLabelActionHeadersSchema,
+  retainTextCoreReferenceLabelActionFailureSchemas,
+  retainTextCoreReferenceLabelActionOutcomeSchema,
+  retainTextCoreReferenceLabelActionPayloadSchema,
+} from './actions/retain-text-core-reference-label';
+
+export type {
+  RetainTextCoreReferenceLabelActionFailure,
+  RetainTextCoreReferenceLabelActionOutcome,
+  RetainTextCoreReferenceLabelActionPayload,
+  RetainTextCoreReferenceLabelActionResponse,
+} from './actions/retain-text-core-reference-label';
+import {
   deleteSelectOptionActionHeadersSchema,
   deleteSelectOptionActionFailureSchemas,
   deleteSelectOptionActionOutcomeSchema,
@@ -363,6 +376,7 @@ import {
   coreSdkOperationFailureSchemas,
   operationContextHeadersSchema,
 } from './core-sdk-operation';
+import { coreReferenceRequestSchema, coreReferenceResponseSchema } from './core-reference';
 import { searchEligiblePeopleResponseSchema } from './person-directory-search';
 import { selectOptionDeletionImpactSchema } from './select-option-deletion-impact';
 import { taskCollectionAggregateSchema } from './task-collection';
@@ -712,6 +726,7 @@ export type {
   TaskPropertyDefinitionEditCapability,
   TaskPropertyEditCapability,
 } from './task-property-edit-capability';
+export type { CoreReferenceRequest, CoreReferenceResponse } from './core-reference';
 export {
   checkboxPropertyDefinitionSchema,
   datePropertyDefinitionSchema,
@@ -997,6 +1012,14 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         headers: operationContextHeadersSchema,
         payload: queryTaskPropertyValuesPayloadSchema,
         success: queryTaskPropertyValuesResponseSchema,
+      }),
+    )
+    .add(
+      HttpApiEndpoint.post('coreReference', '/ticketing/core-references', {
+        error: coreSdkOperationFailureSchemas,
+        headers: operationContextHeadersSchema,
+        payload: coreReferenceRequestSchema,
+        success: coreReferenceResponseSchema,
       }),
     )
     .add(
@@ -1734,6 +1757,18 @@ export const ticketingApi = HttpApi.make('TicketingApi').add(
         payload: deleteSelectOptionActionPayloadSchema,
         success: deleteSelectOptionActionOutcomeSchema,
       }),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        'retainTextCoreReferenceLabelAction',
+        '/ticketing/actions/retain-text-core-reference-label',
+        {
+          error: retainTextCoreReferenceLabelActionFailureSchemas,
+          headers: retainTextCoreReferenceLabelActionHeadersSchema,
+          payload: retainTextCoreReferenceLabelActionPayloadSchema,
+          success: retainTextCoreReferenceLabelActionOutcomeSchema,
+        },
+      ),
     ),
 );
 
@@ -2055,6 +2090,12 @@ export const ticketingOperationContexts = {
     method: 'POST',
     operationId: 'TicketingApi:ticketing:reorderMultiSelectOptionsAction',
     routePath: '/ticketing/actions/reorder-multi-select-options',
+    source: 'generated-client',
+  },
+  retainTextCoreReferenceLabelAction: {
+    method: 'POST',
+    operationId: 'TicketingApi:ticketing:retainTextCoreReferenceLabelAction',
+    routePath: '/ticketing/actions/retain-text-core-reference-label',
     source: 'generated-client',
   },
   searchEligiblePeople: {

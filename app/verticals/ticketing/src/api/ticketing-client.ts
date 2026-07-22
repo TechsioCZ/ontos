@@ -198,6 +198,11 @@ import type {
   DeleteSelectOptionActionFailure,
   DeleteSelectOptionActionOutcome,
   DeleteSelectOptionActionPayload,
+  CoreReferenceRequest,
+  CoreReferenceResponse,
+  RetainTextCoreReferenceLabelActionFailure,
+  RetainTextCoreReferenceLabelActionOutcome,
+  RetainTextCoreReferenceLabelActionPayload,
 } from '../../shared/api';
 
 export { Effect, runEffectRequest };
@@ -212,6 +217,7 @@ export type TicketingClient = HttpApiClient.Client<
 >;
 
 export type TicketingClientError =
+  | RetainTextCoreReferenceLabelActionFailure
   | DeleteSelectOptionActionFailure
   | CreateMultiSelectOptionAndSelectActionFailure
   | ReorderMultiSelectOptionsActionFailure
@@ -342,6 +348,47 @@ export const getTicketing = (
     ...options,
     operationContext: options.operationContext ?? ticketingOperationContexts.get,
   }).pipe(Effect.flatMap((client) => client.ticketing.get({ params: { id } })));
+
+export const executeCoreReference = (
+  payload: CoreReferenceRequest,
+  options: TicketingClientOptions = {},
+): TicketingClientEffect<CoreReferenceResponse> =>
+  createTicketingClient({
+    ...options,
+    operationContext: options.operationContext ?? ticketingOperationContexts.coreReference,
+  }).pipe(
+    Effect.flatMap((client) => {
+      switch (payload.operation) {
+        case 'discover': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        case 'insert': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        case 'open': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        case 'resolve': {
+          return client.ticketing.coreReference({
+            headers: options.headers ?? {},
+            payload,
+          });
+        }
+        default: {
+          return payload satisfies never;
+        }
+      }
+    }),
+  );
 
 export const getTaskCollection = (
   collectionId: string,
@@ -1849,6 +1896,33 @@ export const runDeleteSelectOptionAction = (
   }).pipe(
     Effect.flatMap((client) =>
       client.ticketing.deleteSelectOptionAction({
+        headers: headers ?? {},
+        payload,
+      }),
+    ),
+  );
+};
+
+export const runRetainTextCoreReferenceLabelAction = (
+  payload: RetainTextCoreReferenceLabelActionPayload,
+  options: TicketingClientOptions & { idempotencyKey?: string } = {},
+): TicketingClientEffect<RetainTextCoreReferenceLabelActionOutcome> => {
+  const headers =
+    options.idempotencyKey === undefined
+      ? options.headers
+      : {
+          ...options.headers,
+          'Idempotency-Key': options.idempotencyKey,
+        };
+
+  return createTicketingClient({
+    ...options,
+    ...(headers === undefined ? undefined : { headers }),
+    operationContext:
+      options.operationContext ?? ticketingOperationContexts.retainTextCoreReferenceLabelAction,
+  }).pipe(
+    Effect.flatMap((client) =>
+      client.ticketing.retainTextCoreReferenceLabelAction({
         headers: headers ?? {},
         payload,
       }),

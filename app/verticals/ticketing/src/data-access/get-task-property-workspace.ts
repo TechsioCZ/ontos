@@ -24,6 +24,7 @@ import type {
 import { dateRangeValueFromNullableFields } from '../date-range-value-projection.ts';
 import { orderSelectOptions } from '../select-option-order.ts';
 import { statusDefinitionFromParts, statusGroupLabel } from '../status-property.ts';
+import { resolveTextDocumentProjection } from '../core-reference-text-projection.ts';
 
 interface DefinitionFields {
   readonly hidden: boolean;
@@ -1113,6 +1114,15 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
           db,
         })
       : undefined;
+    const textValueRows = await Promise.all(
+      rowsFromResult<TextValueRow>(textValueResult).map(async (row) => ({
+        ...row,
+        ...(await resolveTextDocumentProjection({
+          context: { principalId: context.principalId, tenantId: context.tenantId },
+          document: row.document,
+        })),
+      })),
+    );
     const tasks = taskRowsFromValues({
       dateRangeValueRows: rowsFromResult<DateRangeValueRow>(dateRangeValueResult),
       dateValueRows: rowsFromResult<DateValueRow>(dateValueResult),
@@ -1128,7 +1138,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       resolvedPeople,
       selectValueRows: rowsFromResult<SelectValueRow>(selectValueResult),
       statusValueRows: rowsFromResult<StatusValueRow>(statusValueResult),
-      textValueRows: rowsFromResult<TextValueRow>(textValueResult),
+      textValueRows,
       urlValueRows: rowsFromResult<UrlValueRow>(urlValueResult),
       valueRows: rowsFromResult<ValueRow>(valueResult),
     });

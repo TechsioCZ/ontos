@@ -6,6 +6,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ticketingApi, ticketingOperationContexts } from '../shared/api.ts';
+import { retainTextCoreReferenceLabelActionRegistration } from '../src/actions/retain-text-core-reference-label.ts';
 import { deleteSelectOptionActionRegistration } from '../src/actions/delete-select-option.ts';
 import { createMultiSelectOptionAndSelectActionRegistration } from '../src/actions/create-multi-select-option-and-select.ts';
 import { reorderMultiSelectOptionsActionRegistration } from '../src/actions/reorder-multi-select-options.ts';
@@ -74,10 +75,14 @@ import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-acces
 import { queryTaskUrlValuesDataAccessRegistration } from '../src/data-access/query-task-url-values.ts';
 import { searchEligiblePeopleDataAccessRegistration } from '../src/data-access/search-eligible-people.ts';
 import { queryIntrinsicTaskPropertiesDataAccessRegistration } from '../src/data-access/query-intrinsic-task-properties.ts';
+import { coreReferenceDataAccessRegistration } from '../src/data-access/core-reference.ts';
 import type { TicketingNotFound, OperationContext } from '../shared/api.ts';
 import type { ConfigurePersonPropertyCardinalityActionFailure } from '../shared/actions/configure-person-property-cardinality.ts';
 import type { TaskPersonQueryFilter } from '../shared/person-query.ts';
 import type { CoreSdkOperationTransportOutcome } from './action-runtime.ts';
+import { ensureTicketingCoreReferenceProviderRegistered } from '../src/core-reference-provider.ts';
+
+ensureTicketingCoreReferenceProviderRegistered();
 
 type CoreSdkOperationTransportFailure = Extract<
   CoreSdkOperationTransportOutcome<unknown>,
@@ -205,6 +210,25 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         }),
       );
     })
+    .handle('coreReference', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkDataAccess({
+          headers: new Headers(request.headers),
+          payload,
+          registration: coreReferenceDataAccessRegistration,
+          resultCount: (response) =>
+            response.operation === 'discover' ? response.references.length : 1,
+        }),
+      ).pipe(
+        Effect.flatMap((outcome) =>
+          outcome.ok ? Effect.succeed(outcome.response) : Effect.fail(outcome),
+        ),
+        Effect.withSpan('ultramodern.api.ticketing.coreReference', {
+          attributes: operationAttributes(ticketingOperationContexts.coreReference),
+          kind: 'server',
+        }),
+      ),
+    )
     .handle('getTaskCollection', ({ params, request }) =>
       Effect.promise(() =>
         runCoreSdkDataAccess({
@@ -1448,6 +1472,28 @@ const ticketingLayer = HttpApiBuilder.group(ticketingApi, 'ticketing', (handlers
         .pipe(
           Effect.withSpan('ultramodern.api.ticketing.deleteSelectOptionAction', {
             attributes: operationAttributes(ticketingOperationContexts.deleteSelectOptionAction),
+            kind: 'server',
+          }),
+        ),
+    )
+    .handle('retainTextCoreReferenceLabelAction', ({ payload, request }) =>
+      Effect.promise(() =>
+        runCoreSdkAction({
+          headers: new Headers(request.headers),
+          payload,
+          registration: retainTextCoreReferenceLabelActionRegistration,
+        }),
+      )
+        .pipe(
+          Effect.flatMap((outcome) =>
+            outcome.ok ? Effect.succeed(outcome) : Effect.fail(outcome),
+          ),
+        )
+        .pipe(
+          Effect.withSpan('ultramodern.api.ticketing.retainTextCoreReferenceLabelAction', {
+            attributes: operationAttributes(
+              ticketingOperationContexts.retainTextCoreReferenceLabelAction,
+            ),
             kind: 'server',
           }),
         ),

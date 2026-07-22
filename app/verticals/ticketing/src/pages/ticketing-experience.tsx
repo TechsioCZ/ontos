@@ -8,6 +8,7 @@ import { useState } from 'react';
 import {
   Effect,
   getTaskPropertyDefinitionEditCapability,
+  executeCoreReference,
   getTaskPropertyEditCapability,
   getTaskCollection,
   runCreateDatePropertyDefinitionAction,
@@ -25,6 +26,7 @@ import {
   runCreateUrlPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,
   runEffectRequest,
+  runRetainTextCoreReferenceLabelAction,
   runUpdateCheckboxPropertyValueAction,
   runUpdateDatePropertyValueAction,
   runUpdateDateRangePropertyValueAction,
@@ -1325,6 +1327,96 @@ export const TicketingExperience = () => {
                         collectionId={openedTaskPropertyWorkspace.collectionId}
                         document={value.document}
                         label={definition.name}
+                        onDiscoverReferences={async (query) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const response = await runEffectRequest(
+                            executeCoreReference(
+                              { operation: 'discover', query },
+                              {
+                                headers: {
+                                  'x-ontos-operation-context': operationContextToken,
+                                },
+                              },
+                            ),
+                          );
+                          return response.operation === 'discover' ? response.references : [];
+                        }}
+                        onInsertReference={async ({ kind, source }) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const response = await runEffectRequest(
+                            executeCoreReference(
+                              { kind, operation: 'insert', source },
+                              {
+                                headers: {
+                                  'x-ontos-operation-context': operationContextToken,
+                                },
+                              },
+                            ),
+                          );
+                          if (response.operation !== 'insert') {
+                            throw new Error(
+                              'Core Reference insertion returned an invalid response.',
+                            );
+                          }
+                          return response.result;
+                        }}
+                        onOpenReference={async (reference) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const response = await runEffectRequest(
+                            executeCoreReference(
+                              { operation: 'open', reference },
+                              {
+                                headers: {
+                                  'x-ontos-operation-context': operationContextToken,
+                                },
+                              },
+                            ),
+                          );
+                          if (response.operation !== 'open') {
+                            throw new Error('Core Reference open returned an invalid response.');
+                          }
+                          return response.result;
+                        }}
+                        onResolveReference={async (reference) => {
+                          const operationContextToken = await loadTicketingOperationContextToken();
+                          const response = await runEffectRequest(
+                            executeCoreReference(
+                              { operation: 'resolve', reference },
+                              {
+                                headers: {
+                                  'x-ontos-operation-context': operationContextToken,
+                                },
+                              },
+                            ),
+                          );
+                          if (response.operation !== 'resolve') {
+                            throw new Error(
+                              'Core Reference resolution returned an invalid response.',
+                            );
+                          }
+                          if (
+                            response.result._tag === 'CoreReferenceActive' &&
+                            response.result.reference.lastResolvedLabel !==
+                              reference.lastResolvedLabel
+                          ) {
+                            await runEffectRequest(
+                              runRetainTextCoreReferenceLabelAction(
+                                {
+                                  collectionId: openedTaskPropertyWorkspace.collectionId,
+                                  propertyDefinitionId: definition.propertyDefinitionId,
+                                  reference,
+                                  taskId: task.taskId,
+                                },
+                                {
+                                  headers: {
+                                    'x-ontos-operation-context': operationContextToken,
+                                  },
+                                },
+                              ),
+                            );
+                          }
+                          return response.result;
+                        }}
                         onSave={async (draft, idempotencyKey) => {
                           const operationContextToken = await loadTicketingOperationContextToken();
                           const outcome = await runEffectRequest(
