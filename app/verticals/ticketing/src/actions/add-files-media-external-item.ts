@@ -137,7 +137,7 @@ const handler: ActionHandler<
       update ticketing.tasks as task
       set
         last_edited_at = ${changedAt}::timestamptz,
-        last_edited_by_principal_id = ${services.context.principalId},
+        last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
         revision = task.revision + 1
       from created_item
       where task.task_id = created_item.task_id
@@ -149,7 +149,7 @@ const handler: ActionHandler<
         changed_at, changed_by_principal_id, reason, revision, task_id, tenant_id
       )
       select
-        updated_task.last_edited_at, ${services.context.principalId},
+        updated_task.last_edited_at, ${services.effectiveEditorPrincipalId},
         'files_media_value_changed', updated_task.revision, updated_task.task_id,
         ${services.context.tenantId}
       from updated_task
