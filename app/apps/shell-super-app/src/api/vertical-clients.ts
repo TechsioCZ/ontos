@@ -1,4 +1,5 @@
 export {
+  runDeleteMultiSelectOptionAction,
   runRemoveFilesMediaItemAction,
   runReorderFilesMediaItemsAction,
   runAddFilesMediaExternalItemAction,
@@ -56,6 +57,7 @@ export {
   runCreateTextPropertyDefinitionAction,
   runTransitionTaskRetentionAction,
   getTaskPropertyDeletionImpact,
+  getMultiSelectOptionDeletionImpact,
   getSelectOptionDeletionImpact,
   runDeleteTaskPropertyDefinitionAction,
   runDuplicateTaskPropertyDefinitionAction,

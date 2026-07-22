@@ -1,4 +1,5 @@
 import { Schema } from '@modern-js/plugin-bff/effect-client';
+import { multiSelectQueryOperationSchema } from './multi-select-query.ts';
 import { numberQueryOperationSchema } from './number-query.ts';
 import { selectQueryOperationSchema } from './select-query.ts';
 import { statusQueryOperationSchema } from './status-query.ts';
@@ -6,6 +7,10 @@ import { textQueryOperationSchema } from './text-query.ts';
 import { filesMediaQueryOperationSchema } from './files-media-query.ts';
 
 export const taskPropertyQuerySchema = Schema.Union([
+  Schema.Struct({
+    datatype: Schema.Literal('multi_select'),
+    operation: multiSelectQueryOperationSchema,
+  }),
   Schema.Struct({
     datatype: Schema.Literal('files_media'),
     operation: filesMediaQueryOperationSchema,

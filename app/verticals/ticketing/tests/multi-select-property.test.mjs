@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, test } from 'node:test';
 
+import { Schema } from '@modern-js/plugin-bff/effect-client';
 import { runAction, runDataAccess } from '../../../packages/core-runtime/src/core-sdk.ts';
 import { sqlClient } from '../../../packages/core-runtime/src/db/client.ts';
 import { createMultiSelectPropertyDefinitionActionRegistration } from '../src/actions/create-multi-select-property-definition.ts';
@@ -11,9 +12,15 @@ import { configureTaskPropertyDefinitionActionRegistration } from '../src/action
 import { reorderMultiSelectOptionsActionRegistration } from '../src/actions/reorder-multi-select-options.ts';
 import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
+import { deleteMultiSelectOptionActionRegistration } from '../src/actions/delete-multi-select-option.ts';
+import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
+import { transitionTaskRetentionActionRegistration } from '../src/actions/transition-task-retention.ts';
+import { getMultiSelectOptionDeletionImpactDataAccessRegistration } from '../src/data-access/get-multi-select-option-deletion-impact.ts';
 import { getTaskPropertyWorkspaceDataAccessRegistration } from '../src/data-access/get-task-property-workspace.ts';
+import { queryTaskPropertyValuesDataAccessRegistration } from '../src/data-access/query-task-property-values.ts';
 import { updateMultiSelectPropertyValueActionRegistration } from '../src/actions/update-multi-select-property-value.ts';
 import { updateMultiSelectOptionActionRegistration } from '../src/actions/update-multi-select-option.ts';
+import { taskPropertyQuerySchema } from '../shared/task-property-query.ts';
 
 const createdTenantIds = [];
 
@@ -555,6 +562,601 @@ test('inline creation atomically appends one shared option only to the current T
     { optionIds: [], propertyDefinitionId, revision: 1 },
   );
   assertIsoTimestamp(otherValue.updatedAt);
+});
+
+test('deleting a Multi-select option preserves every unrelated membership', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const task = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Labels' },
+    registration: createMultiSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const { propertyDefinitionId } = definition.response.definition;
+  const backend = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'blue',
+      expectedDefinitionRevision: 1,
+      name: 'Backend',
+      propertyDefinitionId,
+    },
+    registration: createMultiSelectOptionActionRegistration,
+  });
+  assert.equal(backend._tag, 'OperationSucceeded', JSON.stringify(backend));
+  const bug = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'red',
+      expectedDefinitionRevision: backend.response.definitionRevision,
+      name: 'Bug',
+      propertyDefinitionId,
+    },
+    registration: createMultiSelectOptionActionRegistration,
+  });
+  assert.equal(bug._tag, 'OperationSucceeded', JSON.stringify(bug));
+  const selected = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: 1,
+      optionIds: [backend.response.option.optionId, bug.response.option.optionId],
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: updateMultiSelectPropertyValueActionRegistration,
+  });
+  assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
+
+  const preview = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, optionId: bug.response.option.optionId, propertyDefinitionId },
+    registration: getMultiSelectOptionDeletionImpactDataAccessRegistration,
+    resultCount: ({ impactCount }) => impactCount,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(preview._tag, 'OperationSucceeded', JSON.stringify(preview));
+  assert.equal(preview.response.impactCount, 1);
+
+  const deletionPayload = {
+    collectionId,
+    confirmed: true,
+    expectedDefinitionRevision: preview.response.definitionRevision,
+    expectedImpactCount: preview.response.impactCount,
+    expectedImpactToken: preview.response.impactToken,
+    expectedOptionRevision: preview.response.optionRevision,
+    optionId: bug.response.option.optionId,
+    propertyDefinitionId,
+  };
+  const unconfirmed = await runRegisteredAction({
+    operationContext,
+    payload: { ...deletionPayload, confirmed: false },
+    registration: deleteMultiSelectOptionActionRegistration,
+  });
+  assert.equal(unconfirmed._tag, 'OperationDomainRejected', JSON.stringify(unconfirmed));
+  assert.equal(unconfirmed.code, 'ticketing.deleteMultiSelectOption.confirmation_required');
+
+  const deleted = await runRegisteredAction({
+    operationContext,
+    payload: deletionPayload,
+    registration: deleteMultiSelectOptionActionRegistration,
+  });
+  assert.equal(deleted._tag, 'OperationSucceeded', JSON.stringify(deleted));
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  const publicDefinition = workspace.response.propertyDefinitions.find(
+    (candidate) => candidate.propertyDefinitionId === propertyDefinitionId,
+  );
+  assert.deepEqual(
+    publicDefinition.options.map(({ optionId }) => optionId),
+    [backend.response.option.optionId],
+  );
+  assert.deepEqual(workspace.response.tasks[0].multiSelectValues, [
+    {
+      optionIds: [backend.response.option.optionId],
+      propertyDefinitionId,
+      revision: selected.response.value.revision + 1,
+      updatedAt: workspace.response.tasks[0].multiSelectValues[0].updatedAt,
+    },
+  ]);
+  assertIsoTimestamp(workspace.response.tasks[0].multiSelectValues[0].updatedAt);
+});
+
+test('Multi-select option deletion counts every retained Task and excludes hard-deleted Tasks', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const tasks = [];
+  for (const _state of ['active', 'archived', 'softDeleted', 'hardDeleted']) {
+    // oxlint-disable-next-line no-await-in-loop -- Task identities are created through the public action seam.
+    const task = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+    tasks.push(task);
+  }
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Labels' },
+    registration: createMultiSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const { propertyDefinitionId } = definition.response.definition;
+  const option = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'blue',
+      expectedDefinitionRevision: 1,
+      name: 'Backend',
+      propertyDefinitionId,
+    },
+    registration: createMultiSelectOptionActionRegistration,
+  });
+  assert.equal(option._tag, 'OperationSucceeded', JSON.stringify(option));
+  for (const task of tasks) {
+    // oxlint-disable-next-line no-await-in-loop -- Each Task value is an independent public mutation.
+    const selected = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 1,
+        optionIds: [option.response.option.optionId],
+        propertyDefinitionId,
+        taskId: task.response.task.taskId,
+      },
+      registration: updateMultiSelectPropertyValueActionRegistration,
+    });
+    assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
+    task.selectedRevision = selected.response.taskRevision;
+  }
+
+  for (const [task, transition] of [
+    [tasks[1], 'archive'],
+    [tasks[2], 'softDelete'],
+    [tasks[3], 'hardDelete'],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Retention transitions have independent Task revisions.
+    const transitioned = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: task.selectedRevision,
+        taskId: task.response.task.taskId,
+        transition,
+      },
+      registration: transitionTaskRetentionActionRegistration,
+    });
+    assert.equal(transitioned._tag, 'OperationSucceeded', JSON.stringify(transitioned));
+  }
+
+  const preview = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: {
+      collectionId,
+      optionId: option.response.option.optionId,
+      propertyDefinitionId,
+    },
+    registration: getMultiSelectOptionDeletionImpactDataAccessRegistration,
+    resultCount: ({ impactCount }) => impactCount,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(preview._tag, 'OperationSucceeded', JSON.stringify(preview));
+  assert.equal(preview.response.impactCount, 3);
+
+  const deleted = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      confirmed: true,
+      expectedDefinitionRevision: preview.response.definitionRevision,
+      expectedImpactCount: preview.response.impactCount,
+      expectedImpactToken: preview.response.impactToken,
+      expectedOptionRevision: preview.response.optionRevision,
+      optionId: option.response.option.optionId,
+      propertyDefinitionId,
+    },
+    registration: deleteMultiSelectOptionActionRegistration,
+  });
+  assert.equal(deleted._tag, 'OperationSucceeded', JSON.stringify(deleted));
+  assert.equal(deleted.response.impactCount, 3);
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.equal(workspace.response.tasks.length, 3);
+  for (const task of workspace.response.tasks) {
+    assert.deepEqual(task.multiSelectValues[0].optionIds, []);
+  }
+});
+
+test('Multi-select set filters include Empty only in negative membership', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const tasks = [];
+  for (const _selection of ['backend', 'frontend', 'empty']) {
+    // oxlint-disable-next-line no-await-in-loop -- Task identities are created through the public action seam.
+    const task = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+    tasks.push(task);
+  }
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Labels' },
+    registration: createMultiSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const { propertyDefinitionId } = definition.response.definition;
+  const backend = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'blue',
+      expectedDefinitionRevision: 1,
+      name: 'Backend',
+      propertyDefinitionId,
+    },
+    registration: createMultiSelectOptionActionRegistration,
+  });
+  assert.equal(backend._tag, 'OperationSucceeded', JSON.stringify(backend));
+  const frontend = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      color: 'green',
+      expectedDefinitionRevision: backend.response.definitionRevision,
+      name: 'Frontend',
+      propertyDefinitionId,
+    },
+    registration: createMultiSelectOptionActionRegistration,
+  });
+  assert.equal(frontend._tag, 'OperationSucceeded', JSON.stringify(frontend));
+  for (const [task, optionId] of [
+    [tasks[0], backend.response.option.optionId],
+    [tasks[1], frontend.response.option.optionId],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Each Task value is an independent public mutation.
+    const selected = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 1,
+        optionIds: [optionId],
+        propertyDefinitionId,
+        taskId: task.response.task.taskId,
+      },
+      registration: updateMultiSelectPropertyValueActionRegistration,
+    });
+    assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
+  }
+
+  const filter = (operation) =>
+    runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'multi_select', operation },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: ({ taskIds }) => taskIds.length,
+      transport: { headers: new Headers() },
+    });
+  const filterCases = [
+    [
+      { operator: 'contains', optionId: backend.response.option.optionId, type: 'filter' },
+      [tasks[0].response.task.taskId],
+    ],
+    [
+      { operator: 'doesNotContain', optionId: backend.response.option.optionId, type: 'filter' },
+      [tasks[1].response.task.taskId, tasks[2].response.task.taskId],
+    ],
+    [{ operator: 'isEmpty', type: 'filter' }, [tasks[2].response.task.taskId]],
+    [
+      { operator: 'isNotEmpty', type: 'filter' },
+      [tasks[0].response.task.taskId, tasks[1].response.task.taskId],
+    ],
+  ];
+  for (const [operation, expectedTaskIds] of filterCases) {
+    // oxlint-disable-next-line no-await-in-loop -- Each query is an independently observable filter.
+    const filtered = await filter(operation);
+    assert.equal(filtered._tag, 'OperationSucceeded', JSON.stringify(filtered));
+    assert.deepEqual(filtered.response.taskIds, expectedTaskIds.toSorted());
+  }
+
+  const invalidOption = await filter({
+    operator: 'doesNotContain',
+    optionId: randomUUID(),
+    type: 'filter',
+  });
+  assert.equal(invalidOption._tag, 'OperationExecutionFailed', JSON.stringify(invalidOption));
+});
+
+test('Multi-select search matches selected option names and sort or group stay unavailable', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const tasks = [];
+  for (const _selection of ['resume', 'cafe', 'empty']) {
+    // oxlint-disable-next-line no-await-in-loop -- Task identities are created through the public action seam.
+    const task = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+    tasks.push(task);
+  }
+  const definition = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: false, name: 'Labels' },
+    registration: createMultiSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(definition._tag, 'OperationSucceeded', JSON.stringify(definition));
+  const { propertyDefinitionId } = definition.response.definition;
+  let definitionRevision = definition.response.definition.revision;
+  const options = [];
+  for (const [name, color] of [
+    ['Résumé', 'blue'],
+    ['Cafe\u0301', 'green'],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Catalog revisions make this setup sequential.
+    const option = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        color,
+        expectedDefinitionRevision: definitionRevision,
+        name,
+        propertyDefinitionId,
+      },
+      registration: createMultiSelectOptionActionRegistration,
+    });
+    assert.equal(option._tag, 'OperationSucceeded', JSON.stringify(option));
+    options.push(option.response.option);
+    ({ definitionRevision } = option.response);
+  }
+  for (const [task, option] of [
+    [tasks[0], options[0]],
+    [tasks[1], options[1]],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Each Task value is an independent public mutation.
+    const selected = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 1,
+        optionIds: [option.optionId],
+        propertyDefinitionId,
+        taskId: task.response.task.taskId,
+      },
+      registration: updateMultiSelectPropertyValueActionRegistration,
+    });
+    assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
+  }
+
+  const search = (query) =>
+    runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(operationContext),
+      },
+      payload: {
+        collectionId,
+        propertyDefinitionId,
+        query: { datatype: 'multi_select', operation: { query, type: 'search' } },
+      },
+      registration: queryTaskPropertyValuesDataAccessRegistration,
+      resultCount: ({ taskIds }) => taskIds.length,
+      transport: { headers: new Headers() },
+    });
+  for (const [query, expectedTaskIds] of [
+    ['rÉSu', [tasks[0].response.task.taskId]],
+    ['resume', []],
+    ['Cafe\u0301', [tasks[1].response.task.taskId]],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Each query is an independently observable search.
+    const searched = await search(query);
+    assert.equal(searched._tag, 'OperationSucceeded', JSON.stringify(searched));
+    assert.deepEqual(searched.response.taskIds, expectedTaskIds);
+  }
+
+  for (const unsupportedOperation of [
+    { direction: 'ascending', type: 'sort' },
+    { type: 'group' },
+  ]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(taskPropertyQuerySchema)({
+        datatype: 'multi_select',
+        operation: unsupportedOperation,
+      }),
+    );
+  }
+});
+
+test('Multi-select duplication remaps copied sets to a new ordered option catalog', async () => {
+  const operationContext = await createOperationIdentity();
+  const collection = await runRegisteredAction({
+    operationContext,
+    payload: {},
+    registration: createTaskCollectionActionRegistration,
+  });
+  assert.equal(collection._tag, 'OperationSucceeded', JSON.stringify(collection));
+  const { collectionId } = collection.response.collection;
+  const tasks = [];
+  for (const _task of ['first', 'second']) {
+    // oxlint-disable-next-line no-await-in-loop -- Task identities are created through the public action seam.
+    const task = await runRegisteredAction({
+      operationContext,
+      payload: { collectionId },
+      registration: createTaskActionRegistration,
+    });
+    assert.equal(task._tag, 'OperationSucceeded', JSON.stringify(task));
+    tasks.push(task);
+  }
+  const source = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId, mandatory: true, name: 'Labels' },
+    registration: createMultiSelectPropertyDefinitionActionRegistration,
+  });
+  assert.equal(source._tag, 'OperationSucceeded', JSON.stringify(source));
+  const { propertyDefinitionId } = source.response.definition;
+  let definitionRevision = source.response.definition.revision;
+  const sourceOptions = [];
+  for (const [name, color] of [
+    ['Backend', 'blue'],
+    ['Bug', 'red'],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Catalog revisions make this setup sequential.
+    const option = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        color,
+        expectedDefinitionRevision: definitionRevision,
+        name,
+        propertyDefinitionId,
+      },
+      registration: createMultiSelectOptionActionRegistration,
+    });
+    assert.equal(option._tag, 'OperationSucceeded', JSON.stringify(option));
+    sourceOptions.push(option.response.option);
+    ({ definitionRevision } = option.response);
+  }
+  for (const [task, optionIds] of [
+    [tasks[0], sourceOptions.map(({ optionId }) => optionId)],
+    [tasks[1], [sourceOptions[1].optionId]],
+  ]) {
+    // oxlint-disable-next-line no-await-in-loop -- Each Task value is an independent public mutation.
+    const selected = await runRegisteredAction({
+      operationContext,
+      payload: {
+        collectionId,
+        expectedRevision: 1,
+        optionIds,
+        propertyDefinitionId,
+        taskId: task.response.task.taskId,
+      },
+      registration: updateMultiSelectPropertyValueActionRegistration,
+    });
+    assert.equal(selected._tag, 'OperationSucceeded', JSON.stringify(selected));
+  }
+
+  const duplicated = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      copyValues: true,
+      expectedRevision: definitionRevision,
+      propertyDefinitionId,
+    },
+    registration: duplicateTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(duplicated._tag, 'OperationSucceeded', JSON.stringify(duplicated));
+  const duplicate = duplicated.response.definition;
+  assert.equal(duplicate.datatype, 'multi_select');
+  assert.equal(duplicate.name, 'Labels Copy');
+  assert.equal(duplicate.mandatory, true);
+  assert.deepEqual(
+    duplicate.options.map(({ catalogPosition, color, name }) => ({
+      catalogPosition,
+      color,
+      name,
+    })),
+    sourceOptions.map(({ catalogPosition, color, name }) => ({ catalogPosition, color, name })),
+  );
+  assert.equal(
+    duplicate.options.some(({ optionId }) =>
+      sourceOptions.some((sourceOption) => sourceOption.optionId === optionId),
+    ),
+    false,
+  );
+
+  const blankDuplication = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      copyValues: false,
+      expectedRevision: definitionRevision,
+      propertyDefinitionId,
+    },
+    registration: duplicateTaskPropertyDefinitionActionRegistration,
+  });
+  assert.equal(blankDuplication._tag, 'OperationSucceeded', JSON.stringify(blankDuplication));
+  const blankDuplicate = blankDuplication.response.definition;
+  assert.equal(blankDuplicate.datatype, 'multi_select');
+  assert.equal(blankDuplicate.name, 'Labels Copy 2');
+
+  const workspace = await readWorkspace(operationContext, collectionId);
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  const valuesByTaskId = new Map(
+    workspace.response.tasks.map(({ multiSelectValues, taskId }) => [taskId, multiSelectValues]),
+  );
+  assert.deepEqual(
+    valuesByTaskId
+      .get(tasks[0].response.task.taskId)
+      .find((value) => value.propertyDefinitionId === duplicate.propertyDefinitionId).optionIds,
+    duplicate.options.map(({ optionId }) => optionId),
+  );
+  assert.deepEqual(
+    valuesByTaskId
+      .get(tasks[1].response.task.taskId)
+      .find((value) => value.propertyDefinitionId === duplicate.propertyDefinitionId).optionIds,
+    [duplicate.options[1].optionId],
+  );
+  for (const values of valuesByTaskId.values()) {
+    assert.deepEqual(
+      values.find((value) => value.propertyDefinitionId === blankDuplicate.propertyDefinitionId)
+        .optionIds,
+      [],
+    );
+  }
 });
 
 test('generic Multi-select configuration returns the complete catalog definition', async () => {

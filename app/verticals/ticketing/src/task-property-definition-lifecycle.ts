@@ -3,6 +3,8 @@ import { rowsFromResult } from '@app/core-runtime';
 import { sql } from '@app/core-runtime/db/sql';
 import type { CoreReadonlyDbExecutor, CoreTransaction } from '@app/core-runtime/db/types';
 import type {
+  MultiSelectOption,
+  MultiSelectPropertyDefinition,
   SelectOption,
   SelectOptionOrderMode,
   SelectPropertyDefinition,
@@ -561,6 +563,111 @@ const numberLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const multiSelectLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    await tx.execute(sql`
+      with option_mapping as materialized (
+        select
+          source_option.catalog_position,
+          source_option.color,
+          source_option.name,
+          source_option.normalized_name,
+          source_option.option_id as source_option_id,
+          gen_random_uuid() as target_option_id
+        from ticketing.multi_select_options as source_option
+        where source_option.property_definition_id = ${source.propertyDefinitionId}
+          and source_option.tenant_id = ${source.tenantId}
+      ), copied_options as (
+        insert into ticketing.multi_select_options (
+          catalog_position,
+          color,
+          name,
+          normalized_name,
+          option_id,
+          property_definition_id,
+          tenant_id
+        )
+        select
+          option_mapping.catalog_position,
+          option_mapping.color,
+          option_mapping.name,
+          option_mapping.normalized_name,
+          option_mapping.target_option_id,
+          ${target.propertyDefinitionId},
+          ${source.tenantId}
+        from option_mapping
+        returning option_id
+      ), copied_option_mapping as materialized (
+        select option_mapping.*
+        from option_mapping
+        inner join copied_options
+          on copied_options.option_id = option_mapping.target_option_id
+      ), copied_values as (
+        insert into ticketing.task_multi_select_values (
+          collection_id,
+          property_definition_id,
+          schema_id,
+          task_id,
+          tenant_id
+        )
+        select
+          source_value.collection_id,
+          ${target.propertyDefinitionId},
+          source_value.schema_id,
+          source_value.task_id,
+          source_value.tenant_id
+        from ticketing.task_multi_select_values as source_value
+        where source_value.property_definition_id = ${source.propertyDefinitionId}
+          and source_value.tenant_id = ${source.tenantId}
+        returning task_id
+      )
+      insert into ticketing.task_multi_select_selections (
+        option_id,
+        property_definition_id,
+        task_id,
+        tenant_id
+      )
+      select
+        copied_option_mapping.target_option_id,
+        ${target.propertyDefinitionId},
+        source_selection.task_id,
+        source_selection.tenant_id
+      from ticketing.task_multi_select_selections as source_selection
+      inner join copied_option_mapping
+        on copied_option_mapping.source_option_id = source_selection.option_id
+      inner join copied_values
+        on copied_values.task_id = source_selection.task_id
+      where ${copyValues}
+        and source_selection.property_definition_id = ${source.propertyDefinitionId}
+        and source_selection.tenant_id = ${source.tenantId}
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_multi_select_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+    await tx.execute(sql`
+      delete from ticketing.multi_select_options
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(distinct selection.task_id)::integer as "impactCount"
+      from ticketing.task_multi_select_selections as selection
+      inner join ticketing.tasks as task
+        on task.task_id = selection.task_id
+        and task.tenant_id = selection.tenant_id
+      where selection.property_definition_id = ${target.propertyDefinitionId}
+        and selection.tenant_id = ${target.tenantId}
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const selectLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     await tx.execute(sql`
@@ -826,6 +933,7 @@ const lifecycleAdapters = {
   id: idLifecycleAdapter,
   last_edited_by: intrinsicLifecycleAdapter,
   last_edited_time: intrinsicLifecycleAdapter,
+  multi_select: multiSelectLifecycleAdapter,
   number: numberLifecycleAdapter,
   person: personLifecycleAdapter,
   phone: phoneLifecycleAdapter,
@@ -1003,6 +1111,87 @@ const isSimpleDuplicatedDatatype = (
   datatype: TaskPropertyDefinition['datatype'],
 ): datatype is SimpleDuplicatedDatatype => simpleDuplicatedDatatypes.has(datatype);
 
+const duplicateOptionTaskPropertyDefinition = async ({
+  adapter,
+  copyValues,
+  source,
+  target,
+  tx,
+}: {
+  readonly adapter: TaskPropertyLifecycleAdapter;
+  readonly copyValues: boolean;
+  readonly source: TaskPropertyDefinitionLifecycleTarget;
+  readonly target: Extract<
+    TaskPropertyDefinition,
+    { readonly datatype: 'multi_select' | 'select' }
+  >;
+  readonly tx: CoreTransaction;
+}): Promise<MultiSelectPropertyDefinition | SelectPropertyDefinition> => {
+  if (target.datatype === 'select') {
+    if (source.selectOptionOrderMode === null) {
+      throw new Error('Select Task Property option ordering mode is missing.');
+    }
+    const definition: SelectPropertyDefinition = {
+      datatype: 'select',
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      optionOrderMode: source.selectOptionOrderMode,
+      options: [],
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues, source, target: definition, tx });
+    const optionsResult = await tx.execute(sql`
+      select
+        color,
+        manual_position as "manualPosition",
+        name,
+        option_id as "optionId",
+        revision
+      from ticketing.select_options
+      where property_definition_id = ${definition.propertyDefinitionId}
+        and tenant_id = ${source.tenantId}
+      order by manual_position, option_id
+    `);
+    return {
+      ...definition,
+      options: rowsFromResult<SelectOption>(optionsResult),
+    };
+  }
+
+  const definition: MultiSelectPropertyDefinition = {
+    datatype: 'multi_select',
+    hidden: target.hidden,
+    mandatory: target.mandatory,
+    name: target.name,
+    options: [],
+    propertyDefinitionId: target.propertyDefinitionId,
+    revision: target.revision,
+  };
+  await adapter.copyValues({ copyValues, source, target: definition, tx });
+  const optionsResult = await tx.execute(sql`
+    select
+      catalog_position as "catalogPosition",
+      color,
+      name,
+      option_id as "optionId",
+      revision,
+      to_char(
+        updated_at at time zone 'UTC',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+      ) as "updatedAt"
+    from ticketing.multi_select_options
+    where property_definition_id = ${definition.propertyDefinitionId}
+      and tenant_id = ${source.tenantId}
+    order by catalog_position, option_id
+  `);
+  return {
+    ...definition,
+    options: rowsFromResult<MultiSelectOption>(optionsResult),
+  };
+};
+
 // oxlint-disable-next-line eslint/complexity -- Datatype dispatch remains explicit at this deep lifecycle boundary.
 export const duplicateTaskPropertyDefinition = async ({
   copyValues,
@@ -1113,37 +1302,14 @@ export const duplicateTaskPropertyDefinition = async ({
     await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
     return definition;
   }
-  if (target.datatype === 'select') {
-    if (source.selectOptionOrderMode === null) {
-      throw new Error('Select Task Property option ordering mode is missing.');
-    }
-    const definition: SelectPropertyDefinition = {
-      datatype: 'select',
-      hidden: target.hidden,
-      mandatory: target.mandatory,
-      name: target.name,
-      optionOrderMode: source.selectOptionOrderMode,
-      options: [],
-      propertyDefinitionId: target.propertyDefinitionId,
-      revision: target.revision,
-    };
-    await adapter.copyValues({ copyValues, source, target: definition, tx });
-    const optionsResult = await tx.execute(sql`
-      select
-        color,
-        manual_position as "manualPosition",
-        name,
-        option_id as "optionId",
-        revision
-      from ticketing.select_options
-      where property_definition_id = ${definition.propertyDefinitionId}
-        and tenant_id = ${source.tenantId}
-      order by manual_position, option_id
-    `);
-    return {
-      ...definition,
-      options: rowsFromResult<SelectOption>(optionsResult),
-    };
+  if (target.datatype === 'select' || target.datatype === 'multi_select') {
+    return duplicateOptionTaskPropertyDefinition({
+      adapter,
+      copyValues: effectiveCopyValues,
+      source,
+      target,
+      tx,
+    });
   }
   if (target.datatype === 'status') {
     const definition: StatusPropertyDefinition = {
