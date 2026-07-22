@@ -29,7 +29,8 @@ const duplicatedDefinitionEvidence = (
   changedComponents:
     response.definition.datatype === 'created_by' ||
     response.definition.datatype === 'created_time' ||
-    response.definition.datatype === 'last_edited_time'
+    response.definition.datatype === 'last_edited_time' ||
+    response.definition.datatype === 'last_edited_by'
       ? ['definition']
       : ['definition', 'propertyValues'],
   collectionId: input.collectionId,

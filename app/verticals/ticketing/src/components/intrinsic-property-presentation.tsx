@@ -40,3 +40,6 @@ export const CreatedByPresentation = ({
     {inactive ? ` (${inactiveLabel})` : null}
   </span>
 );
+
+// Both Principal-backed intrinsic datatypes share current-name and inactive presentation.
+export const LastEditedByPresentation = CreatedByPresentation;

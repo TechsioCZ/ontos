@@ -39,7 +39,7 @@ type DefinitionRow =
   | (DefinitionFields & { readonly datatype: 'checkbox' })
   | (DefinitionFields & { readonly datatype: 'date' })
   | (DefinitionFields & {
-      readonly datatype: 'created_by' | 'created_time' | 'last_edited_time';
+      readonly datatype: 'created_by' | 'created_time' | 'last_edited_time' | 'last_edited_by';
     })
   | (DefinitionFields & { readonly datatype: 'date_range'; readonly timeEnabled: boolean })
   | (DefinitionFields & { readonly datatype: 'email' })
@@ -265,6 +265,9 @@ interface ValueRow {
   readonly idPrefix: string | null;
   readonly idPropertyDefinitionId: string | null;
   readonly lastEditedAt: string;
+  readonly lastEditedByDisplayName: string;
+  readonly lastEditedByPrincipalId: string;
+  readonly lastEditedByStatus: 'active' | 'archived' | 'disabled';
   readonly propertyDefinitionId: string | null;
   readonly revision: number;
   readonly taskId: string;
@@ -283,6 +286,8 @@ interface StoredFilesMediaItemRow {
 }
 
 type FilesMediaItemRow = FilesMediaItem & { readonly taskId: string };
+
+type TaskPrincipalAttribution = NonNullable<TaskPropertyWorkspace['tasks'][number]['createdBy']>;
 
 interface TaskRow {
   readonly canvas: TaskPropertyWorkspace['tasks'][number]['canvas'];
@@ -314,12 +319,9 @@ interface TaskRow {
   readonly filesMediaItems: Omit<FilesMediaItemRow, 'taskId'>[];
   idAssignment?: IdAssignment;
   readonly createdAt?: string;
-  readonly createdBy?: {
-    displayName: string;
-    inactive: boolean;
-    principalId: string;
-  };
+  readonly createdBy?: TaskPrincipalAttribution;
   readonly lastEditedAt?: string;
+  readonly lastEditedBy?: TaskPrincipalAttribution;
   numberValues?: {
     propertyDefinitionId: string;
     revision: number;
@@ -486,21 +488,45 @@ const appendFilesMediaItems = (
   }
 };
 
+const taskPrincipalAttribution = ({
+  displayName,
+  principalId,
+  status,
+}: {
+  readonly displayName: string;
+  readonly principalId: string;
+  readonly status: 'active' | 'archived' | 'disabled';
+}): TaskPrincipalAttribution => ({
+  displayName,
+  inactive: status !== 'active',
+  principalId,
+});
+
 const intrinsicTaskFacts = (
   row: ValueRow,
   exposesCreatedBy: boolean,
   exposesCreatedTime: boolean,
+  exposesLastEditedBy: boolean,
   exposesLastEditedTime: boolean,
-): Pick<TaskRow, 'createdAt' | 'createdBy' | 'lastEditedAt'> => ({
+): Pick<TaskRow, 'createdAt' | 'createdBy' | 'lastEditedAt' | 'lastEditedBy'> => ({
   ...(exposesCreatedTime ? { createdAt: row.createdAt } : {}),
   ...(exposesLastEditedTime ? { lastEditedAt: row.lastEditedAt } : {}),
+  ...(exposesLastEditedBy
+    ? {
+        lastEditedBy: taskPrincipalAttribution({
+          displayName: row.lastEditedByDisplayName,
+          principalId: row.lastEditedByPrincipalId,
+          status: row.lastEditedByStatus,
+        }),
+      }
+    : {}),
   ...(exposesCreatedBy
     ? {
-        createdBy: {
+        createdBy: taskPrincipalAttribution({
           displayName: row.createdByDisplayName,
-          inactive: row.createdByStatus !== 'active',
           principalId: row.createdByPrincipalId,
-        },
+          status: row.createdByStatus,
+        }),
       }
     : {}),
 });
@@ -564,6 +590,9 @@ const taskRowsFromValues = ({
   const exposesLastEditedTime = definitions.some(
     (definition) => definition.datatype === 'last_edited_time' && !definition.hidden,
   );
+  const exposesLastEditedBy = definitions.some(
+    (definition) => definition.datatype === 'last_edited_by' && !definition.hidden,
+  );
 
   for (const row of valueRows) {
     const current = tasks.get(row.taskId) ?? {
@@ -571,7 +600,13 @@ const taskRowsFromValues = ({
       checkboxValues: [],
       dateRangeValues: [],
       dateValues: [],
-      ...intrinsicTaskFacts(row, exposesCreatedBy, exposesCreatedTime, exposesLastEditedTime),
+      ...intrinsicTaskFacts(
+        row,
+        exposesCreatedBy,
+        exposesCreatedTime,
+        exposesLastEditedBy,
+        exposesLastEditedTime,
+      ),
       emailValues: [],
       filesMediaItems: [],
       phoneValues: [],
@@ -708,7 +743,7 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
         and status_configuration.tenant_id = definition.tenant_id
       where schema.collection_id = ${input.collectionId}
         and definition.tenant_id = ${context.tenantId}
-        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'last_edited_time', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')
+        and definition.datatype in ('checkbox', 'created_time', 'created_by', 'last_edited_time', 'last_edited_by', 'date', 'date_range', 'email', 'files_media', 'id', 'multi_select', 'number', 'person', 'phone', 'select', 'status', 'text', 'url')
       order by definition.schema_position, definition.property_definition_id
     `);
     const valueResult = await db.execute(sql`
@@ -725,6 +760,9 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
           task.last_edited_at at time zone 'UTC',
           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
         ) as "lastEditedAt",
+        editor.display_name as "lastEditedByDisplayName",
+        task.last_edited_by_principal_id as "lastEditedByPrincipalId",
+        editor.status as "lastEditedByStatus",
         id_assignment.number::text as "idNumber",
         id_definition.prefix as "idPrefix",
         id_assignment.property_definition_id as "idPropertyDefinitionId",
@@ -738,6 +776,9 @@ export const getTaskPropertyWorkspaceDataAccessRegistration: DataAccessRegistrat
       inner join core.principals as creator
         on creator.principal_id = task.created_by_principal_id
         and creator.tenant_id = task.tenant_id
+      inner join core.principals as editor
+        on editor.principal_id = task.last_edited_by_principal_id
+        and editor.tenant_id = task.tenant_id
       left join ticketing.task_checkbox_values as value
         on value.task_id = task.task_id
         and value.tenant_id = task.tenant_id

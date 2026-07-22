@@ -222,7 +222,7 @@ const transitionTaskRetentionActionHandler: ActionHandler<
           else task.last_edited_at
         end,
         last_edited_by_principal_id = case
-          when ${updatesLastEdit} then ${services.context.principalId}
+          when ${updatesLastEdit} then ${services.effectiveEditorPrincipalId}::uuid
           else task.last_edited_by_principal_id
         end,
         retention_state = ${desiredState},
@@ -248,7 +248,10 @@ const transitionTaskRetentionActionHandler: ActionHandler<
       )
       select
         updated_task.changed_at,
-        ${services.context.principalId},
+        case
+          when ${updatesLastEdit} then ${services.effectiveEditorPrincipalId}::uuid
+          else ${services.context.principalId}::uuid
+        end,
         ${reason},
         updated_task.revision,
         updated_task.task_id,

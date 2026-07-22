@@ -12,6 +12,7 @@ import { createTaskActionRegistration } from '../src/actions/create-task.ts';
 import { createTaskCollectionActionRegistration } from '../src/actions/create-task-collection.ts';
 import { addFilesMediaExternalItemActionRegistration } from '../src/actions/add-files-media-external-item.ts';
 import { createFilesMediaPropertyDefinitionActionRegistration } from '../src/actions/create-files-media-property-definition.ts';
+import { createIntrinsicPropertyDefinitionActionRegistration } from '../src/actions/create-intrinsic-property-definition.ts';
 import { duplicateTaskPropertyDefinitionActionRegistration } from '../src/actions/duplicate-task-property-definition.ts';
 import { deleteTaskPropertyDefinitionActionRegistration } from '../src/actions/delete-task-property-definition.ts';
 import { uploadFilesMediaItemActionRegistration } from '../src/actions/upload-files-media-item.ts';
@@ -237,6 +238,107 @@ test('uploaded and exact external items coexist in one committed order', async (
     uploaded.response.item,
     external.response.item,
   ]);
+});
+
+test('Files & media item mutations attribute automation to the originating Principal', async () => {
+  const originContext = await createOperationIdentity();
+  const { collectionId, definition, task } = await createCollectionTaskAndDefinition(originContext);
+  const lastEditedBy = await runRegisteredAction({
+    operationContext: originContext,
+    payload: {
+      collectionId,
+      datatype: 'last_edited_by',
+      mandatory: false,
+      name: 'Last edited by',
+    },
+    registration: createIntrinsicPropertyDefinitionActionRegistration,
+  });
+  assert.equal(lastEditedBy._tag, 'OperationSucceeded', JSON.stringify(lastEditedBy));
+  const [automation] = await sqlClient`
+    insert into core.principals (tenant_id, display_name, kind, status)
+    values (${originContext.tenantId}, ${'Files automation'}, ${'system'}, ${'active'})
+    returning principal_id
+  `;
+  const automationContext = {
+    ...originContext,
+    originatingPrincipalId: originContext.principalId,
+    principalId: automation.principal_id,
+  };
+  const { taskId } = task.response.task;
+  const { propertyDefinitionId } = definition.response.definition;
+  const readLastEditedBy = async () => {
+    const workspace = await runDataAccess({
+      options: {
+        authorizationChecker: allowedAuthorization,
+        operationContextResolver: operationContextResolver(originContext),
+      },
+      payload: { collectionId },
+      registration: getTaskPropertyWorkspaceDataAccessRegistration,
+      resultCount: (response) => response.tasks.length,
+      transport: { headers: new Headers() },
+    });
+    assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+    return workspace.response.tasks[0].lastEditedBy;
+  };
+  const expectedAttribution = {
+    displayName: 'Files editor',
+    inactive: false,
+    principalId: originContext.principalId,
+  };
+
+  const first = await runRegisteredAction({
+    operationContext: automationContext,
+    payload: {
+      collectionId,
+      expectedRevision: task.response.task.revision,
+      propertyDefinitionId,
+      taskId,
+      url: 'https://example.com/first',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(first._tag, 'OperationSucceeded', JSON.stringify(first));
+  assert.deepEqual(await readLastEditedBy(), expectedAttribution);
+
+  const second = await runRegisteredAction({
+    operationContext: automationContext,
+    payload: {
+      collectionId,
+      expectedRevision: first.response.taskRevision,
+      propertyDefinitionId,
+      taskId,
+      url: 'https://example.com/second',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(second._tag, 'OperationSucceeded', JSON.stringify(second));
+  const reordered = await runRegisteredAction({
+    operationContext: automationContext,
+    payload: {
+      collectionId,
+      expectedRevision: second.response.taskRevision,
+      itemIds: [second.response.item.itemId, first.response.item.itemId],
+      propertyDefinitionId,
+      taskId,
+    },
+    registration: reorderFilesMediaItemsActionRegistration,
+  });
+  assert.equal(reordered._tag, 'OperationSucceeded', JSON.stringify(reordered));
+  assert.deepEqual(await readLastEditedBy(), expectedAttribution);
+
+  const removed = await runRegisteredAction({
+    operationContext: automationContext,
+    payload: {
+      collectionId,
+      expectedRevision: reordered.response.taskRevision,
+      itemId: first.response.item.itemId,
+      propertyDefinitionId,
+      taskId,
+    },
+    registration: removeFilesMediaItemActionRegistration,
+  });
+  assert.equal(removed._tag, 'OperationSucceeded', JSON.stringify(removed));
+  assert.deepEqual(await readLastEditedBy(), expectedAttribution);
 });
 
 test('a stale single upload preserves the concurrently committed Files & media value', async () => {

@@ -204,6 +204,7 @@ export interface ActionAuthorizationRequirement<TInput = unknown> {
 export interface ActionExecutionServices<TAction> {
   readonly clock: OperationClock;
   readonly context: OperationContext<TAction>;
+  readonly effectiveEditorPrincipalId: string;
   readonly markNoOp: () => void;
   readonly tx: CoreTransaction;
 }
@@ -457,11 +458,11 @@ const resolveContext = <TAction>({
     : contextInvalid(result.error);
 };
 
-const validateActionActor = async <TAction>(
+const validateActionAttributionContext = async <TAction>(
   context: OperationContext<TAction>,
 ): Promise<OperationContext<TAction> | OperationContextInvalid> => {
   const actor = await db
-    .select({ principalId: principals.principalId })
+    .select({ kind: principals.kind, principalId: principals.principalId })
     .from(principals)
     .where(
       and(
@@ -472,11 +473,36 @@ const validateActionActor = async <TAction>(
     )
     .limit(1);
 
-  return actor.length === 1
+  if (actor.length !== 1) {
+    return {
+      _tag: 'OperationContextInvalid',
+      message: 'The operation Actor must be an active Principal in its tenant.',
+    };
+  }
+
+  if (context.originatingPrincipalId === undefined) {
+    return actor[0]?.kind === 'human'
+      ? { ...context, originatingPrincipalId: context.principalId }
+      : context;
+  }
+
+  const origin = await db
+    .select({ principalId: principals.principalId })
+    .from(principals)
+    .where(
+      and(
+        eq(principals.principalId, context.originatingPrincipalId),
+        eq(principals.tenantId, context.tenantId),
+        eq(principals.kind, 'human'),
+      ),
+    )
+    .limit(1);
+
+  return origin.length === 1
     ? context
     : {
         _tag: 'OperationContextInvalid',
-        message: 'The operation Actor must be an active Principal in its tenant.',
+        message: 'The Originating Principal must be a retained human Principal in the tenant.',
       };
 };
 
@@ -661,6 +687,7 @@ const claimFailedActionInvocationRetry = async <TAction>({
     .update(actionInvocations)
     .set({
       completedAt: null,
+      originatingPrincipalId: context.originatingPrincipalId,
       status: 'received',
     })
     .where(
@@ -748,6 +775,7 @@ const registerActionInvocation = async <TAction>({
       authMethod: 'session',
       idempotencyKey,
       legalEntityId: context.legalEntityId,
+      originatingPrincipalId: context.originatingPrincipalId,
       principalId: context.principalId,
       requestHash: hash,
       status: 'received',
@@ -1256,7 +1284,7 @@ export const runAction = async <TAction, TResponse>({
     return context;
   }
 
-  const actorValidatedContext = await validateActionActor(context);
+  const actorValidatedContext = await validateActionAttributionContext(context);
 
   if ('_tag' in actorValidatedContext) {
     return actorValidatedContext;
@@ -1338,6 +1366,8 @@ export const runAction = async <TAction, TResponse>({
             handlerOutboxMessages.push(message);
           },
         },
+        effectiveEditorPrincipalId:
+          policyCheckedContext.originatingPrincipalId ?? policyCheckedContext.principalId,
         markNoOp: () => {
           actionWasNoOp = true;
         },

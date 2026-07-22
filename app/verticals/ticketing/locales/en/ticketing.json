@@ -107,6 +107,11 @@
         "details": "Details",
         "name": "Last edited time"
       },
+      "last_edited_by": {
+        "create": "Add Last edited by property",
+        "creating": "Adding Last edited by property",
+        "name": "Last edited by"
+      },
       "inactive": "inactive"
     },
     "phone": {

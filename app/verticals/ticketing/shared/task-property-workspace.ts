@@ -85,6 +85,12 @@ export const personPropertyValueSchema = Schema.Struct({
   revision: Schema.Finite,
 });
 
+export const taskPrincipalAttributionSchema = Schema.Struct({
+  displayName: Schema.String,
+  inactive: Schema.Boolean,
+  principalId: Schema.String,
+});
+
 export const taskPropertyWorkspaceSchema = Schema.Struct({
   collectionId: Schema.String,
   effectiveTimeZone: Schema.optional(
@@ -105,19 +111,14 @@ export const taskPropertyWorkspaceSchema = Schema.Struct({
       canvas: Schema.Json,
       checkboxValues: Schema.Array(checkboxPropertyValueSchema),
       createdAt: Schema.optional(Schema.String),
-      createdBy: Schema.optional(
-        Schema.Struct({
-          displayName: Schema.String,
-          inactive: Schema.Boolean,
-          principalId: Schema.String,
-        }),
-      ),
+      createdBy: Schema.optional(taskPrincipalAttributionSchema),
       dateRangeValues: Schema.Array(dateRangePropertyValueSchema),
       dateValues: Schema.Array(datePropertyValueSchema),
       emailValues: Schema.Array(emailPropertyValueSchema),
       filesMediaItems: Schema.Array(filesMediaItemSchema),
       idAssignment: Schema.optional(idAssignmentSchema),
       lastEditedAt: Schema.optional(Schema.String),
+      lastEditedBy: Schema.optional(taskPrincipalAttributionSchema),
       multiSelectValues: Schema.optional(Schema.Array(multiSelectPropertyValueSchema)),
       numberValues: Schema.optional(Schema.Array(numberPropertyValueSchema)),
       personValues: Schema.optional(Schema.Array(personPropertyValueSchema)),

@@ -211,7 +211,7 @@ const updateDatePropertyValueActionHandler: ActionHandler<
     update ticketing.tasks
     set
       last_edited_at = ${changedAt}::timestamptz,
-      last_edited_by_principal_id = ${services.context.principalId},
+      last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
       revision = revision + 1
     where task_id = ${input.taskId}
       and tenant_id = ${services.context.tenantId}
@@ -238,7 +238,7 @@ const updateDatePropertyValueActionHandler: ActionHandler<
     )
     values (
       ${updatedTask.changedAt},
-      ${services.context.principalId},
+      ${services.effectiveEditorPrincipalId},
       'date_value_changed',
       ${updatedTask.taskRevision},
       ${input.taskId},

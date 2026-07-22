@@ -39,6 +39,7 @@ interface EnvelopeRow {
   readonly legal_entity_id: string | null;
   readonly outbox_delivery_id: string;
   readonly outbox_message_id: string;
+  readonly originating_principal_id: string | null;
   readonly payload_json: unknown;
   readonly principal_id: string | null;
   readonly producer_module_key: string;
@@ -260,6 +261,7 @@ const reconstructEnvelope = async (
       event.legal_entity_id,
       event.producer_module_key,
       action.action_invocation_id,
+      action.originating_principal_id,
       action.principal_id,
       action.auth_binding_id,
       action.action_key,
@@ -362,6 +364,9 @@ const executeClaimedDelivery = async ({
               ...(envelope.action_idempotency_key === null
                 ? {}
                 : { originalActionIdempotencyKey: envelope.action_idempotency_key }),
+              ...(envelope.originating_principal_id === null
+                ? {}
+                : { originatingPrincipalId: envelope.originating_principal_id }),
             },
             payload,
           },

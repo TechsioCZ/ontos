@@ -68,6 +68,7 @@ export interface OperationContext<TAction> {
     policyKey: string;
     reason: string;
   }[];
+  originatingPrincipalId?: string;
   principalId: string;
   tenantId: string;
 }

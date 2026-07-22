@@ -226,7 +226,7 @@ const updateTextPropertyValueActionHandler: ActionHandler<
       update ticketing.tasks as task
       set
         last_edited_at = ${changedAt}::timestamptz,
-        last_edited_by_principal_id = ${services.context.principalId},
+        last_edited_by_principal_id = ${services.effectiveEditorPrincipalId},
         revision = task.revision + 1
       from updated_value
       where task.task_id = updated_value.task_id
@@ -244,7 +244,7 @@ const updateTextPropertyValueActionHandler: ActionHandler<
       )
       select
         updated_task.last_edited_at,
-        ${services.context.principalId},
+        ${services.effectiveEditorPrincipalId},
         'text_value_changed',
         updated_task.revision,
         updated_task.task_id,
