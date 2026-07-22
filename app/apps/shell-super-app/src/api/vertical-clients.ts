@@ -2,6 +2,7 @@ export {
   runRemoveFilesMediaItemAction,
   runReorderFilesMediaItemsAction,
   runAddFilesMediaExternalItemAction,
+  runDeleteStatusOptionAction,
   runRetainTextCoreReferenceLabelAction,
   runDeleteSelectOptionAction,
   runCreateMultiSelectOptionAndSelectAction,

@@ -6,9 +6,12 @@ import type {
   SelectOption,
   SelectOptionOrderMode,
   SelectPropertyDefinition,
+  StatusOption,
+  StatusPropertyDefinition,
   TaskPropertyDefinition,
 } from '../shared/task-property-definition.ts';
 import type { TaskPropertyDeletionImpact } from '../shared/task-property-deletion-impact.ts';
+import { statusDefinitionFromParts, statusGroupLabel } from './status-property.ts';
 
 interface TaskPropertyDefinitionLifecycleTarget {
   readonly cardinality: 'one' | 'unlimited' | null;
@@ -630,6 +633,119 @@ const selectLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const statusLifecycleAdapter: TaskPropertyLifecycleAdapter = {
+  copyValues: async ({ copyValues, source, target, tx }) => {
+    await tx.execute(sql`
+      with option_mapping as materialized (
+        select
+          gen_random_uuid() as target_option_id,
+          source_configuration.default_option_id = source_option.option_id as is_default,
+          source_option.color,
+          source_option.group_key,
+          source_option.name,
+          source_option.normalized_name,
+          source_option.option_id as source_option_id,
+          source_option.position
+        from ticketing.status_options as source_option
+        inner join ticketing.status_property_configurations as source_configuration
+          on source_configuration.property_definition_id = source_option.property_definition_id
+          and source_configuration.tenant_id = source_option.tenant_id
+        where source_option.property_definition_id = ${source.propertyDefinitionId}
+          and source_option.tenant_id = ${source.tenantId}
+      ), copied_options as (
+        insert into ticketing.status_options (
+          color,
+          group_key,
+          name,
+          normalized_name,
+          option_id,
+          position,
+          property_definition_id,
+          tenant_id
+        )
+        select
+          option_mapping.color,
+          option_mapping.group_key,
+          option_mapping.name,
+          option_mapping.normalized_name,
+          option_mapping.target_option_id,
+          option_mapping.position,
+          ${target.propertyDefinitionId},
+          ${source.tenantId}
+        from option_mapping
+        returning option_id
+      ), copied_configuration as (
+        insert into ticketing.status_property_configurations (
+          default_option_id,
+          property_definition_id,
+          tenant_id
+        )
+        select
+          option_mapping.target_option_id,
+          ${target.propertyDefinitionId},
+          ${source.tenantId}
+        from option_mapping
+        inner join copied_options
+          on copied_options.option_id = option_mapping.target_option_id
+        where option_mapping.is_default
+        returning property_definition_id
+      )
+      insert into ticketing.task_status_values (
+        collection_id,
+        option_id,
+        property_definition_id,
+        schema_id,
+        task_id,
+        tenant_id
+      )
+      select
+        source_value.collection_id,
+        option_mapping.target_option_id,
+        ${target.propertyDefinitionId},
+        source_value.schema_id,
+        source_value.task_id,
+        source_value.tenant_id
+      from ticketing.task_status_values as source_value
+      inner join option_mapping
+        on option_mapping.source_option_id = source_value.option_id
+      inner join copied_configuration on true
+      where ${copyValues}
+        and source_value.property_definition_id = ${source.propertyDefinitionId}
+        and source_value.tenant_id = ${source.tenantId}
+    `);
+  },
+  deleteValues: async ({ target, tx }) => {
+    await tx.execute(sql`
+      delete from ticketing.task_status_values
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+    await tx.execute(sql`
+      delete from ticketing.status_property_configurations
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+    await tx.execute(sql`
+      delete from ticketing.status_options
+      where property_definition_id = ${target.propertyDefinitionId}
+        and tenant_id = ${target.tenantId}
+    `);
+  },
+  getDeletionImpactCount: async ({ db, target }) => {
+    const result = await db.execute(sql`
+      select count(task.task_id)::integer as "impactCount"
+      from ticketing.task_status_values as value
+      inner join ticketing.tasks as task
+        on task.task_id = value.task_id
+        and task.tenant_id = value.tenant_id
+      where value.property_definition_id = ${target.propertyDefinitionId}
+        and value.tenant_id = ${target.tenantId}
+        and value.option_id is not null
+    `);
+    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  },
+};
+
 const urlLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     await tx.execute(sql`
@@ -704,6 +820,7 @@ const lifecycleAdapters = {
   person: personLifecycleAdapter,
   phone: phoneLifecycleAdapter,
   select: selectLifecycleAdapter,
+  status: statusLifecycleAdapter,
   text: textLifecycleAdapter,
   url: urlLifecycleAdapter,
 } satisfies Readonly<Record<string, TaskPropertyLifecycleAdapter>>;
@@ -878,6 +995,7 @@ const isSimpleDuplicatedDatatype = (
   datatype: TaskPropertyDefinition['datatype'],
 ): datatype is SimpleDuplicatedDatatype => simpleDuplicatedDatatypes.has(datatype);
 
+// oxlint-disable-next-line eslint/complexity -- Datatype dispatch remains explicit at this deep lifecycle boundary.
 export const duplicateTaskPropertyDefinition = async ({
   copyValues,
   source,
@@ -1018,6 +1136,61 @@ export const duplicateTaskPropertyDefinition = async ({
       ...definition,
       options: rowsFromResult<SelectOption>(optionsResult),
     };
+  }
+  if (target.datatype === 'status') {
+    const definition: StatusPropertyDefinition = {
+      datatype: 'status',
+      defaultOptionId: '',
+      groups: [],
+      hidden: target.hidden,
+      mandatory: target.mandatory,
+      name: target.name,
+      propertyDefinitionId: target.propertyDefinitionId,
+      revision: target.revision,
+    };
+    await adapter.copyValues({ copyValues: effectiveCopyValues, source, target: definition, tx });
+    const configurationResult = await tx.execute(sql`
+      select
+        collection.locale,
+        configuration.default_option_id as "defaultOptionId"
+      from ticketing.status_property_configurations as configuration
+      inner join ticketing.task_property_definitions as definition
+        on definition.property_definition_id = configuration.property_definition_id
+        and definition.tenant_id = configuration.tenant_id
+      inner join ticketing.task_schemas as schema
+        on schema.schema_id = definition.schema_id
+        and schema.tenant_id = definition.tenant_id
+      inner join ticketing.task_collections as collection
+        on collection.collection_id = schema.collection_id
+        and collection.tenant_id = schema.tenant_id
+      where configuration.property_definition_id = ${definition.propertyDefinitionId}
+        and configuration.tenant_id = ${source.tenantId}
+    `);
+    const configuration = rowsFromResult<{
+      readonly defaultOptionId: string;
+      readonly locale: string;
+    }>(configurationResult).at(0);
+    if (configuration === undefined) {
+      throw new Error('Duplicated Status configuration is missing.');
+    }
+    const optionsResult = await tx.execute(sql`
+      select
+        color,
+        group_key as group,
+        name,
+        option_id as "optionId",
+        position,
+        revision
+      from ticketing.status_options
+      where property_definition_id = ${definition.propertyDefinitionId}
+        and tenant_id = ${source.tenantId}
+    `);
+    return statusDefinitionFromParts({
+      ...definition,
+      defaultOptionId: configuration.defaultOptionId,
+      groupLabel: (group) => statusGroupLabel(group, configuration.locale),
+      options: rowsFromResult<StatusOption>(optionsResult),
+    });
   }
   if (target.datatype === 'person') {
     if (source.cardinality === null) {

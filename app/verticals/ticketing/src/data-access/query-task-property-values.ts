@@ -27,6 +27,13 @@ interface TextQueryRow {
   readonly taskId: string;
 }
 
+interface StatusQueryRow {
+  readonly locale: string;
+  readonly optionId: string | null;
+  readonly optionName: string | null;
+  readonly taskId: string;
+}
+
 interface TextCollation {
   readonly endsWith: (value: string, search: string) => boolean;
   readonly equals: (left: string, right: string) => boolean;
@@ -464,6 +471,83 @@ export const queryTaskPropertyValuesDataAccessRegistration: DataAccessRegistrati
       `);
       return {
         taskIds: rowsFromResult<{ readonly taskId: string }>(result).map(({ taskId }) => taskId),
+      };
+    }
+
+    if (input.query.datatype === 'status') {
+      const result = await db.execute(sql`
+        select
+          collection.locale,
+          option.option_id as "optionId",
+          option.name as "optionName",
+          task.task_id as "taskId"
+        from ticketing.tasks as task
+        inner join ticketing.task_collections as collection
+          on collection.collection_id = task.collection_id
+          and collection.tenant_id = task.tenant_id
+        inner join ticketing.task_schemas as schema
+          on schema.collection_id = task.collection_id
+          and schema.tenant_id = task.tenant_id
+        inner join ticketing.task_property_definitions as definition
+          on definition.schema_id = schema.schema_id
+          and definition.property_definition_id = ${input.propertyDefinitionId}
+          and definition.datatype = 'status'
+          and definition.tenant_id = task.tenant_id
+        left join ticketing.task_status_values as value
+          on value.task_id = task.task_id
+          and value.property_definition_id = definition.property_definition_id
+          and value.tenant_id = task.tenant_id
+        left join ticketing.status_options as option
+          on option.option_id = value.option_id
+          and option.property_definition_id = definition.property_definition_id
+          and option.tenant_id = task.tenant_id
+        where task.collection_id = ${input.collectionId}
+          and task.tenant_id = ${context.tenantId}
+        order by task.task_id
+      `);
+      const rows = rowsFromResult<StatusQueryRow>(result);
+      const locale = rows.at(0)?.locale ?? 'en-GB';
+      const collation = textCollation(locale);
+      const { operation } = input.query;
+      if (operation.type === 'search') {
+        return {
+          taskIds: rows
+            .filter(
+              ({ optionName }) =>
+                optionName !== null && collation.includes(optionName, operation.query),
+            )
+            .map(({ taskId }) => taskId),
+        };
+      }
+
+      const groups = new Map<
+        string | null,
+        { heading: string | null; identity: string | null; taskIds: string[] }
+      >();
+      for (const row of rows) {
+        const group = groups.get(row.optionId) ?? {
+          heading: row.optionName,
+          identity: row.optionId,
+          taskIds: [],
+        };
+        group.taskIds.push(row.taskId);
+        groups.set(row.optionId, group);
+      }
+      const sortCollator = new Intl.Collator(locale, { sensitivity: 'accent', usage: 'sort' });
+      return {
+        groups: [...groups.values()].toSorted((left, right) => {
+          if (left.heading === null || right.heading === null) {
+            if (left.heading === right.heading) {
+              return 0;
+            }
+            return left.heading === null ? 1 : -1;
+          }
+          return (
+            sortCollator.compare(left.heading, right.heading) ||
+            (left.identity ?? '').localeCompare(right.identity ?? '')
+          );
+        }),
+        taskIds: rows.map(({ taskId }) => taskId),
       };
     }
 
