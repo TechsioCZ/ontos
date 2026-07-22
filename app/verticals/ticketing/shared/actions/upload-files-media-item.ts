@@ -6,6 +6,7 @@ export const uploadFilesMediaItemActionPayloadSchema = Schema.Struct({
   bytesBase64: Schema.String,
   clientMimeType: Schema.optional(Schema.String),
   collectionId: Schema.String,
+  expectedRevision: Schema.Finite,
   filename: Schema.String,
   propertyDefinitionId: Schema.String,
   taskId: Schema.String,

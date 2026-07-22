@@ -40,6 +40,10 @@ interface TaskPropertyLifecycleAdapter {
     readonly db: CoreReadonlyDbExecutor;
     readonly target: TaskPropertyDefinitionLifecycleTarget;
   }) => Promise<number>;
+  readonly getDeletionImpact?: (input: {
+    readonly db: CoreReadonlyDbExecutor;
+    readonly target: TaskPropertyDefinitionLifecycleTarget;
+  }) => Promise<Pick<TaskPropertyDeletionImpact, 'impactCount' | 'impactRevision'>>;
 }
 
 export const shouldCopyTaskPropertyDefinitionValues = ({
@@ -65,6 +69,10 @@ export const shouldCopyTaskPropertyDefinitionValues = ({
 
 interface ImpactCountRow {
   readonly impactCount: number;
+}
+
+interface ImpactRevisionRow extends ImpactCountRow {
+  readonly impactRevision: string;
 }
 
 const checkboxLifecycleAdapter: TaskPropertyLifecycleAdapter = {
@@ -342,6 +350,37 @@ const emailLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   },
 };
 
+const getFilesMediaDeletionImpact = async ({
+  db,
+  target,
+}: {
+  readonly db: CoreReadonlyDbExecutor;
+  readonly target: TaskPropertyDefinitionLifecycleTarget;
+}): Promise<ImpactRevisionRow> => {
+  const result = await db.execute(sql`
+    select
+      count(affected.task_id)::integer as "impactCount",
+      md5(coalesce(
+        string_agg(affected.task_id::text, ',' order by affected.task_id),
+        ''
+      )) as "impactRevision"
+    from (
+      select distinct item.task_id
+      from ticketing.task_files_media_items as item
+      inner join ticketing.tasks as task
+        on task.task_id = item.task_id
+        and task.tenant_id = item.tenant_id
+      where item.property_definition_id = ${target.propertyDefinitionId}
+        and item.tenant_id = ${target.tenantId}
+    ) as affected
+  `);
+  const impact = rowsFromResult<ImpactRevisionRow>(result).at(0);
+  if (impact === undefined) {
+    throw new Error('Files & media deletion impact could not be read.');
+  }
+  return impact;
+};
+
 const filesMediaLifecycleAdapter: TaskPropertyLifecycleAdapter = {
   copyValues: async ({ copyValues, source, target, tx }) => {
     if (!copyValues) {
@@ -376,17 +415,10 @@ const filesMediaLifecycleAdapter: TaskPropertyLifecycleAdapter = {
         and tenant_id = ${target.tenantId}
     `);
   },
-  getDeletionImpactCount: async ({ db, target }) => {
-    const result = await db.execute(sql`
-      select count(distinct item.task_id)::integer as "impactCount"
-      from ticketing.task_files_media_items as item
-      inner join ticketing.tasks as task
-        on task.task_id = item.task_id
-        and task.tenant_id = item.tenant_id
-      where item.property_definition_id = ${target.propertyDefinitionId}
-        and item.tenant_id = ${target.tenantId}
-    `);
-    return rowsFromResult<ImpactCountRow>(result).at(0)?.impactCount ?? 0;
+  getDeletionImpact: getFilesMediaDeletionImpact,
+  getDeletionImpactCount: async (input) => {
+    const impact = await getFilesMediaDeletionImpact(input);
+    return impact.impactCount;
   },
 };
 
@@ -782,8 +814,14 @@ export const getTaskPropertyDefinitionDeletionImpact = async ({
   if (adapter === undefined) {
     throw new Error(`Unsupported Task Property datatype: ${target.datatype}`);
   }
+  const impact =
+    adapter.getDeletionImpact === undefined
+      ? undefined
+      : await adapter.getDeletionImpact({ db, target });
+  const impactCount = impact?.impactCount ?? (await adapter.getDeletionImpactCount({ db, target }));
   return {
-    impactCount: await adapter.getDeletionImpactCount({ db, target }),
+    impactCount,
+    ...(impact === undefined ? {} : { impactRevision: impact.impactRevision }),
     propertyDefinitionId: target.propertyDefinitionId,
     revision: target.revision,
   };
@@ -818,23 +856,7 @@ const normalizeSelectPropertySchemaPositions = async ({
   `);
 };
 
-type SimpleDuplicatedDatatype = Extract<
-  TaskPropertyDefinition,
-  {
-    readonly datatype:
-      | 'created_by'
-      | 'created_time'
-      | 'date'
-      | 'email'
-      | 'files_media'
-      | 'last_edited_time'
-      | 'phone'
-      | 'text'
-      | 'url';
-  }
->['datatype'];
-
-const simpleDuplicatedDatatypes = new Set<SimpleDuplicatedDatatype>([
+const simpleDuplicatedDatatypeValues = [
   'created_by',
   'created_time',
   'date',
@@ -844,12 +866,17 @@ const simpleDuplicatedDatatypes = new Set<SimpleDuplicatedDatatype>([
   'phone',
   'text',
   'url',
-]);
+] as const satisfies readonly TaskPropertyDefinition['datatype'][];
+
+type SimpleDuplicatedDatatype = (typeof simpleDuplicatedDatatypeValues)[number];
+
+const simpleDuplicatedDatatypes = new Set<TaskPropertyDefinition['datatype']>(
+  simpleDuplicatedDatatypeValues,
+);
 
 const isSimpleDuplicatedDatatype = (
   datatype: TaskPropertyDefinition['datatype'],
-): datatype is SimpleDuplicatedDatatype =>
-  simpleDuplicatedDatatypes.has(datatype as SimpleDuplicatedDatatype);
+): datatype is SimpleDuplicatedDatatype => simpleDuplicatedDatatypes.has(datatype);
 
 export const duplicateTaskPropertyDefinition = async ({
   copyValues,

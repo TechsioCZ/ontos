@@ -148,6 +148,7 @@ test('an Editor uploads one generic download-only item through Ticketing and rea
       bytesBase64: Buffer.from([0, 1, 2, 3]).toString('base64'),
       clientMimeType: 'application/octet-stream',
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'payload',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -191,6 +192,7 @@ test('uploaded and exact external items coexist in one committed order', async (
     payload: {
       bytesBase64: Buffer.from('uploaded').toString('base64'),
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'uploaded.txt',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -237,6 +239,56 @@ test('uploaded and exact external items coexist in one committed order', async (
   ]);
 });
 
+test('a stale single upload preserves the concurrently committed Files & media value', async () => {
+  const operationContext = await createOperationIdentity();
+  const { collectionId, definition, task } =
+    await createCollectionTaskAndDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const committed = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: task.response.task.revision,
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+      url: 'https://example.com/concurrent',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(committed._tag, 'OperationSucceeded', JSON.stringify(committed));
+
+  const stale = await runRegisteredAction({
+    operationContext,
+    payload: {
+      bytesBase64: Buffer.from('stale upload').toString('base64'),
+      collectionId,
+      expectedRevision: task.response.task.revision,
+      filename: 'stale.txt',
+      propertyDefinitionId,
+      taskId: task.response.task.taskId,
+    },
+    registration: uploadFilesMediaItemActionRegistration,
+  });
+  assert.deepEqual(stale, {
+    _tag: 'OperationDomainRejected',
+    code: 'ticketing.uploadFilesMediaItem.stale',
+    message: 'The Files & media value changed elsewhere.',
+  });
+
+  const workspace = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId },
+    registration: getTaskPropertyWorkspaceDataAccessRegistration,
+    resultCount: (response) => response.tasks.length,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(workspace._tag, 'OperationSucceeded', JSON.stringify(workspace));
+  assert.deepEqual(workspace.response.tasks[0].filesMediaItems, [committed.response.item]);
+});
+
 test('reordering a complete mixed Files & media value commits atomically', async () => {
   const operationContext = await createOperationIdentity();
   const { collectionId, definition, task } =
@@ -251,6 +303,7 @@ test('reordering a complete mixed Files & media value commits atomically', async
     payload: {
       ...target,
       bytesBase64: Buffer.from('first').toString('base64'),
+      expectedRevision: task.response.task.revision,
       filename: 'first.txt',
     },
     registration: uploadFilesMediaItemActionRegistration,
@@ -377,6 +430,7 @@ test('copying a Files & media value creates new item identities and shares uploa
     payload: {
       ...target,
       bytesBase64: Buffer.from('shared bytes').toString('base64'),
+      expectedRevision: task.response.task.revision,
       filename: 'shared.bin',
     },
     registration: uploadFilesMediaItemActionRegistration,
@@ -569,6 +623,7 @@ test('Files & media deletion counts distinct committed Tasks and rejects stale i
       collectionId,
       confirmed: true,
       expectedImpactCount: impact.response.impactCount,
+      expectedImpactRevision: impact.response.impactRevision,
       expectedRevision: impact.response.revision,
       propertyDefinitionId,
     },
@@ -577,7 +632,91 @@ test('Files & media deletion counts distinct committed Tasks and rejects stale i
   assert.deepEqual(staleDeletion, {
     _tag: 'OperationDomainRejected',
     code: 'ticketing.deleteTaskPropertyDefinition.stale_impact',
-    message: 'The number of affected retained Tasks changed. Review the impact and confirm again.',
+    message: 'The affected retained Tasks changed. Review the impact and confirm again.',
+  });
+});
+
+test('Files & media deletion rejects a same-count affected-Task population change', async () => {
+  const operationContext = await createOperationIdentity();
+  const {
+    collectionId,
+    definition,
+    task: firstTask,
+  } = await createCollectionTaskAndDefinition(operationContext);
+  const { propertyDefinitionId } = definition.response.definition;
+  const secondTask = await runRegisteredAction({
+    operationContext,
+    payload: { collectionId },
+    registration: createTaskActionRegistration,
+  });
+  assert.equal(secondTask._tag, 'OperationSucceeded', JSON.stringify(secondTask));
+  const firstItem = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: firstTask.response.task.revision,
+      propertyDefinitionId,
+      taskId: firstTask.response.task.taskId,
+      url: 'https://example.com/first-task',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(firstItem._tag, 'OperationSucceeded', JSON.stringify(firstItem));
+
+  const impact = await runDataAccess({
+    options: {
+      authorizationChecker: allowedAuthorization,
+      operationContextResolver: operationContextResolver(operationContext),
+    },
+    payload: { collectionId, propertyDefinitionId },
+    registration: getTaskPropertyDeletionImpactDataAccessRegistration,
+    resultCount: () => 1,
+    transport: { headers: new Headers() },
+  });
+  assert.equal(impact._tag, 'OperationSucceeded', JSON.stringify(impact));
+  assert.equal(impact.response.impactCount, 1);
+
+  const removed = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: firstItem.response.taskRevision,
+      itemId: firstItem.response.item.itemId,
+      propertyDefinitionId,
+      taskId: firstTask.response.task.taskId,
+    },
+    registration: removeFilesMediaItemActionRegistration,
+  });
+  assert.equal(removed._tag, 'OperationSucceeded', JSON.stringify(removed));
+  const replacement = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      expectedRevision: secondTask.response.task.revision,
+      propertyDefinitionId,
+      taskId: secondTask.response.task.taskId,
+      url: 'https://example.com/second-task',
+    },
+    registration: addFilesMediaExternalItemActionRegistration,
+  });
+  assert.equal(replacement._tag, 'OperationSucceeded', JSON.stringify(replacement));
+
+  const staleDeletion = await runRegisteredAction({
+    operationContext,
+    payload: {
+      collectionId,
+      confirmed: true,
+      expectedImpactCount: impact.response.impactCount,
+      expectedImpactRevision: impact.response.impactRevision,
+      expectedRevision: impact.response.revision,
+      propertyDefinitionId,
+    },
+    registration: deleteTaskPropertyDefinitionActionRegistration,
+  });
+  assert.deepEqual(staleDeletion, {
+    _tag: 'OperationDomainRejected',
+    code: 'ticketing.deleteTaskPropertyDefinition.stale_impact',
+    message: 'The affected retained Tasks changed. Review the impact and confirm again.',
   });
 });
 
@@ -676,6 +815,7 @@ test('Files & media search matches uploaded filenames and exact external URLs', 
     payload: {
       bytesBase64: Buffer.from('searchable').toString('base64'),
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'Résumé.txt',
       propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -823,6 +963,7 @@ test('bulk upload reports every file independently and appends successful items 
     payload: {
       ...target,
       bytesBase64: Buffer.from([9, 8, 7]).toString('base64'),
+      expectedRevision: task.response.task.revision,
       filename: 'prior',
     },
     registration: uploadFilesMediaItemActionRegistration,
@@ -1024,6 +1165,7 @@ test('Core Media accepts positively detected content when the filename agrees an
     payload: {
       bytesBase64: png.toString('base64'),
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'diagram.png',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -1046,6 +1188,7 @@ test('a positive content mismatch rejects the action and commits no Files & medi
       bytesBase64: png.toString('base64'),
       clientMimeType: 'application/pdf',
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'invoice.pdf',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -1063,6 +1206,7 @@ test('a positive content mismatch rejects the action and commits no Files & medi
     payload: {
       bytesBase64: png.toString('base64'),
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'invoice.docx',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -1096,6 +1240,7 @@ test('Core Media accepts exactly the effective limit and rejects the next byte i
     const payload = {
       clientMimeType: 'application/octet-stream',
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'payload',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,
@@ -1109,7 +1254,11 @@ test('Core Media accepts exactly the effective limit and rejects the next byte i
 
     const rejected = await runRegisteredAction({
       operationContext,
-      payload: { ...payload, bytesBase64: Buffer.alloc(5).toString('base64') },
+      payload: {
+        ...payload,
+        bytesBase64: Buffer.alloc(5).toString('base64'),
+        expectedRevision: accepted.response.taskRevision,
+      },
       registration: uploadFilesMediaItemActionRegistration,
     });
     assert.equal(rejected._tag, 'OperationDomainRejected');
@@ -1146,6 +1295,7 @@ test('Core Media authorizes download-only access and exposes no preview result',
     payload: {
       bytesBase64: bytes.toString('base64'),
       collectionId,
+      expectedRevision: task.response.task.revision,
       filename: 'artifact',
       propertyDefinitionId: definition.response.definition.propertyDefinitionId,
       taskId: task.response.task.taskId,

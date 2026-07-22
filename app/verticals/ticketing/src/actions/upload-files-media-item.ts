@@ -28,6 +28,7 @@ interface ItemRow {
 interface TargetRow {
   readonly nextPosition: number;
   readonly taskId: string;
+  readonly taskRevision: number;
 }
 
 const evidence = (
@@ -78,7 +79,8 @@ const handler: ActionHandler<
           and item.property_definition_id = definition.property_definition_id
           and item.tenant_id = task.tenant_id
       ), 0)::integer as "nextPosition",
-      task.task_id as "taskId"
+      task.task_id as "taskId",
+      task.revision as "taskRevision"
     from ticketing.tasks as task
     inner join ticketing.task_schemas as schema
       on schema.collection_id = task.collection_id
@@ -98,6 +100,12 @@ const handler: ActionHandler<
     throw rejectAction({
       code: 'ticketing.uploadFilesMediaItem.target_missing',
       message: 'The Task or Files & media Task Property Definition was not found.',
+    });
+  }
+  if (target.taskRevision !== input.expectedRevision) {
+    throw rejectAction({
+      code: 'ticketing.uploadFilesMediaItem.stale',
+      message: 'The Files & media value changed elsewhere.',
     });
   }
 
