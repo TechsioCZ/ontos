@@ -36,6 +36,7 @@ import {
   runUpdateEmailPropertyValueAction,
   runUpdateNumberPropertyValueAction,
   runUpdatePhonePropertyValueAction,
+  runUpdateTaskContentAction,
   runUpdateTextPropertyValueAction,
   runUpdateUrlPropertyValueAction,
 } from '../api/ticketing-client';
@@ -63,8 +64,6 @@ import type {
   TaskPropertyDefinitionDraft,
 } from '../components/task-property-definition-form';
 import { UrlPropertyEditor } from '../components/url-property-editor';
-import type { CreateTaskActionFailure } from '../../shared/actions/create-task';
-import type { CreateTaskCollectionActionFailure } from '../../shared/actions/create-task-collection';
 import type { DeleteTaskPropertyDefinitionActionPayload } from '../../shared/actions/delete-task-property-definition';
 import type { DuplicateTaskPropertyDefinitionActionPayload } from '../../shared/actions/duplicate-task-property-definition';
 import type { TaskCollectionAggregate, TaskCollectionCreation } from '../../shared/task-collection';
@@ -114,9 +113,9 @@ const loadTicketingOperationContextToken = async (): Promise<string> => {
   return token;
 };
 
-const isCreateActionFailure = (
+const isTicketingActionFailure = (
   error: unknown,
-): error is CreateTaskActionFailure | CreateTaskCollectionActionFailure =>
+): error is { readonly message: string; readonly ok: false } =>
   typeof error === 'object' &&
   error !== null &&
   'ok' in error &&
@@ -134,6 +133,9 @@ export const TicketingExperience = () => {
   const [openedTaskPropertyWorkspace, setOpenedTaskPropertyWorkspace] =
     useState<TaskPropertyWorkspace>();
   const [isCreatingTask, setIsCreatingTask] = useState(false);
+  const [isSavingTaskTitle, setIsSavingTaskTitle] = useState(false);
+  const [taskTitleDraft, setTaskTitleDraft] = useState('');
+  const [taskTitleIdempotencyKey, setTaskTitleIdempotencyKey] = useState(() => crypto.randomUUID());
   const [definitionIdempotencyKeys, setDefinitionIdempotencyKeys] = useState(
     createDefinitionIdempotencyKeys,
   );
@@ -191,7 +193,7 @@ export const TicketingExperience = () => {
           Effect.match({
             onFailure: (error) => {
               toaster.create(
-                isCreateActionFailure(error)
+                isTicketingActionFailure(error)
                   ? {
                       description: error.message,
                       title: t('ticketing.taskCollection.createRejected'),
@@ -209,6 +211,12 @@ export const TicketingExperience = () => {
             },
             onSuccess: (taskCollection) => {
               setOpenedTaskCollection(taskCollection);
+              setTaskTitleDraft(
+                taskCollection.task.title.length === 0
+                  ? taskCollection.collection.name
+                  : taskCollection.task.title,
+              );
+              setTaskTitleIdempotencyKey(crypto.randomUUID());
               setDefinitionIdempotencyKeys(createDefinitionIdempotencyKeys());
               setOpenedTaskPropertyWorkspace({
                 collectionId: taskCollection.collection.collectionId,
@@ -272,6 +280,82 @@ export const TicketingExperience = () => {
       });
     } finally {
       setIsCreatingTask(false);
+    }
+  };
+
+  const handleSaveTaskTitle = async () => {
+    if (openedTaskCollection === undefined) {
+      return;
+    }
+    const currentWorkspaceTask = openedTaskPropertyWorkspace?.tasks.find(
+      (task) => task.taskId === openedTaskCollection.task.taskId,
+    );
+    setIsSavingTaskTitle(true);
+    try {
+      const operationContextToken = await loadTicketingOperationContextToken();
+      const outcome = await runEffectRequest(
+        runUpdateTaskContentAction(
+          {
+            canvas: currentWorkspaceTask?.canvas ?? openedTaskCollection.task.canvas,
+            collectionId: openedTaskCollection.collection.collectionId,
+            expectedRevision:
+              currentWorkspaceTask?.taskRevision ?? openedTaskCollection.task.revision,
+            taskId: openedTaskCollection.task.taskId,
+            title: taskTitleDraft,
+          },
+          {
+            headers: { 'x-ontos-operation-context': operationContextToken },
+            idempotencyKey: taskTitleIdempotencyKey,
+          },
+        ),
+      );
+      setOpenedTaskCollection((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              task: {
+                ...current.task,
+                canvas: outcome.response.canvas,
+                revision: outcome.response.taskRevision,
+                title: outcome.response.title,
+              },
+            },
+      );
+      setOpenedTaskPropertyWorkspace((current) =>
+        current === undefined
+          ? current
+          : {
+              ...current,
+              tasks: current.tasks.map((task) =>
+                task.taskId === outcome.response.taskId
+                  ? {
+                      ...task,
+                      canvas: outcome.response.canvas,
+                      taskRevision: outcome.response.taskRevision,
+                      title: outcome.response.title,
+                    }
+                  : task,
+              ),
+            },
+      );
+      setTaskTitleDraft(outcome.response.title);
+      setTaskTitleIdempotencyKey(crypto.randomUUID());
+      toaster.create({
+        description: t('ticketing.taskCollection.titleSavedDescription'),
+        title: t('ticketing.taskCollection.titleSavedTitle'),
+        type: 'success',
+      });
+    } catch (error) {
+      toaster.create({
+        description: isTicketingActionFailure(error)
+          ? error.message
+          : t('ticketing.taskCollection.titleSaveFailedDescription'),
+        title: t('ticketing.taskCollection.titleSaveFailedTitle'),
+        type: 'error',
+      });
+    } finally {
+      setIsSavingTaskTitle(false);
     }
   };
 
@@ -731,13 +815,33 @@ export const TicketingExperience = () => {
           <h2 className="ticketing:mb-6 ticketing:text-2xl ticketing:font-bold">
             {openedTaskCollection.collection.name}
           </h2>
-          <FormInput
-            disabled
-            id={`task-title-${openedTaskCollection.task.taskId}`}
-            label={t('ticketing.taskCollection.title')}
-            name="title"
-            value={openedTaskCollection.task.title}
-          />
+          <form
+            className="ticketing:grid ticketing:gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSaveTaskTitle();
+            }}
+          >
+            <FormInput
+              disabled={isSavingTaskTitle}
+              id={`task-title-${openedTaskCollection.task.taskId}`}
+              label={t('ticketing.taskCollection.title')}
+              name="title"
+              onChange={(event) => {
+                setTaskTitleDraft(event.target.value);
+                setTaskTitleIdempotencyKey(crypto.randomUUID());
+              }}
+              value={taskTitleDraft}
+            />
+            <Button
+              disabled={isSavingTaskTitle || taskTitleDraft === openedTaskCollection.task.title}
+              isLoading={isSavingTaskTitle}
+              loadingText={t('ticketing.taskCollection.titleSaving')}
+              type="submit"
+            >
+              {t('ticketing.taskCollection.titleSave')}
+            </Button>
+          </form>
           <div className="ticketing:mt-6">
             <TaskPropertyDefinitionForm onCreate={handleCreatePropertyDefinition} />
           </div>

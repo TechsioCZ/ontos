@@ -224,7 +224,13 @@
       "name": "Název kolekce",
       "nameHelp": "Nastaví se jednou při vytvoření kolekce.",
       "openedTask": "Otevřený úkol",
-      "title": "Název"
+      "title": "Název",
+      "titleSave": "Uložit název",
+      "titleSaveFailedDescription": "Název úkolu se nepodařilo uložit.",
+      "titleSaveFailedTitle": "Uložení názvu úkolu selhalo",
+      "titleSavedDescription": "Název úkolu byl aktualizován.",
+      "titleSavedTitle": "Název úkolu uložen",
+      "titleSaving": "Ukládání názvu"
     },
     "text": {
       "backgroundColor": "Barva pozadí",

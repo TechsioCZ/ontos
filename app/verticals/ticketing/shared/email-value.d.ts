@@ -1,14 +1,14 @@
 export interface EmailValueInvalid {
-  readonly _tag: 'Invalid';
-  readonly message: string;
+    readonly _tag: 'Invalid';
+    readonly message: string;
 }
 export interface EmailValueValid {
-  readonly _tag: 'Valid';
-  readonly normalizedValue: string;
-  readonly value: string;
+    readonly _tag: 'Valid';
+    readonly normalizedValue: string;
+    readonly value: string;
 }
 export interface EmailValueEmpty {
-  readonly _tag: 'Empty';
+    readonly _tag: 'Empty';
 }
 export type ParsedEmailValue = EmailValueEmpty | EmailValueInvalid | EmailValueValid;
 export declare const parseEmailValue: (input: string) => ParsedEmailValue;

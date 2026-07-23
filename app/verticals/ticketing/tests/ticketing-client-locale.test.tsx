@@ -1,6 +1,7 @@
 import { afterEach, expect, rs, test } from '@rstest/core';
 import {
   Effect,
+  getTaskPropertyDefinitionEditCapability,
   getTaskPropertyWorkspace,
   queryIntrinsicTaskProperties,
   runConfigureSelectOptionOrderAction,
@@ -66,10 +67,18 @@ test('catalog reads and order transitions cannot override the browser preferred 
       { baseUrl: 'https://ticketing.example.test', locale: 'forged-XX' },
     ),
   );
+  await Effect.runPromiseExit(
+    getTaskPropertyDefinitionEditCapability('collection-1', {
+      baseUrl: 'https://ticketing.example.test',
+    }),
+  );
 
-  expect(requestUrls).toHaveLength(3);
+  expect(requestUrls).toHaveLength(4);
   expect(new URL(requestUrls[0], 'https://ticketing.example.test').searchParams.get('locale')).toBe(
     'sv-SE',
+  );
+  expect(new URL(requestUrls[3], 'https://ticketing.example.test').pathname).toBe(
+    '/ticketing/task-collections/collection-1/properties/definition-edit-capability',
   );
   expect(requestBodies).toHaveLength(2);
   expect(requestBodies).toEqual([

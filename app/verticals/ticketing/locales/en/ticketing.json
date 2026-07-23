@@ -224,7 +224,13 @@
       "name": "Collection name",
       "nameHelp": "Set once when the Collection is created.",
       "openedTask": "Opened Task",
-      "title": "Title"
+      "title": "Title",
+      "titleSave": "Save title",
+      "titleSaveFailedDescription": "The Task title could not be saved.",
+      "titleSaveFailedTitle": "Task title save failed",
+      "titleSavedDescription": "The Task title was updated.",
+      "titleSavedTitle": "Task title saved",
+      "titleSaving": "Saving title"
     },
     "text": {
       "backgroundColor": "Background color",

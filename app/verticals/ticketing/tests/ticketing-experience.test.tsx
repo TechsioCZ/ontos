@@ -58,6 +58,13 @@ const mocks = rs.hoisted(() => ({
   readFailuresRemaining: 0,
   taskAttempts: 0,
   taskCalls: [] as BoundaryCall<{ readonly collectionId: string }>[],
+  taskContentCalls: [] as BoundaryCall<{
+    readonly canvas: Record<string, never>;
+    readonly collectionId: string;
+    readonly expectedRevision: number;
+    readonly taskId: string;
+    readonly title: string;
+  }>[],
   taskFailuresRemaining: 1,
   toastCreate: rs.fn(),
   urlDefinitionCalls: [] as BoundaryCall<{
@@ -209,6 +216,12 @@ rs.mock('@modern-js/plugin-i18n/runtime', () => ({
         'ticketing.taskCollection.nameHelp': 'Set once when the collection is created.',
         'ticketing.taskCollection.openedTask': 'Opened Task',
         'ticketing.taskCollection.title': 'Title',
+        'ticketing.taskCollection.titleSave': 'Save title',
+        'ticketing.taskCollection.titleSaveFailedDescription': 'The Task title could not be saved.',
+        'ticketing.taskCollection.titleSaveFailedTitle': 'Task title save failed',
+        'ticketing.taskCollection.titleSavedDescription': 'The Task title was updated.',
+        'ticketing.taskCollection.titleSavedTitle': 'Task title saved',
+        'ticketing.taskCollection.titleSaving': 'Saving title',
         'ticketing.title': 'Ticketing',
         'ticketing.url.definitionCreate': 'Add URL property',
         'ticketing.url.definitionCreating': 'Adding URL property',
@@ -650,6 +663,27 @@ rs.mock('../src/api/ticketing-client', () => {
       current.result.ok
         ? Promise.resolve(current.result.value)
         : Promise.reject(current.result.value),
+    runUpdateTaskContentAction: (
+      payload: {
+        readonly canvas: Record<string, never>;
+        readonly collectionId: string;
+        readonly expectedRevision: number;
+        readonly taskId: string;
+        readonly title: string;
+      },
+      options: { readonly idempotencyKey?: string },
+    ) => {
+      mocks.taskContentCalls.push({ idempotencyKey: options.idempotencyKey, payload });
+      return success({
+        response: {
+          canvas: payload.canvas,
+          changedComponents: ['title'],
+          taskId: payload.taskId,
+          taskRevision: payload.expectedRevision + 1,
+          title: payload.title,
+        },
+      });
+    },
     runUpdateUrlPropertyValueAction: (
       payload: {
         readonly collectionId: string;
@@ -691,6 +725,7 @@ beforeEach(() => {
   mocks.propertyMutationWorkspace = 'none';
   mocks.taskAttempts = 0;
   mocks.taskCalls.length = 0;
+  mocks.taskContentCalls.length = 0;
   mocks.taskFailuresRemaining = 1;
   mocks.toastCreate.mockClear();
   mocks.urlDefinitionCalls.length = 0;
@@ -765,7 +800,7 @@ test('uses one form-scoped idempotency key and rotates it after complete success
   ]);
   expect(mocks.readCalls).toEqual(['collection-1']);
   expect(screen.getByRole('heading', { name: 'Support Requests' })).toBeDefined();
-  expect(openedTask.querySelector('input')?.getAttribute('value')).toBe('');
+  expect(openedTask.querySelector('input')?.getAttribute('value')).toBe('Support Requests');
   expect(mocks.toastCreate).toHaveBeenNthCalledWith(2, {
     description: 'A blank Task is ready.',
     title: 'Task Collection created',
@@ -808,6 +843,33 @@ test('starts a new idempotent attempt when a failed Collection name changes', as
   expect(mocks.collectionCalls[1]?.idempotencyKey).not.toBe(
     mocks.collectionCalls[0]?.idempotencyKey,
   );
+});
+
+test('shows the Collection name as an editable Task title and saves the change', async () => {
+  mocks.taskFailuresRemaining = 0;
+  render(<TicketingExperience />);
+
+  enterCollectionName();
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task Collection' }));
+  await screen.findByRole('region', { name: 'Opened Task' });
+
+  const titleInput = screen.getByRole('textbox', { name: 'Title' });
+  expect(titleInput).toBeEnabled();
+  expect(titleInput).toHaveValue('Support Requests');
+
+  fireEvent.change(titleInput, { target: { value: 'Urgent Support' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save title' }));
+
+  await waitFor(() => expect(mocks.taskContentCalls).toHaveLength(1));
+  expect(mocks.taskContentCalls[0]?.payload).toEqual({
+    canvas: {},
+    collectionId: 'collection-1',
+    expectedRevision: 1,
+    taskId: 'task-1',
+    title: 'Urgent Support',
+  });
+  expect(mocks.taskContentCalls[0]?.idempotencyKey).toEqual(expect.any(String));
+  await waitFor(() => expect(titleInput).toHaveValue('Urgent Support'));
 });
 
 test('retries only the governed read after both Actions succeed', async () => {
@@ -943,6 +1005,13 @@ test('creates, edits, and opens a URL through the public Ticketing surface', asy
     taskId: 'task-1',
     value: exactValue,
   });
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Title' }), {
+    target: { value: 'Urgent Support' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Save title' }));
+  await waitFor(() => expect(mocks.taskContentCalls).toHaveLength(1));
+  expect(mocks.taskContentCalls[0]?.payload.expectedRevision).toBe(2);
 });
 
 test('duplicates and deletes a rendered field through governed page actions', async () => {
