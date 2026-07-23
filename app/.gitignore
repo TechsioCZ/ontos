@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-cloudflare/
+build/
+.modernjs/cache/
+.modern-js/
+**/.modern-js/
+.mf/
+**/.mf/
+.modernjs/agent-reference-repos-tmp/
+.codex/reports/
+.zerops/runtime/
+
+**/.env.*
+!**/.env.example
