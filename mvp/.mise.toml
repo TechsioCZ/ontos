@@ -1,5 +1,0 @@
-[tools]
-pnpm = "11.5.3"
-
-[env]
-_.file = ".env"

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Graph: Helm"
-  short_description: "Steer a live agent graph"
-  default_prompt: "Use $helm to monitor active agents, inspect live diffs, steer drifting lanes, and keep a running agent graph on course. For plan-backed work, preserve the same plan selection or explicit --graph-id plus the graph_id/selection_hash/snapshot_path bundle, and close superseded lanes so thread budget stays accurate."

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Graph: Plan Graph"
-  short_description: "Validate, persist, and inspect plan DAGs"
-  default_prompt: "Use $plan-graph to validate plan files, inspect saved graphs, and build the full plan DAG when structure matters. When creating new plan files, start from the bundled plan template so frontmatter stays machine-readable and the markdown body carries detailed operator guidance. Preserve the exact plan selection, including any --depends edges, or carry an explicit --graph-id; prefer --format json when handing graph_id, selection_hash, snapshot_path, or state_dir to downstream orchestration skills."

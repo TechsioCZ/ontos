@@ -1,4 +1,0 @@
-interface:
-  display_name: "Debugger Mode"
-  short_description: "Hypothesis-driven runtime debug loop"
-  default_prompt: "Use $debugger-mode to run a hypothesis-driven debug loop with local ingest logs and repo scans in any project."

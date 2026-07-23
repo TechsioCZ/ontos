@@ -1,1 +1,0 @@
-ALTER TABLE "ticketing"."task_collections" ALTER COLUMN "collection_id" SET DEFAULT gen_random_uuid();

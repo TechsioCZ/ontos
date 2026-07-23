@@ -1,3 +1,0 @@
-@import 'tailwindcss' prefix(ticketing) source(none);
-@source '..';
-@import '@app/shared-design-tokens/tokens.css';

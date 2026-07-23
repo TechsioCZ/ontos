@@ -1,3 +1,0 @@
-ALTER TABLE "ticketing"."task_files_media_items" ALTER COLUMN "media_asset_id" DROP NOT NULL;--> statement-breakpoint
-ALTER TABLE "ticketing"."task_files_media_items" ADD COLUMN "external_url" text;--> statement-breakpoint
-ALTER TABLE "ticketing"."task_files_media_items" ADD CONSTRAINT "ticketing_task_files_media_items_kind_ck" CHECK (("ticketing"."task_files_media_items"."media_asset_id" is not null)::integer + ("ticketing"."task_files_media_items"."external_url" is not null)::integer = 1);

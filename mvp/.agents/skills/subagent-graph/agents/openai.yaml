@@ -1,4 +1,0 @@
-interface:
-  display_name: "Graph: Subagent Graph"
-  short_description: "Design and launch a managed agent graph"
-  default_prompt: "Use $subagent-graph to design and launch a dependency-aware subagent graph with explicit ownership, wave order, and merge points. For plan-backed work, preserve the exact plan selection, any --depends edges, and the resolved graph_id/selection_hash/snapshot_path bundle so $helm can steer the same slot later."

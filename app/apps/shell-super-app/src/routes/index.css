@@ -1,6 +1,0 @@
-@import 'tailwindcss' source(none);
-@source '..';
-@source '../../node_modules/@techsio/ui-kit/dist';
-
-@import '@techsio/ui-kit/tokens';
-@import '@techsio/ui-kit/theme.css';
