@@ -26,6 +26,7 @@
     "@module-federation/modern-js-v3": "2.7.0",
     "@module-federation/runtime": "2.7.0",
     "@tanstack/react-router": "1.170.17",
+    "@techsio/ui-kit": "0.25.1",
     "i18next": "26.3.6",
     "node-fetch": "^3.3.2",
     "react": "^19.2.7",
