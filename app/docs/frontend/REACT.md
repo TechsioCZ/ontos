@@ -116,16 +116,19 @@ Require an explicit view model or accessor.
 Choose the data mechanism according to when and where the data is needed.
 
 1. Use route loaders for route-level initial data.
-2. In SSR loaders, call the MicroVertical's server-side Effect service or use case directly. Do not call the same application's HTTP BFF client unless you are crossing an intentional deployment or MicroVertical boundary.
+2. In SSR loaders, use the MicroVertical’s generated BFF client. The deployment composition seam selects a local or network adapter for that client. Do not import or call the backend Effect service directly from route or frontend code, and never include the backend implementation in the browser bundle.
 3. Use data hooks and the generated BFF client for browser-side fetching, mutations, refetching, pagination, polling, cache invalidation, and optimistic updates.
 4. Use local component state only for temporary visual and interaction state.
 
 ```text
-Initial route load:
-loader → Effect use case → view data
+Initial route query:
+loader → BFF client → BFF endpoint backed by Effect → view data
 
-Client interaction:
-data hook → BFF client → Effect BFF
+Client query:
+data hook → BFF client → BFF endpoint backed by Effect
+
+Client mutation:
+data hook → BFF client → BFF endpoint → Action runtime → Action handler backed by Effect
 ```
 
 Loaders must return serializable data intended for the route.

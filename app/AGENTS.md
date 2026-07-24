@@ -12,7 +12,12 @@ mise exec -- pnpm <command>
 
 ## Required Guidance
 
-Use the repository-level `../docs/` as architectural context and `app/docs/` as current implementation guidance. If they conflict, stop and ask the developer instead of choosing one silently.
+Use the repository-level `../docs/` as architectural context and `app/docs/` as current implementation guidance. When they conflict, follow `app/docs/` for work inside `app/` and raise the discrepancy to the developer.
+
+## Architectural Invariants
+
+- The frontend/backend boundary within a MicroVertical is flexible. The generated BFF client is their interface and conforms to a typed contract, regardless of whether they are deployed together or separately.
+- Boundaries between MicroVerticals are strict. Each MicroVertical must remain independently deployable to a separate server.
 
 Read and follow the documents relevant to the task:
 
