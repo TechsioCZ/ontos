@@ -2,8 +2,10 @@
 
 Follow these rules when writing code with MicroVerticals:
 
-- Always use Effect TS wherever possible.
+- Use Effect TS for MicroVertical business logic, BFF operations, typed expected errors, and service composition. Follow the [MicroVertical Data Boundaries](./SEAM.md) for the boundaries between Effect and reusable UI.
 - Always prefer direct object, method, and variable references over string constants.
 - Do not create an abstraction without a concrete reuse case.
-- Always write the simplest code possible without introducing new concepts, classes, variables, or files.
-- Always inspect the Codesmith generators in `src/scripts` and use them to generate code first. Generate as much code as possible, then fill in the logic. Never generate new files while working on business functionality. You may generate new files only when working on infrastructure or architecture.
+- Reuse existing concepts and files first. Add a concept, class, variable, or file only when the current requirement, documented architecture, or code readability requires it.
+- Before creating a file type supported by Codesmith, inspect `app/scripts` and run the corresponding generator. The [repository agent instructions](../../../AGENTS.md#mandatory-codesmith-generators) contain the canonical list of mandatory generators.
+- Treat files emitted by Codesmith as required scaffolding, not as files created directly by AI. Use the generated output as the starting point, fill in its logic, and adapt its structure when the task requires it. Do not recreate the initial files or wiring by hand.
+- Do not create business-functionality files directly. If a required file type has no Codesmith generator, stop and ask the developer how to proceed. You may create files directly only for infrastructure or architecture work.

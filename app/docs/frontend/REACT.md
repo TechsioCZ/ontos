@@ -2,7 +2,7 @@
 
 Follow these rules when working with **Modern.js, React 19, TypeScript, and `@techsio/ui-kit`**.
 
-React Server Components are not commonly used unless stated otherwise.
+Do not introduce React Server Components unless the developer explicitly requests them.
 
 ## Core Rules
 
@@ -20,8 +20,13 @@ Before creating UI, follow this sequence:
 
 1. Check whether the UI kit already provides it.
 2. Compose existing kit components where possible.
-3. Do not recreate or restyle existing primitives.
-4. Do not hardcode values when a kit token or property exists.
+3. Before introducing any new component definition, stop and discuss the component-creation strategy with the developer.
+4. Explain the requirement, the existing components considered, the proposed composition, the proposed ownership location, and the intended API and reuse scope.
+5. Introduce the component only after the developer approves the strategy.
+6. Do not recreate or restyle existing primitives.
+7. Do not hardcode values when a kit token or property exists.
+
+Never write plain CSS. Use the installed version of Tailwind CSS.
 
 Keep domain-specific components inside their feature.
 
@@ -150,11 +155,11 @@ function UsersFeature() {
 
 Reusable components receive plain view data and semantic callbacks. They must remain unaware of whether the data came from a route loader, BFF client, Effect service, query cache, or test fixture.
 
-Use Suspense and error boundaries only when the selected data library supports them cleanly. Otherwise, represent loading, error, empty, and success states explicitly.
+Use Suspense and error boundaries only when the selected data library provides documented Suspense integration and an error-reset mechanism. Otherwise, represent loading, error, empty, and success states explicitly.
 
 ## React 19
 
-Prefer React 19 features when they simplify client-side code:
+Use a React 19 feature when it replaces custom state or effect plumbing while keeping data and error flow explicit. Do not add a React 19 feature solely because it is available:
 
 - React Actions for asynchronous mutations
 - `useActionState` for action state and results
@@ -219,12 +224,13 @@ Avoid exposing DOM events from higher-level components unless a low-level UI pri
 Before completing a change, verify:
 
 1. Existing `@techsio/ui-kit` components and tokens were reused.
-2. Reusable UI has no application dependencies.
-3. Shared UI across domains uses one component.
-4. Domain data is mapped through a view model or typed accessor.
-5. Data access stays in route or feature code.
-6. Query and loader objects are not passed into reusable UI.
-7. Local visual state was not lifted unnecessarily.
-8. No unnecessary React effect was added.
-9. React 19 features are used only when they simplify the implementation.
-10. Props describe a clear visual and interaction contract.
+2. Any new component strategy received developer approval before implementation.
+3. Reusable UI has no application dependencies.
+4. Shared UI across domains uses one component.
+5. Domain data is mapped through a view model or typed accessor.
+6. Data access stays in route or feature code.
+7. Query and loader objects are not passed into reusable UI.
+8. Local visual state was not lifted unnecessarily.
+9. No unnecessary React effect was added.
+10. React 19 features replace custom state or effect plumbing while keeping data and error flow explicit.
+11. Props describe a clear visual and interaction contract.
