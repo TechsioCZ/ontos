@@ -1,94 +1,23 @@
-# UltraModern Agent Contract
+# OntOS Application Agent Instructions
 
-This workspace is generated as an agent-ready UltraModern.js SuperApp shell.
-Codex should treat the files under `.codex/skills` as local project
-instructions, not optional reading.
+OntOS is an ERP system built with [UltraModern.js](https://bleedingdev.github.io/ultramodern.js/guides/get-started/ultramodern) and [`@techsio/ui-kit`](https://github.com/TechsioCZ/new-engine).
 
-## Quality Gates
+## Toolchain
 
-Generated workspaces target Node `>=26` and pnpm `11.10.0`. Keep
-`packageManager`, `.mise.toml`, generated validation, and CI aligned to that
-baseline; do not reintroduce Corepack or older pnpm aliases.
-
-- `pnpm lint` runs Oxlint with the Ultracite preset.
-- `pnpm format` runs oxfmt.
-- `pnpm typecheck` runs stable TS7 through effect-tsgo in project-reference build mode with parallel `--checkers` and `--builders`.
-- `pnpm i18n:boundaries` verifies workspace source boundaries through `@modern-js/code-tools`.
-- `pnpm contract:check` verifies the generated workspace contract.
-- `pnpm mf:types` verifies Module Federation type outputs after builds.
-- `pnpm check` is a local convenience aggregate for the primitive gates.
-- Generated CI runs primitive gates as separate matrix jobs instead of calling `pnpm check`.
-- Generated Codex stop hooks and subagent-stop hooks run `pnpm format && pnpm lint:fix && pnpm check`.
-- `postinstall` formats the generated tree, installs/updates pinned Codex skills, and installs `lefthook`. It never installs system packages. Clone-backed public skills are attempted by default; offline clone failures are advisory. Reference repos remain an explicit `pnpm agents:refs:install` step. Generated `lefthook.yml` runs separate format and lint-fix commands on pre-commit; pre-push runs read-only primitive gates in parallel.
-
-## Localized Routes
-
-Generated apps keep locale-prefixed entry routes under `src/routes/[lang]`,
-static language links, and canonical plus `hreflang` metadata. A new workspace
-starts shell-only; `create <domain> --vertical` adds route-owned metadata,
-localized resources, and Effect BFF surfaces for that domain. Runtime i18n is
-not enabled in the starter because the current React 19 + Module Federation
-streaming SSR stack must render predictably first. Canonical and hreflang URLs
-use `MODERN_PUBLIC_SITE_URL` only. JS/CSS/static assets use
-`MODERN_ASSET_PREFIX`, then `ULTRAMODERN_ASSET_PREFIX`, then `/`; do not use
-`MODERN_PUBLIC_SITE_URL` or stale public URL aliases as asset-prefix fallbacks.
-Without an asset prefix, builds emit origin-relative asset paths so pages work
-behind tunnels and reverse proxies.
-
-## Required Skill Baseline
-
-Use these skills when the task touches the matching subsystem:
-
-- `rsbuild-best-practices`: Modern.js app build configuration, Rsbuild options, assets, type checking, and build debugging.
-- `rspack-best-practices`: Rspack-level bundling, CSS, assets, profiling, and production build behavior.
-- `rspack-tracing`: Rspack build failures, slow builds, crash localization, and trace analysis.
-- `rsdoctor-analysis`: Evidence-based bundle analysis from `rsdoctor-data.json`, including duplicate packages, large chunks, and retained modules.
-- `rslib-best-practices`: Shared packages, generated libraries, declaration output, and Rslib configuration.
-- `rslib-modern-package`: Package contracts for shared libraries, exports, side effects, dependency placement, README, and release readiness.
-- `rstest-best-practices`: Rstest configuration, test writing, mocking, snapshots, coverage, and CI test behavior.
-- `mf`: Module Federation docs, Modern.js integration, DTS/type checks, shared dependency checks, runtime errors, and observability troubleshooting.
-
-Skill bodies are lockfile-pinned in `.codex/skills-lock.json` and installed
-into the repo-owned `.codex/skills` directory by default. The installer updates
-only pinned skill directories and preserves unrelated user skills already
-present under `.codex/skills`. Set `ULTRAMODERN_SKIP_CODEX_SKILLS=1` or
-`ULTRAMODERN_CODEX_SKILLS=0` to opt out during install. `pnpm skills:check` is
-advisory when local skill bodies are missing so offline CI can still run the
-normal gate.
-
-## Private Skills
-
-ScriptedAlchemy/TechsioCZ skills are private and are cloned only when the current developer is authorized for `TechsioCZ/skills`.
+Run every pnpm command from the `app/` directory with the repository-managed toolchain:
 
 ```bash
-pnpm skills:install
+mise exec -- pnpm <command>
 ```
 
-The installer copies only the pinned private skills from `.codex/skills-lock.json`: `plan-graph`, `dag`, `subagent-graph`, `helm`, and `debugger-mode`.
+## Required Guidance
 
-## Agent Reference Repositories
+Use the repository-level `../docs/` as architectural context and `app/docs/` as current implementation guidance. If they conflict, stop and ask the developer instead of choosing one silently.
 
-The workspace can install read-only source references under `repos/` with the explicit `pnpm agents:refs:install` command using `git subtree add --squash`. These repositories are reference material for coding agents, not application source:
+Read and follow the documents relevant to the task:
 
-- `repos/effect` from `Effect-TS/effect`.
-- `repos/ultramodern.js` from `BleedingDev/ultramodern.js`.
-
-Agents may read files under `repos/` to understand upstream patterns, APIs, and project conventions. Do not edit files under `repos/`, import from them, or make production code depend on them. `ULTRAMODERN_SKIP_AGENT_REPOS=1` disables the installer even when invoked explicitly.
-
-## Project Priorities
-
-- Keep `presetUltramodern` as the single preset.
-- Keep stable `typescript` on TS7 so Modern/Rspack and effect-tsgo use TS-Go by default.
-- Keep the initial workspace shell-only unless a user explicitly asks for a
-  starter vertical.
-- Use `create <domain> --vertical` as the growth path for real business
-  MicroVerticals.
-- Prefer Effect for BFF code.
-- Prefer TanStack Router for app routing.
-- Keep UI-kit or design-system code as ordinary vertical or shared package code, not a special core path.
-- Keep generated packages explicit and publishable: stable `exports`, correct declarations, small public APIs, and clear ownership metadata.
-- Do not add migration tooling or codemods unless the project owner explicitly asks for migration work.
-
-## Skill Provenance
-
-The Rstack skills, public Module Federation skill, and private TechsioCZ skill set are pinned in `.codex/skills-lock.json`. Do not update, remove, or replace them casually. If a skill needs updating, update the lock file and run the affected primitive gate plus `pnpm check`.
+- Product and architectural decisions: [`../docs/`](../docs/)
+- General UltraModern.js and MicroVertical rules: [`docs/architecture/ULTRAMODERN.md`](./docs/architecture/ULTRAMODERN.md)
+- Action execution and transaction rules: [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md)
+- MicroVertical data and Effect boundaries: [`docs/architecture/SEAM.md`](./docs/architecture/SEAM.md)
+- User-facing frontend work: [`docs/frontend/FRONTEND.md`](./docs/frontend/FRONTEND.md)
