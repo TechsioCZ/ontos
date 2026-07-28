@@ -21,7 +21,17 @@ const result = createBin
     });
 
 if (result.error) {
-  console.error(result.error.message);
+  const launchTarget = createBin
+    ? process.execPath + ' with ULTRAMODERN_CREATE_BIN=' + createBin
+    : 'modern-js-create from PATH';
+  console.error(
+    'Failed to launch ' +
+      launchTarget +
+      ' for UltraModern command "' +
+      ultramodernArgs.slice(1).join(' ') +
+      '": ' +
+      result.error.message,
+  );
   process.exit(1);
 }
 

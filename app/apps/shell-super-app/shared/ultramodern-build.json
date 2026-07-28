@@ -1,8 +1,8 @@
 {
   "deliveryUnit": {
     "appId": "shell-super-app",
-    "build": "f2a12915381c5eab",
-    "buildMarker": "f2a12915381c5eab",
+    "build": "090dd0a19fdd0853",
+    "buildMarker": "090dd0a19fdd0853",
     "deployProfile": "cloudflare-ssr-mf-effect-v1",
     "kind": "microvertical-delivery-unit",
     "packageName": "@app/shell-super-app",
@@ -16,8 +16,8 @@
   "surfaces": {
     "api": {
       "appId": "shell-super-app",
-      "build": "f2a12915381c5eab",
-      "buildMarker": "f2a12915381c5eab",
+      "build": "090dd0a19fdd0853",
+      "buildMarker": "090dd0a19fdd0853",
       "deployProfile": "cloudflare-ssr-mf-effect-v1",
       "kind": "microvertical-delivery-unit",
       "packageName": "@app/shell-super-app",
@@ -29,8 +29,8 @@
     },
     "ui": {
       "appId": "shell-super-app",
-      "build": "f2a12915381c5eab",
-      "buildMarker": "f2a12915381c5eab",
+      "build": "090dd0a19fdd0853",
+      "buildMarker": "090dd0a19fdd0853",
       "deployProfile": "cloudflare-ssr-mf-effect-v1",
       "kind": "microvertical-delivery-unit",
       "packageName": "@app/shell-super-app",

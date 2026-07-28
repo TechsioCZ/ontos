@@ -10,5 +10,7 @@
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__shared-contracts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-contracts.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

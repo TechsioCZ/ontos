@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @app/shell-super-app dev",
     "dev:shell": "pnpm --filter @app/shell-super-app dev",
-    "build": "ULTRAMODERN_ZEPHYR=false pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
+    "build": "pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "cloudflare:build": "pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types && pnpm cloudflare-output:verify",
     "cloudflare:deploy": "pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",
     "cloudflare:proof": "node ./scripts/proof-cloudflare-version.mts --out .codex/reports/cloudflare-version-proof/public-url-proof.json",
@@ -32,26 +32,27 @@
     "agents:refs:check": "node ./scripts/setup-agent-reference-repos.mts --check",
     "api:check": "node ./scripts/check-ultramodern-api-boundaries.mts",
     "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
-    "postinstall": "oxfmt . '!repos/**' && node ./scripts/bootstrap-agent-skills.mts --postinstall"
+    "postinstall": "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt . '!repos/**'"
   },
   "devDependencies": {
-    "@effect/tsgo": "0.16.3",
-    "@modern-js/code-tools": "npm:@bleedingdev/modern-js-code-tools@3.5.0-ultramodern.44",
-    "@modern-js/create": "npm:@bleedingdev/modern-js-create@3.5.0-ultramodern.44",
-    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.44",
-    "@typescript/typescript6": "6.0.2",
+    "@effect/tsgo": "0.19.0",
+    "@modern-js/code-tools": "npm:@bleedingdev/modern-js-code-tools@3.5.0-ultramodern.96",
+    "@modern-js/create": "npm:@bleedingdev/modern-js-create@3.5.0-ultramodern.96",
+    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.96",
     "lefthook": "^2.1.10",
     "oxfmt": "0.58.0",
     "oxlint": "1.73.0",
     "ultracite": "7.9.3",
-    "wrangler": "4.109.0",
-    "zephyr-agent": "1.1.1"
+    "wrangler": "4.110.0",
+    "zephyr-agent": "1.1.1",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "miniflare": "4.20260708.1"
   },
   "engines": {
     "node": ">=26",
     "pnpm": ">=11"
   },
-  "packageManager": "pnpm@11.10.0",
+  "packageManager": "pnpm@11.17.0",
   "modernjs": {
     "preset": "presetUltramodern",
     "workspace": "ultramodern-superapp",

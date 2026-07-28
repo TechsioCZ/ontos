@@ -1,6 +1,5 @@
-// @effect-diagnostics processEnv:off
-import { setTimeout as delay } from 'node:timers/promises';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
@@ -8,71 +7,35 @@ import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
-type ZephyrRspackConfig = Parameters<ReturnType<typeof withZephyrRspack>>[0];
-
-const zephyrEnabled = process.env['ULTRAMODERN_ZEPHYR'] !== 'false';
-const cloudflareDeployEnabled = process.env['MODERNJS_DEPLOY'] === 'cloudflare';
-
-const parsedZephyrTimeoutMs = Math.trunc(
-  Number(process.env['ULTRAMODERN_ZEPHYR_TIMEOUT_MS'] ?? ''),
-);
-const zephyrTimeoutMs =
-  Number.isFinite(parsedZephyrTimeoutMs) && parsedZephyrTimeoutMs > 0
-    ? parsedZephyrTimeoutMs
-    : 45_000;
-
-const zephyrWarn = (error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.warn(
-    `[ultramodern] zephyr-rspack-plugin failed; continuing without Zephyr (set ULTRAMODERN_ZEPHYR=false to disable it): ${message}`,
-  );
-};
+const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
 
 const zephyrRspackPlugin = () => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
-  setup(api: {
-    modifyRspackConfig: (
-      handler: (config: ZephyrRspackConfig) => ZephyrRspackConfig | Promise<ZephyrRspackConfig>,
-    ) => void;
-  }) {
-    if (!zephyrEnabled) {
+  setup(api: { modifyRspackConfig: (handler: ReturnType<typeof withZephyrRspack>) => void }) {
+    // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
+    // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
+    // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
+    // application configuration. Zephyr therefore engages ONLY for such an
+    // authoritative deploy — a plain build never contacts Zephyr Cloud, needs
+    // no account, and is never blocked. This is the framework's "works with or
+    // without Zephyr" contract. The plugin stays registered unconditionally
+    // (this gate keys on Zephyr's native deploy token, not any UltraModern
+    // opt-out). When deploying, ZE_FAIL_BUILD=true makes an upload failure a
+    // hard build failure.
+    const zephyrCiDeploy = (getBuildConfigEnvironment('ZE_CI_TOKEN') ?? '').length > 0;
+    if (!zephyrCiDeploy) {
       return;
     }
-    api.modifyRspackConfig(async (config) => {
-      try {
-        // Zephyr can not only throw/reject but also hang on a stalled network
-        // call, wedging the whole build. Race it against a watchdog so a hang
-        // degrades to an unmodified config instead of blocking indefinitely.
-        const zephyrConfig = (async () => {
-          try {
-            return await withZephyrRspack()(config);
-          } catch (error) {
-            zephyrWarn(error);
-            return config;
-          }
-        })();
-        const watchdog = async () => {
-          await delay(zephyrTimeoutMs, undefined, { ref: false });
-          zephyrWarn(
-            `timed out after ${zephyrTimeoutMs}ms (override with ULTRAMODERN_ZEPHYR_TIMEOUT_MS)`,
-          );
-          return config;
-        };
-        return await Promise.race([zephyrConfig, watchdog()]);
-      } catch (error) {
-        zephyrWarn(error);
-        return config;
-      }
-    });
+    api.modifyRspackConfig(withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()));
   },
 });
 
 const appId = 'shell-super-app';
 const cloudflareWorkerName = 'app-shell-super-app';
-const port = Number(process.env['SHELL_SUPER_APP_PORT'] ?? 3020);
+const port = Number(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT') ?? 3020);
 const envValue = (name: string) => {
-  const value = process.env[name]?.trim();
+  const value = getBuildConfigEnvironment(name)?.trim();
   return value !== undefined && value.length > 0 ? value : undefined;
 };
 const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
@@ -106,7 +69,7 @@ const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`
 
 if (
   cloudflareDeployEnabled &&
-  process.env['ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'] === 'true' &&
+  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true' &&
   configuredCloudflareUrl === undefined &&
   configuredSiteUrl === undefined &&
   inferredCloudflareUrl === undefined
@@ -197,7 +160,7 @@ export default defineConfig(
         },
         rsdoctor: {
           disableClientServer: true,
-          enabled: process.env['ULTRAMODERN_RSDOCTOR'] === 'true',
+          enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
         },
       },
       plugins: [
@@ -238,7 +201,7 @@ export default defineConfig(
         port,
         publicDir: ['./locales', './assets'],
         ssr: {
-          mode: 'string',
+          mode: 'stream',
           moduleFederationAppSSR: true,
         },
       },
@@ -274,6 +237,11 @@ export default defineConfig(
     },
     {
       appId,
+      deliveryUnit: {
+        buildMarker: '090dd0a19fdd0853',
+        unitId: 'app/shell-super-app',
+        version: '0.1.0',
+      },
       enableBffRequestId: true,
       enableModuleFederationSSR: true,
       enableTelemetryExporters: true,

@@ -20,7 +20,10 @@
       "workerName": "app-shell-super-app",
       "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
       "compatibilityDate": "2026-06-02",
-      "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+      "compatibilityFlags": [
+        "nodejs_compat",
+        "global_fetch_strictly_public"
+      ],
       "assetsBinding": "ASSETS",
       "routes": {
         "ssr": "/en",
@@ -37,15 +40,46 @@
         "contentSecurityPolicy": {
           "mode": "report-only",
           "directives": {
-            "base-uri": ["'self'"],
-            "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-            "default-src": ["'self'"],
-            "font-src": ["'self'", "data:", "https:", "http:"],
-            "form-action": ["'self'"],
-            "frame-ancestors": ["'self'"],
-            "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-            "manifest-src": ["'self'", "https:", "http:"],
-            "object-src": ["'none'"],
+            "base-uri": [
+              "'self'"
+            ],
+            "connect-src": [
+              "'self'",
+              "https:",
+              "http:",
+              "wss:",
+              "ws:"
+            ],
+            "default-src": [
+              "'self'"
+            ],
+            "font-src": [
+              "'self'",
+              "data:",
+              "https:",
+              "http:"
+            ],
+            "form-action": [
+              "'self'"
+            ],
+            "frame-ancestors": [
+              "'self'"
+            ],
+            "img-src": [
+              "'self'",
+              "data:",
+              "blob:",
+              "https:",
+              "http:"
+            ],
+            "manifest-src": [
+              "'self'",
+              "https:",
+              "http:"
+            ],
+            "object-src": [
+              "'none'"
+            ],
             "script-src": [
               "'self'",
               "'unsafe-inline'",
@@ -54,8 +88,16 @@
               "http:",
               "blob:"
             ],
-            "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-            "worker-src": ["'self'", "blob:"]
+            "style-src": [
+              "'self'",
+              "'unsafe-inline'",
+              "https:",
+              "http:"
+            ],
+            "worker-src": [
+              "'self'",
+              "blob:"
+            ]
           },
           "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
         },
@@ -115,6 +157,15 @@
           "docs/super-app-rfc-adr/wave2/rollback.md#shell-lkg"
         ]
       }
+    },
+    "deliveryUnit": {
+      "schemaVersion": 1,
+      "kind": "microvertical-delivery-unit",
+      "unitId": "app/shell-super-app",
+      "packageName": "@app/shell-super-app",
+      "version": "0.1.0",
+      "buildMarker": "090dd0a19fdd0853",
+      "sourceRevision": "workspace"
     }
   },
   "verticals": [],
@@ -134,6 +185,10 @@
   ],
   "validation": {
     "script": "scripts/validate-ultramodern-workspace.mts",
-    "commands": ["pnpm i18n:boundaries", "pnpm api:check", "pnpm contract:check"]
+    "commands": [
+      "pnpm i18n:boundaries",
+      "pnpm api:check",
+      "pnpm contract:check"
+    ]
   }
 }

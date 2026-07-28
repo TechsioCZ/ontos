@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off processEnv:off
 // ultramodern-mf: host-only
 import { createRequire } from 'node:module';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
@@ -16,12 +15,6 @@ const reactDomVersion = (require('react-dom/package.json') as { version: string 
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
   createModuleFederationConfig({
-    bridge: {
-      enableBridgeRouter: false,
-    },
-    dev: {
-      disableDynamicRemoteTypeHints: true,
-    },
     dts: {
       consumeTypes: true,
       generateTypes: false,
@@ -66,7 +59,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
         treeShaking: false,
       },
     },
-    treeShakingSharedExcludePlugins: ['RspackModuleFederationPlugin'],
   });
 
 export default moduleFederationConfig;

@@ -1,0 +1,208 @@
+{
+  "aliases": {
+    "@modern-js/adapter-rstest": "@bleedingdev/modern-js-adapter-rstest",
+    "@modern-js/app-tools": "@bleedingdev/modern-js-app-tools",
+    "@modern-js/bff-core": "@bleedingdev/modern-js-bff-core",
+    "@modern-js/bff-runtime": "@bleedingdev/modern-js-bff-runtime",
+    "@modern-js/builder": "@bleedingdev/modern-js-builder",
+    "@modern-js/code-tools": "@bleedingdev/modern-js-code-tools",
+    "@modern-js/create": "@bleedingdev/modern-js-create",
+    "@modern-js/create-request": "@bleedingdev/modern-js-create-request",
+    "@modern-js/i18n-utils": "@bleedingdev/modern-js-i18n-utils",
+    "@modern-js/image": "@bleedingdev/modern-js-image",
+    "@modern-js/main-doc": "@bleedingdev/modern-js-main-doc",
+    "@modern-js/plugin": "@bleedingdev/modern-js-plugin",
+    "@modern-js/plugin-bff": "@bleedingdev/modern-js-plugin-bff",
+    "@modern-js/plugin-data-loader": "@bleedingdev/modern-js-plugin-data-loader",
+    "@modern-js/plugin-i18n": "@bleedingdev/modern-js-plugin-i18n",
+    "@modern-js/plugin-polyfill": "@bleedingdev/modern-js-plugin-polyfill",
+    "@modern-js/plugin-ssg": "@bleedingdev/modern-js-plugin-ssg",
+    "@modern-js/plugin-styled-components": "@bleedingdev/modern-js-plugin-styled-components",
+    "@modern-js/plugin-tanstack": "@bleedingdev/modern-js-plugin-tanstack",
+    "@modern-js/prod-server": "@bleedingdev/modern-js-prod-server",
+    "@modern-js/render": "@bleedingdev/modern-js-render",
+    "@modern-js/runtime": "@bleedingdev/modern-js-runtime",
+    "@modern-js/runtime-utils": "@bleedingdev/modern-js-runtime-utils",
+    "@modern-js/sandpack-react": "@bleedingdev/modern-js-sandpack-react",
+    "@modern-js/server": "@bleedingdev/modern-js-server",
+    "@modern-js/server-core": "@bleedingdev/modern-js-server-core",
+    "@modern-js/server-runtime": "@bleedingdev/modern-js-server-runtime",
+    "@modern-js/server-runtime-extensions": "@bleedingdev/modern-js-server-runtime-extensions",
+    "@modern-js/server-utils": "@bleedingdev/modern-js-server-utils",
+    "@modern-js/tsconfig": "@bleedingdev/modern-js-tsconfig",
+    "@modern-js/types": "@bleedingdev/modern-js-types",
+    "@modern-js/utils": "@bleedingdev/modern-js-utils"
+  },
+  "packages": [
+    {
+      "sourceName": "@modern-js/adapter-rstest",
+      "targetName": "@bleedingdev/modern-js-adapter-rstest",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/app-tools",
+      "targetName": "@bleedingdev/modern-js-app-tools",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/bff-core",
+      "targetName": "@bleedingdev/modern-js-bff-core",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/bff-runtime",
+      "targetName": "@bleedingdev/modern-js-bff-runtime",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/builder",
+      "targetName": "@bleedingdev/modern-js-builder",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/code-tools",
+      "targetName": "@bleedingdev/modern-js-code-tools",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/create",
+      "targetName": "@bleedingdev/modern-js-create",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/create-request",
+      "targetName": "@bleedingdev/modern-js-create-request",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/i18n-utils",
+      "targetName": "@bleedingdev/modern-js-i18n-utils",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/image",
+      "targetName": "@bleedingdev/modern-js-image",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/main-doc",
+      "targetName": "@bleedingdev/modern-js-main-doc",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin",
+      "targetName": "@bleedingdev/modern-js-plugin",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-bff",
+      "targetName": "@bleedingdev/modern-js-plugin-bff",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-data-loader",
+      "targetName": "@bleedingdev/modern-js-plugin-data-loader",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-i18n",
+      "targetName": "@bleedingdev/modern-js-plugin-i18n",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-polyfill",
+      "targetName": "@bleedingdev/modern-js-plugin-polyfill",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-ssg",
+      "targetName": "@bleedingdev/modern-js-plugin-ssg",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-styled-components",
+      "targetName": "@bleedingdev/modern-js-plugin-styled-components",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/plugin-tanstack",
+      "targetName": "@bleedingdev/modern-js-plugin-tanstack",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/prod-server",
+      "targetName": "@bleedingdev/modern-js-prod-server",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/render",
+      "targetName": "@bleedingdev/modern-js-render",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/runtime",
+      "targetName": "@bleedingdev/modern-js-runtime",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/runtime-utils",
+      "targetName": "@bleedingdev/modern-js-runtime-utils",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/sandpack-react",
+      "targetName": "@bleedingdev/modern-js-sandpack-react",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/server",
+      "targetName": "@bleedingdev/modern-js-server",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/server-core",
+      "targetName": "@bleedingdev/modern-js-server-core",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/server-runtime",
+      "targetName": "@bleedingdev/modern-js-server-runtime",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/server-runtime-extensions",
+      "targetName": "@bleedingdev/modern-js-server-runtime-extensions",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/server-utils",
+      "targetName": "@bleedingdev/modern-js-server-utils",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/tsconfig",
+      "targetName": "@bleedingdev/modern-js-tsconfig",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/types",
+      "targetName": "@bleedingdev/modern-js-types",
+      "version": "3.5.0-ultramodern.96"
+    },
+    {
+      "sourceName": "@modern-js/utils",
+      "targetName": "@bleedingdev/modern-js-utils",
+      "version": "3.5.0-ultramodern.96"
+    }
+  ],
+  "release": {
+    "tag": "latest",
+    "version": "3.5.0-ultramodern.96"
+  },
+  "schema": "bleedingdev.ultramodern.release-cohort",
+  "schemaVersion": 1,
+  "source": {
+    "commit": "4772a4f48686764f954e429011998fd72364a0b7",
+    "repository": "BleedingDev/ultramodern.js"
+  }
+}

@@ -3,13 +3,13 @@
   "profile": "cloudflare-ssr-mf-effect-v1",
   "generator": {
     "package": "@modern-js/create",
-    "version": "3.5.0-ultramodern.44"
+    "version": "3.5.0-ultramodern.96"
   },
   "workspace": {
     "packageScope": "app",
     "packageManager": {
       "name": "pnpm",
-      "version": "11.10.0"
+      "version": "11.17.0"
     },
     "node": {
       "version": "26.5.0",
@@ -18,7 +18,7 @@
   },
   "packageSource": {
     "strategy": "install",
-    "modernPackageVersion": "3.5.0-ultramodern.44",
+    "modernPackageVersion": "3.5.0-ultramodern.96",
     "aliasScope": "bleedingdev",
     "aliasPackageNamePrefix": "modern-js-"
   },
@@ -48,6 +48,15 @@
             "compilerInstance": "effect-tsgo",
             "tsConfigPath": "./tsconfig.mf-types.json"
           }
+        },
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/shell-super-app",
+          "packageName": "@app/shell-super-app",
+          "version": "0.1.0",
+          "buildMarker": "090dd0a19fdd0853",
+          "sourceRevision": "workspace"
         }
       }
     ]
@@ -58,13 +67,19 @@
     "dependencies": [],
     "lockfilePolicy": "nested",
     "gates": [],
-    "reactSingletons": ["react", "react-dom"]
+    "reactSingletons": [
+      "react",
+      "react-dom"
+    ]
   },
   "deploy": {
     "worker": {
       "wrangler": {
         "compatibility_date": "2026-06-02",
-        "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"]
+        "compatibility_flags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ]
       },
       "artifacts": [],
       "publicAssetExcludes": []
@@ -91,7 +106,10 @@
     "installDir": "./.codex/skills",
     "mode": "repo-owned-default-on",
     "selfContainedVendoring": true,
-    "optOutEnv": ["ULTRAMODERN_SKIP_CODEX_SKILLS=1", "ULTRAMODERN_CODEX_SKILLS=0"]
+    "optOutEnv": [
+      "ULTRAMODERN_SKIP_CODEX_SKILLS=1",
+      "ULTRAMODERN_CODEX_SKILLS=0"
+    ]
   },
   "tooling": {
     "command": "modern-js-create ultramodern",

@@ -1,5 +1,3 @@
-import '@modern-js/app-tools/types';
+/// <reference types="@modern-js/app-tools/types" />
 
-declare global {
-  const ULTRAMODERN_SITE_URL: string;
-}
+declare const ULTRAMODERN_SITE_URL: string;
