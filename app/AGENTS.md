@@ -2,6 +2,21 @@
 
 OntOS is an ERP system built with [UltraModern.js](https://bleedingdev.github.io/ultramodern.js/guides/get-started/ultramodern) and [`@techsio/ui-kit`](https://github.com/TechsioCZ/new-engine).
 
+## Required Guidance
+
+For work inside `app/`, this file and `app/docs/` are authoritative implementation guidance. Use the repository-level [`../docs/`](../docs/) as product and architectural context. If they conflict, follow the guidance under `app/` and raise the discrepancy to the developer.
+
+### Non-Negotiable Architecture
+
+- **MicroVerticals:** Preserve the strict, independently deployable vertical seams between MicroVerticals. Keep each MicroVertical's frontend/backend seam virtual and represented by its generated Effect-based Backend for Frontend (BFF) client. Follow [MicroVertical Architecture](./docs/architecture/MICROVERTICALS.md).
+- **Actions:** Drive every state change through a typed Action and preserve its required lifecycle, transaction, event, and evidence rules. Follow [Action Execution](./docs/architecture/ACTIONS.md).
+- **Effect errors:** Use Effect end to end for application behavior, BFF contracts and clients, and expected failures. Every backend error response must come from a declared typed Effect error with the correct HTTP status. Follow [Effect Error and HTTP Contracts](./docs/architecture/ERRORS.md).
+
+### Task-Specific Rules
+
+- All implementation work: [UltraModern.js Implementation Rules](./docs/architecture/ULTRAMODERN.md)
+- User-facing frontend work: [Frontend Architecture Rules](./docs/frontend/FRONTEND.md)
+
 ## Toolchain
 
 Run every pnpm command from the `app/` directory with the repository-managed toolchain:
@@ -9,20 +24,3 @@ Run every pnpm command from the `app/` directory with the repository-managed too
 ```bash
 mise exec -- pnpm <command>
 ```
-
-## Required Guidance
-
-Use the repository-level `../docs/` as architectural context and `app/docs/` as current implementation guidance. When they conflict, follow `app/docs/` for work inside `app/` and raise the discrepancy to the developer.
-
-## Architectural Invariants
-
-- The frontend/backend boundary within a MicroVertical is flexible. The generated BFF client is their interface and conforms to a typed contract, regardless of whether they are deployed together or separately.
-- Boundaries between MicroVerticals are strict. Each MicroVertical must remain independently deployable to a separate server.
-
-Read and follow the documents relevant to the task:
-
-- Product and architectural decisions: [`../docs/`](../docs/)
-- General UltraModern.js and MicroVertical rules: [`docs/architecture/ULTRAMODERN.md`](./docs/architecture/ULTRAMODERN.md)
-- Action execution and transaction rules: [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md)
-- MicroVertical data and Effect boundaries: [`docs/architecture/SEAM.md`](./docs/architecture/SEAM.md)
-- User-facing frontend work: [`docs/frontend/FRONTEND.md`](./docs/frontend/FRONTEND.md)

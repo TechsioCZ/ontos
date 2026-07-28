@@ -2,7 +2,11 @@
 
 Follow these rules when writing code with MicroVerticals:
 
-- Use Effect TS for MicroVertical business logic, BFF operations, typed expected errors, and service composition. Follow the [MicroVertical Data Boundaries](./SEAM.md) for the boundaries between Effect and reusable UI.
+- Preserve the strict vertical deployment seams and virtual horizontal Backend for Frontend (BFF) seam defined in [MicroVertical Architecture](./MICROVERTICALS.md).
+- Use Effect as the default for application behavior, asynchronous work, I/O, resource management, concurrency, dependency composition, BFF contracts and clients, schemas, and expected failures.
+- Keep pure synchronous transformations as plain TypeScript when Effect adds no behavior. Reusable presentation components may remain ordinary React; their route, feature, and data integration code must use the Effect-based BFF client.
+- Model expected failures as tagged, typed Effect errors. Do not throw, reject a Promise, return an untyped error object, or collapse an error into a string where the Effect error channel can represent it.
+- Follow [Effect Error and HTTP Contracts](./ERRORS.md) for every BFF endpoint and client.
 - Always prefer direct object, method, and variable references over string constants.
 - Do not create an abstraction without a concrete reuse case.
 - Reuse existing concepts and files first. Add a concept, class, variable, or file only when the current requirement, documented architecture, or code readability requires it.

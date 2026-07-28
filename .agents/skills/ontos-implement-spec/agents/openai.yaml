@@ -1,0 +1,4 @@
+interface:
+  display_name: "OntOS Implement Spec"
+  short_description: "Implement, test, and review an OntOS spec"
+  default_prompt: "Use $ontos-implement-spec to implement a specification, test it, review the diff, and record completion evidence."

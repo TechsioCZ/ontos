@@ -1,0 +1,4 @@
+interface:
+  display_name: "OntOS Write Spec"
+  short_description: "Research and write OntOS specifications"
+  default_prompt: "Use $ontos-write-spec to research this request and write an implementation specification under specs/."
