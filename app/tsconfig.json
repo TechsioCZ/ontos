@@ -2,6 +2,9 @@
   "files": [],
   "references": [
     {
+      "path": "packages/core-runtime"
+    },
+    {
       "path": "packages/shared-contracts"
     },
     {

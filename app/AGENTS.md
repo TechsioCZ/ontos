@@ -11,6 +11,7 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 - **MicroVerticals:** Preserve the strict, independently deployable vertical seams between MicroVerticals. Keep each MicroVertical's frontend/backend seam virtual and represented by its generated Effect-based Backend for Frontend (BFF) client. Follow [MicroVertical Architecture](./docs/architecture/MICROVERTICALS.md).
 - **Actions:** Drive every state change through a typed Action and preserve its required lifecycle, transaction, event, and evidence rules. Follow [Action Execution](./docs/architecture/ACTIONS.md).
 - **Effect errors:** Use Effect end to end for application behavior, BFF contracts and clients, and expected failures. Every backend error response must come from a declared typed Effect error with the correct HTTP status. Follow [Effect Error and HTTP Contracts](./docs/architecture/ERRORS.md).
+- **Database access:** Keep PostgreSQL access typed through Drizzle schema references and query builders inside Effect services. Follow [Database Architecture](./docs/architecture/DATABASE.md).
 
 ### Task-Specific Rules
 

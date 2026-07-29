@@ -171,6 +171,12 @@
   "verticals": [],
   "sharedPackages": [
     {
+      "id": "core-runtime",
+      "package": "@app/core-runtime",
+      "path": "packages/core-runtime",
+      "description": "Server-only Core infrastructure and typed PostgreSQL ownership."
+    },
+    {
       "id": "shared-contracts",
       "package": "@app/shared-contracts",
       "path": "packages/shared-contracts",

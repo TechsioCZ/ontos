@@ -1,0 +1,28 @@
+{
+  "name": "@app/core-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./db/schema": "./src/db/schema.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:test": "node --test tests/unit/*.test.ts",
+    "db:verify": "node scripts/verify-db-schema.mts",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "effect": "4.0.0-beta.97",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/pg": "8.20.0",
+    "dotenv": "17.4.2",
+    "drizzle-kit": "0.31.10"
+  }
+}

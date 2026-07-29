@@ -3,6 +3,22 @@
   "preset": "presetUltramodern",
   "owners": [
     {
+      "id": "core-runtime",
+      "package": "@app/core-runtime",
+      "path": "packages/core-runtime",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/wave2/core-runtime.md",
+        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
+        "blastRadius": {
+          "tier": "tier-0-core-infrastructure",
+          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
+        }
+      }
+    },
+    {
       "id": "shell-super-app",
       "package": "@app/shell-super-app",
       "path": "apps/shell-super-app",

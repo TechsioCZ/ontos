@@ -11,6 +11,10 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @app/shell-super-app dev",
     "dev:shell": "pnpm --filter @app/shell-super-app dev",
+    "db:generate": "pnpm --filter @app/core-runtime db:generate",
+    "db:migrate": "pnpm --filter @app/core-runtime db:migrate",
+    "db:test": "pnpm --filter @app/core-runtime db:test",
+    "db:verify": "pnpm --filter @app/core-runtime db:verify",
     "build": "pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "cloudflare:build": "pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types && pnpm cloudflare-output:verify",
     "cloudflare:deploy": "pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",

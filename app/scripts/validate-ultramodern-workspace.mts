@@ -252,8 +252,8 @@ const workspaceValidationContract = {
     appIds: ['shell-super-app'],
     backendAppIds: [],
     verticalIds: [],
-    sharedPackageIds: ['shared-contracts', 'shared-design-tokens'],
-    ownerIds: ['shell-super-app', 'shared-contracts', 'shared-design-tokens'],
+    sharedPackageIds: ['core-runtime', 'shared-contracts', 'shared-design-tokens'],
+    ownerIds: ['core-runtime', 'shell-super-app', 'shared-contracts', 'shared-design-tokens'],
     packageManifests: [
       {
         id: 'workspace-root',
@@ -266,6 +266,12 @@ const workspaceValidationContract = {
         packageName: '@app/shell-super-app',
         path: 'apps/shell-super-app/package.json',
         role: 'shell',
+      },
+      {
+        id: 'core-runtime',
+        packageName: '@app/core-runtime',
+        path: 'packages/core-runtime/package.json',
+        role: 'shared-package',
       },
       {
         id: 'shared-contracts',
@@ -452,6 +458,12 @@ const workspaceValidationContract = {
       verticals: [],
       sharedPackages: [
         {
+          id: 'core-runtime',
+          package: '@app/core-runtime',
+          path: 'packages/core-runtime',
+          description: 'Server-only Core infrastructure and typed PostgreSQL ownership.',
+        },
+        {
           id: 'shared-contracts',
           package: '@app/shared-contracts',
           path: 'packages/shared-contracts',
@@ -473,6 +485,22 @@ const workspaceValidationContract = {
       schemaVersion: 1,
       preset: 'presetUltramodern',
       owners: [
+        {
+          id: 'core-runtime',
+          package: '@app/core-runtime',
+          path: 'packages/core-runtime',
+          ownership: {
+            team: 'super-app-platform',
+            slack: '#super-app-platform',
+            pagerDuty: 'pd-super-app-platform',
+            runbookRef: 'runbooks/wave2/core-runtime.md',
+            adrRef: 'docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages',
+            blastRadius: {
+              tier: 'tier-0-core-infrastructure',
+              references: ['docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages'],
+            },
+          },
+        },
         {
           id: 'shell-super-app',
           package: '@app/shell-super-app',
@@ -3036,7 +3064,9 @@ const toPosixPath = (value) => value.split(path.sep).join('/');
 const referenceFrom = (fromPath, toPath) => ({
   path: toPosixPath(path.relative(fromPath, toPath)),
 });
+const infrastructurePackagePaths = ['packages/core-runtime'];
 const sharedPackagePaths = ['packages/shared-contracts', 'packages/shared-design-tokens'];
+const workspacePackagePaths = [...infrastructurePackagePaths, ...sharedPackagePaths];
 const tsgoCacheKey = (packagePath) => packagePath.replace(/[^a-zA-Z0-9._-]+/gu, '__');
 const assertProjectReferenceEmitConfig = (tsConfig, packagePath) => {
   const compilerOptions = tsConfig.compilerOptions ?? {};
@@ -3078,7 +3108,7 @@ const assertTsConfigReferenceGraph = () => {
     .filter((shell) => shell.id !== 'shell-super-app')
     .map((shell) => shell.packageDir);
   const expectedRootReferences = [
-    ...sharedPackagePaths,
+    ...workspacePackagePaths,
     'apps/shell-super-app',
     ...fullStackVerticals.map((vertical) => vertical.path),
     ...additionalShellPaths,
@@ -3132,10 +3162,10 @@ const assertTsConfigReferenceGraph = () => {
     'apps/shell-super-app/tsconfig.mf-types.json',
     'restore the generated shell Module Federation DTS boundary',
   );
-  for (const sharedPackagePath of sharedPackagePaths) {
+  for (const workspacePackagePath of workspacePackagePaths) {
     assertProjectReferenceEmitConfig(
-      readJson(`${sharedPackagePath}/tsconfig.json`),
-      sharedPackagePath,
+      readJson(`${workspacePackagePath}/tsconfig.json`),
+      workspacePackagePath,
     );
   }
 
@@ -3691,6 +3721,9 @@ const requiredPaths = [
   requiredShellWorkerCompositionPath('apps/shell-super-app'),
   'apps/shell-super-app/src/routes/[lang]/page.tsx',
   ...shellRouteMetaPaths,
+  'packages/core-runtime/package.json',
+  'packages/core-runtime/src/index.ts',
+  'packages/core-runtime/tsconfig.json',
   'packages/shared-contracts/package.json',
   'packages/shared-contracts/src/index.ts',
   'packages/shared-contracts/tsconfig.json',
