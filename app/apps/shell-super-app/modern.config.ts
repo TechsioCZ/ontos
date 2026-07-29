@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
@@ -6,6 +8,8 @@ import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
+
+Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
 
@@ -32,6 +36,9 @@ const zephyrRspackPlugin = () => ({
 });
 
 const appId = 'shell-super-app';
+const moduleFederationConfigPath = fileURLToPath(
+  new URL('module-federation.config.ts', import.meta.url),
+);
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = Number(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT') ?? 3020);
 const envValue = (name: string) => {
@@ -194,7 +201,9 @@ export default defineConfig(
           },
           reactI18next: false,
         }),
-        moduleFederationPlugin(),
+        moduleFederationPlugin({
+          configPath: moduleFederationConfigPath,
+        }),
         zephyrRspackPlugin(),
       ],
       server: {

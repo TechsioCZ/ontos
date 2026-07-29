@@ -1,6 +1,5 @@
 import { defineRuntimeConfig } from '@modern-js/runtime';
 import { ultramodernBoundaryDebuggerPlugin } from '@modern-js/runtime/boundary-debugger';
-import { createInstance } from 'i18next';
 import csResource from '../locales/cs/shell.json';
 import enResource from '../locales/en/shell.json';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
@@ -22,7 +21,6 @@ const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<st
   );
 };
 
-const i18nInstance = createInstance();
 const resources = {
   cs: { [ultramodernRouteNamespace]: flattenLocaleResource(csResource) },
   en: { [ultramodernRouteNamespace]: flattenLocaleResource(enResource) },
@@ -30,7 +28,6 @@ const resources = {
 
 export default defineRuntimeConfig({
   i18n: {
-    i18nInstance,
     initOptions: {
       defaultNS: ultramodernRouteNamespace,
       fallbackLng: 'en',

@@ -41,7 +41,7 @@ Choose the status from the meaning of the failure, not from a generic domain-err
 | Status | Use when                                                                                                            |
 | ------ | ------------------------------------------------------------------------------------------------------------------- |
 | `400`  | The request cannot be decoded or structurally validated against its schema.                                         |
-| `401`  | Credentials are missing, invalid, expired, revoked, or otherwise unusable. Include a `WWW-Authenticate` challenge.   |
+| `401`  | Credentials are missing, invalid, expired, revoked, or otherwise unusable. Include a `WWW-Authenticate` challenge.  |
 | `403`  | Authentication succeeded, but the principal is not permitted to perform the operation.                              |
 | `404`  | The requested resource is absent and revealing that fact is allowed.                                                |
 | `409`  | The operation conflicts with the current mutable state or a concurrency invariant and may succeed after resolution. |

@@ -32,6 +32,7 @@ const workspaceValidationContract = {
   },
   cohort: {
     modernPackages: [
+      '@modern-js/adapter-rstest',
       '@modern-js/create',
       '@modern-js/code-tools',
       '@modern-js/app-tools',

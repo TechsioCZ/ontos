@@ -19,6 +19,25 @@
       "en": "English",
       "switcher": "Language"
     },
+    "login": {
+      "field": {
+        "login": "Login",
+        "password": "Password"
+      },
+      "required": {
+        "login": "Enter your login.",
+        "password": "Enter your password."
+      },
+      "seo": {
+        "description": "Sign in to the OntOS workspace."
+      },
+      "submit": "Login",
+      "title": "Login",
+      "toast": {
+        "description": "Fill in both required fields.",
+        "title": "Login details are incomplete"
+      }
+    },
     "remoteUnavailable": "Remote vertical unavailable",
     "remotes": {},
     "routes": {

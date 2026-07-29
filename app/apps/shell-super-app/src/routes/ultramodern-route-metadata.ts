@@ -21,9 +21,30 @@ export const ultramodernRouteMetadata = [
     publicSurface: 'private-app-screen',
     titleKey: 'shell.title',
   },
+  {
+    canonicalPath: '/login',
+    descriptionKey: 'shell.login.seo.description',
+    id: 'shell-login',
+    indexable: false,
+    localisedPaths: {
+      cs: '/login',
+      en: '/login',
+    },
+    mfBoundaryId: 'shellSuperApp',
+    namespace: 'shell',
+    ownerAppId: 'shell-super-app',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'shell.login.title',
+  },
 ] as const;
 
-export const ultramodernLocalisedUrls = {} as const;
+export const ultramodernLocalisedUrls = {
+  '/login': {
+    cs: '/login',
+    en: '/login',
+  },
+} as const;
 
 export const ultramodernPublicRoutes = [] as const;
 

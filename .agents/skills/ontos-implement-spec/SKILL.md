@@ -35,6 +35,12 @@ Use the `specs/*.md` path supplied with the skill invocation. A uniquely identif
 - Do not create business-functionality files directly. If a required business file type has no Codesmith generator, stop and ask the developer how to proceed.
 - Follow existing patterns and preserve strict MicroVertical deployment seams, the generated Effect BFF client seam, typed Action state changes, and typed Effect error contracts.
 - Write new tests or update existing tests for every changed behavior and important failure path. Validation commands are not a substitute for test coverage.
+- Keep tests owned by the deployable package they validate:
+  - shell tests live under `apps/<shell>/tests/`;
+  - each MicroVertical's tests live under `apps/<microvertical>/tests/`;
+  - shared-package tests live under `packages/<package>/tests/`.
+- Organize each package-owned test tree by level as applicable: `tests/unit/`, `tests/integration/`, and `tests/e2e/`. Do not place test files in production `src/` unless an explicit repository instruction requires colocated tests.
+- Update test-runner discovery, imports, and package scripts when adding or moving package-owned tests.
 - Run focused tests after each meaningful implementation slice and fix failures before continuing.
 - Mark each plan task complete only after its implementation and tests are verified.
 

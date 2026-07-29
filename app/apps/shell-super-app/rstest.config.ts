@@ -1,0 +1,23 @@
+import { createRequire } from 'node:module';
+import { withModernConfig } from '@modern-js/adapter-rstest';
+import { defineConfig } from '@rstest/core';
+
+Object.assign(globalThis, { require: createRequire(import.meta.url) });
+
+export default defineConfig({
+  clearMocks: true,
+  extends: withModernConfig({
+    configPath: './modern.rstest.config.ts',
+  }),
+  include: ['tests/unit/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
+  output: {
+    module: false,
+  },
+  restoreMocks: true,
+  source: {
+    define: {
+      ULTRAMODERN_SITE_URL: JSON.stringify('http://localhost:3020'),
+    },
+  },
+  testEnvironment: 'happy-dom',
+});

@@ -19,6 +19,25 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
+    "login": {
+      "field": {
+        "login": "Přihlašovací jméno",
+        "password": "Heslo"
+      },
+      "required": {
+        "login": "Zadejte přihlašovací jméno.",
+        "password": "Zadejte heslo."
+      },
+      "seo": {
+        "description": "Přihlaste se do pracovního prostoru OntOS."
+      },
+      "submit": "Přihlásit se",
+      "title": "Přihlášení",
+      "toast": {
+        "description": "Vyplňte obě povinná pole.",
+        "title": "Přihlašovací údaje nejsou úplné"
+      }
+    },
     "remoteUnavailable": "Remote vertical je nedostupný",
     "remotes": {},
     "routes": {

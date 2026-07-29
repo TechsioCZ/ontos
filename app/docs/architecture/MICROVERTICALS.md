@@ -6,10 +6,10 @@ Each MicroVertical is a complete, independently deployable business module. It o
 
 OntOS has two different kinds of seams. Do not treat them as equivalent.
 
-| Seam       | Location                                      | Meaning                                                                                     |
-| ---------- | --------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Vertical   | Between MicroVerticals                        | A strict physical deployment seam that must always be preserved.                            |
-| Horizontal | Between frontend and backend in one vertical | A virtual seam represented by the generated, Effect-based BFF client—not a domain seam.     |
+| Seam       | Location                                     | Meaning                                                                                 |
+| ---------- | -------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Vertical   | Between MicroVerticals                       | A strict physical deployment seam that must always be preserved.                        |
+| Horizontal | Between frontend and backend in one vertical | A virtual seam represented by the generated, Effect-based BFF client—not a domain seam. |
 
 ## Vertical Seams: Strict and Independently Deployable
 
