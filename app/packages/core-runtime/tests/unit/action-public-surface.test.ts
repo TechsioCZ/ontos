@@ -87,6 +87,8 @@ test('publishes only the narrow server Action surface', () => {
   assert.equal('denyPolicy' in publicSurface, true);
   assert.equal('ActionPolicyDenied' in publicSurface, true);
   assert.equal('ActionPolicyEvaluationError' in publicSurface, true);
+  assert.equal('ActionPermissionDenied' in publicSurface, true);
+  assert.equal('ActionPermissionCheckError' in publicSurface, true);
   assert.equal('resolveActionCommit' in publicSurface, true);
   assert.equal('ActionRepository' in publicSurface, false);
   assert.equal('ActionRepositoryLive' in publicSurface, false);
@@ -94,5 +96,10 @@ test('publishes only the narrow server Action surface', () => {
   assert.equal('makeActionRepository' in publicSurface, false);
   assert.equal('finalizePolicyDenial' in publicSurface, false);
   assert.equal('isActionPolicy' in publicSurface, false);
+  assert.equal('ActionPermission' in publicSurface, false);
+  assert.equal('ActionPermissionLive' in publicSurface, false);
+  assert.equal('SpiceDbConfig' in publicSurface, false);
+  assert.equal('createPermissionCheckClient' in publicSurface, false);
+  assert.equal('makeActionPermissionService' in publicSurface, false);
   assert.equal('Pool' in publicSurface, false);
 });

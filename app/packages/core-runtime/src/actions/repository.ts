@@ -1,3 +1,4 @@
+/* eslint-disable max-classes-per-file -- Private rollback signals preserve typed failures across Drizzle's Promise callback boundary. */
 // @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off
 // Drizzle's transaction/query contract is Promise-based; these narrow bridges
 // keep the exported repository operations in typed Effect error channels.
@@ -19,6 +20,7 @@ import type { ActionEvidenceSnapshot } from './events.ts';
 import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
+  ActionInvocationStateError,
   ActionTransactionError,
 } from './errors.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
@@ -177,6 +179,14 @@ export interface FlushActionSuccessInput {
   readonly transport: ActionTransportMetadata;
 }
 
+export interface RejectPermissionDeniedInput {
+  readonly actionInvocationId: string;
+  readonly actionKey: string;
+  readonly auditProfile: ActionAuditProfile;
+  readonly principal: TrustedPrincipalContext;
+  readonly transport: ActionTransportMetadata;
+}
+
 export interface ActionRepositoryService {
   readonly createOrResolveInvocation: (
     executor: CoreDatabaseExecutor,
@@ -194,6 +204,13 @@ export interface ActionRepositoryService {
     transaction: CoreTransaction,
     invocationId: string,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
+  readonly rejectPermissionDenied: (
+    executor: CoreDatabaseExecutor,
+    input: RejectPermissionDeniedInput,
+  ) => Effect.Effect<
+    void,
+    ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
+  >;
   readonly resolveInvocation: (
     executor: CoreDatabaseExecutor,
     input: ResolveActionInvocationInput,
@@ -244,6 +261,14 @@ const transactionFailure = (reason: string, cause?: unknown) => {
   }
   return failure;
 };
+
+class PermissionDenialRollbackSignal {
+  readonly error: ActionInvocationPersistenceError | ActionInvocationStateError;
+
+  constructor(error: ActionInvocationPersistenceError | ActionInvocationStateError) {
+    this.error = error;
+  }
+}
 
 /** Internal bridge used by the runtime to log a sanitized persistence failure's full cause. */
 export const getActionTransactionFailureCause = (
@@ -394,6 +419,86 @@ export const makeActionRepository = (): ActionRepositoryService => {
         }
         return resolved;
       },
+    });
+
+  const rejectPermissionDenied: ActionRepositoryService['rejectPermissionDenied'] = (
+    executor,
+    input,
+  ) =>
+    Effect.tryPromise({
+      catch: (cause) =>
+        cause instanceof PermissionDenialRollbackSignal
+          ? cause.error
+          : transactionFailure('Unable to persist Action permission denial evidence', cause),
+      try: () =>
+        executor.transaction(async (transaction) => {
+          const rows = await transaction
+            .select(invocationSelection)
+            .from(actionInvocations)
+            .where(
+              and(
+                eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+                eq(actionInvocations.actionKey, input.actionKey),
+                eq(actionInvocations.principalId, input.principal.principalId),
+                eq(actionInvocations.tenantId, input.principal.tenantId),
+              ),
+            )
+            .for('update')
+            .limit(1);
+          const [invocation] = rows;
+          if (invocation === undefined) {
+            throw new PermissionDenialRollbackSignal(
+              persistenceFailure('The denied Action invocation no longer exists'),
+            );
+          }
+
+          if (invocation.status === 'rejected' && invocation.completedAt !== null) {
+            return;
+          }
+          if (invocation.status !== 'received' || invocation.completedAt !== null) {
+            throw new PermissionDenialRollbackSignal(
+              new ActionInvocationStateError({
+                code: 'action_invocation_state_invalid',
+                reason: 'The Action invocation cannot be rejected from its current state',
+              }),
+            );
+          }
+
+          await transaction.insert(auditEvents).values({
+            actionInvocationId: input.actionInvocationId,
+            auditProfile: input.auditProfile,
+            authBindingId: input.principal.authBindingId,
+            authContextRef: input.principal.authContextRef,
+            authMethod: input.principal.authMethod,
+            eventType: 'action.rejected',
+            evidenceJson: { actionKey: input.actionKey },
+            impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+            legalEntityId: input.principal.legalEntityId,
+            outcome: 'denied',
+            outcomeCode: 'spicedb_permission_denied',
+            outcomeStage: 'authz',
+            principalId: input.principal.principalId,
+            targetModuleKey: input.transport.targetModuleKey,
+            targetResourceId: input.transport.targetResourceId,
+            targetResourceType: input.transport.targetResourceType,
+            tenantId: input.principal.tenantId,
+          });
+
+          const rejected = await transaction
+            .update(actionInvocations)
+            .set({ completedAt: new Date(), status: 'rejected' })
+            .where(
+              and(
+                eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+                eq(actionInvocations.status, 'received'),
+                isNull(actionInvocations.completedAt),
+              ),
+            )
+            .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+          if (rejected.length !== 1) {
+            throw new Error('The Action invocation could not be marked rejected');
+          }
+        }),
     });
 
   const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = (executor, input) =>
@@ -648,6 +753,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
     finalizePolicyDenial,
     flushSuccess,
     lockInvocation,
+    rejectPermissionDenied,
     resolveInvocation,
     transitionInvocationToRunning,
   });

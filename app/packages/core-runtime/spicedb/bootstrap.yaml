@@ -1,0 +1,22 @@
+schema: |-
+  definition principal {}
+
+  definition action {
+    relation restriction: action
+    relation executor: principal
+
+    permission is_restricted = restriction
+    permission execute = executor
+  }
+
+relationships: |-
+  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#restriction@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
+  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#executor@principal:allowed-principal
+
+assertions:
+  assertTrue:
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:allowed-principal
+  assertFalse:
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:denied-principal

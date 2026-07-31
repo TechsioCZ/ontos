@@ -66,6 +66,7 @@ allowBuilds:
   esbuild: true
   lefthook: true
   msgpackr-extract: true
+  protobufjs: true
   sharp: true
   workerd: true
 patchedDependencies:

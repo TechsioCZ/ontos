@@ -20,6 +20,30 @@ services:
       timeout: 5s
       retries: 20
 
+  ontos-spicedb:
+    container_name: ontos-spicedb
+    image: authzed/spicedb:v1.56.0
+    command:
+      - serve
+      - --datastore-engine=memory
+      - --datastore-bootstrap-files=/bootstrap/bootstrap.yaml
+      - --http-enabled=true
+    environment:
+      SPICEDB_GRPC_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
+    ports:
+      - '${SPICEDB_GRPC_PORT}:50051'
+      - '${SPICEDB_HTTP_PORT}:8443'
+    volumes:
+      - ./packages/core-runtime/spicedb/bootstrap.yaml:/bootstrap/bootstrap.yaml:ro
+    healthcheck:
+      test:
+        - CMD
+        - /usr/local/bin/grpc_health_probe
+        - -addr=localhost:50051
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   ontos_postgres_data:
     name: ontos_postgres_data

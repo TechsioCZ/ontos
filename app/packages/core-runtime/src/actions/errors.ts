@@ -37,6 +37,22 @@ export class ActionIdempotencyKeyRequired extends Schema.TaggedErrorClass<Action
   },
 ) {}
 
+export class ActionPermissionDenied extends Schema.TaggedErrorClass<ActionPermissionDenied>()(
+  'ActionPermissionDenied',
+  {
+    code: Schema.Literal('action_permission_denied'),
+    ...safeReason,
+  },
+) {}
+
+export class ActionPermissionCheckError extends Schema.TaggedErrorClass<ActionPermissionCheckError>()(
+  'ActionPermissionCheckError',
+  {
+    code: Schema.Literal('action_permission_check_failed'),
+    ...safeReason,
+  },
+) {}
+
 export class ActionAlreadyCommitted extends Schema.TaggedErrorClass<ActionAlreadyCommitted>()(
   'ActionAlreadyCommitted',
   {
@@ -136,6 +152,8 @@ export type ActionCoreError =
   | ActionInvocationNotFound
   | ActionInvocationPersistenceError
   | ActionInvocationStateError
+  | ActionPermissionCheckError
+  | ActionPermissionDenied
   | ActionPayloadValidationError
   | ActionPolicyDenied
   | ActionPolicyEvaluationError
@@ -149,19 +167,22 @@ export type ActionCoreError =
  * registration's declared domain errors exhaustively to its public schemas.
  * Structural payload/metadata validation maps to 400, invalid trusted
  * authentication context to 401, a missing required idempotency key to 428,
- * idempotency and terminal-state conflicts to 409, missing invocations to
- * 404, and temporarily unavailable persistence, Policy evaluation capability,
- * and indeterminate commit failures to an appropriate retryable status such as
- * 503. Policy denials map according to their declared business semantics (for
- * example 403, 409, or 422), never through one universal Policy status. Invalid
- * results and sanitized unexpected execution/transaction defects map to a
- * declared safe 500.
+ * permission denial to 403, idempotency and terminal-state conflicts to 409,
+ * missing invocations to 404, and permission-check failure, temporarily
+ * unavailable persistence, Policy evaluation capability, and indeterminate
+ * commit failures to an appropriate retryable status such as 503. Policy
+ * denials map according to their declared business semantics (for example 403,
+ * 409, or 422), never through one universal Policy status. Invalid results and
+ * sanitized unexpected execution/transaction defects map to a declared safe
+ * 500.
  */
 export const ACTION_CORE_ERROR_TAGS = [
   'ActionPayloadValidationError',
   'ActionResultValidationError',
   'ActionTrustedContextValidationError',
   'ActionIdempotencyKeyRequired',
+  'ActionPermissionDenied',
+  'ActionPermissionCheckError',
   'ActionAlreadyCommitted',
   'ActionRequestHashConflict',
   'ActionInvocationNotFound',

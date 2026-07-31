@@ -109,6 +109,8 @@ export {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
   ActionPayloadValidationError,
   ActionPolicyDenied,
   ActionPolicyEvaluationError,
