@@ -1,17 +1,26 @@
 // @effect-diagnostics processEnv:off
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { defineConfig } from 'drizzle-kit';
 
-const rootEnvironmentPath = fileURLToPath(new URL('../../.env', import.meta.url));
+const invocationRoot =
+  process.env['ULTRAMODERN_WORKSPACE_ROOT'] ?? process.env['INIT_CWD'] ?? process.cwd();
+const workspaceRoot = ['apps', 'packages', 'verticals'].includes(
+  path.basename(path.dirname(invocationRoot)),
+)
+  ? path.resolve(invocationRoot, '../..')
+  : invocationRoot;
+const rootEnvironmentPath = path.resolve(workspaceRoot, '.env');
 const dotenvResult = loadDotenv({
   path: rootEnvironmentPath,
   quiet: true,
 });
+const dotenvErrorCode: string | undefined = dotenvResult.error?.code;
 
 if (
   dotenvResult.error !== undefined &&
-  dotenvResult.error.code !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
+  dotenvErrorCode !== 'ENOENT' &&
+  dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
 ) {
   throw dotenvResult.error;
 }
@@ -27,6 +36,10 @@ export default defineConfig({
     url: databaseUrl,
   },
   dialect: 'postgresql',
+  migrations: {
+    schema: 'drizzle',
+    table: '__drizzle_migrations_core',
+  },
   out: './drizzle',
   schema: './src/db/schema.ts',
   strict: true,

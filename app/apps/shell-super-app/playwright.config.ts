@@ -16,7 +16,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'pnpm serve',
+    command: 'pnpm exec modern build && pnpm serve',
     reuseExistingServer: !process.env['CI'],
     url: 'http://127.0.0.1:3020/en',
   },

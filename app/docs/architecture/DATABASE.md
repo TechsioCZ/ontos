@@ -12,6 +12,10 @@ governed by [Action Execution](./ACTIONS.md).
 - PostgreSQL schema `public` owns no OntOS application tables.
 - Auth and every MicroVertical own separate schemas and migration histories.
   They are not registered in the Core Drizzle configuration or runtime schema.
+- All migration histories store bookkeeping in the shared PostgreSQL schema
+  `drizzle`, using a distinct journal table per owner. Independent migration
+  histories must never share one journal table because their timestamps would
+  suppress each other's migrations.
 - Code outside an owning package must not import a private schema, repository,
   migration, or database client from that package.
 

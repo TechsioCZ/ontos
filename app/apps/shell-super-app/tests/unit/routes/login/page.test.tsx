@@ -1,8 +1,23 @@
 import { afterEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
+import { toaster } from '@techsio/ui-kit/molecules/toast';
 import LoginPage from '../../../../src/routes/[lang]/login/page';
+
+const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => ({
+  navigateMock: rstest.fn(() => Promise.resolve()),
+  runEffectRequestMock: rstest.fn(() =>
+    Promise.resolve({
+      identity: {
+        displayName: 'Ada',
+        email: 'ada@example.test',
+        principalId: 'principal-1',
+        tenantId: 'tenant-1',
+      },
+    }),
+  ),
+  signInMock: rstest.fn(() => ({ operation: 'signIn' })),
+}));
 
 const translations: Record<string, string> = {
   'shell.login.field.login': 'Login',
@@ -29,22 +44,26 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   }),
 }));
 
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useNavigate: () => navigateMock,
+}));
+
+rstest.mock('../../../../src/api/auth-client.ts', () => ({
+  runEffectRequest: runEffectRequestMock,
+  signIn: signInMock,
+}));
+
 const getLogin = () => screen.getByRole('textbox', { name: 'Login *' });
 const getPassword = () => screen.getByLabelText(/^Password/u, { selector: 'input' });
 const getSubmit = () => screen.getByRole('button', { name: 'Login' });
 
-const renderLogin = () =>
-  render(
-    <>
-      <Toaster />
-      <LoginPage />
-    </>,
-  );
+const renderLogin = () => render(<LoginPage />);
 
 afterEach(() => {
   cleanup();
   toaster.remove();
   rstest.unstubAllGlobals();
+  rstest.clearAllMocks();
 });
 
 test('shows the required login controls through the UI kit', () => {
@@ -191,11 +210,8 @@ test('runs the same validation when submitted with Enter', () => {
     });
 });
 
-test('does not request, navigate, or show a Toast for valid values', () => {
+test('submits valid values through the Shell authentication client and navigates home', () => {
   const user = userEvent.setup();
-  const fetchMock = rstest.fn();
-  rstest.stubGlobal('fetch', fetchMock);
-  const initialLocation = window.location.href;
   renderLogin();
 
   return user
@@ -203,8 +219,15 @@ test('does not request, navigate, or show a Toast for valid values', () => {
     .then(() => user.type(getPassword(), 'secret'))
     .then(() => user.click(getSubmit()))
     .then(() => {
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(window.location.href).toBe(initialLocation);
+      expect(signInMock).toHaveBeenCalledWith(
+        {
+          email: 'admin',
+          password: 'secret',
+        },
+        { locale: 'en' },
+      );
+      expect(runEffectRequestMock).toHaveBeenCalledTimes(1);
+      expect(navigateMock).toHaveBeenCalledWith({ to: '/en/' });
       expect(screen.queryByText('Login details are incomplete')).toBeNull();
     });
 });

@@ -1,5 +1,20 @@
 {
   "shell": {
+    "auth": {
+      "identity": {
+        "displayName": "Name",
+        "email": "Email",
+        "principal": "Principal",
+        "tenant": "Tenant",
+        "title": "Authenticated identity"
+      },
+      "loginLink": "Login",
+      "logout": {
+        "action": "Logout",
+        "failed": "Logout failed. Try again.",
+        "pending": "Logging out…"
+      }
+    },
     "boundaries": {
       "toggle": "show team boundaries"
     },
@@ -20,6 +35,13 @@
       "switcher": "Language"
     },
     "login": {
+      "error": {
+        "forbidden": "This account is not permitted to access OntOS.",
+        "internal": "Login failed. Try again.",
+        "invalid": "The email address or password is invalid.",
+        "title": "Unable to log in",
+        "unavailable": "Authentication is temporarily unavailable. Try again."
+      },
       "field": {
         "login": "Login",
         "password": "Password"
@@ -28,6 +50,7 @@
         "login": "Enter your login.",
         "password": "Enter your password."
       },
+      "pending": "Logging in…",
       "seo": {
         "description": "Sign in to the OntOS workspace."
       },

@@ -167,6 +167,10 @@ errors with concrete Effect `Schema` values; generic JSON shortcuts such as
 `Schema.UnknownFromJsonString`, `Schema.Unknown`, and `Schema.Any` are rejected
 in API modules.
 
+The Shell authentication API is the deliberate Shell-owned instance of this topology.
+Authentication and session mechanics remain a Shell/Core capability and must not be
+represented by an Auth MicroVertical.
+
 Generated pnpm overrides pin the framework-compatible Effect cohort. Keep
 `effect` and `@effect/vitest` aligned with `pnpm-workspace.yaml`; do not add
 new direct package-level Effect versions unless the whole UltraModern cohort is

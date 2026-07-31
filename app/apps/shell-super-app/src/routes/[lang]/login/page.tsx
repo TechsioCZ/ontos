@@ -1,9 +1,12 @@
+/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { useToast } from '@techsio/ui-kit/molecules/toast';
+import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { runEffectRequest, signIn } from '../../../api/auth-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 interface LoginValidation {
@@ -16,42 +19,91 @@ const validLogin: LoginValidation = {
   passwordMissing: false,
 };
 
+const authenticationErrorMessageKey = (errorTag: unknown) => {
+  if (errorTag === 'InvalidCredentialsProblem') {
+    return 'shell.login.error.invalid';
+  }
+  if (errorTag === 'OntosIdentityForbiddenProblem') {
+    return 'shell.login.error.forbidden';
+  }
+  if (errorTag === 'AuthenticationUnavailableProblem') {
+    return 'shell.login.error.unavailable';
+  }
+  return 'shell.login.error.internal';
+};
+
 export default function LoginPage() {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const navigate = useNavigate();
   const toaster = useToast();
   const loginRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
+  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
+    if (submitting) {
+      return;
+    }
+
     const formData = new FormData(event.currentTarget);
     const login = formData.get('login');
     const password = formData.get('password');
+    const loginValue = typeof login === 'string' ? login : '';
+    const passwordValue = typeof password === 'string' ? password : '';
     const nextValidation = {
-      loginMissing: typeof login !== 'string' || login.trim().length === 0,
-      passwordMissing: typeof password !== 'string' || password.length === 0,
+      loginMissing: loginValue.trim().length === 0,
+      passwordMissing: passwordValue.length === 0,
     };
 
     setValidation(nextValidation);
 
-    if (!nextValidation.loginMissing && !nextValidation.passwordMissing) {
+    if (nextValidation.loginMissing || nextValidation.passwordMissing) {
+      toaster.create({
+        description: t('shell.login.toast.description'),
+        title: t('shell.login.toast.title'),
+        type: 'error',
+      });
+
+      if (nextValidation.loginMissing) {
+        loginRef.current?.focus();
+        return;
+      }
+
+      passwordRef.current?.focus();
       return;
     }
 
-    toaster.create({
-      description: t('shell.login.toast.description'),
-      title: t('shell.login.toast.title'),
-      type: 'error',
-    });
+    setSubmitting(true);
+    void runEffectRequest(
+      signIn(
+        {
+          email: loginValue.trim(),
+          password: passwordValue,
+        },
+        { locale: language },
+      ),
+    )
+      .then(() => navigate({ to: `/${language}/` }))
+      .catch((error: unknown) => {
+        const errorTag =
+          typeof error === 'object' && error !== null && '_tag' in error
+            ? error._tag
+            : 'AuthenticationInternalProblem';
+        const messageKey = authenticationErrorMessageKey(errorTag);
 
-    if (nextValidation.loginMissing) {
-      loginRef.current?.focus();
-      return;
-    }
-
-    passwordRef.current?.focus();
+        toaster.create({
+          description: t(messageKey),
+          title: t('shell.login.error.title'),
+          type: 'error',
+        });
+        loginRef.current?.focus();
+      })
+      .finally(() => {
+        setSubmitting(false);
+      });
   };
 
   return (
@@ -85,12 +137,22 @@ export default function LoginPage() {
               type="password"
               validateStatus={validation.passwordMissing ? 'error' : 'default'}
             />
-            <Button block size="md" theme="solid" type="submit" variant="primary">
+            <Button
+              block
+              disabled={submitting}
+              isLoading={submitting}
+              loadingText={t('shell.login.pending')}
+              size="md"
+              theme="solid"
+              type="submit"
+              variant="primary"
+            >
               {t('shell.login.submit')}
             </Button>
           </form>
         </section>
       </main>
+      <Toaster />
     </>
   );
 }

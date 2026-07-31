@@ -1,12 +1,20 @@
 // @effect-diagnostics processEnv:off
-import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { Context, Effect, Layer } from 'effect';
 import { DatabaseConfigError } from './config-error.ts';
 
 export { DatabaseConfigError } from './config-error.ts';
 
-export const ROOT_ENV_PATH = fileURLToPath(new URL('../../../../.env', import.meta.url));
+const invocationRoot =
+  process.env['ULTRAMODERN_WORKSPACE_ROOT'] ?? process.env['INIT_CWD'] ?? process.cwd();
+const workspaceRoot = ['apps', 'packages', 'verticals'].includes(
+  path.basename(path.dirname(invocationRoot)),
+)
+  ? path.resolve(invocationRoot, '../..')
+  : invocationRoot;
+
+export const ROOT_ENV_PATH = path.resolve(workspaceRoot, '.env');
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -43,8 +51,13 @@ const loadEnvironment = (
         processEnv: fileEnvironment,
         quiet: true,
       });
+      const dotenvErrorCode: string | undefined = result.error?.code;
 
-      if (result.error !== undefined && result.error.code !== 'NOT_FOUND_DOTENV_ENVIRONMENT') {
+      if (
+        result.error !== undefined &&
+        dotenvErrorCode !== 'ENOENT' &&
+        dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
+      ) {
         throw result.error;
       }
 

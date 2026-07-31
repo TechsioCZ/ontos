@@ -11,6 +11,7 @@ import {
   modernTanstackRouterFastDefaults,
 } from '@modern-js/plugin-tanstack/runtime';
 
+import { loader as loader_0 } from "../../routes/[lang]/page.data";
 import component_0 from "../../routes/[lang]/page";
 import component_1 from "../../routes/[lang]/login/page";
 import component_2 from "../../routes/layout";
@@ -26,8 +27,10 @@ const route__lang__page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_0,
   path: "$lang",
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_0),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/page",
+    modernRouteLoader: loader_0,
   }),
 });
 

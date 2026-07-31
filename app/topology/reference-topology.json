@@ -8,6 +8,24 @@
     "kind": "shell",
     "package": "@app/shell-super-app",
     "verticalRefs": [],
+    "authentication": {
+      "kind": "shell-core-capability",
+      "owners": [
+        "shell-super-app",
+        "core-runtime"
+      ],
+      "databaseSchema": "auth",
+      "api": {
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "prefix": "/shell-super-app-api",
+        "operations": [
+          "signIn",
+          "currentSession",
+          "signOut"
+        ]
+      }
+    },
     "moduleFederation": {
       "role": "host",
       "name": "shellSuperApp",

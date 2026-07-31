@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
+    "./api": "./shared/api.ts",
+    "./api/client": "./src/api/auth-client.ts",
     "./api/clients": "./src/api/vertical-clients.ts"
   },
   "scripts": {
@@ -12,12 +14,17 @@
     "cloudflare:deploy": "ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "node ../../scripts/proof-cloudflare-version.mts --app shell-super-app",
+    "db:generate": "drizzle-kit generate --config drizzle.auth.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.auth.config.ts",
+    "db:verify": "node scripts/verify-auth-db-schema.mts",
     "serve": "modern serve",
     "test:e2e": "playwright test",
+    "test:integration": "node --test tests/integration/*.test.ts",
     "test:unit": "rstest",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
+    "@app/core-runtime": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.96",
@@ -29,8 +36,12 @@
     "@module-federation/runtime": "2.8.0",
     "@tanstack/react-router": "1.170.17",
     "@techsio/ui-kit": "0.25.1",
+    "better-auth": "1.6.23",
+    "drizzle-orm": "0.45.2",
+    "effect": "4.0.0-beta.97",
     "i18next": "26.3.6",
     "node-fetch": "^3.3.2",
+    "pg": "8.22.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-router": "7.18.1"
@@ -46,8 +57,12 @@
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",
     "@types/node": "^20",
+    "@types/pg": "8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "auth": "1.6.23",
+    "dotenv": "17.4.2",
+    "drizzle-kit": "0.31.10",
     "happy-dom": "20.8.3",
     "tailwindcss": "^4.3.2",
     "typescript": "7.0.2",

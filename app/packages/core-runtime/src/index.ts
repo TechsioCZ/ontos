@@ -1,4 +1,24 @@
 export {
+  PrincipalBindingAmbiguousError,
+  PrincipalBindingInactiveError,
+  PrincipalBindingMissingError,
+  PrincipalInactiveError,
+  PrincipalResolverUnavailableError,
+  TenantInactiveError,
+} from './auth/principal-resolver-errors.ts';
+export type { PrincipalResolutionError } from './auth/principal-resolver-errors.ts';
+export {
+  PrincipalResolver,
+  PrincipalResolverLive,
+  classifyPrincipalResolution,
+  makePrincipalResolver,
+} from './auth/principal-resolver.ts';
+export type {
+  PrincipalResolutionRecord,
+  PrincipalResolverShape,
+  ResolvedPrincipalIdentity,
+} from './auth/principal-resolver.ts';
+export {
   CoreDatabase,
   CoreDatabaseLive,
   DatabaseConnectionError,

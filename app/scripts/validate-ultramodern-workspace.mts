@@ -335,6 +335,17 @@ const workspaceValidationContract = {
         kind: 'shell',
         package: '@app/shell-super-app',
         verticalRefs: [],
+        authentication: {
+          kind: 'shell-core-capability',
+          owners: ['shell-super-app', 'core-runtime'],
+          databaseSchema: 'auth',
+          api: {
+            runtimeFramework: 'effect',
+            strictEffectApproach: true,
+            prefix: '/shell-super-app-api',
+            operations: ['signIn', 'currentSession', 'signOut'],
+          },
+        },
         moduleFederation: {
           role: 'host',
           name: 'shellSuperApp',
@@ -857,12 +868,6 @@ const workspaceValidationContract = {
       },
     ],
     forbiddenPathClasses: [
-      {
-        id: 'shell-api-surface',
-        path: 'api',
-        diagnostic:
-          'A thin Shell must not own an API surface (api/); business APIs belong to a MicroVertical.',
-      },
       {
         id: 'shell-server-surface',
         path: 'server',
@@ -3114,6 +3119,7 @@ const assertTsConfigReferenceGraph = () => {
     ...additionalShellPaths,
   ].map((referencePath) => ({ path: referencePath }));
   const expectedShellReferences = [
+    'packages/core-runtime',
     ...sharedPackagePaths,
     ...(topology.shell?.verticalRefs ?? [])
       .map((verticalRef) => fullStackVerticals.find((candidate) => candidate.id === verticalRef))
@@ -3148,7 +3154,7 @@ const assertTsConfigReferenceGraph = () => {
   );
   assertSameJson(
     shellTsConfig.include ?? [],
-    ['src', 'locales/**/*.json', 'package.json', 'shared'],
+    ['api', 'src', 'locales/**/*.json', 'package.json', 'shared'],
     'apps/shell-super-app/tsconfig.json include',
     'restore the generated shell typecheck boundary',
   );

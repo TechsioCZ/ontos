@@ -128,10 +128,7 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
           inner join pg_catalog.pg_class as relation
             on relation.relnamespace = user_schemas.oid
           where relation.relkind in (${'r'}, ${'p'})
-            and not (
-              user_schemas.nspname = ${'drizzle'}
-              and relation.relname = ${'__drizzle_migrations'}
-            )
+            and user_schemas.nspname = ${CORE_SCHEMA_NAME}
         ),
         unexpected_schemas as (
           select
@@ -140,6 +137,7 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
             null::text as table_name
           from user_schemas
           where user_schemas.nspname not in (
+            ${'auth'},
             ${CORE_SCHEMA_NAME},
             ${'drizzle'},
             ${'public'}
@@ -155,7 +153,6 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
             on relation.relnamespace = user_schemas.oid
           where relation.relkind = ${'r'}
             and user_schemas.nspname = ${'drizzle'}
-            and relation.relname = ${'__drizzle_migrations'}
         )
         select kind, schema_name, table_name from application_tables
         union all
@@ -167,11 +164,13 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   });
 
   const entries: CatalogEntry[] = [];
-  let migrationBookkeepingCount = 0;
+  const migrationBookkeepingTables: string[] = [];
 
   for (const row of catalogResult.rows) {
     if (row.kind === 'migration') {
-      migrationBookkeepingCount += 1;
+      if (row.table_name !== null) {
+        migrationBookkeepingTables.push(row.table_name);
+      }
       continue;
     }
 
@@ -197,9 +196,18 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     });
   }
 
-  if (migrationBookkeepingCount !== 1) {
+  const expectedMigrationBookkeepingTables = [
+    '__drizzle_migrations_auth',
+    '__drizzle_migrations_core',
+  ];
+  migrationBookkeepingTables.sort();
+
+  if (
+    JSON.stringify(migrationBookkeepingTables) !==
+    JSON.stringify(expectedMigrationBookkeepingTables)
+  ) {
     return yield* new DatabaseVerificationError({
-      reason: `Expected one Drizzle migration bookkeeping table, found ${migrationBookkeepingCount}`,
+      reason: `Expected Drizzle migration bookkeeping tables [${expectedMigrationBookkeepingTables.join(', ')}], found [${migrationBookkeepingTables.join(', ')}]`,
     });
   }
 

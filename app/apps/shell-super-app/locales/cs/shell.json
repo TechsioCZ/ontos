@@ -1,5 +1,20 @@
 {
   "shell": {
+    "auth": {
+      "identity": {
+        "displayName": "Jméno",
+        "email": "E-mail",
+        "principal": "Principal",
+        "tenant": "Tenant",
+        "title": "Přihlášená identita"
+      },
+      "loginLink": "Přihlásit se",
+      "logout": {
+        "action": "Odhlásit se",
+        "failed": "Odhlášení selhalo. Zkuste to znovu.",
+        "pending": "Odhlašuji…"
+      }
+    },
     "boundaries": {
       "toggle": "zobrazit hranice týmů"
     },
@@ -20,6 +35,13 @@
       "switcher": "Jazyk"
     },
     "login": {
+      "error": {
+        "forbidden": "Tento účet nemá přístup do OntOS.",
+        "internal": "Přihlášení selhalo. Zkuste to znovu.",
+        "invalid": "E-mailová adresa nebo heslo nejsou správné.",
+        "title": "Přihlášení se nezdařilo",
+        "unavailable": "Ověření je dočasně nedostupné. Zkuste to znovu."
+      },
       "field": {
         "login": "Přihlašovací jméno",
         "password": "Heslo"
@@ -28,6 +50,7 @@
         "login": "Zadejte přihlašovací jméno.",
         "password": "Zadejte heslo."
       },
+      "pending": "Přihlašuji…",
       "seo": {
         "description": "Přihlaste se do pracovního prostoru OntOS."
       },

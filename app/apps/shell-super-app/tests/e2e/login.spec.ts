@@ -1,106 +1,122 @@
 import { expect, test } from '@playwright/test';
+import { createAuthenticationFixture, e2eCredentials } from './auth-fixture.ts';
 
-test('renders the English login route with the localized UI-Kit controls', ({ page }) =>
+let cleanupFixture: (() => Promise<void>) | undefined;
+
+test.beforeAll(() =>
+  createAuthenticationFixture().then((cleanup) => {
+    cleanupFixture = cleanup;
+  }),
+);
+
+test.afterAll(() => cleanupFixture?.());
+
+test('renders the exact anonymous English and Czech home states', ({ page }) =>
+  page
+    .goto('/en/')
+    .then(() =>
+      Promise.all([
+        expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
+        expect(page.getByRole('link')).toHaveCount(1),
+        expect(page.getByRole('button')).toHaveCount(0),
+        expect(page.getByRole('checkbox')).toHaveCount(0),
+        expect(page.getByRole('region')).toHaveCount(0),
+      ]),
+    )
+    .then(() => page.goto('/cs/'))
+    .then(() =>
+      Promise.all([
+        expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible(),
+        expect(page.getByRole('link')).toHaveCount(1),
+        expect(page.getByRole('button')).toHaveCount(0),
+        expect(page.getByRole('checkbox')).toHaveCount(0),
+        expect(page.getByRole('region')).toHaveCount(0),
+      ]),
+    ));
+
+test('shows one generic error for invalid English credentials', ({ page }) =>
   page
     .goto('/en/login')
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('heading', { level: 1, name: 'Login' })).toBeVisible(),
-        expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeVisible(),
-        expect(page.getByLabel(/^Password/u)).toBeVisible(),
-        expect(page.getByRole('button', { name: 'Login' })).toBeVisible(),
-        expect(page).toHaveTitle('Login'),
-        expect(page.locator('meta[name="description"]')).toHaveAttribute(
-          'content',
-          'Sign in to the OntOS workspace.',
-        ),
-        expect(page.locator('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow'),
-      ]),
-    ));
-
-test('renders the Czech login route with Czech translations', ({ page }) =>
-  page
-    .goto('/cs/login')
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('heading', { level: 1, name: 'Přihlášení' })).toBeVisible(),
-        expect(page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })).toBeVisible(),
-        expect(page.getByLabel(/^Heslo/u)).toBeVisible(),
-        expect(page.getByRole('button', { name: 'Přihlásit se' })).toBeVisible(),
-        expect(page).toHaveTitle('Přihlášení'),
-        expect(page.locator('meta[name="description"]')).toHaveAttribute(
-          'content',
-          'Přihlaste se do pracovního prostoru OntOS.',
-        ),
-      ]),
-    ));
-
-test('shows Czech validation without stale English content', ({ page }) =>
-  page
-    .goto('/cs/login')
-    .then(() => page.getByRole('button', { name: 'Přihlásit se' }).click())
-    .then(() =>
-      Promise.all([
-        expect(page.getByText('Zadejte přihlašovací jméno.')).toBeVisible(),
-        expect(page.getByText('Zadejte heslo.')).toBeVisible(),
-        expect(page.getByText('Přihlašovací údaje nejsou úplné')).toHaveCount(1),
-        expect(page.getByText('Vyplňte obě povinná pole.')).toBeVisible(),
-        expect(page.getByText('Enter your login.')).toHaveCount(0),
-        expect(page.getByText('Login details are incomplete')).toHaveCount(0),
-      ]),
-    ));
-
-test('redirects the bare login path through locale detection', ({ page }) =>
-  page.goto('/login').then(() => expect(page).toHaveURL(/\/(?:en|cs)\/login$/u)));
-
-test('shows one Toast, both field errors, and focuses Login after an invalid submit', ({ page }) =>
-  page
-    .goto('/en/login')
+    .then(() => page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email))
+    .then(() => page.getByLabel(/^Password/u).fill('wrong-password'))
     .then(() => page.getByRole('button', { name: 'Login' }).click())
     .then(() =>
       Promise.all([
+        expect(page.getByText('Unable to log in')).toHaveCount(1),
+        expect(page.getByText('The email address or password is invalid.')).toBeVisible(),
         expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
-        expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toHaveAttribute(
-          'aria-invalid',
-          'true',
-        ),
-        expect(page.getByLabel(/^Password/u)).toHaveAttribute('aria-invalid', 'true'),
-        expect(page.getByText('Enter your login.')).toBeVisible(),
-        expect(page.getByText('Enter your password.')).toBeVisible(),
-        expect(page.getByText('Login details are incomplete')).toHaveCount(1),
-        expect(page.getByText('Fill in both required fields.')).toBeVisible(),
       ]),
     ));
 
-test('does not request or navigate when valid values are submitted', ({ page }) => {
-  const submittedRequests: string[] = [];
-
-  return page
+test('persists an English session, logs out, clears the cookie, and stays anonymous', ({ page }) =>
+  page
     .goto('/en/login')
-    .then(() => page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill('admin'))
-    .then(() => page.getByLabel(/^Password/u).fill('secret'))
-    .then(() => {
-      page.on('request', (request) => submittedRequests.push(request.url()));
-      return page.getByRole('button', { name: 'Login' }).click();
-    })
+    .then(() => page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email))
+    .then(() => page.getByLabel(/^Password/u).fill(e2eCredentials.password))
+    .then(() => page.getByRole('button', { name: 'Login' }).click())
+    .then(() => expect(page).toHaveURL(/\/en\/?$/u))
     .then(() =>
       Promise.all([
-        expect(page).toHaveURL(/\/en\/login$/u),
-        expect(page.getByText('Login details are incomplete')).toHaveCount(0),
+        expect(page.getByText('E2E user')).toBeVisible(),
+        expect(page.getByText(e2eCredentials.email)).toBeVisible(),
+        expect(page.getByRole('button', { name: 'Logout' })).toHaveCount(1),
+        expect(page.getByRole('link')).toHaveCount(0),
       ]),
     )
-    .then(() => expect(submittedRequests).toEqual([]));
-});
-
-test('keeps the login form usable at a mobile viewport', ({ page }) =>
-  page
-    .setViewportSize({ height: 667, width: 375 })
-    .then(() => page.goto('/en/login'))
+    .then(() => page.reload())
+    .then(() => expect(page.getByRole('button', { name: 'Logout' })).toBeVisible())
+    .then(() => page.getByRole('button', { name: 'Logout' }).click())
     .then(() =>
       Promise.all([
-        expect(page.getByRole('heading', { level: 1, name: 'Login' })).toBeInViewport(),
-        expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeInViewport(),
-        expect(page.getByLabel(/^Password/u)).toBeInViewport(),
-        expect(page.getByRole('button', { name: 'Login' })).toBeInViewport(),
+        expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
+        expect(page.getByRole('button')).toHaveCount(0),
+      ]),
+    )
+    .then(() => page.reload())
+    .then(() => expect(page.getByRole('link', { name: 'Login' })).toBeVisible()));
+
+test('keeps the Czech authenticated state on logout failure and succeeds on retry', ({ page }) => {
+  let failLogout = true;
+
+  return page
+    .goto('/cs/login')
+    .then(() =>
+      page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u }).fill(e2eCredentials.email),
+    )
+    .then(() => page.getByLabel(/^Heslo/u).fill(e2eCredentials.password))
+    .then(() => page.getByRole('button', { name: 'Přihlásit se' }).click())
+    .then(() => expect(page).toHaveURL(/\/cs\/?$/u))
+    .then(() =>
+      page.route('**/shell-super-app-api/auth/sign-out', (route) => {
+        if (failLogout) {
+          failLogout = false;
+          return route.abort('failed');
+        }
+        return route.continue();
+      }),
+    )
+    .then(() => page.getByRole('button', { name: 'Odhlásit se' }).click())
+    .then(() =>
+      Promise.all([
+        expect(page.getByText('E2E user')).toBeVisible(),
+        expect(page.getByText('Odhlášení selhalo. Zkuste to znovu.')).toBeVisible(),
+        expect(page.getByRole('button', { name: 'Odhlásit se' })).toBeVisible(),
+      ]),
+    )
+    .then(() => page.getByRole('button', { name: 'Odhlásit se' }).click())
+    .then(() => expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible());
+});
+
+test('keeps the login form keyboard- and mobile-usable', ({ page }) =>
+  page
+    .setViewportSize({ height: 667, width: 375 })
+    .then(() => page.goto('/cs/login'))
+    .then(() => page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u }).focus())
+    .then(() => page.keyboard.press('Enter'))
+    .then(() =>
+      Promise.all([
+        expect(page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })).toBeFocused(),
+        expect(page.getByText('Zadejte přihlašovací jméno.')).toBeInViewport(),
+        expect(page.getByText('Zadejte heslo.')).toBeInViewport(),
       ]),
     ));

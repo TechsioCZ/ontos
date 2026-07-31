@@ -1,76 +1,107 @@
-import { Link, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { ultramodernUiMarker } from '../../ultramodern-build';
-import ShellFrame from '../shell-frame';
+/* eslint-disable promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
+import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { useState } from 'react';
+import { runEffectRequest, signOut } from '../../api/auth-client.ts';
+import type { CurrentSession } from '../../../shared/api.ts';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
-import { VerticalShowcase } from '../vertical-components';
 
-export default function ShellHome() {
-  const { t } = useModernI18n();
+interface HomeViewProps {
+  readonly initialSession: CurrentSession;
+}
+
+export const HomeView = ({ initialSession }: HomeViewProps) => {
+  const { language, t } = useModernI18n();
+  const [session, setSession] = useState(initialSession);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutFailed, setLogoutFailed] = useState(false);
+
+  const handleLogout = () => {
+    if (logoutPending) {
+      return;
+    }
+
+    setLogoutPending(true);
+    setLogoutFailed(false);
+    void runEffectRequest(signOut({ locale: language }))
+      .then(() => {
+        setSession({ state: 'anonymous' });
+      })
+      .catch(() => {
+        setLogoutFailed(true);
+      })
+      .finally(() => {
+        setLogoutPending(false);
+      });
+  };
+
+  if (session.state === 'anonymous') {
+    return (
+      <>
+        <UltramodernRouteHead />
+        <main className="flex min-h-screen items-center justify-center bg-(--color-page-bg) p-4">
+          <LinkButton href={`/${language}/login`} size="md" theme="solid" variant="primary">
+            {t('shell.auth.loginLink')}
+          </LinkButton>
+        </main>
+      </>
+    );
+  }
 
   return (
-    <ShellFrame>
+    <>
       <UltramodernRouteHead />
-      <section className="shell:mx-auto shell:grid shell:max-w-7xl shell:items-center shell:gap-8 shell:py-8 shell:md:grid-cols-[0.9fr_1.1fr] shell:lg:gap-14">
-        <div className="shell:min-w-0">
-          <p className="shell:text-xs shell:font-black shell:uppercase shell:tracking-[0.18em] shell:text-emerald-800">
-            {t('shell.hero.eyebrow')}
-          </p>
-          <h1 className="shell:mt-3 shell:max-w-3xl shell:text-5xl shell:font-black shell:leading-none shell:tracking-normal shell:text-stone-950 shell:md:text-7xl">
-            {t('shell.title')}
-          </h1>
-          <p className="shell:mt-5 shell:max-w-2xl shell:text-lg shell:leading-8 shell:text-stone-600">
-            {t('shell.hero.lede')}
-          </p>
-          <div className="shell:mt-7 shell:flex shell:flex-wrap shell:gap-3">
-            <Link
-              className="shell:inline-flex shell:min-h-11 shell:items-center shell:justify-center shell:rounded-full shell:bg-emerald-800 shell:px-5 shell:font-bold shell:text-white shell:shadow-lg shell:shadow-stone-900/10"
-              to="/"
-            >
-              {t('shell.hero.primary')}
-            </Link>
-            <span className="shell:inline-flex shell:min-h-11 shell:items-center shell:justify-center shell:rounded-full shell:border shell:border-stone-900/15 shell:bg-white/90 shell:px-5 shell:font-bold shell:text-stone-950 shell:shadow-lg shell:shadow-stone-900/10">
-              {t('shell.hero.secondary')}
-            </span>
-          </div>
-        </div>
-        <div className="shell:rounded-3xl shell:bg-white/90 shell:p-6 shell:shadow-2xl shell:shadow-stone-900/15">
-          <div className="shell:grid shell:gap-4 shell:sm:grid-cols-2">
-            <article className="shell:rounded-2xl shell:bg-emerald-50 shell:p-5">
-              <span className="shell:text-sm shell:font-black shell:uppercase shell:tracking-[0.16em] shell:text-emerald-800">
-                {t('shell.hero.cardOneKicker')}
-              </span>
-              <strong className="shell:mt-3 shell:block shell:text-3xl shell:font-black shell:text-stone-950">
-                0
-              </strong>
-              <p className="shell:mt-2 shell:text-sm shell:font-semibold shell:text-stone-600">
-                {t('shell.hero.cardOne')}
-              </p>
-            </article>
-            <article className="shell:rounded-2xl shell:bg-amber-50 shell:p-5">
-              <span className="shell:text-sm shell:font-black shell:uppercase shell:tracking-[0.16em] shell:text-amber-800">
-                {t('shell.hero.cardTwoKicker')}
-              </span>
-              <strong className="shell:mt-3 shell:block shell:text-3xl shell:font-black shell:text-stone-950">
-                SSR
-              </strong>
-              <p className="shell:mt-2 shell:text-sm shell:font-semibold shell:text-stone-600">
-                {t('shell.hero.cardTwo')}
-              </p>
-            </article>
-          </div>
-        </div>
-      </section>
-      <VerticalShowcase />
-      <p className="shell:sr-only" data-testid="ultramodern-preset">
-        presetUltramodern workspace
-      </p>
-      <p
-        className="shell:sr-only"
-        data-build-marker={ultramodernUiMarker.build}
-        data-testid="ultramodern-ui-marker"
-      >
-        {ultramodernUiMarker.appId}:{ultramodernUiMarker.version}
-      </p>
-    </ShellFrame>
+      <main className="flex min-h-screen items-center justify-center bg-(--color-page-bg) p-4 text-(--color-page-fg)">
+        <section
+          aria-label={t('shell.auth.identity.title')}
+          className="flex w-full max-w-lg flex-col gap-4 bg-(--color-surface) p-6"
+        >
+          <dl className="grid gap-3">
+            <div>
+              <dt className="font-semibold">{t('shell.auth.identity.displayName')}</dt>
+              <dd>{session.identity.displayName}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold">{t('shell.auth.identity.email')}</dt>
+              <dd>{session.identity.email}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold">{t('shell.auth.identity.principal')}</dt>
+              <dd>{session.identity.principalId}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold">{t('shell.auth.identity.tenant')}</dt>
+              <dd>{session.identity.tenantId}</dd>
+            </div>
+          </dl>
+          {logoutFailed ? (
+            <StatusText aria-live="polite" showIcon status="error">
+              {t('shell.auth.logout.failed')}
+            </StatusText>
+          ) : null}
+          <Button
+            block
+            disabled={logoutPending}
+            isLoading={logoutPending}
+            loadingText={t('shell.auth.logout.pending')}
+            onClick={handleLogout}
+            size="md"
+            theme="solid"
+            type="button"
+            variant="primary"
+          >
+            {t('shell.auth.logout.action')}
+          </Button>
+        </section>
+      </main>
+    </>
   );
+};
+
+export default function ShellHome() {
+  const initialSession = useLoaderData({ strict: false }) as CurrentSession;
+  return <HomeView initialSession={initialSession} />;
 }

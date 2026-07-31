@@ -77,3 +77,11 @@ typed Effect success/error
 Route and feature integration preserves the BFF client's typed Effect success and error channels, then maps them to view models and explicit UI states. Reusable presentation does not receive BFF clients, Effect programs, query objects, or domain errors.
 
 Follow [Frontend Architecture Rules](../frontend/FRONTEND.md) for the complete frontend module and presentation interfaces.
+
+## Authentication Boundary
+
+Authentication is a cross-cutting Shell/Core capability, never a MicroVertical. The
+Shell owns credentials, Better Auth sessions and cookies, the strict Effect
+authentication BFF, and the private `auth` schema. Core owns only non-secret
+principal auth bindings and active principal/tenant resolution. Do not create an
+Auth vertical, remote, package, delivery unit, or Module Federation boundary.

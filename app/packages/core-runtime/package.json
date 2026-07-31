@@ -10,7 +10,7 @@
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
-    "db:test": "node --test tests/unit/*.test.ts",
+    "db:test": "node --test tests/unit/*.test.ts tests/integration/*.test.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },

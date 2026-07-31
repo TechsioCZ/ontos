@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
+import { bffPlugin } from '@modern-js/plugin-bff';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
@@ -89,6 +90,17 @@ if (
 export default defineConfig(
   presetUltramodern(
     {
+      bff: {
+        effect: {
+          entry: './api/index',
+          openapi: {
+            path: '/openapi.json',
+          },
+          strictEffectApproach: true,
+        },
+        prefix: '/shell-super-app-api',
+        runtimeFramework: 'effect',
+      },
       builderPlugins: [pluginTailwindcss()],
       ...(cloudflareDeployEnabled
         ? {
@@ -172,6 +184,7 @@ export default defineConfig(
       },
       plugins: [
         appTools(),
+        bffPlugin(),
         tanstackRouterPlugin(),
         i18nPlugin({
           backend: {

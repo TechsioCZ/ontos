@@ -1,5 +1,4 @@
 import { defineRuntimeConfig } from '@modern-js/runtime';
-import { ultramodernBoundaryDebuggerPlugin } from '@modern-js/runtime/boundary-debugger';
 import csResource from '../locales/cs/shell.json';
 import enResource from '../locales/en/shell.json';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
@@ -26,6 +25,21 @@ const resources = {
   en: { [ultramodernRouteNamespace]: flattenLocaleResource(enResource) },
 } as const;
 
+export const ultramodernBoundaryMetadata = {
+  appId: 'shell-super-app',
+  boundaries: [
+    {
+      appId: 'shell-super-app',
+      label: 'Shell Super App',
+      mfName: 'shellSuperApp',
+      ownerTeam: 'super-app-platform',
+      packageName: '@app/shell-super-app',
+      role: 'host',
+    },
+  ],
+  schemaVersion: 1,
+} as const;
+
 export default defineRuntimeConfig({
   i18n: {
     initOptions: {
@@ -39,25 +53,6 @@ export default defineRuntimeConfig({
       supportedLngs: ['en', 'cs'],
     },
   },
-  plugins: [
-    ultramodernBoundaryDebuggerPlugin({
-      metadata: {
-        appId: 'shell-super-app',
-        boundaries: [
-          {
-            appId: 'shell-super-app',
-            label: 'Shell Super App',
-            mfName: 'shellSuperApp',
-            ownerTeam: 'super-app-platform',
-            packageName: '@app/shell-super-app',
-            role: 'host',
-          },
-        ],
-        schemaVersion: 1,
-      },
-    }),
-  ],
-
   router: {
     framework: 'tanstack',
   },

@@ -1,6 +1,5 @@
 import { afterEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen } from '@testing-library/react';
-import { toaster } from '@techsio/ui-kit/molecules/toast';
 import Layout from '../../src/routes/layout';
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
@@ -9,21 +8,12 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 
 afterEach(() => {
   cleanup();
-  toaster.remove();
 });
 
-test('mounts one global Toast host beside the active route', () => {
+test('leaves route content free of global user-perceivable UI', () => {
   render(<Layout />);
 
-  toaster.create({
-    description: 'Toast details',
-    title: 'Toast title',
-    type: 'error',
-  });
-
-  expect(screen.getAllByRole('region')).toHaveLength(1);
-  return screen.findByText('Toast title').then((title) => {
-    expect(title).toBeTruthy();
-    expect(screen.getByText('Toast details')).toBeTruthy();
-  });
+  expect(screen.getByRole('main').textContent).toBe('Current route');
+  expect(screen.queryByRole('region')).toBeNull();
+  expect(document.body.textContent?.trim()).toBe('Current route');
 });
