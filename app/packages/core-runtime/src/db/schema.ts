@@ -60,6 +60,7 @@ export const ACTION_AUTH_METHODS = [
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
 export const coreSchema = pgSchema(CORE_SCHEMA_NAME);
+export const domainEventTenantSequence = coreSchema.sequence('domain_event_tenant_sequence_no_seq');
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
@@ -398,7 +399,12 @@ export const domainEvents = coreSchema.table(
     payloadJson: jsonb('payload_json')
       .notNull()
       .default(sql`'{}'::jsonb`),
-    tenantSequenceNo: bigint('tenant_sequence_no', { mode: 'bigint' }).notNull(),
+    // PostgreSQL owns sequence allocation. A global sequence is monotonic for
+    // every tenant stream, permits gaps, and is safe across concurrent
+    // transactions without application-side max + 1 allocation.
+    tenantSequenceNo: bigint('tenant_sequence_no', { mode: 'bigint' })
+      .default(sql`nextval('core.domain_event_tenant_sequence_no_seq'::regclass)`)
+      .notNull(),
     occurredAt: occurredAt(),
   },
   (table) => [

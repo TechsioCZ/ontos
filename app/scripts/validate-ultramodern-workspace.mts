@@ -991,7 +991,7 @@ const workspaceValidationContract = {
     contractCheck: 'node ./scripts/validate-ultramodern-workspace.mts',
     typecheck: 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
     check:
-      'pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
+      'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
   },
   packageScripts: {
     build:
@@ -1008,7 +1008,7 @@ const workspaceValidationContract = {
     'contract:check': 'node ./scripts/validate-ultramodern-workspace.mts',
     typecheck: 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
     check:
-      'pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
+      'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
   },
   cloudflareSecurity: {
     enabled: true,

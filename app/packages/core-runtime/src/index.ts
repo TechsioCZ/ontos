@@ -43,3 +43,59 @@ export {
   coreDatabaseSchema,
 } from './db/schema.ts';
 export type { CoreDatabaseExecutor, CoreDbExecutor, CoreTransaction } from './db/types.ts';
+export { defineAction } from './actions/definition.ts';
+export type {
+  ActionAuditProfile,
+  ActionDescriptor,
+  ActionHandler,
+  ActionIdempotencyRule,
+  ActionRegistration,
+} from './actions/definition.ts';
+export {
+  ActionRuntime,
+  ActionRuntimeLive,
+  resolveActionCommit,
+  runAction,
+} from './actions/runtime.ts';
+export type {
+  ActionCommitOpen,
+  ActionRuntimeService,
+  ResolveActionCommitInput,
+  RunActionInput,
+} from './actions/runtime.ts';
+export { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './actions/context.ts';
+export type {
+  ActionCollectorMethods,
+  ActionHandlerContext,
+  ActionTransactionExecutor,
+  ActionTransportMetadata,
+  TrustedPrincipalContext,
+} from './actions/context.ts';
+export { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './actions/events.ts';
+export type {
+  ActionAccessEvidencePolicy,
+  DataAccessEvent,
+  DataAccessEventInput,
+  DeclaredDomainEvent,
+  DomainEvent,
+  DomainEventContractMap,
+  DomainEventReference,
+  OutboxMessage,
+} from './actions/events.ts';
+export {
+  ACTION_CORE_ERROR_TAGS,
+  ActionAlreadyCommitted,
+  ActionCollectorError,
+  ActionCommitIndeterminate,
+  ActionHandlerExecutionError,
+  ActionIdempotencyKeyRequired,
+  ActionInvocationNotFound,
+  ActionInvocationPersistenceError,
+  ActionInvocationStateError,
+  ActionPayloadValidationError,
+  ActionRequestHashConflict,
+  ActionResultValidationError,
+  ActionTransactionError,
+  ActionTrustedContextValidationError,
+} from './actions/errors.ts';
+export type { ActionCoreError } from './actions/errors.ts';

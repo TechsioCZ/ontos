@@ -213,7 +213,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 ### 4. Define typed Action registrations and execution inputs
 
 - [x] Add `definition.ts` with an Effect Schema-backed Action descriptor, private generic Effect handler, and paired registration object. Prefer interfaces and immutable objects over inheritance.
-- [x] Require stable Action key, owning module key, payload schema, result schema, declared domain-error schema, permitted Domain Event payload schemas, idempotency rule, and audit profile without embedding custom runtime control flow in the descriptor.
+- [x] Require stable Action key, owning module key, payload schema, result schema, declared domain-error schema, permitted Domain Event payload schemas, idempotency rule, audit profile, and a typed descriptor-owned Data Access evidence policy without embedding custom runtime control flow in the descriptor.
 - [x] Represent no-payload Actions with `Schema.Void`; do not weaken payloads or results to `unknown` after decoding.
 - [x] Add `context.ts` so `runAction` accepts trusted tenant/legal-entity/principal context separately from payload and transport metadata. The handler receives that trusted context but cannot source or override it from the payload.
 - [x] Define a handler-facing transaction executor that supports typed Drizzle business queries but does not expose commit, rollback, or transaction creation.
@@ -379,39 +379,48 @@ Execute every command to validate the feature with zero regressions.
 
 ## Implementation Evidence
 
+### Summary
+
+- Restored the server-only typed Action descriptor, trusted execution context, evidence collectors, repository, Effect runtime, idempotency coordination, transaction ownership, and explicit commit-resolution surface.
+- Restored the database-owned Domain Event sequence plus per-tenant commit-order lock, narrow Core exports, lifecycle guidance, validation wiring, and complete unit/integration coverage.
+
 ### Changed Files
 
-- Added the server-only Action descriptor, context, evidence contracts, errors, collector, repository, and Effect runtime under `packages/core-runtime/src/actions/`.
-- Added focused Action unit and PostgreSQL integration coverage under `packages/core-runtime/tests/`.
-- Updated the Core schema and generated migration `0001_cloudy_weapon_omega.sql` with a database-owned Domain Event sequence.
-- Updated the narrow Core runtime exports, package validation scripts, and authoritative Action lifecycle documentation.
+24 files changed, 7,211 insertions, 63 deletions against the current `develop` merge base.
 
-### Tests
+### Tests Written or Updated
 
-- `mise exec -- pnpm --filter @app/core-runtime db:test` — passed 37/37 Core unit tests.
-- `mise exec -- pnpm --filter @app/core-runtime action:test:integration` — passed 5/5 PostgreSQL integration tests covering atomic success, rollback, idempotency/concurrency, tenant commit-order sequencing, and lost commit acknowledgement.
-- Action-focused unit coverage proves descriptor decoding, trusted-context separation, collision-safe deterministic hashing, declared Domain Event/error enforcement, collector invariants, typed failures, stage order, terminal-state rejection, commit resolution, and server-only exports.
+- `packages/core-runtime/tests/unit/action-definition.test.ts` — proves descriptor immutability, descriptor-owned access-evidence policy, typed payload/result decoding, `Schema.Void`, and trusted-principal separation.
+- `packages/core-runtime/tests/unit/action-errors.test.ts` — proves the exhaustive transport-neutral Core Action error surface and safe messages.
+- `packages/core-runtime/tests/unit/action-collector.test.ts` — proves descriptor-owned evidence capture, mode-specific invariants, append-only evidence, declared event schemas, producer ownership, event/outbox linkage, foreign/orphan rejection, and immutable snapshots.
+- `packages/core-runtime/tests/unit/action-runtime.test.ts` — proves stage order, fresh collectors, transaction ownership, typed domain failures, defect sanitization, rollback, idempotency, terminal states, commit resolution, and definite-versus-indeterminate commit failure classification.
+- `packages/core-runtime/tests/unit/action-public-surface.test.ts` — proves collision-safe canonical hashing and the narrow server-only public surface.
+- `packages/core-runtime/tests/unit/schema-contract.test.ts` — proves the database-owned Domain Event sequence and tenant-sequence uniqueness contract.
+- `packages/core-runtime/tests/integration/action-runtime.test.ts` — proves atomic success, rollback at each individual success-evidence write, orphan rejection, idempotency/concurrency, tenant commit-order sequencing, and lost-acknowledgement resolution in PostgreSQL.
 
 ### Validation
 
-- `mise exec -- pnpm --filter @app/core-runtime db:test` — passed.
-- `mise exec -- pnpm --filter @app/core-runtime typecheck` — passed.
-- `mise exec -- pnpm db:migrate` — passed.
-- `mise exec -- pnpm db:verify` — passed with all 18 typed Core tables verified.
-- `mise exec -- pnpm --filter @app/core-runtime action:test:integration` — passed.
+- `mise exec -- pnpm db:generate` — passed; generated the reviewed Core-only `0001_cloudy_weapon_omega.sql` migration and synchronized snapshot.
+- `mise exec -- pnpm --filter @app/core-runtime action:test:unit` — passed 26/26 Action unit tests.
+- `mise exec -- pnpm db:test` — passed all 46 Core tests and the Better Auth integration test on the rebased branch.
+- `mise exec -- pnpm db:migrate` — passed for both the Core and Better Auth migration ledgers and remained idempotent.
+- `mise exec -- pnpm db:verify` with temporary local Better Auth validation values — passed with all 18 typed Core tables and all 4 typed Auth tables verified.
+- `DATABASE_URL=postgresql://ontos:ontos@localhost:5433/ontos_action_runtime_validation mise exec -- pnpm db:migrate` — passed against a temporary isolated database.
+- `DATABASE_URL=postgresql://ontos:ontos@localhost:5433/ontos_action_runtime_validation mise exec -- pnpm db:verify` — passed with all 18 typed Core tables verified; the temporary database was then removed.
+- `mise exec -- pnpm --filter @app/core-runtime action:test:integration` — passed 6/6 PostgreSQL integration tests.
 - `mise exec -- pnpm check` — passed the complete offline quality gate.
-- `mise exec -- pnpm build` — passed the public/runtime build, Module Federation type validation, and performance checks.
+- `mise exec -- pnpm build` — passed the production build, Module Federation type validation, and performance readiness checks.
 
 ### Review
 
-- Re-read both `AGENTS.md` files plus the relevant MicroVertical, Action, errors, database, UltraModern, Core kernel, consistency-model, and operation-flow guidance.
-- Review fixes made request hashing collision-safe and transport-independent; required every descriptor to declare domain-error and Domain Event schemas; enforced owning-module producer identity; added principal-scoped explicit commit resolution; restricted execution to open invocation states; and sanitized undeclared handler failures.
-- Lifecycle review moved authentication, permission, and policy boundaries before the business transaction, persisted the accepted `received`-to-`running` transition independently, and retained the lock/recheck immediately before handler execution.
-- Concurrency review added the per-tenant row lock before Domain Event sequence allocation and proved concurrent sequence order cannot overtake commit order. Collector lookup also rejects inherited object-property names as undeclared event types.
-- Final review found no browser exposure, cross-vertical private-handler import, generic endpoint, production Action, unrelated change, or accidental public API expansion.
+- Re-read `../AGENTS.md`, `AGENTS.md`, `MICROVERTICALS.md`, `ACTIONS.md`, `ERRORS.md`, `DATABASE.md`, `ULTRAMODERN.md`, the Core kernel, consistency model, and CoreSDK operation-flow guidance.
+- Inspected `git status --short`, `git diff --check`, tracked and untracked diff statistics, the complete runtime/test source, generated migration, topology, package scripts, and public exports.
+- Recovery review restored collision-safe transport-independent hashing, schema-declared domain errors/events, owning-module producer checks, principal-scoped commit resolution, open-state enforcement, defect sanitization, independent `received`-to-`running` transition, and the per-tenant sequence-allocation lock.
+- Independent standards and spec reviews found and then verified fixes for descriptor-owned Data Access evidence policy, complete infrastructure-cause logging, realistic commit-acknowledgement failure classification, and per-stage PostgreSQL rollback coverage. Both review axes passed with no blocker.
+- Final review found no browser exposure, cross-vertical private implementation import, generic Action endpoint, production Action, generator violation, unrelated application edit, or unexplained public API expansion. No screenshots apply because this feature has no user-facing surface.
 
 ### Deviations and Follow-ups
 
-- No plan deviations. Permissions, policies, terminal failed-invocation evidence, and generated per-Action BFF endpoints remain the explicit planned follow-up scope.
+- After rebasing onto the completed Auth feature, the root database commands now validate Core and Auth together. The worktree's ignored `.env` predates Auth, so safe temporary local Auth values were supplied only to run the final verifier and tests; no tracked configuration or shared data was changed.
+- Permissions, policies, terminal failed-invocation evidence, stored-artifact evidence binding, and generated per-Action BFF endpoints remain the explicit planned follow-up scope.
 - The mandatory Action generator was intentionally not run because this feature adds runtime infrastructure and test-local registrations only.
-- The production build completed successfully, including Module Federation type validation and performance readiness checks.

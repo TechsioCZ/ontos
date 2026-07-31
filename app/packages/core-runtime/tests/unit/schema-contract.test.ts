@@ -9,6 +9,7 @@ import {
   CORE_SCHEMA_NAME,
   CORE_TABLE_INVENTORY,
   actionInvocations,
+  domainEvents,
   principals,
 } from '../../src/db/schema.ts';
 
@@ -98,6 +99,28 @@ test('preserves critical Action foreign keys and unique idempotency index', () =
   assert.deepEqual(
     idempotencyIndex.config.columns.map((column) => 'name' in column && column.name),
     ['tenant_id', 'action_key', 'principal_id', 'idempotency_key'],
+  );
+});
+
+test('allocates Domain Event order through a database-owned monotonic sequence', () => {
+  const domainEventConfig = getTableConfig(domainEvents);
+  const sequenceColumn = domainEventConfig.columns.find(
+    (candidate) => candidate.name === 'tenant_sequence_no',
+  );
+
+  assert.ok(sequenceColumn);
+  assert.equal(sequenceColumn.notNull, true);
+  assert.equal(sequenceColumn.hasDefault, true);
+  assert.equal(sequenceColumn.dataType, 'bigint');
+
+  const sequenceIndex = domainEventConfig.indexes.find(
+    (candidate) => candidate.config.name === 'core_domain_events_tenant_sequence_uk',
+  );
+  assert.ok(sequenceIndex);
+  assert.equal(sequenceIndex.config.unique, true);
+  assert.deepEqual(
+    sequenceIndex.config.columns.map((column) => 'name' in column && column.name),
+    ['tenant_id', 'tenant_sequence_no'],
   );
 });
 

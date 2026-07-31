@@ -5,74 +5,68 @@ This document defines state-changing Action execution. MicroVertical deployment 
 ## Core Rules
 
 - Every state change in the system must be driven by an Action.
-- An Action is a typed Effect program with a declared input, success value, expected error channel, and required dependencies.
+- An Action is a typed command or intent with a declared payload, success value, expected error channel, and required dependencies. Its private handler is an Effect program.
+- A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
 
 ## Invocation Lifecycle
 
 Process every Action request in this order:
 
-1. Decode the request and validate its structural input schema. A decoding or structural validation failure does not create an Action Invocation Log and does not enter the Action lifecycle. Evaluate pre-handler business eligibility later through policies. The Action handler remains responsible for domain invariants and may return a typed domain rejection.
-2. Write the Action Invocation Log after structural validation and before authentication. Persist this record outside the business transaction so that it survives rejection, failure, and transaction rollback. The record must support attempts without an authenticated principal and retain the available anonymous session and transport correlation. If the initial record cannot be persisted, stop processing and return an internal failure.
-3. Authenticate the request.
-4. Check permissions in SpiceDB.
-5. Evaluate the applicable global and MicroVertical-specific policies.
-6. Execute the Action handler only after authentication, permission checks, and policy checks pass.
+1. Decode the request and validate its structural input schema. A decoding or structural validation failure does not create an Action Invocation Log and does not enter the Action lifecycle. The Action handler remains responsible for domain invariants and may return a typed domain rejection.
+2. Resolve and validate trusted tenant, legal-entity, principal, authentication, and correlation context separately from the Action payload. A payload must never supply or override trusted identity.
+3. Insert or resolve the Action Invocation Log outside and before the business transaction. The invocation is the durable idempotency anchor. If it cannot be persisted, stop processing with a typed infrastructure failure.
+4. Reject request-hash conflicts and treat an already `succeeded` invocation as committed without rerunning the handler or replaying a stored result.
+5. Enter explicit authentication, permission, and policy stage boundaries before opening the business transaction.
+6. Persist the accepted invocation transition from `received` to `running` independently so a definite business rollback leaves it open.
+7. Open the Core-owned business transaction, lock and recheck the invocation immediately before handler execution, then execute the private Action handler with a restricted transaction executor. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
+
+The first Shell/Core runtime receives an already trusted principal context. Permission and policy evaluation are deliberately not implemented in this increment; the explicit stage boundaries remain so those gates can be added before handler execution. They must not be simulated as successful decisions or recorded as if checks occurred.
 
 ## Outcomes
 
 Handle each possible outcome as follows:
 
-### Rejected before the handler
+### Definite rejection or failure
 
-Authentication, permission checks, or policies reject the request.
-
-- **Business transaction:** Do not open it or execute the handler.
-- **Required persistence:** In an independent evidence transaction, mark the Action Invocation Log as rejected and persist the required Audit Events and any Data Access Events.
-
-### Rejected by the handler
-
-The Action handler returns a typed domain rejection.
+The Action handler returns a typed domain rejection, a collector invariant fails, required persistence fails, an unexpected handler defect is sanitized, or the transaction definitely rolls back.
 
 - **Business transaction:** Roll back the entire transaction.
-- **Required persistence:** After rollback, use an independent evidence transaction to mark the Action Invocation Log as rejected and persist the required Audit Events and any Data Access Events.
-
-### Failed
-
-Authentication, permission, or policy evaluation fails operationally; or the handler, required event persistence, or transaction definitively fails.
-
-- **Business transaction:** Roll it back if one was opened.
-- **Required persistence:** In an independent evidence transaction, mark the Action Invocation Log as `failed` and persist the required Audit Events and any Data Access Events.
+- **Required persistence:** Persist no business write, result Audit Event, Data Access Event, Domain Event, Outbox Message, terminal failure evidence, or `completed_at` value from the rolled-back attempt.
+- **Invocation state:** Intentionally leave the independently persisted invocation open. Open-invocation finalization, permanent failure evidence, retention, and support workflow are deferred.
+- **Response:** Return a declared typed Effect error and expose no read or handler result to the caller.
 
 ### Indeterminate
 
-The result of the business transaction commit is unknown.
+The database did not acknowledge whether the business transaction committed.
 
 - **Business transaction:** Do not assume that it committed or rolled back.
-- **Required persistence:** Leave the Action Invocation Log non-terminal until reconciliation proves whether the canonical business records and Audit Events committed.
+- **Required persistence:** Return a typed indeterminate outcome while the database is unavailable. Once lookup is possible, `succeeded` proves commit; an unlocked open invocation with the same request hash permits retry.
 
 ### Successful
 
-- **Business transaction:** Atomically commit all required business records and events.
-- **Required persistence:** After commit, mark the Action Invocation Log as successful.
+- **Business transaction:** Atomically commit the handler's business writes, successful result Audit Event, successful Data Access Events, Domain Events, Domain Event-linked Outbox Messages, and the invocation `succeeded` update with `completed_at`.
+- **Required persistence:** The `succeeded` invocation update is the durable commit marker. It is not a post-commit write.
 
 ### Reconciliation
 
-If an independent evidence transaction fails, retry it and raise an operational alert. A reconciler must scan non-terminal Action Invocation Logs. For attempts that never opened a business transaction, it may finalize an unrecoverable outcome as `failed` with an operational recovery code. When a commit result is indeterminate, reconcile it from canonical business records and committed Audit Events; mark the Action as successful only when the commit is proven and as `failed` only when rollback or non-commit is proven. If the outcome cannot be established, keep it indeterminate and raise a critical operational alert. Never roll back an already committed business transaction.
+This increment resolves uncertain commits through an explicit server-side commit-resolution operation. It accepts the invocation identifier and trusted principal context, waits for any transaction lock to clear, and reports `succeeded` as already committed or an unlocked `received`, `running`, or `indeterminate` invocation as open. Database unavailability remains `ActionCommitIndeterminate`. General scanning, alerting, permanent failure finalization, and retention of open invocations remain deferred. Never roll back an already committed business transaction.
 
 ## Events and Transactions
 
-- Generate at least one Audit Event for every Action attempt that enters the lifecycle, including successful, failed, and rejected attempts. This mandatory event records the terminal outcome. Generate any additional audit checkpoints required by the Action’s evidence profile.
-- Define each Action’s Domain Event requirements as part of the Action definition. An Action may instantiate zero or more Domain Events, and every instantiated Domain Event must be persisted.
-- Generate a Data Access Event whenever Action processing reads business data.
-- For a successful Action, persist the business updates, required Audit Events, instantiated Domain Events, Data Access Events, and Outbox Messages atomically in one business transaction.
+- Persist a successful result Audit Event for every committed Action. Generate any additional successful audit checkpoints required by the Action's evidence profile.
+- Define every expected domain failure, each permitted Domain Event type and payload schema, and the Data Access evidence policy as part of the Action descriptor. The policy—not handler input—selects `metadata_only`, `hash_only`, or `redacted_payload`; this runtime does not accept `stored_artifact` until Core can enforce its media, retention, classification, and encryption contract. An Action may instantiate zero or more declared Domain Events, and every instantiated Domain Event must be persisted. Core rejects undeclared error values, undeclared event types, invalid event payloads, and any event whose producer differs from the descriptor's owning module.
+- Build idempotency request hashes from canonical decoded business payload, Action/schema identity, trusted tenant/principal scope, and target ResourceRef metadata only. Correlation, tracing, authentication transport, and idempotency metadata are not part of the business request hash.
+- Record a Data Access Event whenever Action processing reads business data whose result contributes to a successful response or write, including reads, lists, searches, exports, downloads, invariant checks, and repository lookups.
+- For a successful Action, persist the business updates, successful Audit Events, instantiated Domain Events, Data Access Events, Domain Event-linked Outbox Messages, and invocation success marker atomically in one business transaction.
 - If any business update, Audit Event, Domain Event, Data Access Event, or Outbox Message cannot be persisted, roll back the entire business transaction and treat the Action as failed.
-- Persist Audit Events and Data Access Events produced by rejected or failed attempts through the independent evidence transaction because those attempts do not commit a business transaction.
-- The Action Invocation Log is never part of the business transaction.
+- Do not persist Audit Events or Data Access Events collected by a rejected or failed attempt in this increment.
+- The Action Invocation Log is inserted independently before the business transaction, but its successful status update is part of the business transaction.
+- Before allocating Domain Event sequence numbers, lock the owning tenant row for the remainder of the transaction. This serializes sequence allocation with commit order for one tenant so checkpoint consumers cannot skip an event that commits late.
 
 ## Outbox Messages
 
-An Action handler may manually instantiate zero or more Outbox Messages and add them to the handler’s Outbox Message collection. The Action runtime persists every message in that collection as part of the business transaction.
+An Action handler may instantiate zero or more Domain Events. Adding a Domain Event returns an execution-local opaque reference. An Outbox Message may be added only with a Domain Event reference registered by that same execution. The Action runtime persists each message with a database foreign key to its Domain Event in the same business transaction. Orphan references and references from another execution are rejected before persistence.
 
 ## Public Action Failures
 
