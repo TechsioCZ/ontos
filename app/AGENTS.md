@@ -1,6 +1,7 @@
 # OntOS Application Agent Instructions
 
 OntOS is an ERP system built with [UltraModern.js](https://bleedingdev.github.io/ultramodern.js/guides/get-started/ultramodern) and [`@techsio/ui-kit`](https://github.com/TechsioCZ/new-engine).
+Never read .env file
 
 ## Required Guidance
 

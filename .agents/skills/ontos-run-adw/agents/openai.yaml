@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ontos Run ADW"
+  short_description: "Create a typed worktree and plan an issue"
+  default_prompt: "Use $ontos-run-adw with an open typed issue number to create its worktree and complete specification planning."
