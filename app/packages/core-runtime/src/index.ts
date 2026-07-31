@@ -52,6 +52,23 @@ export type {
   ActionRegistration,
 } from './actions/definition.ts';
 export {
+  PolicyDenied,
+  defineGlobalPolicy,
+  defineMicroverticalPolicy,
+  denyPolicy,
+} from './actions/policy.ts';
+export type {
+  ActionPolicy,
+  ActionPolicyEvaluator,
+  ActionPolicyEvaluatorInput,
+  ActionPolicyIdentity,
+  ActionPolicyTarget,
+  DefineGlobalPolicyInput,
+  DefineMicroverticalPolicyInput,
+  GlobalActionPolicy,
+  MicroverticalActionPolicy,
+} from './actions/policy.ts';
+export {
   ActionRuntime,
   ActionRuntimeLive,
   resolveActionCommit,
@@ -93,6 +110,8 @@ export {
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionPayloadValidationError,
+  ActionPolicyDenied,
+  ActionPolicyEvaluationError,
   ActionRequestHashConflict,
   ActionResultValidationError,
   ActionTransactionError,

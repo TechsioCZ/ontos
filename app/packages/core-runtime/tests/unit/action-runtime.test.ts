@@ -7,12 +7,18 @@ import { CoreDatabase } from '../../src/db/client.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
+  FinalizeActionPolicyDenialInput,
   FlushActionSuccessInput,
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
+import {
+  defineGlobalPolicy,
+  defineMicroverticalPolicy,
+  denyPolicy,
+} from '../../src/actions/policy.ts';
 
 const principal = {
   authMethod: 'session',
@@ -40,11 +46,13 @@ const fakeTransaction = {
 interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
+  readonly policyFinalizationFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
+  const finalized: FinalizeActionPolicyDenialInput[] = [];
   const flushed: FlushActionSuccessInput[] = [];
   const stages: ActionRuntimeStage[] = [];
   let createCount = 0;
@@ -70,6 +78,23 @@ const makeHarness = (options: HarnessOptions = {}) => {
         ...currentInvocation,
         requestHash: currentInvocation.requestHash || input.requestHash,
       });
+    },
+    finalizePolicyDenial: (_executor, input) => {
+      if (options.policyFinalizationFailure === true) {
+        return Effect.fail(
+          new ActionInvocationPersistenceError({
+            code: 'action_invocation_persistence_failed',
+            reason: 'test rejection persistence failed',
+          }),
+        );
+      }
+      finalized.push(input);
+      currentInvocation = {
+        ...currentInvocation,
+        completedAt: new Date(),
+        status: 'rejected',
+      };
+      return Effect.void;
     },
     flushSuccess: (_transaction, input) => {
       flushed.push(input);
@@ -138,6 +163,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   return {
     counts: () => ({ createCount, lockCount, transactionCount, transitionCount }),
+    finalized,
     flushed,
     runtime,
     stages,
@@ -157,6 +183,7 @@ const registration = () =>
       idempotency: 'required',
       owningModuleKey: 'shell.core',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+      policies: [],
       resultSchema: Schema.Struct({ total: Schema.Finite }),
       schemaVersion: '1',
     },
@@ -210,6 +237,260 @@ test('executes the complete stage order with transaction ownership and success e
   assert.equal(harness.flushed[0]?.evidence.dataAccessEvents.length, 1);
   assert.equal(harness.flushed[0]?.evidence.domainEvents.length, 1);
   assert.equal(harness.flushed[0]?.evidence.outboxMessages.length, 1);
+  assert.deepEqual(harness.flushed[0]?.allowedPolicies, []);
+});
+
+test('evaluates Policies in order before running and hands allowed checkpoints to success', async () => {
+  const observed: string[] = [];
+  const globalPolicy = defineGlobalPolicy<{ readonly amount: number }>({
+    evaluate: () => {
+      observed.push('global');
+      return Effect.void;
+    },
+    policyKey: 'global.tenant-active.v1',
+  });
+  const modulePolicy = defineMicroverticalPolicy<{ readonly amount: number }, 'inventory.stock'>({
+    evaluate: (input) => {
+      observed.push(`module:${input.payload.amount}`);
+      assert.equal(input.principal.principalId, principal.principalId);
+      assert.equal(input.action.actionKey, 'inventory.stock.policy-allowed');
+      assert.equal(input.target.targetResourceId, 'primary');
+      assert.equal('idempotencyKey' in input.transport, false);
+      return Effect.void;
+    },
+    owningModuleKey: 'inventory.stock',
+    policyKey: 'inventory.stock.allowed.v1',
+  });
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      actionKey: 'inventory.stock.policy-allowed',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      idempotency: 'required',
+      owningModuleKey: 'inventory.stock',
+      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+      policies: [globalPolicy, modulePolicy],
+      resultSchema: Schema.Finite,
+      schemaVersion: '1',
+    },
+    (payload) => {
+      observed.push('handler');
+      return Effect.succeed(payload.amount);
+    },
+  );
+  const harness = makeHarness();
+
+  const result = await Effect.runPromise(
+    harness.runtime.runAction({
+      payload: { amount: 4 },
+      principal,
+      registration: action,
+      transport: { ...transport(), targetModuleKey: 'inventory.stock' },
+    }),
+  );
+
+  assert.equal(result, 4);
+  assert.deepEqual(observed, ['global', 'module:4', 'handler']);
+  assert.deepEqual(harness.flushed[0]?.allowedPolicies, [
+    { policyKey: 'global.tenant-active.v1', scope: 'global' },
+    {
+      owningModuleKey: 'inventory.stock',
+      policyKey: 'inventory.stock.allowed.v1',
+      scope: 'microvertical',
+    },
+  ]);
+});
+
+test('short-circuits the first Policy denial, finalizes it, and never starts execution', async () => {
+  const observed: string[] = [];
+  let handlerExecutions = 0;
+  const policies = [
+    defineGlobalPolicy<{ readonly amount: number }>({
+      evaluate: () => {
+        observed.push('first');
+        return Effect.void;
+      },
+      policyKey: 'global.first.v1',
+    }),
+    defineGlobalPolicy<{ readonly amount: number }>({
+      evaluate: () => {
+        observed.push('denied');
+        return Effect.fail(denyPolicy('counter_locked', 'Counter changes are locked — try later'));
+      },
+      policyKey: 'global.counter-locked.v1',
+    }),
+    defineGlobalPolicy<{ readonly amount: number }>({
+      evaluate: () => {
+        observed.push('unreachable');
+        return Effect.void;
+      },
+      policyKey: 'global.unreachable.v1',
+    }),
+  ] as const;
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      actionKey: 'shell.counter.policy-denied',
+      auditProfile: 'sensitive',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      idempotency: 'required',
+      owningModuleKey: 'shell.core',
+      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+      policies,
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => {
+      handlerExecutions += 1;
+      return Effect.void;
+    },
+  );
+  const harness = makeHarness();
+
+  const denial = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: action,
+        transport: transport('policy-denied'),
+      }),
+    ),
+  );
+
+  assert.equal(denial._tag, 'ActionPolicyDenied');
+  assert.equal(denial.policyReasonCode, 'counter_locked');
+  assert.equal(denial.reason, 'Counter changes are locked — try later');
+  assert.deepEqual(observed, ['first', 'denied']);
+  assert.equal(handlerExecutions, 0);
+  assert.deepEqual(harness.counts(), {
+    createCount: 1,
+    lockCount: 0,
+    transactionCount: 0,
+    transitionCount: 0,
+  });
+  assert.deepEqual(harness.stages, [
+    'payload_decoded',
+    'trusted_context_validated',
+    'invocation_prepared',
+    'authentication_boundary',
+    'permission_boundary_deferred',
+    'policy_boundary',
+  ]);
+  assert.deepEqual(harness.finalized[0], {
+    actionInvocationId: 'invocation-1',
+    actionKey: 'shell.counter.policy-denied',
+    auditProfile: 'sensitive',
+    policy: { policyKey: 'global.counter-locked.v1', scope: 'global' },
+    principal,
+    reasonCode: 'counter_locked',
+    transport: transport('policy-denied'),
+  });
+  assert.equal(harness.flushed.length, 0);
+});
+
+test('sanitizes Policy defects, interrupts, and undeclared failures without finalizing', async () => {
+  const evaluators = [
+    () => Effect.die('secret evaluator defect'),
+    () => Effect.interrupt,
+    () => Effect.fail({ _tag: 'UnavailablePolicyCapability', secret: 'database detail' }) as never,
+  ] as const;
+
+  for (const [index, evaluate] of evaluators.entries()) {
+    let handlerExecutions = 0;
+    const policy = defineGlobalPolicy<unknown>({
+      evaluate,
+      policyKey: `global.failure-${index}.v1`,
+    });
+    const action = defineAction(
+      {
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        actionKey: `shell.counter.policy-failure-${index}`,
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        idempotency: 'required',
+        owningModuleKey: 'shell.core',
+        payloadSchema: Schema.Void,
+        policies: [policy],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerExecutions += 1;
+        return Effect.void;
+      },
+    );
+    const harness = makeHarness();
+    const error = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: action,
+          transport: transport(`policy-failure-${index}`),
+        }),
+      ),
+    );
+
+    assert.equal(error._tag, 'ActionPolicyEvaluationError');
+    assert.equal(error.reason.includes('secret'), false);
+    assert.equal(handlerExecutions, 0);
+    assert.equal(harness.finalized.length, 0);
+    assert.deepEqual(harness.counts(), {
+      createCount: 1,
+      lockCount: 0,
+      transactionCount: 0,
+      transitionCount: 0,
+    });
+  }
+});
+
+test('returns persistence failure when denial evidence cannot be finalized', async () => {
+  let handlerExecutions = 0;
+  const policy = defineGlobalPolicy<unknown>({
+    evaluate: () => Effect.fail(denyPolicy('blocked', 'This action is blocked')),
+    policyKey: 'global.blocked.v1',
+  });
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      actionKey: 'shell.counter.policy-persistence-failure',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      idempotency: 'required',
+      owningModuleKey: 'shell.core',
+      payloadSchema: Schema.Void,
+      policies: [policy],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => {
+      handlerExecutions += 1;
+      return Effect.void;
+    },
+  );
+  const harness = makeHarness({ policyFinalizationFailure: true });
+
+  const error = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport('policy-finalization-failure'),
+      }),
+    ),
+  );
+
+  assert.equal(error._tag, 'ActionInvocationPersistenceError');
+  assert.equal(handlerExecutions, 0);
+  assert.equal(harness.finalized.length, 0);
+  assert.equal(harness.counts().transactionCount, 0);
 });
 
 test('creates fresh collectors for every execution', async () => {
@@ -234,6 +515,53 @@ test('creates fresh collectors for every execution', async () => {
     [1, 1],
   );
   assert.notEqual(harness.flushed[0]?.evidence, harness.flushed[1]?.evidence);
+});
+
+test('evaluates Policies afresh for separate invocations', async () => {
+  let evaluations = 0;
+  const policy = defineGlobalPolicy<{ readonly amount: number }>({
+    evaluate: () => {
+      evaluations += 1;
+      return Effect.void;
+    },
+    policyKey: 'global.fresh-evaluation.v1',
+  });
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      actionKey: 'shell.counter.fresh-policy',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      idempotency: 'required',
+      owningModuleKey: 'shell.core',
+      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+      policies: [policy],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => Effect.void,
+  );
+  for (const key of ['fresh-first', 'fresh-second']) {
+    const harness = makeHarness({
+      createRecord: {
+        actionInvocationId: key,
+        completedAt: null,
+        requestHash: '',
+        status: 'received',
+      },
+    });
+    await Effect.runPromise(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: action,
+        transport: transport(key),
+      }),
+    );
+  }
+
+  assert.equal(evaluations, 2);
 });
 
 test('rejects structural payloads, trusted context, and missing idempotency before invocation', async () => {
@@ -280,6 +608,14 @@ test('preserves declared domain rejections and rolls back collected evidence', a
     reason: Schema.String,
   }) {}
   const harness = makeHarness();
+  let policyEvaluations = 0;
+  const allowedPolicy = defineGlobalPolicy<unknown>({
+    evaluate: () => {
+      policyEvaluations += 1;
+      return Effect.void;
+    },
+    policyKey: 'global.domain-rejection-allowed.v1',
+  });
   const rejected = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
@@ -292,6 +628,7 @@ test('preserves declared domain rejections and rolls back collected evidence', a
       idempotency: 'required',
       owningModuleKey: 'shell.core',
       payloadSchema: Schema.Void,
+      policies: [allowedPolicy],
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
@@ -322,6 +659,7 @@ test('preserves declared domain rejections and rolls back collected evidence', a
 
   assert.equal(error._tag, 'DomainRejected');
   assert.equal(error.reason, 'counter_locked');
+  assert.equal(policyEvaluations, 1);
   assert.equal(harness.flushed.length, 0);
 });
 
@@ -337,6 +675,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       idempotency: 'required',
       owningModuleKey: 'shell.core',
       payloadSchema: Schema.Void,
+      policies: [],
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
@@ -364,6 +703,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       idempotency: 'required',
       owningModuleKey: 'shell.core',
       payloadSchema: Schema.Void,
+      policies: [],
       resultSchema: Schema.Struct({ total: Schema.Finite }),
       schemaVersion: '1',
     },
@@ -407,6 +747,7 @@ test('sanitizes undeclared handler failures instead of widening the domain error
       idempotency: 'required',
       owningModuleKey: 'shell.core',
       payloadSchema: Schema.Void,
+      policies: [],
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
@@ -623,6 +964,7 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
       idempotency: 'required',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Struct({ quantity: Schema.Finite }),
+      policies: [],
       resultSchema: Schema.Struct({ reserved: Schema.Boolean }),
       schemaVersion: '1',
     },

@@ -3,6 +3,8 @@ import type { ActionHandlerContext } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
 import type { ActionCollectorError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
+import { isActionPolicy } from './policy.ts';
+import type { ActionPolicy } from './policy.ts';
 
 export type ActionIdempotencyRule = 'optional' | 'required';
 export type ActionAuditProfile = 'minimal' | 'sensitive' | 'standard';
@@ -12,6 +14,7 @@ export interface ActionDescriptor<
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
+  Owner extends string,
 > {
   readonly accessEvidencePolicy: ActionAccessEvidencePolicy;
   readonly actionKey: string;
@@ -19,8 +22,9 @@ export interface ActionDescriptor<
   readonly domainErrorSchema: DomainErrorSchema;
   readonly domainEvents: DomainEvents;
   readonly idempotency: ActionIdempotencyRule;
-  readonly owningModuleKey: string;
+  readonly owningModuleKey: Owner;
   readonly payloadSchema: PayloadSchema;
+  readonly policies: readonly ActionPolicy<PayloadSchema['Type'], NoInfer<Owner>>[];
   readonly resultSchema: ResultSchema;
   readonly schemaVersion: string;
 }
@@ -40,9 +44,10 @@ export interface ActionRegistration<
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
+  Owner extends string,
 > {
   readonly descriptor: Readonly<
-    ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>
+    ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>
   >;
   readonly handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>;
 }
@@ -52,18 +57,33 @@ export const defineAction = <
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
 >(
-  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
-): ActionRegistration<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents> =>
-  Object.freeze({
+): ActionRegistration<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner> => {
+  if (!Array.isArray(descriptor.policies)) {
+    throw new TypeError('Action policies must be an explicit readonly array of Policy references');
+  }
+  for (const policy of descriptor.policies) {
+    if (!isActionPolicy(policy)) {
+      throw new TypeError('Action policies must contain direct Policy object references');
+    }
+    if (policy.scope === 'microvertical' && policy.owningModuleKey !== descriptor.owningModuleKey) {
+      throw new TypeError('A MicroVertical Policy must be owned by the Action owning module');
+    }
+  }
+
+  return Object.freeze({
     descriptor: Object.freeze({
       ...descriptor,
       accessEvidencePolicy: Object.freeze({ ...descriptor.accessEvidencePolicy }),
       domainEvents: Object.freeze({ ...descriptor.domainEvents }),
+      policies: Object.freeze([...descriptor.policies]),
     }),
     handler,
   });
+};
 
 export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecoder<unknown, never>>(
   schema: PayloadSchema,

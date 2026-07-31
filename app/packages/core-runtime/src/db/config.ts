@@ -1,4 +1,4 @@
-// @effect-diagnostics processEnv:off
+// @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import path from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { Context, Effect, Layer } from 'effect';

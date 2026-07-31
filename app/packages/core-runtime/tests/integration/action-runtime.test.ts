@@ -9,6 +9,12 @@ import { makeActionRepository } from '../../src/actions/repository.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
 import type { DomainEventReference } from '../../src/actions/events.ts';
+import {
+  defineGlobalPolicy,
+  defineMicroverticalPolicy,
+  denyPolicy,
+} from '../../src/actions/policy.ts';
+import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -185,6 +191,7 @@ interface RegistrationOptions {
   readonly mode?: 'orphan-outbox' | 'reject' | 'success';
   readonly onExecute?: () => void;
   readonly pause?: boolean;
+  readonly policies?: readonly ActionPolicy<{ readonly value: string }, 'shell.core'>[];
 }
 
 const makeRegistration = ({
@@ -194,6 +201,7 @@ const makeRegistration = ({
   mode = 'success',
   onExecute,
   pause = false,
+  policies = [],
 }: RegistrationOptions) =>
   defineAction(
     {
@@ -210,6 +218,7 @@ const makeRegistration = ({
       idempotency: 'required',
       owningModuleKey: 'shell.core',
       payloadSchema: Schema.Struct({ value: Schema.String }),
+      policies,
       resultSchema: Schema.Struct({ stateId: Schema.String, value: Schema.String }),
       schemaVersion: '1',
     },
@@ -355,6 +364,248 @@ test('atomically commits business state, all success evidence, and the succeeded
   });
 });
 
+test('commits allowed Policy checkpoints atomically before handler success evidence', async () => {
+  const key = 'policy-allowed';
+  const moduleStateKey = `test.${key}.${tenantId}`;
+  const observed: string[] = [];
+  const policy = defineGlobalPolicy<{ readonly value: string }>({
+    evaluate: () => {
+      observed.push('policy');
+      return Effect.void;
+    },
+    policyKey: 'global.integration-allowed.v1',
+  });
+
+  await databasePromise(async (database) => {
+    const runtime = makeActionRuntime(database, makeActionRepository());
+    await Effect.runPromise(
+      runtime.runAction({
+        payload: { value: 'committed' },
+        principal,
+        registration: makeRegistration({
+          actionKey: 'shell.test.policy-allowed',
+          moduleStateKey,
+          onExecute: () => observed.push('handler'),
+          policies: [policy],
+        }),
+        transport: transport(key, moduleStateKey),
+      }),
+    );
+
+    const [invocation] = await database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, key));
+    assert.ok(invocation);
+    const audits = await database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+
+    assert.deepEqual(observed, ['policy', 'handler']);
+    assert.equal(invocation.status, 'succeeded');
+    assert.equal(audits.length, 2);
+    const policyAudit = audits.find((row) => row.eventType === 'action.policy_checked');
+    const executionAudit = audits.find((row) => row.eventType === 'action.executed');
+    assert.equal(policyAudit?.outcome, 'allowed');
+    assert.equal(policyAudit?.outcomeStage, 'policy');
+    assert.equal(executionAudit?.outcome, 'succeeded');
+    assert.equal(executionAudit?.outcomeStage, 'execution');
+    assert.equal(JSON.stringify(policyAudit?.evidenceJson).includes('committed'), false);
+    assert.equal(JSON.stringify(policyAudit?.evidenceJson).includes(policy.policyKey), true);
+  });
+});
+
+test('atomically rejects denied global and same-owner MicroVertical Policies without handler evidence', async () => {
+  const scenarios = [
+    {
+      actionKey: 'shell.test.policy-denied-global',
+      key: 'policy-denied-global',
+      makeRegistration(handler: () => void) {
+        const policy = defineGlobalPolicy<{ readonly value: string }>({
+          evaluate: () =>
+            Effect.fail(
+              denyPolicy('tenant_suspended', 'This tenant is suspended — contact support'),
+            ),
+          policyKey: 'global.tenant-active.v1',
+        });
+        return makeRegistration({
+          actionKey: this.actionKey,
+          moduleStateKey: `test.${this.key}.${tenantId}`,
+          onExecute: handler,
+          policies: [policy],
+        });
+      },
+      reason: 'This tenant is suspended — contact support',
+      reasonCode: 'tenant_suspended',
+    },
+    {
+      actionKey: 'inventory.stock.policy-denied-local',
+      key: 'policy-denied-local',
+      makeRegistration(handler: () => void) {
+        const policy = defineMicroverticalPolicy<{ readonly value: string }, 'inventory.stock'>({
+          evaluate: () =>
+            Effect.fail(denyPolicy('stock_locked', 'Stock is locked for reconciliation')),
+          owningModuleKey: 'inventory.stock',
+          policyKey: 'inventory.stock.unlocked.v1',
+        });
+        return defineAction(
+          {
+            accessEvidencePolicy: {
+              captureMode: 'metadata_only',
+              policyKey: 'action-runtime.integration.v1',
+            },
+            actionKey: this.actionKey,
+            auditProfile: 'standard',
+            domainErrorSchema: Schema.Union([TestDomainRejected, TestPersistenceError]),
+            domainEvents: {
+              'test-state.changed': Schema.Struct({ value: Schema.String }),
+            },
+            idempotency: 'required',
+            owningModuleKey: 'inventory.stock',
+            payloadSchema: Schema.Struct({ value: Schema.String }),
+            policies: [policy],
+            resultSchema: Schema.Struct({ stateId: Schema.String, value: Schema.String }),
+            schemaVersion: '1',
+          },
+          (payload) => {
+            handler();
+            return Effect.succeed({ stateId: 'unreachable', value: payload.value });
+          },
+        );
+      },
+      reason: 'Stock is locked for reconciliation',
+      reasonCode: 'stock_locked',
+    },
+  ] as const;
+
+  await databasePromise(async (database) => {
+    const runtime = makeActionRuntime(database, makeActionRepository());
+    for (const scenario of scenarios) {
+      let handlerExecutions = 0;
+      const beforeMessages = await database.executor
+        .select()
+        .from(outboxMessages)
+        .where(eq(outboxMessages.tenantId, tenantId));
+      const exit = await Effect.runPromise(
+        Effect.exit(
+          runtime.runAction({
+            payload: { value: 'must-not-persist' },
+            principal,
+            registration: scenario.makeRegistration(() => {
+              handlerExecutions += 1;
+            }),
+            transport: transport(scenario.key, `test.${scenario.key}.${tenantId}`),
+          }),
+        ),
+      );
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : undefined;
+      assert.equal(failureTag(exit), 'ActionPolicyDenied');
+      if (failure?._tag === 'Some' && typeof failure.value === 'object' && failure.value !== null) {
+        assert.equal('reason' in failure.value && failure.value.reason, scenario.reason);
+        assert.equal(
+          'policyReasonCode' in failure.value && failure.value.policyReasonCode,
+          scenario.reasonCode,
+        );
+      }
+      assert.equal(handlerExecutions, 0);
+
+      const [invocation] = await database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, scenario.key));
+      assert.ok(invocation);
+      const [audits, accesses, events, states] = await Promise.all([
+        database.executor
+          .select()
+          .from(auditEvents)
+          .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId)),
+        database.executor
+          .select()
+          .from(dataAccessEvents)
+          .where(eq(dataAccessEvents.actionInvocationId, invocation.actionInvocationId)),
+        database.executor
+          .select()
+          .from(domainEvents)
+          .where(eq(domainEvents.actionInvocationId, invocation.actionInvocationId)),
+        database.executor
+          .select()
+          .from(tenantModuleStates)
+          .where(eq(tenantModuleStates.moduleKey, `test.${scenario.key}.${tenantId}`)),
+      ]);
+      const messages = await database.executor
+        .select()
+        .from(outboxMessages)
+        .where(eq(outboxMessages.tenantId, tenantId));
+
+      assert.equal(invocation.status, 'rejected');
+      assert.ok(invocation.completedAt);
+      assert.equal(audits.length, 2);
+      for (const eventType of ['action.policy_checked', 'action.rejected']) {
+        const audit = audits.find((row) => row.eventType === eventType);
+        assert.equal(audit?.outcome, 'denied');
+        assert.equal(audit?.outcomeStage, 'policy');
+        assert.equal(audit?.outcomeCode, scenario.reasonCode);
+      }
+      assert.equal(JSON.stringify(audits).includes(scenario.reason), false);
+      assert.equal(accesses.length, 0);
+      assert.equal(events.length, 0);
+      assert.equal(states.length, 0);
+      assert.equal(messages.length, beforeMessages.length);
+    }
+  });
+});
+
+test('rolls back every denied-Policy finalization persistence failure', async () => {
+  const policy = defineGlobalPolicy<{ readonly value: string }>({
+    evaluate: () => Effect.fail(denyPolicy('blocked', 'This operation is blocked')),
+    policyKey: 'global.blocked.v1',
+  });
+
+  await databasePromise(async (database) => {
+    for (const stage of ['audit', 'invocation-success'] as const) {
+      const key = `policy-finalization-${stage}`;
+      let handlerExecutions = 0;
+      const runtime = makeActionRuntime(
+        withEvidencePersistenceFailure(database, stage),
+        makeActionRepository(),
+      );
+      const exit = await Effect.runPromise(
+        Effect.exit(
+          runtime.runAction({
+            payload: { value: 'must-not-persist' },
+            principal,
+            registration: makeRegistration({
+              actionKey: `shell.test.${key}`,
+              moduleStateKey: `test.${key}.${tenantId}`,
+              onExecute: () => {
+                handlerExecutions += 1;
+              },
+              policies: [policy],
+            }),
+            transport: transport(key),
+          }),
+        ),
+      );
+      const [invocation] = await database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, key));
+      assert.ok(invocation);
+      const audits = await database.executor
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+
+      assert.equal(failureTag(exit), 'ActionInvocationPersistenceError');
+      assert.equal(handlerExecutions, 0);
+      assert.equal(invocation.status, 'received');
+      assert.equal(invocation.completedAt, null);
+      assert.equal(audits.length, 0);
+    }
+  });
+});
+
 test('rolls back domain rejection, evidence persistence failure, and orphan outbox attempts', async () => {
   const scenarios = [
     {
@@ -450,6 +701,10 @@ test('rolls back every individual success-evidence persistence failure', async (
     'outbox',
     'invocation-success',
   ];
+  const allowedPolicy = defineGlobalPolicy<{ readonly value: string }>({
+    evaluate: () => Effect.void,
+    policyKey: 'global.atomic-success-evidence.v1',
+  });
 
   await databasePromise(async (database) => {
     for (const stage of stages) {
@@ -471,6 +726,7 @@ test('rolls back every individual success-evidence persistence failure', async (
             registration: makeRegistration({
               actionKey: `shell.test.${key}`,
               moduleStateKey,
+              policies: stage === 'audit' ? [allowedPolicy] : [],
             }),
             transport: transport(key, moduleStateKey),
           }),
@@ -515,6 +771,155 @@ test('rolls back every individual success-evidence persistence failure', async (
       assert.equal(events.length, 0, stage);
       assert.equal(afterOutbox.length, beforeOutbox.length, stage);
     }
+  });
+});
+
+test('keeps Policy rejection terminal and deduplicates repeated and concurrent evidence', async () => {
+  await databasePromise(async (database) => {
+    const runtime = makeActionRuntime(database, makeActionRepository());
+    let evaluations = 0;
+    let handlerExecutions = 0;
+    const policy = defineGlobalPolicy<{ readonly value: string }>({
+      evaluate: () => {
+        evaluations += 1;
+        return Effect.fail(denyPolicy('terminal_rejection', 'This rejection is terminal'));
+      },
+      policyKey: 'global.terminal-rejection.v1',
+    });
+    const key = 'policy-terminal-retry';
+    const action = makeRegistration({
+      actionKey: 'shell.test.policy-terminal-retry',
+      moduleStateKey: `test.${key}.${tenantId}`,
+      onExecute: () => {
+        handlerExecutions += 1;
+      },
+      policies: [policy],
+    });
+    const input = {
+      payload: { value: 'same' },
+      principal,
+      registration: action,
+      transport: transport(key),
+    };
+    const first = await Effect.runPromise(Effect.exit(runtime.runAction(input)));
+    const retry = await Effect.runPromise(Effect.exit(runtime.runAction(input)));
+    const [invocation] = await database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, key));
+    assert.ok(invocation);
+    const audits = await database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+
+    assert.equal(failureTag(first), 'ActionPolicyDenied');
+    assert.equal(failureTag(retry), 'ActionInvocationStateError');
+    assert.equal(evaluations, 1);
+    assert.equal(handlerExecutions, 0);
+    assert.equal(invocation.status, 'rejected');
+    assert.equal(audits.length, 2);
+
+    let concurrentEvaluations = 0;
+    const concurrentKey = 'policy-terminal-concurrent';
+    const concurrentPolicy = defineGlobalPolicy<{ readonly value: string }>({
+      evaluate: () =>
+        Effect.gen(function* delayedDenial() {
+          concurrentEvaluations += 1;
+          yield* Effect.sleep('20 millis');
+          return yield* denyPolicy('concurrent_rejection', 'Concurrent request rejected');
+        }),
+      policyKey: 'global.concurrent-rejection.v1',
+    });
+    const concurrentInput = {
+      payload: { value: 'same' },
+      principal,
+      registration: makeRegistration({
+        actionKey: 'shell.test.policy-terminal-concurrent',
+        moduleStateKey: `test.${concurrentKey}.${tenantId}`,
+        onExecute: () => {
+          handlerExecutions += 1;
+        },
+        policies: [concurrentPolicy],
+      }),
+      transport: transport(concurrentKey),
+    };
+    const concurrent = await Promise.all([
+      Effect.runPromise(Effect.exit(runtime.runAction(concurrentInput))),
+      Effect.runPromise(Effect.exit(runtime.runAction(concurrentInput))),
+    ]);
+    const [concurrentInvocation] = await database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, concurrentKey));
+    assert.ok(concurrentInvocation);
+    const concurrentAudits = await database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, concurrentInvocation.actionInvocationId));
+
+    assert.deepEqual(concurrent.map(failureTag), ['ActionPolicyDenied', 'ActionPolicyDenied']);
+    assert.equal(concurrentEvaluations, 2);
+    assert.equal(handlerExecutions, 0);
+    assert.equal(concurrentInvocation.status, 'rejected');
+    assert.equal(concurrentAudits.length, 2);
+  });
+});
+
+test('never lets a losing Policy denial replace a running or successful invocation', async () => {
+  await databasePromise(async (database) => {
+    const repository = makeActionRepository();
+    const allowedRuntime = makeActionRuntime(database, repository);
+    const deniedRuntime = makeActionRuntime(database, repository);
+    const handlerStarted = await Effect.runPromise(Deferred.make<null>());
+    const key = 'policy-loses-to-success';
+    const moduleStateKey = `test.${key}.${tenantId}`;
+    const actionKey = 'shell.test.policy-loses-to-success';
+    const allowed = makeRegistration({
+      actionKey,
+      moduleStateKey,
+      onExecute: () => {
+        Effect.runSync(Deferred.succeed(handlerStarted, null));
+      },
+      pause: true,
+    });
+    const denial = defineGlobalPolicy<{ readonly value: string }>({
+      evaluate: () => Effect.fail(denyPolicy('late_denial', 'This denial arrived too late')),
+      policyKey: 'global.late-denial.v1',
+    });
+    const denied = makeRegistration({
+      actionKey,
+      moduleStateKey,
+      policies: [denial],
+    });
+    const sharedInput = {
+      payload: { value: 'same' },
+      principal,
+      transport: transport(key, moduleStateKey),
+    };
+
+    const success = Effect.runPromise(
+      allowedRuntime.runAction({ ...sharedInput, registration: allowed }),
+    );
+    await Effect.runPromise(Deferred.await(handlerStarted));
+    const rejected = Effect.runPromise(
+      Effect.exit(deniedRuntime.runAction({ ...sharedInput, registration: denied })),
+    );
+    const [successResult, rejectedExit] = await Promise.all([success, rejected]);
+    const [invocation] = await database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, key));
+    assert.ok(invocation);
+    const audits = await database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, invocation.actionInvocationId));
+
+    assert.equal(successResult.value, 'same');
+    assert.equal(failureTag(rejectedExit), 'ActionInvocationPersistenceError');
+    assert.equal(invocation.status, 'succeeded');
+    assert.equal(audits.filter((row) => row.eventType === 'action.rejected').length, 0);
   });
 });
 
