@@ -92,6 +92,8 @@ export {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
   ActionPayloadValidationError,
   ActionRequestHashConflict,
   ActionResultValidationError,

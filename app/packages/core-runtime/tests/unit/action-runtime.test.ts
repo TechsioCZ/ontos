@@ -8,11 +8,20 @@ import type {
   ActionInvocationRecord,
   ActionRepositoryService,
   FlushActionSuccessInput,
+  RejectPermissionDeniedInput,
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { defineAction } from '../../src/actions/definition.ts';
-import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
+import {
+  ActionInvocationPersistenceError,
+  ActionPermissionCheckError,
+  ActionTransactionError,
+} from '../../src/actions/errors.ts';
+import type {
+  ActionPermissionDecision,
+  CheckActionPermissionInput,
+} from '../../src/permissions/service.ts';
 
 const principal = {
   authMethod: 'session',
@@ -40,15 +49,22 @@ const fakeTransaction = {
 interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
+  readonly permissionDecision?: ActionPermissionDecision;
+  readonly permissionFailure?: boolean;
+  readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
   const flushed: FlushActionSuccessInput[] = [];
+  const permissionChecks: CheckActionPermissionInput[] = [];
+  const rejections: RejectPermissionDeniedInput[] = [];
   const stages: ActionRuntimeStage[] = [];
   let createCount = 0;
   let lockCount = 0;
+  let permissionCheckCount = 0;
+  let rejectionCount = 0;
   let transitionCount = 0;
   let transactionCount = 0;
   const invocation =
@@ -82,6 +98,24 @@ const makeHarness = (options: HarnessOptions = {}) => {
         requestHash: currentInvocation.requestHash || preparedHash,
       });
     },
+    rejectPermissionDenied: (_executor, input) => {
+      rejectionCount += 1;
+      rejections.push(input);
+      if (options.rejectionFailure === true) {
+        return Effect.fail(
+          new ActionTransactionError({
+            code: 'action_transaction_failed',
+            reason: 'test denial evidence transaction failed',
+          }),
+        );
+      }
+      currentInvocation = {
+        ...currentInvocation,
+        completedAt: new Date(),
+        status: 'rejected',
+      };
+      return Effect.void;
+    },
     resolveInvocation: () =>
       options.resolutionUnavailable === true
         ? Effect.fail(
@@ -103,6 +137,21 @@ const makeHarness = (options: HarnessOptions = {}) => {
         ...currentInvocation,
         requestHash: currentInvocation.requestHash || preparedHash,
       });
+    },
+  };
+
+  const permission = {
+    checkActionPermission: (input: CheckActionPermissionInput) => {
+      permissionCheckCount += 1;
+      permissionChecks.push(input);
+      return options.permissionFailure === true
+        ? Effect.fail(
+            new ActionPermissionCheckError({
+              code: 'action_permission_check_failed',
+              reason: 'test authorization service unavailable',
+            }),
+          )
+        : Effect.succeed(options.permissionDecision ?? 'unconfigured');
     },
   };
 
@@ -130,15 +179,24 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
   };
 
-  const runtime = makeActionRuntime(database as never, repository, {
+  const runtime = makeActionRuntime(database as never, repository, permission, {
     onStage: (stage) => {
       stages.push(stage);
     },
   });
 
   return {
-    counts: () => ({ createCount, lockCount, transactionCount, transitionCount }),
+    counts: () => ({
+      createCount,
+      lockCount,
+      permissionCheckCount,
+      rejectionCount,
+      transactionCount,
+      transitionCount,
+    }),
     flushed,
+    permissionChecks,
+    rejections,
     runtime,
     stages,
   };
@@ -203,6 +261,8 @@ test('executes the complete stage order with transaction ownership and success e
   assert.deepEqual(harness.counts(), {
     createCount: 1,
     lockCount: 1,
+    permissionCheckCount: 1,
+    rejectionCount: 0,
     transactionCount: 1,
     transitionCount: 1,
   });
@@ -210,6 +270,146 @@ test('executes the complete stage order with transaction ownership and success e
   assert.equal(harness.flushed[0]?.evidence.dataAccessEvents.length, 1);
   assert.equal(harness.flushed[0]?.evidence.domainEvents.length, 1);
   assert.equal(harness.flushed[0]?.evidence.outboxMessages.length, 1);
+  assert.deepEqual(harness.permissionChecks, [
+    {
+      actionKey: 'shell.counter.change',
+      correlationId: 'correlation-intent-1',
+      principalId: principal.principalId,
+    },
+  ]);
+});
+
+test('allows configured and unconfigured Actions while preserving policy placement', async () => {
+  for (const decision of ['allowed', 'unconfigured'] as const) {
+    const harness = makeHarness({ permissionDecision: decision });
+    const result = await Effect.runPromise(
+      harness.runtime.runAction({
+        payload: { amount: 2 },
+        principal,
+        registration: registration(),
+        transport: transport(decision),
+      }),
+    );
+
+    assert.deepEqual(result, { total: 2 });
+    assert.ok(
+      harness.stages.indexOf('permission_checked') <
+        harness.stages.indexOf('policy_boundary_deferred'),
+    );
+    assert.equal(harness.counts().transitionCount, 1);
+    assert.equal(harness.counts().transactionCount, 1);
+  }
+});
+
+test('persists a definite permission denial before returning it and never starts execution', async () => {
+  let handlerCount = 0;
+  const harness = makeHarness({ permissionDecision: 'denied' });
+  const deniedRegistration = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      actionKey: 'shell.counter.denied',
+      auditProfile: 'sensitive',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      idempotency: 'required',
+      owningModuleKey: 'shell.core',
+      payloadSchema: Schema.Void,
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => {
+      handlerCount += 1;
+      return Effect.void;
+    },
+  );
+
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: deniedRegistration,
+        transport: transport('denied'),
+      }),
+    ),
+  );
+
+  assert.equal(failure._tag, 'ActionPermissionDenied');
+  assert.equal(failure.code, 'action_permission_denied');
+  assert.equal(handlerCount, 0);
+  assert.deepEqual(harness.stages, [
+    'payload_decoded',
+    'trusted_context_validated',
+    'invocation_prepared',
+    'authentication_boundary',
+    'permission_checked',
+  ]);
+  assert.deepEqual(harness.counts(), {
+    createCount: 1,
+    lockCount: 0,
+    permissionCheckCount: 1,
+    rejectionCount: 1,
+    transactionCount: 0,
+    transitionCount: 0,
+  });
+  assert.deepEqual(harness.rejections, [
+    {
+      actionInvocationId: 'invocation-1',
+      actionKey: 'shell.counter.denied',
+      auditProfile: 'sensitive',
+      principal,
+      transport: transport('denied'),
+    },
+  ]);
+});
+
+test('fails closed and leaves the invocation received when permission cannot be determined', async () => {
+  const harness = makeHarness({ permissionFailure: true });
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('unavailable'),
+      }),
+    ),
+  );
+
+  assert.equal(failure._tag, 'ActionPermissionCheckError');
+  assert.deepEqual(harness.counts(), {
+    createCount: 1,
+    lockCount: 0,
+    permissionCheckCount: 1,
+    rejectionCount: 0,
+    transactionCount: 0,
+    transitionCount: 0,
+  });
+  assert.deepEqual(harness.stages, [
+    'payload_decoded',
+    'trusted_context_validated',
+    'invocation_prepared',
+    'authentication_boundary',
+  ]);
+});
+
+test('does not claim denial when terminal evidence persistence rolls back', async () => {
+  const harness = makeHarness({ permissionDecision: 'denied', rejectionFailure: true });
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('denial-persistence-failure'),
+      }),
+    ),
+  );
+
+  assert.equal(failure._tag, 'ActionTransactionError');
+  assert.equal(harness.counts().rejectionCount, 1);
+  assert.equal(harness.counts().transitionCount, 0);
+  assert.equal(harness.counts().transactionCount, 0);
 });
 
 test('creates fresh collectors for every execution', async () => {
@@ -525,8 +725,10 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
 
   assert.equal(committedError._tag, 'ActionAlreadyCommitted');
   assert.equal(committed.counts().transactionCount, 0);
+  assert.equal(committed.counts().permissionCheckCount, 0);
   assert.equal(conflictError._tag, 'ActionRequestHashConflict');
   assert.equal(conflict.counts().transactionCount, 0);
+  assert.equal(conflict.counts().permissionCheckCount, 0);
   assert.equal(definiteError._tag, 'ActionTransactionError');
   assert.equal(definiteCommitError._tag, 'ActionTransactionError');
   assert.equal(uncertainError._tag, 'ActionCommitIndeterminate');

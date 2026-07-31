@@ -10,6 +10,8 @@ import {
   ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
   ActionPayloadValidationError,
   ActionRequestHashConflict,
   ActionResultValidationError,
@@ -34,6 +36,14 @@ test('publishes the exhaustive stable Core Action error tags', () => {
     new ActionIdempotencyKeyRequired({
       code: 'action_idempotency_key_required',
       reason: 'Idempotency key required',
+    }),
+    new ActionPermissionDenied({
+      code: 'action_permission_denied',
+      reason: 'The principal is not permitted to execute this Action',
+    }),
+    new ActionPermissionCheckError({
+      code: 'action_permission_check_failed',
+      reason: 'The authorization service could not determine permission safely',
     }),
     new ActionAlreadyCommitted({
       code: 'action_already_committed',
@@ -80,6 +90,7 @@ test('publishes the exhaustive stable Core Action error tags', () => {
   );
   for (const error of errors) {
     assert.equal(error.reason.includes('postgresql://'), false);
+    assert.equal(error.reason.includes('ontos-local-development-key'), false);
     assert.equal('status' in error, false);
   }
 });

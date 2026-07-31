@@ -53,6 +53,18 @@ Choose the status from the meaning of the failure, not from a generic domain-err
 
 Use other RFC 9110 statuses when they are a more accurate semantic match. Do not disguise authentication or authorization failures as validation errors, and do not use `500` for declared business rejections.
 
+## Core Action Permission Failures
+
+Core keeps its Action errors transport-neutral. A future Action BFF endpoint
+must exhaustively map `ActionPermissionDenied` to a declared `403` Problem
+Details schema and `ActionPermissionCheckError` to a declared `503` Problem
+Details schema. The denial exposes only its stable code and safe reason. The
+check error covers missing configuration, timeout, unavailability,
+authentication or schema failure, and any conditional or otherwise
+indeterminate SpiceDB decision; it must never be reclassified as an
+unconfigured-Action allow. Do not introduce a generic Action HTTP endpoint to
+perform this mapping.
+
 ## Problem Details
 
 Every error response must contain a Problem Details body whose schema is declared in the endpoint contract. It must include:

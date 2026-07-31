@@ -87,5 +87,12 @@ test('publishes only the narrow server Action surface', () => {
   assert.equal('ActionRepositoryLive' in publicSurface, false);
   assert.equal('makeActionCollector' in publicSurface, false);
   assert.equal('makeActionRepository' in publicSurface, false);
+  assert.equal('ActionPermissionDenied' in publicSurface, true);
+  assert.equal('ActionPermissionCheckError' in publicSurface, true);
+  assert.equal('ActionPermission' in publicSurface, false);
+  assert.equal('ActionPermissionLive' in publicSurface, false);
+  assert.equal('SpiceDbConfig' in publicSurface, false);
+  assert.equal('createPermissionCheckClient' in publicSurface, false);
+  assert.equal('makeActionPermissionService' in publicSurface, false);
   assert.equal('Pool' in publicSurface, false);
 });

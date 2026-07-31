@@ -57,6 +57,10 @@ const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   targetResourceType: 'test-state',
 });
 
+const unconfiguredPermission = {
+  checkActionPermission: () => Effect.succeed('unconfigured' as const),
+};
+
 const withDatabase = <Value, Error>(
   operation: (database: ContextServiceShape) => Effect.Effect<Value, Error>,
 ) =>
@@ -299,7 +303,7 @@ test('atomically commits business state, all success evidence, and the succeeded
   const moduleStateKey = `test.${key}.${tenantId}`;
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository());
+    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
     const result = await Effect.runPromise(
       runtime.runAction({
         payload: { value: 'committed' },
@@ -381,7 +385,7 @@ test('rolls back domain rejection, evidence persistence failure, and orphan outb
   ] as const;
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository());
+    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
     for (const scenario of scenarios) {
       const moduleStateKey = `test.${scenario.key}.${tenantId}`;
       const exit = await Effect.runPromise(
@@ -462,6 +466,7 @@ test('rolls back every individual success-evidence persistence failure', async (
       const runtime = makeActionRuntime(
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
+        unconfiguredPermission,
       );
       const exit = await Effect.runPromise(
         Effect.exit(
@@ -521,7 +526,7 @@ test('rolls back every individual success-evidence persistence failure', async (
 test('serializes concurrent requests and enforces committed, open-retry, and hash-conflict behavior', async () => {
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository());
+      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
       let executions = 0;
       const concurrentKey = 'concurrent-once';
       const concurrentModule = `test.concurrent.${tenantId}`;
@@ -629,8 +634,9 @@ test('serializes Domain Event allocation by tenant commit order', async () => {
     const firstRuntime = makeActionRuntime(
       { executor: delayedExecutor } as ContextServiceShape,
       repository,
+      unconfiguredPermission,
     );
-    const secondRuntime = makeActionRuntime(database, repository);
+    const secondRuntime = makeActionRuntime(database, repository, unconfiguredPermission);
     const firstModule = `test.sequence.first.${tenantId}`;
     const secondModule = `test.sequence.second.${tenantId}`;
 
@@ -706,6 +712,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     const uncertainRuntime = makeActionRuntime(
       { executor: uncertainExecutor } as ContextServiceShape,
       repository,
+      unconfiguredPermission,
     );
     const first = await Effect.runPromise(
       Effect.exit(
@@ -719,7 +726,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     );
     assert.equal(failureTag(first), 'ActionCommitIndeterminate');
 
-    const resolvingRuntime = makeActionRuntime(database, repository);
+    const resolvingRuntime = makeActionRuntime(database, repository, unconfiguredPermission);
     const invocations = await database.executor
       .select()
       .from(actionInvocations)
@@ -737,16 +744,20 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
         }),
       ),
     );
-    const unavailableRuntime = makeActionRuntime(database, {
-      ...repository,
-      resolveInvocation: () =>
-        Effect.fail(
-          new ActionInvocationPersistenceError({
-            code: 'action_invocation_persistence_failed',
-            reason: 'test database unavailable',
-          }),
-        ),
-    });
+    const unavailableRuntime = makeActionRuntime(
+      database,
+      {
+        ...repository,
+        resolveInvocation: () =>
+          Effect.fail(
+            new ActionInvocationPersistenceError({
+              code: 'action_invocation_persistence_failed',
+              reason: 'test database unavailable',
+            }),
+          ),
+      },
+      unconfiguredPermission,
+    );
     const unavailableResolution = await Effect.runPromise(
       Effect.exit(
         unavailableRuntime.resolveActionCommit({
@@ -814,6 +825,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     const uncertainOpenRuntime = makeActionRuntime(
       { executor: uncertainRollbackExecutor } as ContextServiceShape,
       repository,
+      unconfiguredPermission,
     );
     const openFirst = await Effect.runPromise(
       Effect.exit(

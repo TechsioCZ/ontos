@@ -22,6 +22,7 @@ import {
   ActionIdempotencyKeyRequired,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
+  ActionPermissionDenied,
   ActionPayloadValidationError,
   ActionRequestHashConflict,
   ActionTransactionError,
@@ -29,6 +30,8 @@ import {
 } from './errors.ts';
 import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
+import { ActionPermission, ActionPermissionLive } from '../permissions/service.ts';
+import type { ActionPermissionService } from '../permissions/service.ts';
 import {
   ActionRepository,
   ActionRepositoryLive,
@@ -44,7 +47,7 @@ export const ACTION_RUNTIME_STAGES = [
   'trusted_context_validated',
   'invocation_prepared',
   'authentication_boundary',
-  'permission_boundary_deferred',
+  'permission_checked',
   'policy_boundary_deferred',
   'invocation_running',
   'invocation_locked',
@@ -292,6 +295,7 @@ const validateInvocationId = (
 export const makeActionRuntime = (
   database: Context.Service.Shape<typeof CoreDatabaseService>,
   repository: ActionRepositoryService,
+  permission: ActionPermissionService,
   options: ActionRuntimeOptions = {},
 ): ActionRuntimeService => {
   const notifyStage = (stage: ActionRuntimeStage): void => {
@@ -373,11 +377,66 @@ export const makeActionRuntime = (
       notifyStage('invocation_prepared');
       yield* verifyInvocation(invocation, requestHash);
 
-      // The trusted context already represents authentication for this first
-      // runtime increment. Permission and policy boundaries are explicit but
-      // deliberately perform no decision until their dedicated features land.
+      // The trusted context already represents authentication. Authorization
+      // uses only the immutable Action key and trusted principal identity.
       notifyStage('authentication_boundary');
-      notifyStage('permission_boundary_deferred');
+      const permissionDecision = yield* permission
+        .checkActionPermission({
+          actionKey: input.registration.descriptor.actionKey,
+          correlationId: transport.correlationId,
+          principalId: principal.principalId,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.annotateLogs(Effect.logError(error.reason), {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            }),
+          ),
+        );
+      notifyStage('permission_checked');
+
+      if (permissionDecision === 'denied') {
+        yield* repository
+          .rejectPermissionDenied(database.executor, {
+            actionInvocationId: invocation.actionInvocationId,
+            actionKey: input.registration.descriptor.actionKey,
+            auditProfile: input.registration.descriptor.auditProfile,
+            principal,
+            transport,
+          })
+          .pipe(
+            Effect.tapError((error) => {
+              if (error._tag === 'ActionInvocationPersistenceError') {
+                return logInvocationPersistenceFailure(error, {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                });
+              }
+              if (error._tag === 'ActionTransactionError') {
+                const cause = getActionTransactionFailureCause(error);
+                return cause === undefined
+                  ? Effect.void
+                  : Effect.annotateLogs(
+                      Effect.logError('Unexpected permission denial persistence failure', cause),
+                      {
+                        actionKey: input.registration.descriptor.actionKey,
+                        correlationId: transport.correlationId,
+                        invocationId: invocation.actionInvocationId,
+                      },
+                    );
+              }
+              return Effect.void;
+            }),
+          );
+        return yield* new ActionPermissionDenied({
+          code: 'action_permission_denied',
+          reason: 'The principal is not permitted to execute this Action',
+        });
+      }
+
       notifyStage('policy_boundary_deferred');
 
       const runningInvocation = yield* repository
@@ -593,9 +652,10 @@ export const ActionRuntimeLive = Layer.effect(
   Effect.gen(function* makeActionRuntimeService() {
     const database = yield* CoreDatabaseService;
     const repository = yield* ActionRepository;
-    return makeActionRuntime(database, repository);
+    const permission = yield* ActionPermission;
+    return makeActionRuntime(database, repository, permission);
   }),
-).pipe(Layer.provide(ActionRepositoryLive));
+).pipe(Layer.provide(ActionRepositoryLive), Layer.provide(ActionPermissionLive));
 
 export const runAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,

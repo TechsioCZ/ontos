@@ -13,10 +13,11 @@
     "db:test": "node --test tests/unit/*.test.ts tests/integration/*.test.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
     "action:test:unit": "node --test tests/unit/action-*.test.ts",
-    "action:test:integration": "node --test tests/integration/action-runtime.test.ts",
+    "action:test:integration": "node --test tests/integration/action-*.test.ts",
     "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
   },
   "dependencies": {
+    "@authzed/authzed-node": "1.6.1",
     "drizzle-orm": "0.45.2",
     "effect": "4.0.0-beta.97",
     "pg": "8.22.0"

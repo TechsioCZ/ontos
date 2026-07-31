@@ -14,6 +14,12 @@ export interface ActionDescriptor<
   DomainEvents extends DomainEventContractMap,
 > {
   readonly accessEvidencePolicy: ActionAccessEvidencePolicy;
+  /**
+   * Stable, globally unique authorization identity for this Action. Core maps
+   * it losslessly to SpiceDB's object-id alphabet. Once relationships reference
+   * that identity, the key is immutable; display names, routes, payloads, and
+   * target resources must never replace or derive it.
+   */
   readonly actionKey: string;
   readonly auditProfile: ActionAuditProfile;
   readonly domainErrorSchema: DomainErrorSchema;

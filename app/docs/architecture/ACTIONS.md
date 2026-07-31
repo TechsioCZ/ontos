@@ -17,11 +17,23 @@ Process every Action request in this order:
 2. Resolve and validate trusted tenant, legal-entity, principal, authentication, and correlation context separately from the Action payload. A payload must never supply or override trusted identity.
 3. Insert or resolve the Action Invocation Log outside and before the business transaction. The invocation is the durable idempotency anchor. If it cannot be persisted, stop processing with a typed infrastructure failure.
 4. Reject request-hash conflicts and treat an already `succeeded` invocation as committed without rerunning the handler or replaying a stored result.
-5. Enter explicit authentication, permission, and policy stage boundaries before opening the business transaction.
+5. Enter the authentication boundary, check the Action permission through Core's
+   SpiceDB service, and then enter the policy boundary before opening the
+   business transaction. The descriptor `actionKey` is losslessly encoded as
+   `ak_` plus unpadded base64url for SpiceDB's restricted object-id alphabet;
+   the trusted `principalId` remains the exact subject identifier.
 6. Persist the accepted invocation transition from `received` to `running` independently so a definite business rollback leaves it open.
 7. Open the Core-owned business transaction, lock and recheck the invocation immediately before handler execution, then execute the private Action handler with a restricted transaction executor. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
 
-The first Shell/Core runtime receives an already trusted principal context. Permission and policy evaluation are deliberately not implemented in this increment; the explicit stage boundaries remain so those gates can be added before handler execution. They must not be simulated as successful decisions or recorded as if checks occurred.
+The first Shell/Core runtime receives an already trusted principal context.
+Permission evaluation is active. An Action is unconfigured only when a fully
+consistent check of its self-referential restriction marker returns a definite
+negative decision; that compatibility case is allowed. A marked Action requires
+a definite positive `execute` decision for the trusted principal. Missing
+configuration, timeout, unavailability, authentication/schema failure,
+conditional decisions, and every other indeterminate result fail closed while
+leaving the invocation open in `received`. Policy evaluation remains deferred
+at its explicit boundary and must not be recorded as if a decision occurred.
 
 ## Outcomes
 
@@ -35,6 +47,17 @@ The Action handler returns a typed domain rejection, a collector invariant fails
 - **Required persistence:** Persist no business write, result Audit Event, Data Access Event, Domain Event, Outbox Message, terminal failure evidence, or `completed_at` value from the rolled-back attempt.
 - **Invocation state:** Intentionally leave the independently persisted invocation open. Open-invocation finalization, permanent failure evidence, retention, and support workflow are deferred.
 - **Response:** Return a declared typed Effect error and expose no read or handler result to the caller.
+
+A definite SpiceDB permission denial is the narrow exception to that open
+invocation rule. Before returning `ActionPermissionDenied`, Core opens a
+separate evidence transaction, locks the `received` invocation, inserts exactly
+one terminal `action.rejected` Audit Event with `outcome = denied`,
+`outcome_stage = authz`, and `outcome_code = spicedb_permission_denied`, and
+marks the invocation `rejected` with `completed_at`. Concurrent or repeated
+denial persistence is idempotent. If that evidence transaction does not commit,
+Core returns a typed infrastructure failure rather than claiming a denial was
+durably recorded. No handler, business transaction, business write, Data Access
+Event, Domain Event, or Outbox Message may occur on either blocked path.
 
 ### Indeterminate
 

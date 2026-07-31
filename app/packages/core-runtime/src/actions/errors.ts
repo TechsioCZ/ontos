@@ -37,6 +37,22 @@ export class ActionIdempotencyKeyRequired extends Schema.TaggedErrorClass<Action
   },
 ) {}
 
+export class ActionPermissionDenied extends Schema.TaggedErrorClass<ActionPermissionDenied>()(
+  'ActionPermissionDenied',
+  {
+    code: Schema.Literal('action_permission_denied'),
+    ...safeReason,
+  },
+) {}
+
+export class ActionPermissionCheckError extends Schema.TaggedErrorClass<ActionPermissionCheckError>()(
+  'ActionPermissionCheckError',
+  {
+    code: Schema.Literal('action_permission_check_failed'),
+    ...safeReason,
+  },
+) {}
+
 export class ActionAlreadyCommitted extends Schema.TaggedErrorClass<ActionAlreadyCommitted>()(
   'ActionAlreadyCommitted',
   {
@@ -119,6 +135,8 @@ export type ActionCoreError =
   | ActionInvocationNotFound
   | ActionInvocationPersistenceError
   | ActionInvocationStateError
+  | ActionPermissionCheckError
+  | ActionPermissionDenied
   | ActionPayloadValidationError
   | ActionRequestHashConflict
   | ActionResultValidationError
@@ -130,8 +148,9 @@ export type ActionCoreError =
  * registration's declared domain errors exhaustively to its public schemas.
  * Structural payload/metadata validation maps to 400, invalid trusted
  * authentication context to 401, a missing required idempotency key to 428,
- * idempotency and terminal-state conflicts to 409, missing invocations to
- * 404, temporarily unavailable persistence and indeterminate commit to 503,
+ * permission denial to 403, idempotency and terminal-state conflicts to 409,
+ * missing invocations to 404, permission-check failure, temporarily
+ * unavailable persistence, and indeterminate commit to 503,
  * and invalid results or sanitized unexpected execution/transaction failures
  * to a declared safe 500.
  */
@@ -140,6 +159,8 @@ export const ACTION_CORE_ERROR_TAGS = [
   'ActionResultValidationError',
   'ActionTrustedContextValidationError',
   'ActionIdempotencyKeyRequired',
+  'ActionPermissionDenied',
+  'ActionPermissionCheckError',
   'ActionAlreadyCommitted',
   'ActionRequestHashConflict',
   'ActionInvocationNotFound',
