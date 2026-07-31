@@ -93,6 +93,23 @@ export class ActionHandlerExecutionError extends Schema.TaggedErrorClass<ActionH
   },
 ) {}
 
+export class ActionPolicyDenied extends Schema.TaggedErrorClass<ActionPolicyDenied>()(
+  'ActionPolicyDenied',
+  {
+    code: Schema.Literal('action_policy_denied'),
+    policyReasonCode: Schema.String,
+    ...safeReason,
+  },
+) {}
+
+export class ActionPolicyEvaluationError extends Schema.TaggedErrorClass<ActionPolicyEvaluationError>()(
+  'ActionPolicyEvaluationError',
+  {
+    code: Schema.Literal('action_policy_evaluation_failed'),
+    ...safeReason,
+  },
+) {}
+
 export class ActionTransactionError extends Schema.TaggedErrorClass<ActionTransactionError>()(
   'ActionTransactionError',
   {
@@ -120,6 +137,8 @@ export type ActionCoreError =
   | ActionInvocationPersistenceError
   | ActionInvocationStateError
   | ActionPayloadValidationError
+  | ActionPolicyDenied
+  | ActionPolicyEvaluationError
   | ActionRequestHashConflict
   | ActionResultValidationError
   | ActionTransactionError
@@ -131,9 +150,12 @@ export type ActionCoreError =
  * Structural payload/metadata validation maps to 400, invalid trusted
  * authentication context to 401, a missing required idempotency key to 428,
  * idempotency and terminal-state conflicts to 409, missing invocations to
- * 404, temporarily unavailable persistence and indeterminate commit to 503,
- * and invalid results or sanitized unexpected execution/transaction failures
- * to a declared safe 500.
+ * 404, and temporarily unavailable persistence, Policy evaluation capability,
+ * and indeterminate commit failures to an appropriate retryable status such as
+ * 503. Policy denials map according to their declared business semantics (for
+ * example 403, 409, or 422), never through one universal Policy status. Invalid
+ * results and sanitized unexpected execution/transaction defects map to a
+ * declared safe 500.
  */
 export const ACTION_CORE_ERROR_TAGS = [
   'ActionPayloadValidationError',
@@ -147,6 +169,8 @@ export const ACTION_CORE_ERROR_TAGS = [
   'ActionInvocationStateError',
   'ActionCollectorError',
   'ActionHandlerExecutionError',
+  'ActionPolicyDenied',
+  'ActionPolicyEvaluationError',
   'ActionTransactionError',
   'ActionCommitIndeterminate',
 ] as const;

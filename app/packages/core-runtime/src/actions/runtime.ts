@@ -23,12 +23,16 @@ import {
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionPayloadValidationError,
+  ActionPolicyDenied,
+  ActionPolicyEvaluationError,
   ActionRequestHashConflict,
   ActionTransactionError,
   ActionTrustedContextValidationError,
 } from './errors.ts';
 import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
+import { PolicyDenied } from './policy.ts';
+import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import {
   ActionRepository,
   ActionRepositoryLive,
@@ -37,7 +41,11 @@ import {
   getActionInvocationPersistenceFailureCause,
   getActionTransactionFailureCause,
 } from './repository.ts';
-import type { ActionRepositoryService, ActionInvocationRecord } from './repository.ts';
+import type {
+  ActionInvocationRecord,
+  ActionPolicyEvidence,
+  ActionRepositoryService,
+} from './repository.ts';
 
 export const ACTION_RUNTIME_STAGES = [
   'payload_decoded',
@@ -45,7 +53,7 @@ export const ACTION_RUNTIME_STAGES = [
   'invocation_prepared',
   'authentication_boundary',
   'permission_boundary_deferred',
-  'policy_boundary_deferred',
+  'policy_boundary',
   'invocation_running',
   'invocation_locked',
   'handler_executed',
@@ -59,6 +67,7 @@ export interface RunActionInput<
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
+  Owner extends string = string,
 > {
   readonly payload: unknown;
   readonly principal: unknown;
@@ -66,7 +75,8 @@ export interface RunActionInput<
     PayloadSchema,
     ResultSchema,
     DomainErrorSchema,
-    DomainEvents
+    DomainEvents,
+    Owner
   >;
   readonly transport: unknown;
 }
@@ -87,8 +97,9 @@ export interface ActionRuntimeService {
     ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
     DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
     DomainEvents extends DomainEventContractMap,
+    Owner extends string,
   >(
-    input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
+    input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ) => Effect.Effect<ResultSchema['Type'], ActionCoreError | DomainErrorSchema['Type']>;
   readonly resolveActionCommit: (
     input: ResolveActionCommitInput,
@@ -276,6 +287,17 @@ const makeHandlerExecutionError = () =>
     reason: 'The Action handler failed unexpectedly',
   });
 
+const policyEvidence = <Payload, Owner extends string>(
+  policy: ActionPolicy<Payload, Owner>,
+): ActionPolicyEvidence =>
+  policy.scope === 'global'
+    ? { policyKey: policy.policyKey, scope: policy.scope }
+    : {
+        owningModuleKey: policy.owningModuleKey,
+        policyKey: policy.policyKey,
+        scope: policy.scope,
+      };
+
 const validateInvocationId = (
   input: unknown,
 ): Effect.Effect<string, ActionPayloadValidationError> =>
@@ -303,8 +325,9 @@ export const makeActionRuntime = (
     ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
     DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
     DomainEvents extends DomainEventContractMap,
+    Owner extends string,
   >(
-    input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
+    input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ): Effect.Effect<ResultSchema['Type'], ActionCoreError | DomainErrorSchema['Type']> =>
     Effect.gen(function* runActionEffect() {
       const payload = yield* decodeActionPayload(
@@ -374,11 +397,92 @@ export const makeActionRuntime = (
       yield* verifyInvocation(invocation, requestHash);
 
       // The trusted context already represents authentication for this first
-      // runtime increment. Permission and policy boundaries are explicit but
-      // deliberately perform no decision until their dedicated features land.
+      // runtime increment. Permission enforcement remains deliberately deferred.
       notifyStage('authentication_boundary');
       notifyStage('permission_boundary_deferred');
-      notifyStage('policy_boundary_deferred');
+      notifyStage('policy_boundary');
+
+      const policyInput: ActionPolicyEvaluatorInput<typeof payload> = Object.freeze({
+        action: Object.freeze({
+          actionKey: input.registration.descriptor.actionKey,
+          owningModuleKey: input.registration.descriptor.owningModuleKey,
+          schemaVersion: input.registration.descriptor.schemaVersion,
+        }),
+        payload,
+        principal: Object.freeze({ ...principal }),
+        target: Object.freeze({
+          ...(transport.targetModuleKey === undefined
+            ? {}
+            : { targetModuleKey: transport.targetModuleKey }),
+          ...(transport.targetResourceId === undefined
+            ? {}
+            : { targetResourceId: transport.targetResourceId }),
+          ...(transport.targetResourceType === undefined
+            ? {}
+            : { targetResourceType: transport.targetResourceType }),
+        }),
+        transport: Object.freeze({
+          correlationId: transport.correlationId,
+          ...(transport.traceId === undefined ? {} : { traceId: transport.traceId }),
+        }),
+      });
+      const allowedPolicies: ActionPolicyEvidence[] = [];
+      for (const policy of input.registration.descriptor.policies) {
+        const policyExit = yield* Effect.exit(Effect.suspend(() => policy.evaluate(policyInput)));
+        if (Exit.isSuccess(policyExit)) {
+          allowedPolicies.push(policyEvidence(policy));
+          continue;
+        }
+
+        const failure = Cause.findErrorOption(policyExit.cause);
+        if (
+          !Cause.hasDies(policyExit.cause) &&
+          !Cause.hasInterrupts(policyExit.cause) &&
+          failure._tag === 'Some' &&
+          Schema.is(PolicyDenied)(failure.value)
+        ) {
+          const denial = failure.value;
+          yield* repository
+            .finalizePolicyDenial(database.executor, {
+              actionInvocationId: invocation.actionInvocationId,
+              actionKey: input.registration.descriptor.actionKey,
+              auditProfile: input.registration.descriptor.auditProfile,
+              policy: policyEvidence(policy),
+              principal,
+              reasonCode: denial.reasonCode,
+              transport,
+            })
+            .pipe(
+              Effect.tapError((error) =>
+                logInvocationPersistenceFailure(error, {
+                  actionKey: input.registration.descriptor.actionKey,
+                  correlationId: transport.correlationId,
+                  invocationId: invocation.actionInvocationId,
+                  policyKey: policy.policyKey,
+                }),
+              ),
+            );
+          return yield* new ActionPolicyDenied({
+            code: 'action_policy_denied',
+            policyReasonCode: denial.reasonCode,
+            reason: denial.reason,
+          });
+        }
+
+        yield* Effect.annotateLogs(
+          Effect.logError('Unexpected Action Policy evaluation failure', policyExit.cause),
+          {
+            actionKey: input.registration.descriptor.actionKey,
+            correlationId: transport.correlationId,
+            invocationId: invocation.actionInvocationId,
+            policyKey: policy.policyKey,
+          },
+        );
+        return yield* new ActionPolicyEvaluationError({
+          code: 'action_policy_evaluation_failed',
+          reason: 'A required Action Policy could not be evaluated',
+        });
+      }
 
       const runningInvocation = yield* repository
         .transitionInvocationToRunning(database.executor, invocation.actionInvocationId)
@@ -472,6 +576,7 @@ export const makeActionRuntime = (
               repository.flushSuccess(drizzleTransaction as CoreTransaction, {
                 actionInvocationId: invocation.actionInvocationId,
                 actionKey: input.registration.descriptor.actionKey,
+                allowedPolicies,
                 auditProfile: input.registration.descriptor.auditProfile,
                 evidence: collector.snapshot(),
                 principal,

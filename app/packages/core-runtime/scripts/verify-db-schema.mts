@@ -203,8 +203,10 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   migrationBookkeepingTables.sort();
 
   if (
-    JSON.stringify(migrationBookkeepingTables) !==
-    JSON.stringify(expectedMigrationBookkeepingTables)
+    migrationBookkeepingTables.length !== expectedMigrationBookkeepingTables.length ||
+    migrationBookkeepingTables.some(
+      (tableName, index) => tableName !== expectedMigrationBookkeepingTables[index],
+    )
   ) {
     return yield* new DatabaseVerificationError({
       reason: `Expected Drizzle migration bookkeeping tables [${expectedMigrationBookkeepingTables.join(', ')}], found [${migrationBookkeepingTables.join(', ')}]`,

@@ -82,10 +82,17 @@ test('canonical hashing distinguishes literal objects from internal value types'
 test('publishes only the narrow server Action surface', () => {
   assert.equal('ActionRuntime' in publicSurface, true);
   assert.equal('defineAction' in publicSurface, true);
+  assert.equal('defineGlobalPolicy' in publicSurface, true);
+  assert.equal('defineMicroverticalPolicy' in publicSurface, true);
+  assert.equal('denyPolicy' in publicSurface, true);
+  assert.equal('ActionPolicyDenied' in publicSurface, true);
+  assert.equal('ActionPolicyEvaluationError' in publicSurface, true);
   assert.equal('resolveActionCommit' in publicSurface, true);
   assert.equal('ActionRepository' in publicSurface, false);
   assert.equal('ActionRepositoryLive' in publicSurface, false);
   assert.equal('makeActionCollector' in publicSurface, false);
   assert.equal('makeActionRepository' in publicSurface, false);
+  assert.equal('finalizePolicyDenial' in publicSurface, false);
+  assert.equal('isActionPolicy' in publicSurface, false);
   assert.equal('Pool' in publicSurface, false);
 });

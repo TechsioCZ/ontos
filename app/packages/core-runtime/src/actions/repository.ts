@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off globalDateInEffect:off
+// @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off
 // Drizzle's transaction/query contract is Promise-based; these narrow bridges
 // keep the exported repository operations in typed Effect error channels.
 import { createHash, randomUUID } from 'node:crypto';
@@ -150,9 +150,26 @@ export interface ActionInvocationRecord {
   readonly status: ActionInvocationStatus;
 }
 
+export interface ActionPolicyEvidence {
+  readonly owningModuleKey?: string;
+  readonly policyKey: string;
+  readonly scope: 'global' | 'microvertical';
+}
+
+export interface FinalizeActionPolicyDenialInput {
+  readonly actionInvocationId: string;
+  readonly actionKey: string;
+  readonly auditProfile: ActionAuditProfile;
+  readonly policy: ActionPolicyEvidence;
+  readonly principal: TrustedPrincipalContext;
+  readonly reasonCode: string;
+  readonly transport: ActionTransportMetadata;
+}
+
 export interface FlushActionSuccessInput {
   readonly actionInvocationId: string;
   readonly actionKey: string;
+  readonly allowedPolicies: readonly ActionPolicyEvidence[];
   readonly auditProfile: ActionAuditProfile;
   readonly evidence: ActionEvidenceSnapshot;
   readonly principal: TrustedPrincipalContext;
@@ -165,6 +182,10 @@ export interface ActionRepositoryService {
     executor: CoreDatabaseExecutor,
     input: PrepareActionInvocationInput,
   ) => Effect.Effect<ActionInvocationRecord, ActionInvocationPersistenceError>;
+  readonly finalizePolicyDenial: (
+    executor: CoreDatabaseExecutor,
+    input: FinalizeActionPolicyDenialInput,
+  ) => Effect.Effect<void, ActionInvocationPersistenceError>;
   readonly flushSuccess: (
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
@@ -375,10 +396,130 @@ export const makeActionRepository = (): ActionRepositoryService => {
       },
     });
 
+  const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = (executor, input) =>
+    Effect.tryPromise({
+      catch: (cause) =>
+        persistenceFailure('Unable to persist the rejected Action invocation', cause),
+      try: () =>
+        executor.transaction(async (transaction) => {
+          const rows = await transaction
+            .select(invocationSelection)
+            .from(actionInvocations)
+            .where(eq(actionInvocations.actionInvocationId, input.actionInvocationId))
+            .for('update')
+            .limit(1);
+          const [invocation] = rows;
+          if (invocation === undefined) {
+            throw new Error('The Action invocation no longer exists');
+          }
+          if (invocation.status === 'rejected' && invocation.completedAt !== null) {
+            return;
+          }
+          if (invocation.status !== 'received' || invocation.completedAt !== null) {
+            throw new Error('The Action invocation is no longer open for Policy rejection');
+          }
+
+          const policyEvidence = {
+            actionKey: input.actionKey,
+            ...(input.policy.owningModuleKey === undefined
+              ? {}
+              : { owningModuleKey: input.policy.owningModuleKey }),
+            policyKey: input.policy.policyKey,
+            policyScope: input.policy.scope,
+          };
+          await transaction.insert(auditEvents).values([
+            {
+              actionInvocationId: input.actionInvocationId,
+              auditProfile: input.auditProfile,
+              authBindingId: input.principal.authBindingId,
+              authContextRef: input.principal.authContextRef,
+              authMethod: input.principal.authMethod,
+              eventType: 'action.policy_checked',
+              evidenceJson: policyEvidence,
+              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+              legalEntityId: input.principal.legalEntityId,
+              outcome: 'denied',
+              outcomeCode: input.reasonCode,
+              outcomeStage: 'policy',
+              principalId: input.principal.principalId,
+              targetModuleKey: input.transport.targetModuleKey,
+              targetResourceId: input.transport.targetResourceId,
+              targetResourceType: input.transport.targetResourceType,
+              tenantId: input.principal.tenantId,
+            },
+            {
+              actionInvocationId: input.actionInvocationId,
+              auditProfile: input.auditProfile,
+              authBindingId: input.principal.authBindingId,
+              authContextRef: input.principal.authContextRef,
+              authMethod: input.principal.authMethod,
+              eventType: 'action.rejected',
+              evidenceJson: policyEvidence,
+              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+              legalEntityId: input.principal.legalEntityId,
+              outcome: 'denied',
+              outcomeCode: input.reasonCode,
+              outcomeStage: 'policy',
+              principalId: input.principal.principalId,
+              targetModuleKey: input.transport.targetModuleKey,
+              targetResourceId: input.transport.targetResourceId,
+              targetResourceType: input.transport.targetResourceType,
+              tenantId: input.principal.tenantId,
+            },
+          ]);
+
+          const rejected = await transaction
+            .update(actionInvocations)
+            .set({ completedAt: new Date(), status: 'rejected' })
+            .where(
+              and(
+                eq(actionInvocations.actionInvocationId, input.actionInvocationId),
+                eq(actionInvocations.status, 'received'),
+                isNull(actionInvocations.completedAt),
+              ),
+            )
+            .returning({ actionInvocationId: actionInvocations.actionInvocationId });
+          if (rejected.length !== 1) {
+            throw new Error('The Action invocation could not be marked rejected');
+          }
+        }),
+    });
+
   const flushSuccess: ActionRepositoryService['flushSuccess'] = (transaction, input) =>
     Effect.tryPromise({
       catch: (cause) => transactionFailure('Unable to persist successful Action evidence', cause),
       try: async () => {
+        if (input.allowedPolicies.length > 0) {
+          await transaction.insert(auditEvents).values(
+            input.allowedPolicies.map((policy) => ({
+              actionInvocationId: input.actionInvocationId,
+              auditProfile: input.auditProfile,
+              authBindingId: input.principal.authBindingId,
+              authContextRef: input.principal.authContextRef,
+              authMethod: input.principal.authMethod,
+              eventType: 'action.policy_checked',
+              evidenceJson: {
+                actionKey: input.actionKey,
+                ...(policy.owningModuleKey === undefined
+                  ? {}
+                  : { owningModuleKey: policy.owningModuleKey }),
+                policyKey: policy.policyKey,
+                policyScope: policy.scope,
+              },
+              impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
+              legalEntityId: input.principal.legalEntityId,
+              outcome: 'allowed',
+              outcomeCode: 'policy_allowed',
+              outcomeStage: 'policy',
+              principalId: input.principal.principalId,
+              targetModuleKey: input.transport.targetModuleKey,
+              targetResourceId: input.transport.targetResourceId,
+              targetResourceType: input.transport.targetResourceType,
+              tenantId: input.principal.tenantId,
+            })),
+          );
+        }
+
         await transaction.insert(auditEvents).values({
           actionInvocationId: input.actionInvocationId,
           auditProfile: input.auditProfile,
@@ -504,6 +645,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
 
   return Object.freeze({
     createOrResolveInvocation,
+    finalizePolicyDenial,
     flushSuccess,
     lockInvocation,
     resolveInvocation,

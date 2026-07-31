@@ -34,6 +34,8 @@ Internal domain and infrastructure errors may be more detailed than the public c
 
 Unexpected defects are not expected failures. At the outer HTTP seam, log the full Effect cause with correlation context, then convert it to a declared, non-sensitive typed `InternalServerError` with status `500`. No defect may escape as an unstructured backend response.
 
+Generated Action BFF endpoints must also map the complete Core Action error union. `ActionPolicyDenied` carries a stable Policy reason code and safe human-readable reason, but Core deliberately assigns no HTTP status: the endpoint maps the Policy's declared semantics to the correct public Problem Details schema, such as `403` for authorization-like denial, `409` for current-state conflict, or `422` for semantic ineligibility. `ActionPolicyEvaluationError` represents a sanitized evaluator defect or unavailable required capability and must map to the endpoint's declared operational failure, commonly a retryable `503` when appropriate. Neither error may fall through to an exception, generic Action endpoint, or ad hoc response.
+
 ## Status Code Semantics
 
 Choose the status from the meaning of the failure, not from a generic domain-error default.
@@ -89,3 +91,4 @@ Before completing backend or BFF client work, verify:
 5. Unexpected defects become a typed, safe `500` response after the full cause is logged.
 6. The generated client decodes backend, transport, and decoding failures into typed errors.
 7. Frontend integration handles the client error union exhaustively before rendering.
+8. Action endpoints exhaustively translate `ActionPolicyDenied` and `ActionPolicyEvaluationError`, choosing denial status by Policy semantics rather than applying one universal Policy status.

@@ -6,6 +6,7 @@ This document defines state-changing Action execution. MicroVertical deployment 
 
 - Every state change in the system must be driven by an Action.
 - An Action is a typed command or intent with a declared payload, success value, expected error channel, and required dependencies. Its private handler is an Effect program.
+- Every Action descriptor declares an explicit readonly array of immutable Policy object references. A global Shell/Core Policy may be referenced by any Action; an executable MicroVertical Policy may be referenced only by an Action with the same owning module key. Raw Policy keys, registries, and cross-owner Policy imports are forbidden.
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
 
@@ -17,11 +18,12 @@ Process every Action request in this order:
 2. Resolve and validate trusted tenant, legal-entity, principal, authentication, and correlation context separately from the Action payload. A payload must never supply or override trusted identity.
 3. Insert or resolve the Action Invocation Log outside and before the business transaction. The invocation is the durable idempotency anchor. If it cannot be persisted, stop processing with a typed infrastructure failure.
 4. Reject request-hash conflicts and treat an already `succeeded` invocation as committed without rerunning the handler or replaying a stored result.
-5. Enter explicit authentication, permission, and policy stage boundaries before opening the business transaction.
-6. Persist the accepted invocation transition from `received` to `running` independently so a definite business rollback leaves it open.
-7. Open the Core-owned business transaction, lock and recheck the invocation immediately before handler execution, then execute the private Action handler with a restricted transaction executor. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
+5. Enter the explicit authentication and permission boundaries, then evaluate every referenced Policy sequentially and fail-fast in descriptor order. Policy input contains only the decoded payload, trusted principal context, sanitized transport/target metadata, and Action identity.
+6. If a Policy denies, atomically finalize the still-`received` invocation as `rejected` outside the business transaction and return the typed denial. If a Policy evaluator fails unexpectedly, return the sanitized typed evaluation error and leave the invocation open for retry.
+7. Only after all Policies allow, persist the accepted invocation transition from `received` to `running` independently so a definite business rollback leaves it open.
+8. Open the Core-owned business transaction, lock and recheck the invocation immediately before handler execution, then execute the private Action handler with a restricted transaction executor. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
 
-The first Shell/Core runtime receives an already trusted principal context. Permission and policy evaluation are deliberately not implemented in this increment; the explicit stage boundaries remain so those gates can be added before handler execution. They must not be simulated as successful decisions or recorded as if checks occurred.
+The first Shell/Core runtime receives an already trusted principal context. Permission evaluation remains deferred and must not be simulated as a successful decision. Policy evaluation is enforced before the invocation becomes `running`, the business transaction opens, or the handler and collector are created.
 
 ## Outcomes
 
@@ -36,6 +38,8 @@ The Action handler returns a typed domain rejection, a collector invariant fails
 - **Invocation state:** Intentionally leave the independently persisted invocation open. Open-invocation finalization, permanent failure evidence, retention, and support workflow are deferred.
 - **Response:** Return a declared typed Effect error and expose no read or handler result to the caller.
 
+Policy denial is the deliberate pre-execution exception to this general rollback rule. Because no business transaction or handler has started, Core opens one separate transaction, locks and rechecks the invocation, writes a denied `action.policy_checked` Audit Event plus terminal `action.rejected` Audit Event at the `policy` stage, and marks the invocation `rejected` with `completed_at`. The evidence includes only Action and Policy identity/scope metadata and the stable reason code—not payloads, safe display messages, credentials, or evaluator causes. If that transaction fails, all rejection writes roll back, the invocation remains open, and Core returns the typed persistence failure rather than claiming a durable rejection.
+
 ### Indeterminate
 
 The database did not acknowledge whether the business transaction committed.
@@ -45,7 +49,7 @@ The database did not acknowledge whether the business transaction committed.
 
 ### Successful
 
-- **Business transaction:** Atomically commit the handler's business writes, successful result Audit Event, successful Data Access Events, Domain Events, Domain Event-linked Outbox Messages, and the invocation `succeeded` update with `completed_at`.
+- **Business transaction:** Atomically commit one allowed `action.policy_checked` Audit Event per evaluated Policy, the handler's business writes, successful result Audit Event, successful Data Access Events, Domain Events, Domain Event-linked Outbox Messages, and the invocation `succeeded` update with `completed_at`. An Action with `policies: []` retains the previous success evidence shape.
 - **Required persistence:** The `succeeded` invocation update is the durable commit marker. It is not a post-commit write.
 
 ### Reconciliation
@@ -60,7 +64,7 @@ This increment resolves uncertain commits through an explicit server-side commit
 - Record a Data Access Event whenever Action processing reads business data whose result contributes to a successful response or write, including reads, lists, searches, exports, downloads, invariant checks, and repository lookups.
 - For a successful Action, persist the business updates, successful Audit Events, instantiated Domain Events, Data Access Events, Domain Event-linked Outbox Messages, and invocation success marker atomically in one business transaction.
 - If any business update, Audit Event, Domain Event, Data Access Event, or Outbox Message cannot be persisted, roll back the entire business transaction and treat the Action as failed.
-- Do not persist Audit Events or Data Access Events collected by a rejected or failed attempt in this increment.
+- Do not persist Audit Events or Data Access Events collected by a rejected or failed handler attempt. The only pre-execution exception is the small, Core-owned Policy denial evidence described above.
 - The Action Invocation Log is inserted independently before the business transaction, but its successful status update is part of the business transaction.
 - Before allocating Domain Event sequence numbers, lock the owning tenant row for the remainder of the transaction. This serializes sequence allocation with commit order for one tenant so checkpoint consumers cannot skip an event that commits late.
 

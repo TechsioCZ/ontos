@@ -11,6 +11,8 @@ import {
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionPayloadValidationError,
+  ActionPolicyDenied,
+  ActionPolicyEvaluationError,
   ActionRequestHashConflict,
   ActionResultValidationError,
   ActionTransactionError,
@@ -63,6 +65,15 @@ test('publishes the exhaustive stable Core Action error tags', () => {
       code: 'action_handler_execution_failed',
       reason: 'Handler execution failed',
     }),
+    new ActionPolicyDenied({
+      code: 'action_policy_denied',
+      policyReasonCode: 'tenant_suspended',
+      reason: 'This tenant is suspended',
+    }),
+    new ActionPolicyEvaluationError({
+      code: 'action_policy_evaluation_failed',
+      reason: 'A required Policy could not be evaluated',
+    }),
     new ActionTransactionError({
       code: 'action_transaction_failed',
       reason: 'Transaction failed',
@@ -82,4 +93,11 @@ test('publishes the exhaustive stable Core Action error tags', () => {
     assert.equal(error.reason.includes('postgresql://'), false);
     assert.equal('status' in error, false);
   }
+  const denial = errors.find(
+    (error): error is ActionPolicyDenied => error._tag === 'ActionPolicyDenied',
+  );
+  assert.equal(denial?.reason, 'This tenant is suspended');
+  assert.equal(denial?.policyReasonCode, 'tenant_suspended');
+  assert.equal('payload' in (denial ?? {}), false);
+  assert.equal('cause' in (denial ?? {}), false);
 });
