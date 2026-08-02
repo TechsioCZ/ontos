@@ -571,6 +571,8 @@ Execute every command to validate the feature with zero regressions.
   retaining the canonical Action key in the runtime, invocation, and audit evidence contracts.
 - Replaced the deferred Action permission boundary with the real gate after invocation/idempotency
   verification and before `running`, transaction acquisition, collector creation, or handler entry.
+- Kept handlers outside the public Action registration object and made Core `runAction` the only
+  package-supported path that can resolve and invoke them.
 - Added atomic terminal-denial persistence and typed denial/check failures with documented future
   HTTP `403`/`503` mappings. All focused, live integration, repository, and build validation passes.
 
@@ -597,6 +599,8 @@ Execute every command to validate the feature with zero regressions.
   pre-authorization idempotency/hash terminal behavior.
 - Updated Action error/public-surface tests and the existing PostgreSQL Action runtime suite's
   explicit permission seam.
+- Updated Action definition tests to prove an exported registration exposes its immutable descriptor
+  without exposing a directly callable handler.
 - `packages/core-runtime/tests/integration/action-permission.test.ts`: isolated live
   SpiceDB/PostgreSQL fixtures,
   unconfigured and granted execution, normalized atomic denial, concurrent denial idempotency,
@@ -609,9 +613,9 @@ Execute every command to validate the feature with zero regressions.
   containers reached healthy state with SpiceDB `v1.56.0` bootstrapped from the committed schema.
 - `DATABASE_URL=postgresql://ontos:ontos@localhost:5433/ontos mise exec -- pnpm db:migrate` — passed;
   existing Core and Auth migrations applied and no migration was generated.
-- `mise exec -- pnpm --filter @app/core-runtime action:test:unit` — passed, 38/38 tests.
+- `mise exec -- pnpm --filter @app/core-runtime action:test:unit` — passed, 48/48 tests.
 - `DATABASE_URL=postgresql://ontos:ontos@localhost:5433/ontos SPICEDB_ENDPOINT=localhost:50051 SPICEDB_PRESHARED_KEY=ontos-local-development-key SPICEDB_INSECURE=true mise exec -- pnpm --filter @app/core-runtime action:test:integration`
-  — passed, 11/11 live PostgreSQL/SpiceDB Action integration tests.
+  — passed, 16/16 live PostgreSQL/SpiceDB Action integration tests.
 - `DATABASE_URL=postgresql://ontos:ontos@localhost:5433/ontos BETTER_AUTH_SECRET=replace-with-at-least-32-random-characters BETTER_AUTH_URL=http://localhost:3020 BETTER_AUTH_TRUSTED_ORIGINS=http://localhost:3020,http://127.0.0.1:3020 mise exec -- pnpm db:verify`
   — passed; verified 18 Core tables and four Auth tables.
 - `mise exec -- pnpm check` — passed, including format, lint, focused tests, typecheck, skills,
@@ -631,8 +635,8 @@ Execute every command to validate the feature with zero regressions.
   or migration, and does not require a Codesmith-supported business scaffold.
 - Review fixes removed retention/logging of raw gRPC causes, tightened denial lookup to the exact
   Action/tenant/principal tuple, rejected endpoint query/fragment suffixes, removed the unsupported
-  SpiceDB `v1.56.0` plaintext flag, introduced the required lossless object-id encoding, and made
-  integration cleanup exact and resilient.
+  SpiceDB `v1.56.0` plaintext flag, introduced the required lossless object-id encoding, removed the
+  public registration handler bypass, and made integration cleanup exact and resilient.
 - No frontend files changed, so browser validation and screenshots are not applicable.
 
 ### Deviations and Follow-ups

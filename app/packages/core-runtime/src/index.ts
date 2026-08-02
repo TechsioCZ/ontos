@@ -120,3 +120,6 @@ export {
   ActionTrustedContextValidationError,
 } from './actions/errors.ts';
 export type { ActionCoreError } from './actions/errors.ts';
+
+// <generated-global-policy-exports>
+// </generated-global-policy-exports>

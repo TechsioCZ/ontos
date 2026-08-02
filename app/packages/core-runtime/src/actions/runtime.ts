@@ -12,7 +12,7 @@ import {
   restrictTransactionExecutor,
 } from './context.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
-import { decodeActionPayload, decodeActionResult } from './definition.ts';
+import { decodeActionPayload, decodeActionResult, getActionHandler } from './definition.ts';
 import type { ActionRegistration } from './definition.ts';
 import {
   ActionAlreadyCommitted,
@@ -338,6 +338,7 @@ export const makeActionRuntime = (
         input.registration.descriptor.payloadSchema,
         input.payload,
       );
+      const handler = getActionHandler(input.registration);
       notifyStage('payload_decoded');
 
       const principal = yield* validatePrincipal(input.principal);
@@ -590,7 +591,7 @@ export const makeActionRuntime = (
             });
 
             const handlerExit = await Effect.runPromiseExit(
-              Effect.suspend(() => input.registration.handler(payload, handlerContext)),
+              Effect.suspend(() => handler(payload, handlerContext)),
             );
 
             if (Exit.isFailure(handlerExit)) {
