@@ -8,9 +8,15 @@
     "incremental": true,
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__shared-contracts",
-    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-contracts.tsbuildinfo"
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-contracts.tsbuildinfo",
+    "types": ["node"]
   },
   "include": [
     "src"
+  ],
+  "references": [
+    {
+      "path": "../core-runtime"
+    }
   ]
 }

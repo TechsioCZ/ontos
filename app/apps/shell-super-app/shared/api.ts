@@ -5,6 +5,7 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import { GatewayContextApiGroup } from '@app/shared-contracts';
 
 export interface SafeAuthenticatedIdentity {
   readonly displayName: string;
@@ -133,47 +134,50 @@ export const AuthenticationInternalProblemSchema = Schema.TaggedStruct(
   },
 ).pipe(HttpApiSchema.status(500));
 
-export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi').add(
-  HttpApiGroup.make('authentication')
-    .add(
-      HttpApiEndpoint.post('signIn', '/auth/sign-in', {
-        error: [
-          InvalidCredentialsProblemSchema,
-          OntosIdentityForbiddenProblemSchema,
-          AuthenticationUnavailableProblemSchema,
-          AuthenticationInternalProblemSchema,
-        ],
-        payload: SignInPayloadSchema,
-        success: SignInResponseSchema,
-      }),
-    )
-    .add(
-      HttpApiEndpoint.get('currentSession', '/auth/session', {
-        error: [
-          InvalidCredentialsProblemSchema,
-          OntosIdentityForbiddenProblemSchema,
-          AuthenticationUnavailableProblemSchema,
-          AuthenticationInternalProblemSchema,
-        ],
-        success: CurrentSessionSchema,
-      }),
-    )
-    .add(
-      HttpApiEndpoint.post('signOut', '/auth/sign-out', {
-        error: [
-          InvalidCredentialsProblemSchema,
-          OntosIdentityForbiddenProblemSchema,
-          AuthenticationUnavailableProblemSchema,
-          AuthenticationInternalProblemSchema,
-        ],
-        success: SignOutResponseSchema,
-      }),
-    ),
-);
+export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
+  .add(
+    HttpApiGroup.make('authentication')
+      .add(
+        HttpApiEndpoint.post('signIn', '/auth/sign-in', {
+          error: [
+            InvalidCredentialsProblemSchema,
+            OntosIdentityForbiddenProblemSchema,
+            AuthenticationUnavailableProblemSchema,
+            AuthenticationInternalProblemSchema,
+          ],
+          payload: SignInPayloadSchema,
+          success: SignInResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.get('currentSession', '/auth/session', {
+          error: [
+            InvalidCredentialsProblemSchema,
+            OntosIdentityForbiddenProblemSchema,
+            AuthenticationUnavailableProblemSchema,
+            AuthenticationInternalProblemSchema,
+          ],
+          success: CurrentSessionSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('signOut', '/auth/sign-out', {
+          error: [
+            InvalidCredentialsProblemSchema,
+            OntosIdentityForbiddenProblemSchema,
+            AuthenticationUnavailableProblemSchema,
+            AuthenticationInternalProblemSchema,
+          ],
+          success: SignOutResponseSchema,
+        }),
+      ),
+  )
+  .add(GatewayContextApiGroup);
 
 export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
   currentSessionPath: '/shell-super-app-api/auth/session',
+  issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
   signInPath: '/shell-super-app-api/auth/sign-in',
   signOutPath: '/shell-super-app-api/auth/sign-out',

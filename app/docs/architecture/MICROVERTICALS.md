@@ -86,3 +86,24 @@ Shell owns credentials, Better Auth sessions and cookies, the strict Effect
 authentication BFF, and the private `auth` schema. Core owns only non-secret
 principal auth bindings and active principal/tenant resolution. Do not create an
 Auth vertical, remote, package, delivery unit, or Module Federation boundary.
+
+### Shell-user Action identity
+
+For a Shell-authenticated user calling an Action owned by an independently deployed
+MicroVertical, the Shell resolves the current Better Auth session and issues one short-lived,
+audience-scoped EdDSA assertion. The Shell alone owns the private Ed25519 signing JWK. The
+receiving BFF receives only a public JWKS and independently verifies the signature, protected
+header, issuer, exact topology app ID audience, times, version, subject consistency, and trusted
+principal schema for every request.
+
+The assertion is authentication context, not authorization. It contains only the safe
+`TrustedPrincipalContext` fields and never contains credentials, cookies, session tokens, display
+data, Action keys, permissions, Policy decisions, or business payload. After verification, Core's
+Action runtime still performs the Action-specific SpiceDB permission check and executable Policy
+evaluation. Co-location with the Shell never bypasses this boundary.
+
+Prepare an existing MicroVertical once with
+`pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>` before its BFF accepts
+Shell-user Action calls. The generated server verifier and client acquisition adapter embed the
+vertical's authoritative topology app ID. Actions remain independently generated, and adding an
+Action must never require a new Shell endpoint or a hand-maintained audience registry.

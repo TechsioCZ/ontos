@@ -5,12 +5,15 @@ import { pathToFileURL } from 'node:url';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
 import actionGenerator from './action/scaffold.mts';
+import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
+  ActionBoundaryScaffoldConfig,
+  ActionBoundaryScaffoldResult,
   OutboxScaffoldConfig,
   OutboxScaffoldResult,
   PageScaffoldConfig,
@@ -19,15 +22,22 @@ import type {
   PolicyScaffoldResult,
 } from './shared.mts';
 
-export type ScaffoldCommand = 'action' | 'microvertical-page' | 'outbox-message' | 'policy';
+export type ScaffoldCommand =
+  | 'action'
+  | 'microvertical-action-boundary'
+  | 'microvertical-page'
+  | 'outbox-message'
+  | 'policy';
 
 type GeneratorResult =
+  | ActionBoundaryScaffoldResult
   | ActionScaffoldResult
   | OutboxScaffoldResult
   | PageScaffoldResult
   | PolicyScaffoldResult;
 
 type GeneratorConfig =
+  | ActionBoundaryScaffoldConfig
   | ActionScaffoldConfig
   | OutboxScaffoldConfig
   | PageScaffoldConfig
@@ -97,6 +107,22 @@ Options:
 `,
     requiredFlags: ['action', 'vertical'],
     toConfig: (flags) => ({ action: flags['action'] ?? '', vertical: flags['vertical'] ?? '' }),
+  },
+  'microvertical-action-boundary': {
+    flags: ['vertical'],
+    generator: actionBoundaryGenerator,
+    help: `Usage: pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>
+
+Generate one Shell-user Action identity boundary in an existing MicroVertical.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['vertical'],
+    toConfig: (flags) => ({ vertical: flags['vertical'] ?? '' }),
   },
   'microvertical-page': {
     afterGenerate: async (result, options, workspaceRoot) => {

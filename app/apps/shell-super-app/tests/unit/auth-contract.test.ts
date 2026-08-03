@@ -7,17 +7,25 @@ import {
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
 
-test('publishes only the three Shell authentication operations', () => {
-  const endpoints = Object.keys(ShellAuthenticationApi.groups.authentication.endpoints).toSorted();
+test('publishes the existing authentication operations and one generic gateway operation', () => {
+  const authenticationEndpoints = Object.keys(
+    ShellAuthenticationApi.groups.authentication.endpoints,
+  ).toSorted();
+  const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
 
-  expect(endpoints).toEqual(['currentSession', 'signIn', 'signOut']);
+  expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
+  expect(gatewayEndpoints).toEqual(['issueGatewayContext']);
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',
     currentSessionPath: '/shell-super-app-api/auth/session',
+    issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
     ownerId: 'shell-super-app',
     signInPath: '/shell-super-app-api/auth/sign-in',
     signOutPath: '/shell-super-app-api/auth/sign-out',
   });
+  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
+    /testing|actionKey/u,
+  );
 });
 
 test('rejects malformed credentials through Effect Schema', async () => {

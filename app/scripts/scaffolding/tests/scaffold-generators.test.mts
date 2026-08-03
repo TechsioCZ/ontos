@@ -3,13 +3,44 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
+import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
+import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
+import {
+  defineEffectBff,
+  Effect,
+  HttpApi,
+  HttpApiBuilder,
+  HttpApiEndpoint,
+  HttpApiGroup,
+  HttpApiSchema,
+  HttpEffect,
+  HttpServerResponse,
+  Layer,
+  Schema,
+} from '@modern-js/plugin-bff/effect-edge';
+import {
+  GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+  GATEWAY_ASSERTION_TTL_SECONDS,
+} from '../../../packages/shared-contracts/src/gateway-context.ts';
+import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
+import { issueGatewayContextAssertion } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
+import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import { getHelpText, runScaffold } from '../cli.mts';
 import type { ScaffoldCommand } from '../cli.mts';
 
 interface Fixture {
   readonly root: string;
 }
+
+type GeneratedPrincipalErrorTag =
+  | 'ActionPrincipalConfigurationError'
+  | 'ActionPrincipalExpiredError'
+  | 'ActionPrincipalInvalidError'
+  | 'ActionPrincipalMissingError'
+  | 'ActionPrincipalScopeError'
+  | 'ActionPrincipalUnavailableError';
 
 interface FixtureVertical {
   readonly appId: string;
@@ -34,8 +65,35 @@ const billingVertical: FixtureVertical = {
 
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
+const esbuildPath = path.join(appRoot, 'node_modules', '.bin', 'esbuild');
 const oxfmtPath = path.join(appRoot, 'node_modules', '.bin', 'oxfmt');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
+
+const makeGatewayKey = async (
+  kid: string,
+): Promise<{
+  configuration: GatewayIssuerConfigValue;
+  publicJwk: Record<string, unknown>;
+}> => {
+  const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+  const privateJwk = await exportJWK(pair.privateKey);
+  const publicJwk = await exportJWK(pair.publicKey);
+  return {
+    configuration: {
+      issuer: 'https://shell.example.test',
+      privateJwk: {
+        alg: 'EdDSA',
+        crv: 'Ed25519',
+        d: privateJwk.d ?? '',
+        kid,
+        kty: 'OKP',
+        use: 'sig',
+        x: privateJwk.x ?? '',
+      },
+    },
+    publicJwk: { ...publicJwk, alg: 'EdDSA', kid, use: 'sig' },
+  };
+};
 
 const writeFixtureFile = async (
   root: string,
@@ -172,7 +230,15 @@ const run = (
 
 test('documents every command and treats --help as a write-free operation', async () => {
   await Promise.all(
-    (['action', 'microvertical-page', 'outbox-message', 'policy'] as const).map(async (command) => {
+    (
+      [
+        'action',
+        'microvertical-action-boundary',
+        'microvertical-page',
+        'outbox-message',
+        'policy',
+      ] as const
+    ).map(async (command) => {
       const result = await runScaffold(command, ['--', '--help'], {
         workspaceRoot: path.join(tmpdir(), 'does-not-need-to-exist'),
       });
@@ -206,6 +272,12 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
         /package metadata is missing/u,
       ],
       [
+        'microvertical-action-boundary',
+        ['--vertical', 'inventory-stock', '--unknown', 'x'],
+        /unknown flag --unknown/u,
+      ],
+      ['microvertical-action-boundary', ['--vertical', '../billing'], /lower-kebab-case/u],
+      [
         'policy',
         ['--scope', 'global', '--policy', 'tenant-active', '--vertical', 'inventory-stock'],
         /forbidden/u,
@@ -224,6 +296,454 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
         assert.deepEqual(await snapshotTree(fixture.root), before);
       }),
     );
+  });
+});
+
+test('generates one immutable Action identity boundary and exact direct dependencies', async () => {
+  await withFixture(async (fixture) => {
+    const shellBefore = await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts');
+    const topologyBefore = await readFixtureFile(fixture.root, 'topology/reference-topology.json');
+    const result = await run(fixture, 'microvertical-action-boundary', [
+      '--vertical',
+      'inventory-stock',
+    ]);
+    assert.equal(result.kind, 'generated');
+    const server = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/api/auth/action-principal.ts',
+    );
+    const client = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/api/action-gateway.ts',
+    );
+    for (const source of [server, client]) {
+      assert.match(source, /@ontos-action-boundary-owner inventory-stock/u);
+      assert.match(source, /@ontos-action-boundary-audience inventory-stock/u);
+      assert.match(source, /ACTION_GATEWAY_AUDIENCE = 'inventory-stock'/u);
+    }
+    assert.match(server, /algorithms: \['EdDSA'\]/u);
+    assert.match(server, /@app\/core-runtime\/actions\/principal-context/u);
+    assert.match(server, /TrustedPrincipalContextSchema/u);
+    assert.match(server, /\^Bearer /u);
+    assert.match(server, /Clock\.currentTimeMillis/u);
+    assert.doesNotMatch(server, /Date\.now|Effect\.runPromise|decodeUnknownSync/u);
+    assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
+    assert.doesNotMatch(client, /localStorage|sessionStorage/u);
+    const packageJson = JSON.parse(
+      await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
+    ) as { dependencies: Record<string, string>; scripts: Record<string, string> };
+    assert.deepEqual(packageJson.dependencies, {
+      '@app/core-runtime': 'workspace:*',
+      '@app/shared-contracts': 'workspace:*',
+      effect: '4.0.0-beta.97',
+      jose: '6.2.5',
+      zeta: '1.0.0',
+    });
+    assert.equal(packageJson.scripts['existing'], 'preserve-me');
+    assert.equal(
+      await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts'),
+      shellBefore,
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, 'topology/reference-topology.json'),
+      topologyBefore,
+    );
+  });
+});
+
+test('Action identity boundary preflight refuses unsafe writes', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    const afterFirstRun = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']),
+      /refusing to overwrite existing business file/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
+  });
+  await withFixture(async (fixture) => {
+    const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
+    const packageJson = JSON.parse(await readFile(packagePath, 'utf-8')) as {
+      dependencies: Record<string, string>;
+    };
+    packageJson.dependencies['jose'] = '^5.0.0';
+    await writeFile(packagePath, json(packageJson), 'utf-8');
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']),
+      /incompatible jose dependency/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
+test('generated verifier executes real Shell assertions and overlapping Ed25519 rotation', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime'),
+      path.join(fixture.root, 'node_modules/@app/core-runtime'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/shared-contracts'),
+      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
+      path.join(fixture.root, 'node_modules/effect'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
+      path.join(fixture.root, 'node_modules/jose'),
+      'dir',
+    );
+    const edgeBundleDirectory = path.join(fixture.root, 'edge-bundle');
+    await mkdir(edgeBundleDirectory, { recursive: true });
+    const edgeMetafile = path.join(edgeBundleDirectory, 'meta.json');
+    const edgeBundle = spawnSync(
+      esbuildPath,
+      [
+        path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts'),
+        '--bundle',
+        '--format=esm',
+        `--metafile=${edgeMetafile}`,
+        `--outfile=${path.join(edgeBundleDirectory, 'action-principal.mjs')}`,
+        '--platform=browser',
+      ],
+      { encoding: 'utf-8' },
+    );
+    assert.equal(edgeBundle.status, 0, edgeBundle.stderr);
+    const edgeInputs = Object.keys(
+      (JSON.parse(await readFile(edgeMetafile, 'utf-8')) as { inputs: Record<string, unknown> })
+        .inputs,
+    ).join('\n');
+    assert.doesNotMatch(edgeInputs, /core-runtime\/src\/(?:auth|db)|node:(?:crypto|path)|\/pg\//u);
+    const generated = (await import(
+      pathToFileURL(
+        path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts'),
+      ).href
+    )) as {
+      verifyActionPrincipal: (
+        authorization: string | undefined,
+        options: {
+          currentTimeSeconds: Effect.Effect<number>;
+          environment: Readonly<Record<string, string>>;
+        },
+      ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
+    };
+    const generatedClient = (await import(
+      pathToFileURL(path.join(fixture.root, 'verticals/inventory-stock/src/api/action-gateway.ts'))
+        .href
+    )) as {
+      makeActionGateway: (
+        acquire: (payload: { audience: string }) => Effect.Effect<{ token: string }>,
+      ) => {
+        invoke: <Success>(
+          attempt: (authorization: string) => Effect.Effect<Success>,
+        ) => Effect.Effect<Success>;
+      };
+    };
+    const current = await makeGatewayKey('current');
+    const retiring = await makeGatewayKey('retiring');
+    const principal = {
+      authMethod: 'session' as const,
+      principalId: '40000000-0000-4000-8000-000000000001',
+      tenantId: '50000000-0000-4000-8000-000000000001',
+    };
+    const issue = (
+      configuration: GatewayIssuerConfigValue,
+      issuedAt: number,
+      audience = 'inventory-stock',
+    ) =>
+      Effect.runPromise(
+        issueGatewayContextAssertion(
+          { audience, principal },
+          {
+            currentTimeSeconds: Effect.succeed(issuedAt),
+            generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
+            loadAudiences: Effect.succeed(new Set([audience])),
+            loadConfig: Effect.succeed(configuration),
+          },
+        ),
+      );
+    const environment = {
+      ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+        keys: [current.publicJwk, retiring.publicJwk],
+      }),
+    };
+    const currentAssertion = await issue(current.configuration, 1_700_000_000);
+    const retiringAssertion = await issue(retiring.configuration, 1_700_000_000);
+    const verify = (token: string, override = environment, now = 1_700_000_001) =>
+      Effect.runPromise(
+        generated.verifyActionPrincipal(`Bearer ${token}`, {
+          currentTimeSeconds: Effect.succeed(now),
+          environment: override,
+        }),
+      );
+
+    assert.deepEqual(await verify(currentAssertion.token), principal);
+    assert.deepEqual(await verify(retiringAssertion.token), principal);
+    await assert.rejects(
+      verify(
+        retiringAssertion.token,
+        {
+          ...environment,
+          ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [current.publicJwk] }),
+        },
+        1_700_000_000 + GATEWAY_ASSERTION_TTL_SECONDS + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS + 1,
+      ),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    const wrongAudience = await issue(current.configuration, 1_700_000_000, 'billing');
+    await assert.rejects(
+      verify(wrongAudience.token),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalScopeError',
+    );
+    const wrongIssuer = await issue(
+      { ...current.configuration, issuer: 'https://other.example.test' },
+      1_700_000_000,
+    );
+    await assert.rejects(
+      verify(wrongIssuer.token),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalScopeError',
+    );
+    const unknownKid = await issue(
+      {
+        ...current.configuration,
+        privateJwk: { ...current.configuration.privateJwk, kid: 'unknown' },
+      },
+      1_700_000_000,
+    );
+    await assert.rejects(
+      verify(unknownKid.token),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    const expired = await issue(current.configuration, 1_699_999_000);
+    await assert.rejects(
+      verify(expired.token),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalExpiredError',
+    );
+    const future = await issue(current.configuration, 1_700_000_032);
+    await assert.rejects(
+      verify(future.token),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    const signingKey = await importJWK(current.configuration.privateJwk, 'EdDSA');
+    const mismatchedSubject = await new SignJWT({ principal, ver: 1 })
+      .setProtectedHeader({ alg: 'EdDSA', kid: 'current', typ: 'JWT' })
+      .setIssuer('https://shell.example.test')
+      .setAudience('inventory-stock')
+      .setSubject('70000000-0000-4000-8000-000000000001')
+      .setIssuedAt(1_700_000_000)
+      .setExpirationTime(1_700_000_300)
+      .setJti('60000000-0000-4000-8000-000000000001')
+      .sign(signingKey);
+    await assert.rejects(
+      verify(mismatchedSubject),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    const invalidContext = await new SignJWT({
+      principal: { ...principal, principalId: 'not-a-uuid' },
+      ver: 1,
+    })
+      .setProtectedHeader({ alg: 'EdDSA', kid: 'current', typ: 'JWT' })
+      .setIssuer('https://shell.example.test')
+      .setAudience('inventory-stock')
+      .setSubject('not-a-uuid')
+      .setIssuedAt(1_700_000_000)
+      .setExpirationTime(1_700_000_300)
+      .setJti('60000000-0000-4000-8000-000000000001')
+      .sign(signingKey);
+    await assert.rejects(
+      verify(invalidContext),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    const hmacToken = await new SignJWT({ principal, ver: 1 })
+      .setProtectedHeader({ alg: 'HS256', kid: 'current', typ: 'JWT' })
+      .setIssuer('https://shell.example.test')
+      .setAudience('inventory-stock')
+      .setSubject(principal.principalId)
+      .setIssuedAt(1_700_000_000)
+      .setExpirationTime(1_700_000_300)
+      .setJti('60000000-0000-4000-8000-000000000001')
+      .sign(await generateSecret('HS256'));
+    await assert.rejects(
+      verify(hmacToken),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    const tokenParts = currentAssertion.token.split('.');
+    const encodedPayload = tokenParts[1] ?? '';
+    const tampered = `${tokenParts[0]}.${encodedPayload.startsWith('a') ? 'b' : 'a'}${encodedPayload.slice(1)}.${tokenParts[2]}`;
+    await assert.rejects(
+      verify(tampered),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    await assert.rejects(
+      Effect.runPromise(
+        generated.verifyActionPrincipal(undefined, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment,
+        }),
+      ),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalMissingError',
+    );
+    await assert.rejects(
+      Effect.runPromise(
+        generated.verifyActionPrincipal('bearer malformed', {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment,
+        }),
+      ),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalInvalidError',
+    );
+    await assert.rejects(
+      Effect.runPromise(
+        generated.verifyActionPrincipal(`Bearer ${currentAssertion.token}`, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment: {},
+        }),
+      ),
+      (error: { _tag?: string }) => error._tag === 'ActionPrincipalConfigurationError',
+    );
+    let acquisitions = 0;
+    const authorizations: string[] = [];
+    const idempotencyKey = 'caller-owned-idempotency-key';
+    const actionGateway = generatedClient.makeActionGateway(({ audience }) => {
+      acquisitions += 1;
+      assert.equal(audience, 'inventory-stock');
+      return Effect.succeed({ token: `attempt-${acquisitions}` });
+    });
+    const attempt = (authorization: string) => {
+      authorizations.push(authorization);
+      return Effect.succeed(idempotencyKey);
+    };
+    assert.equal(await Effect.runPromise(actionGateway.invoke(attempt)), idempotencyKey);
+    assert.equal(await Effect.runPromise(actionGateway.invoke(attempt)), idempotencyKey);
+    assert.deepEqual(authorizations, ['Bearer attempt-1', 'Bearer attempt-2']);
+
+    const problemFields = {
+      detail: Schema.String,
+      status: Schema.Finite,
+      title: Schema.String,
+      type: Schema.String,
+    };
+    const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
+    const ActionAuthenticationProblemSchema = Schema.TaggedStruct(
+      'ActionAuthenticationProblem',
+      problemFields,
+    ).pipe(asProblemDetails, HttpApiSchema.status(401));
+    const ActionVerificationUnavailableProblemSchema = Schema.TaggedStruct(
+      'ActionVerificationUnavailableProblem',
+      { ...problemFields, retryable: Schema.Literal(true) },
+    ).pipe(asProblemDetails, HttpApiSchema.status(503));
+    type EndpointProblem =
+      | Schema.Schema.Type<typeof ActionAuthenticationProblemSchema>
+      | Schema.Schema.Type<typeof ActionVerificationUnavailableProblemSchema>;
+    const actionApi = HttpApi.make('generatedActionIdentityFixture').add(
+      HttpApiGroup.make('action').add(
+        HttpApiEndpoint.post('invoke', '/actions/invoke', {
+          error: [ActionAuthenticationProblemSchema, ActionVerificationUnavailableProblemSchema],
+          success: TrustedPrincipalContextSchema,
+        }),
+      ),
+    );
+    const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
+    );
+    let actionReached = false;
+    let endpointEnvironment: Readonly<Record<string, string>> = environment;
+    const actionGroupLive = HttpApiBuilder.group(actionApi, 'action', (handlers) =>
+      handlers.handle('invoke', ({ request }) =>
+        generated
+          .verifyActionPrincipal(request.headers['authorization'], {
+            currentTimeSeconds: Effect.succeed(1_700_000_001),
+            environment: endpointEnvironment,
+          })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (actionReached = true))),
+            Effect.catch((error) => {
+              switch (error._tag) {
+                case 'ActionPrincipalExpiredError':
+                case 'ActionPrincipalInvalidError':
+                case 'ActionPrincipalMissingError':
+                case 'ActionPrincipalScopeError': {
+                  return bearerChallenge.pipe(
+                    Effect.andThen(
+                      Effect.fail<EndpointProblem>({
+                        _tag: 'ActionAuthenticationProblem' as const,
+                        detail: 'A valid Bearer assertion is required.',
+                        status: 401 as const,
+                        title: 'Action authentication required',
+                        type: 'https://ontos.dev/problems/action-authentication-required',
+                      }),
+                    ),
+                  );
+                }
+                case 'ActionPrincipalConfigurationError':
+                case 'ActionPrincipalUnavailableError': {
+                  return Effect.fail<EndpointProblem>({
+                    _tag: 'ActionVerificationUnavailableProblem' as const,
+                    detail: 'Action identity verification is temporarily unavailable.',
+                    retryable: true as const,
+                    status: 503 as const,
+                    title: 'Action verification unavailable',
+                    type: 'https://ontos.dev/problems/action-verification-unavailable',
+                  });
+                }
+                default: {
+                  return Effect.die(new Error(`Unexpected generated error ${error._tag}`));
+                }
+              }
+            }),
+          ),
+      ),
+    );
+    const actionRuntime = defineEffectBff({
+      api: actionApi,
+      layer: HttpApiBuilder.layer(actionApi).pipe(Layer.provide(actionGroupLive)),
+    });
+    const actionHandler = actionRuntime.createHandler();
+    try {
+      const missingResponse = await actionHandler.handler(
+        new Request('https://inventory.example.test/actions/invoke', { method: 'POST' }),
+      );
+      assert.equal(missingResponse.status, 401);
+      assert.equal(missingResponse.headers.get('www-authenticate'), 'Bearer');
+      assert.match(
+        missingResponse.headers.get('content-type') ?? '',
+        /application\/problem\+json/u,
+      );
+      assert.equal(actionReached, false);
+
+      endpointEnvironment = {};
+      const unavailableResponse = await actionHandler.handler(
+        new Request('https://inventory.example.test/actions/invoke', {
+          headers: { authorization: `Bearer ${currentAssertion.token}` },
+          method: 'POST',
+        }),
+      );
+      assert.equal(unavailableResponse.status, 503);
+      assert.equal(((await unavailableResponse.json()) as { retryable?: boolean }).retryable, true);
+      assert.equal(actionReached, false);
+
+      endpointEnvironment = environment;
+      const successResponse = await actionHandler.handler(
+        new Request('https://inventory.example.test/actions/invoke', {
+          headers: { authorization: `Bearer ${currentAssertion.token}` },
+          method: 'POST',
+        }),
+      );
+      assert.equal(successResponse.status, 200);
+      assert.deepEqual(await successResponse.json(), principal);
+      assert.equal(actionReached, true);
+    } finally {
+      await actionHandler.dispose();
+    }
   });
 });
 
@@ -825,6 +1345,7 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
 });
 
 const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<string, string>>> => {
+  await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
   await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
   await run(fixture, 'outbox-message', [
     '--vertical',
@@ -852,7 +1373,7 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
   return snapshotTree(fixture.root);
 };
 
-test('all generators compose deterministically without crossing owner or BFF boundaries', async () => {
+test('all generators compose deterministically without crossing owner boundaries', async () => {
   const first = await createFixture();
   const second = await createFixture();
   try {
@@ -878,11 +1399,6 @@ test('all generators compose deterministically without crossing owner or BFF bou
       await readFixtureFile(first.root, 'topology/reference-topology.json'),
       topologyBefore,
     );
-    const changedPaths = Object.keys(firstTree);
-    assert.equal(
-      changedPaths.some((file) => /api|bff|client|contract/iu.test(file)),
-      false,
-    );
     const combinedSource = Object.values(firstTree).join('\n');
     assert.doesNotMatch(combinedSource, /from ['"]\.\.\/\.\.\/billing|fetch\(/u);
   } finally {
@@ -901,6 +1417,8 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/inventory-stock/src/policies/stock-available.policy.ts',
       'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
       'verticals/inventory-stock/src/routes/[lang]/orders/route.meta.ts',
+      'verticals/inventory-stock/api/auth/action-principal.ts',
+      'verticals/inventory-stock/src/api/action-gateway.ts',
     ];
 
     await Promise.all(
@@ -926,6 +1444,11 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
       path.join(fixture.root, 'node_modules/effect'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
+      path.join(fixture.root, 'node_modules/jose'),
       'dir',
     );
     await symlink(
@@ -965,6 +1488,10 @@ test('all generated files typecheck against the real workspace contracts', async
           noEmit: true,
           paths: {
             '@app/core-runtime': [path.join(appRoot, 'packages/core-runtime/src/index.ts')],
+            '@app/core-runtime/actions/principal-context': [
+              path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
+            ],
+            '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
           },
           skipLibCheck: true,
           strict: true,
@@ -977,6 +1504,8 @@ test('all generated files typecheck against the real workspace contracts', async
           'verticals/inventory-stock/src/policies/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.tsx',
+          'verticals/inventory-stock/api/**/*.ts',
+          'verticals/inventory-stock/src/api/**/*.ts',
         ],
       }),
       'utf-8',

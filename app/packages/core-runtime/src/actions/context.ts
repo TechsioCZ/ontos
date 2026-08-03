@@ -9,21 +9,12 @@ import type {
   OutboxMessage,
 } from './events.ts';
 import type { ActionCollectorError } from './errors.ts';
+import type { TrustedPrincipalContext } from './principal-context.ts';
 
-const uuid = Schema.String.check(Schema.isUUID());
+export { TrustedPrincipalContextSchema } from './principal-context.ts';
+export type { TrustedPrincipalContext } from './principal-context.ts';
+
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
-
-export const TrustedPrincipalContextSchema = Schema.Struct({
-  authBindingId: Schema.optionalKey(uuid),
-  authContextRef: Schema.optionalKey(nonEmptyString),
-  authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
-  impersonatedByPrincipalId: Schema.optionalKey(uuid),
-  legalEntityId: Schema.optionalKey(uuid),
-  principalId: uuid,
-  tenantId: uuid,
-});
-
-export type TrustedPrincipalContext = Schema.Schema.Type<typeof TrustedPrincipalContextSchema>;
 
 export const ActionTransportMetadataSchema = Schema.Struct({
   correlationId: nonEmptyString,

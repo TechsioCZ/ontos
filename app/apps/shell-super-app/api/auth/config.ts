@@ -1,4 +1,4 @@
-// @effect-diagnostics processEnv:off
+// @effect-diagnostics nodeBuiltinImport:off processEnv:off
 /* eslint-disable max-classes-per-file -- The validated service and its configuration error form one boundary. */
 import path from 'node:path';
 import { config as loadDotenv } from 'dotenv';
