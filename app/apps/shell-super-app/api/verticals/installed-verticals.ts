@@ -2,8 +2,8 @@ import { Effect, Schema } from 'effect';
 
 declare const ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: unknown;
 
-export class GatewayAudienceTopologyError extends Schema.TaggedErrorClass<GatewayAudienceTopologyError>()(
-  'GatewayAudienceTopologyError',
+export class InstalledVerticalTopologyError extends Schema.TaggedErrorClass<InstalledVerticalTopologyError>()(
+  'InstalledVerticalTopologyError',
   { reason: Schema.String },
 ) {}
 
@@ -12,39 +12,39 @@ const stableAppIdPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export const deriveGatewayAudiences = (
+export const deriveInstalledVerticalIds = (
   input: unknown,
-): Effect.Effect<ReadonlySet<string>, GatewayAudienceTopologyError> =>
+): Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError> =>
   Effect.try({
     catch: () =>
-      new GatewayAudienceTopologyError({
-        reason: 'The authoritative MicroVertical audience topology is malformed',
+      new InstalledVerticalTopologyError({
+        reason: 'The authoritative installed MicroVertical topology is malformed',
       }),
     try: () => {
       if (!isRecord(input) || !Array.isArray(input['verticals'])) {
         throw new Error('Topology verticals are missing');
       }
 
-      const audiences = new Set<string>();
+      const installedVerticalIds = new Set<string>();
       for (const entry of input['verticals']) {
         if (!isRecord(entry) || entry['kind'] !== 'vertical') {
-          throw new Error('Topology contains a non-vertical audience candidate');
+          throw new Error('Topology contains a non-vertical installed candidate');
         }
         const { id } = entry;
         if (typeof id !== 'string' || !stableAppIdPattern.test(id)) {
           throw new Error('Topology contains an invalid vertical ID');
         }
-        if (audiences.has(id)) {
+        if (installedVerticalIds.has(id)) {
           throw new Error('Topology contains duplicate vertical IDs');
         }
-        audiences.add(id);
+        installedVerticalIds.add(id);
       }
 
-      return audiences;
+      return installedVerticalIds;
     },
   });
 
-export const gatewayAudiences: Effect.Effect<
+export const installedVerticalIds: Effect.Effect<
   ReadonlySet<string>,
-  GatewayAudienceTopologyError
-> = Effect.suspend(() => deriveGatewayAudiences(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY));
+  InstalledVerticalTopologyError
+> = Effect.suspend(() => deriveInstalledVerticalIds(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY));

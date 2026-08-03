@@ -3,7 +3,7 @@ import { GATEWAY_ASSERTION_TTL_SECONDS, GATEWAY_ASSERTION_VERSION } from '@app/s
 import type { GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import { Clock, Effect, Schema } from 'effect';
 import { SignJWT, importJWK } from 'jose';
-import type { GatewayAudienceTopologyError } from './gateway-audiences.ts';
+import type { InstalledVerticalTopologyError } from '../verticals/installed-verticals.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
 import type {
   GatewayIssuerConfigError,
@@ -28,7 +28,7 @@ export interface GatewayIssuerDependencies {
   readonly generateJti: Effect.Effect<string>;
   readonly loadAudiences: Effect.Effect<
     ReadonlySet<string>,
-    GatewayAudienceTopologyError | GatewayIssuerError
+    InstalledVerticalTopologyError | GatewayIssuerError
   >;
   readonly loadConfig: Effect.Effect<GatewayIssuerConfigValue, GatewayIssuerConfigError>;
 }
@@ -44,8 +44,8 @@ export const gatewayIssuerLiveDependencies: GatewayIssuerDependencies = {
         code: 'gateway_issuer_unavailable',
         reason: 'The generated MicroVertical audience topology is unavailable',
       }),
-    try: () => import('./gateway-audiences.ts'),
-  }).pipe(Effect.flatMap((module) => module.gatewayAudiences)),
+    try: () => import('../verticals/installed-verticals.ts'),
+  }).pipe(Effect.flatMap((module) => module.installedVerticalIds)),
   loadConfig: loadGatewayIssuerConfig(),
 };
 

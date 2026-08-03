@@ -55,6 +55,7 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
 export interface ActionHandlerContext<
   DomainEvents extends DomainEventContractMap,
 > extends ActionCollectorMethods<DomainEvents> {
+  readonly actionInvocationId: string;
   readonly principal: TrustedPrincipalContext;
   readonly transaction: ActionTransactionExecutor;
 }

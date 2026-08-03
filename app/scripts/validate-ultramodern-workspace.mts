@@ -4736,24 +4736,29 @@ assert(
     gatewayContractSource.includes("contentType: 'application/problem+json'"),
   'Shared contracts must retain the versioned generic EdDSA gateway assertion protocol',
 );
-const gatewayAudienceSource = readText('apps/shell-super-app/api/auth/gateway-audiences.ts');
+const installedVerticalSource = readText(
+  'apps/shell-super-app/api/verticals/installed-verticals.ts',
+);
 const shellModernConfigSource = readText('apps/shell-super-app/modern.config.ts');
 assert(
   shellModernConfigSource.includes(
     "new URL('../../topology/reference-topology.json', import.meta.url)",
   ) &&
     shellModernConfigSource.includes("readFileSync(referenceTopologyPath, 'utf-8')") &&
-    shellModernConfigSource.includes('ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology') &&
-    gatewayAudienceSource.includes(
-      'Effect.suspend(() => deriveGatewayAudiences(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY))',
+    shellModernConfigSource.includes(
+      'Object.assign(globalThis, {\n  ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology',
     ) &&
-    gatewayAudienceSource.includes("entry['kind'] !== 'vertical'"),
-  'Shell gateway audiences must derive exclusively from authoritative topology verticals',
+    shellModernConfigSource.includes('ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology') &&
+    installedVerticalSource.includes(
+      'deriveInstalledVerticalIds(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY)',
+    ) &&
+    installedVerticalSource.includes("entry['kind'] !== 'vertical'"),
+  'Shell installed verticals must derive exclusively from authoritative topology verticals',
 );
 assert(
   !fs.existsSync(path.join(root, 'packages/shared-contracts/src/gateway-topology.generated.ts')) &&
-    !gatewayAudienceSource.includes('ultramodernGatewayAudienceTopology'),
-  'Shell gateway audiences must not introduce a second topology registry',
+    !installedVerticalSource.includes('ultramodernGatewayAudienceTopology'),
+  'Shell installed verticals must not introduce a second topology registry',
 );
 assert(
   rootPackage.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',

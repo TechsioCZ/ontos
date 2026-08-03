@@ -10,11 +10,17 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Layer } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
-import { makePrincipalResolver } from '@app/core-runtime';
+import {
+  TenantModuleStateReadUnavailableError,
+  TenantModuleStateService,
+  makePrincipalResolver,
+  makeTenantModuleStateService,
+} from '@app/core-runtime';
 import {
   coreDatabaseSchema,
   principalAuthBindings,
   principals,
+  tenantModuleStates,
   tenants,
 } from '@app/core-runtime/db/schema';
 import { loadAuthConfig } from '../../api/auth/config.ts';
@@ -28,6 +34,7 @@ import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/mic
 const email = 'better-auth-runtime@example.test';
 const password = 'correct-horse-battery-staple';
 const tenantId = '30000000-0000-4000-8000-000000000001';
+const foreignTenantId = '30000000-0000-4000-8000-000000000002';
 const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 
@@ -45,6 +52,10 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     allowFixtureSignUp: true,
   });
   const authenticationLayer = Layer.succeed(AuthenticationService, authentication);
+  const moduleStateLayer = Layer.succeed(
+    TenantModuleStateService,
+    makeTenantModuleStateService({ executor: coreDatabase }),
+  );
   const handlers: { readonly dispose: () => Promise<void> }[] = [];
   const generatedFixtureRoot = await mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-'));
 
@@ -68,8 +79,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     await coreDatabase
       .delete(principalAuthBindings)
       .where(eq(principalAuthBindings.principalId, principalId));
+    await coreDatabase.delete(tenantModuleStates).where(eq(tenantModuleStates.tenantId, tenantId));
+    await coreDatabase
+      .delete(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, foreignTenantId));
     await coreDatabase.delete(principals).where(eq(principals.principalId, principalId));
     await coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
+    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId));
   };
 
   try {
@@ -83,6 +99,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       slug: 'authentication-runtime-tenant',
       status: 'active',
       tenantId,
+    });
+    await coreDatabase.insert(tenants).values({
+      defaultLocale: 'en',
+      name: 'Foreign authentication runtime tenant',
+      slug: 'foreign-authentication-runtime-tenant',
+      status: 'active',
+      tenantId: foreignTenantId,
     });
     await coreDatabase.insert(principals).values({
       displayName: 'Runtime fixture',
@@ -99,6 +122,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       subjectType: 'user',
       tenantId,
     });
+    await coreDatabase.insert(tenantModuleStates).values([
+      { moduleKey: 'testing1', state: 'active', tenantId },
+      { moduleKey: 'stale-non-installed', state: 'active', tenantId },
+      { moduleKey: 'inactive-installed', state: 'suspended', tenantId },
+      { moduleKey: 'testing1', state: 'active', tenantId: foreignTenantId },
+    ]);
 
     const requestHeaders = new Headers({
       origin: configuration.baseUrl,
@@ -108,12 +137,17 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(invalid._tag, 'InvalidCredentialsError');
 
-    const anonymousRuntime = makeShellAuthenticationApiRuntime(authenticationLayer, {
-      currentTimeSeconds: Effect.succeed(1_700_000_000),
-      generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-      loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
-      loadConfig: parseGatewayIssuerConfig({}),
-    });
+    const anonymousRuntime = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
+        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+      Effect.succeed(new Set(['testing1'])),
+    );
     const unavailableHandler = anonymousRuntime.createHandler();
     handlers.push(unavailableHandler);
     const anonymousGatewayResponse = await unavailableHandler.handler(
@@ -125,6 +159,14 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(anonymousGatewayResponse.status, 401);
     assert.match(anonymousGatewayResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
+
+    const anonymousModulesResponse = await unavailableHandler.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, {
+        headers: { origin: configuration.baseUrl },
+      }),
+    );
+    assert.equal(anonymousModulesResponse.status, 401);
+    assert.match(anonymousModulesResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
 
     const signInResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/sign-in`, {
@@ -161,6 +203,74 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         ?.principalId,
       principalId,
     );
+
+    const activeModulesResponse = await unavailableHandler.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, {
+        headers: authenticatedHeaders,
+      }),
+    );
+    assert.equal(activeModulesResponse.status, 200);
+    assert.deepEqual(await activeModulesResponse.json(), [
+      { moduleKey: 'testing1', state: 'active' },
+    ]);
+
+    const refreshingRuntime = makeShellAuthenticationApiRuntime(
+      Layer.succeed(AuthenticationService, {
+        ...authentication,
+        currentSession: () =>
+          Effect.succeed({
+            identity: current.identity,
+            setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
+          }),
+      }),
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
+        loadAudiences: Effect.succeed(new Set(['testing1'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+      Effect.succeed(new Set(['testing1'])),
+    ).createHandler();
+    handlers.push(refreshingRuntime);
+    const refreshedModulesResponse = await refreshingRuntime.handler(
+      new Request(`${configuration.baseUrl}/modules/active`),
+    );
+    assert.equal(refreshedModulesResponse.status, 200);
+    assert.ok(
+      refreshedModulesResponse.headers
+        .getSetCookie()
+        .some((header) => header.startsWith('refreshed-session=value')),
+    );
+
+    const unavailableModulesHandler = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
+        loadAudiences: Effect.succeed(new Set(['testing1'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      Layer.succeed(TenantModuleStateService, {
+        listActiveTenantModules: () =>
+          Effect.fail(
+            new TenantModuleStateReadUnavailableError({
+              code: 'tenant_module_state_read_unavailable',
+              reason: `secret SQL failure for ${tenantId}`,
+            }),
+          ),
+      }),
+      Effect.succeed(new Set(['testing1'])),
+    ).createHandler();
+    handlers.push(unavailableModulesHandler);
+    const unavailableModulesResponse = await unavailableModulesHandler.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, {
+        headers: authenticatedHeaders,
+      }),
+    );
+    assert.equal(unavailableModulesResponse.status, 503);
+    const unavailableModulesProblem = await unavailableModulesResponse.text();
+    assert.doesNotMatch(unavailableModulesProblem, /SQL|30000000|40000000/u);
 
     const unavailableGatewayResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/gateway-context`, {
@@ -206,6 +316,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const issuingHandler = makeShellAuthenticationApiRuntime(
       authenticationLayer,
       issuerDependencies,
+      moduleStateLayer,
+      Effect.succeed(new Set(['testing1'])),
     ).createHandler();
     handlers.push(issuingHandler);
     const assertionResponse = await issuingHandler.handler(
@@ -304,10 +416,15 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(invalidAudienceResponse.status, 400);
 
-    const defectHandler = makeShellAuthenticationApiRuntime(authenticationLayer, {
-      ...issuerDependencies,
-      generateJti: Effect.die(new Error('deliberate gateway test defect')),
-    }).createHandler();
+    const defectHandler = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      {
+        ...issuerDependencies,
+        generateJti: Effect.die(new Error('deliberate gateway test defect')),
+      },
+      moduleStateLayer,
+      Effect.succeed(new Set(['testing1'])),
+    ).createHandler();
     handlers.push(defectHandler);
     const defectResponse = await defectHandler.handler(
       new Request(`${configuration.baseUrl}/auth/gateway-context`, {
@@ -340,6 +457,14 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       Effect.flip(authentication.currentSession(authenticatedHeaders)),
     );
     assert.equal(revoked._tag, 'OntosIdentityForbiddenError');
+    const forbiddenModulesResponse = await unavailableHandler.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, {
+        headers: authenticatedHeaders,
+      }),
+    );
+    assert.equal(forbiddenModulesResponse.status, 401);
+    assert.match(forbiddenModulesResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
+    assert.doesNotMatch(await forbiddenModulesResponse.text(), /30000000|40000000/u);
 
     await coreDatabase
       .update(principalAuthBindings)
@@ -365,6 +490,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       ),
     );
     assert.equal(anonymous.identity, null);
+    const expiredModulesResponse = await unavailableHandler.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, {
+        headers: authenticatedHeaders,
+      }),
+    );
+    assert.equal(expiredModulesResponse.status, 401);
+    assert.doesNotMatch(await expiredModulesResponse.text(), /30000000|40000000/u);
   } finally {
     await Promise.all(handlers.map(({ dispose }) => dispose()));
     await rm(generatedFixtureRoot, { force: true, recursive: true });

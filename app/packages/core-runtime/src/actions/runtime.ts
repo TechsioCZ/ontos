@@ -583,6 +583,7 @@ export const makeActionRuntime = (
               input.registration.descriptor.accessEvidencePolicy,
             );
             const handlerContext = Object.freeze({
+              actionInvocationId: lockedInvocation.actionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
               principal,

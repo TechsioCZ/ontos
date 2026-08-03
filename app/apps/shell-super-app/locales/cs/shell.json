@@ -61,6 +61,16 @@
         "title": "Přihlašovací údaje nejsou úplné"
       }
     },
+    "modules": {
+      "active": {
+        "item": "{{moduleKey}}: {{state}}",
+        "label": "Aktivní MicroVerticaly",
+        "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
+      },
+      "state": {
+        "active": "Aktivní"
+      }
+    },
     "remoteUnavailable": "Remote vertical je nedostupný",
     "remotes": {},
     "routes": {

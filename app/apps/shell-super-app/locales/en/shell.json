@@ -61,6 +61,16 @@
         "title": "Login details are incomplete"
       }
     },
+    "modules": {
+      "active": {
+        "item": "{{moduleKey}}: {{state}}",
+        "label": "Active MicroVerticals",
+        "unavailable": "Active MicroVerticals are temporarily unavailable. Reload the page to try again."
+      },
+      "state": {
+        "active": "Active"
+      }
+    },
     "remoteUnavailable": "Remote vertical unavailable",
     "remotes": {},
     "routes": {

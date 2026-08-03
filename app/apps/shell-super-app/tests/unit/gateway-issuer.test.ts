@@ -1,7 +1,6 @@
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
 import { decodeJwt, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { deriveGatewayAudiences, gatewayAudiences } from '../../api/auth/gateway-audiences.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
@@ -108,30 +107,6 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
 
   expect(audienceError.code).toBe('gateway_audience_invalid');
   expect(timeError.code).toBe('gateway_issuer_unavailable');
-});
-
-test('validates topology audiences without accepting shell, packages, malformed IDs, or duplicates', async () => {
-  expect([...(await Effect.runPromise(gatewayAudiences))]).toEqual([]);
-  const valid = await Effect.runPromise(
-    deriveGatewayAudiences({
-      sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],
-      shell: { id: 'shell-super-app', kind: 'shell' },
-      verticals: [{ id: 'inventory-stock', kind: 'vertical' }],
-    }),
-  );
-  expect([...valid]).toEqual(['inventory-stock']);
-
-  const errors = await Promise.all(
-    [
-      [{ id: 'shell-super-app', kind: 'shell' }],
-      [{ id: '../inventory', kind: 'vertical' }],
-      [
-        { id: 'inventory-stock', kind: 'vertical' },
-        { id: 'inventory-stock', kind: 'vertical' },
-      ],
-    ].map((verticals) => Effect.runPromise(Effect.flip(deriveGatewayAudiences({ verticals })))),
-  );
-  expect(errors.every((error) => error._tag === 'GatewayAudienceTopologyError')).toBe(true);
 });
 
 test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing key IDs', async () => {

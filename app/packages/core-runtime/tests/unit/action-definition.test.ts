@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+// @effect-diagnostics asyncFunction:off
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import {

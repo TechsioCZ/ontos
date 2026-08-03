@@ -38,6 +38,13 @@ export interface SignOutResponse {
   readonly signedOut: true;
 }
 
+export interface ActiveModule {
+  readonly moduleKey: string;
+  readonly state: 'active';
+}
+
+export type ActiveModules = readonly ActiveModule[];
+
 interface ProblemDetails {
   readonly detail: string;
   readonly status: number;
@@ -66,6 +73,24 @@ export type AuthenticationProblem =
   | OntosIdentityForbiddenProblem
   | AuthenticationUnavailableProblem
   | AuthenticationInternalProblem;
+
+export interface ActiveModulesAuthenticationRequiredProblem extends ProblemDetails {
+  readonly _tag: 'ActiveModulesAuthenticationRequiredProblem';
+}
+
+export interface ActiveModulesUnavailableProblem extends ProblemDetails {
+  readonly _tag: 'ActiveModulesUnavailableProblem';
+  readonly retryable: true;
+}
+
+export interface ActiveModulesInternalProblem extends ProblemDetails {
+  readonly _tag: 'ActiveModulesInternalProblem';
+}
+
+export type ActiveModulesProblem =
+  | ActiveModulesAuthenticationRequiredProblem
+  | ActiveModulesUnavailableProblem
+  | ActiveModulesInternalProblem;
 
 export const SafeAuthenticatedIdentitySchema: Schema.Codec<SafeAuthenticatedIdentity> =
   Schema.Struct({
@@ -102,6 +127,13 @@ export const SignOutResponseSchema: Schema.Codec<SignOutResponse> = Schema.Struc
   signedOut: Schema.Literal(true),
 });
 
+export const ActiveModuleSchema: Schema.Codec<ActiveModule> = Schema.Struct({
+  moduleKey: Schema.String,
+  state: Schema.Literal('active'),
+});
+
+export const ActiveModulesSchema: Schema.Codec<ActiveModules> = Schema.Array(ActiveModuleSchema);
+
 const authenticationProblemFields = {
   detail: Schema.String,
   status: Schema.Finite,
@@ -132,6 +164,24 @@ export const AuthenticationInternalProblemSchema = Schema.TaggedStruct(
   {
     ...authenticationProblemFields,
   },
+).pipe(HttpApiSchema.status(500));
+
+export const ActiveModulesAuthenticationRequiredProblemSchema = Schema.TaggedStruct(
+  'ActiveModulesAuthenticationRequiredProblem',
+  authenticationProblemFields,
+).pipe(HttpApiSchema.status(401));
+
+export const ActiveModulesUnavailableProblemSchema = Schema.TaggedStruct(
+  'ActiveModulesUnavailableProblem',
+  {
+    ...authenticationProblemFields,
+    retryable: Schema.Literal(true),
+  },
+).pipe(HttpApiSchema.status(503));
+
+export const ActiveModulesInternalProblemSchema = Schema.TaggedStruct(
+  'ActiveModulesInternalProblem',
+  authenticationProblemFields,
 ).pipe(HttpApiSchema.status(500));
 
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
@@ -172,9 +222,22 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       ),
   )
+  .add(
+    HttpApiGroup.make('modules').add(
+      HttpApiEndpoint.get('activeModules', '/modules/active', {
+        error: [
+          ActiveModulesAuthenticationRequiredProblemSchema,
+          ActiveModulesUnavailableProblemSchema,
+          ActiveModulesInternalProblemSchema,
+        ],
+        success: ActiveModulesSchema,
+      }),
+    ),
+  )
   .add(GatewayContextApiGroup);
 
 export const shellAuthenticationApiContract = {
+  activeModulesPath: '/shell-super-app-api/modules/active',
   apiPrefix: '/shell-super-app-api',
   currentSessionPath: '/shell-super-app-api/auth/session',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',

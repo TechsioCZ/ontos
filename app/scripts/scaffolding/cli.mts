@@ -92,21 +92,41 @@ const defaultRouteRefresh: RouteRefreshExecutor = ({ appId, workspaceRoot }) => 
 
 const commandDefinitions: Readonly<Record<ScaffoldCommand, CommandDefinition>> = {
   action: {
-    flags: ['action', 'vertical'],
+    flags: ['action', 'module', 'scope', 'vertical'],
     generator: actionGenerator,
-    help: `Usage: pnpm scaffold:action -- --vertical <vertical> --action <action>
+    help: `Usage:
+  pnpm scaffold:action -- --vertical <vertical> --action <action>
+  pnpm scaffold:action -- --scope core --module <core.module> --action <action>
 
-Generate one typed, fail-closed Action registration in an existing MicroVertical.
+Generate one typed, fail-closed Action registration for an existing MicroVertical or Core.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --action <action>      Action name (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder; exclusive with Core ownership
+  --scope core           Required only for Core ownership; forbidden with --vertical
+  --module <core.module> Stable core.* module key; required only with --scope core
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'vertical'],
-    toConfig: (flags) => ({ action: flags['action'] ?? '', vertical: flags['vertical'] ?? '' }),
+    requiredFlags: ['action'],
+    toConfig: (flags) => {
+      const action = flags['action'] ?? '';
+      const { module, scope, vertical } = flags;
+      if (vertical !== undefined) {
+        if (scope !== undefined || module !== undefined) {
+          throw new Error('--vertical is mutually exclusive with --scope and --module');
+        }
+        return { action, vertical };
+      }
+      if (scope !== 'core') {
+        throw new Error('--scope core is required when --vertical is not supplied');
+      }
+      if (module === undefined) {
+        throw new Error('--module is required for Core Action ownership');
+      }
+      return { action, module, scope };
+    },
   },
   'microvertical-action-boundary': {
     flags: ['vertical'],

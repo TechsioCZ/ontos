@@ -2,6 +2,7 @@ import { expect, test } from '@rstest/core';
 import { Effect, Schema } from 'effect';
 import {
   CurrentSessionSchema,
+  ActiveModulesSchema,
   SignInPayloadSchema,
   ShellAuthenticationApi,
   shellAuthenticationApiContract,
@@ -12,10 +13,13 @@ test('publishes the existing authentication operations and one generic gateway o
     ShellAuthenticationApi.groups.authentication.endpoints,
   ).toSorted();
   const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
+  const moduleEndpoints = Object.keys(ShellAuthenticationApi.groups.modules.endpoints);
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext']);
+  expect(moduleEndpoints).toEqual(['activeModules']);
   expect(shellAuthenticationApiContract).toEqual({
+    activeModulesPath: '/shell-super-app-api/modules/active',
     apiPrefix: '/shell-super-app-api',
     currentSessionPath: '/shell-super-app-api/auth/session',
     issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
@@ -23,9 +27,25 @@ test('publishes the existing authentication operations and one generic gateway o
     signInPath: '/shell-super-app-api/auth/sign-in',
     signOutPath: '/shell-super-app-api/auth/sign-out',
   });
-  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
-    /testing|actionKey/u,
+  expect(
+    [...authenticationEndpoints, ...gatewayEndpoints, ...moduleEndpoints].join(':'),
+  ).not.toMatch(/testing|actionKey/u);
+});
+
+test('decodes only ordered active-module response fields and accepts no request tenant', async () => {
+  const modules = await Effect.runPromise(
+    Schema.decodeUnknownEffect(ActiveModulesSchema)([
+      { moduleKey: 'future-generated', state: 'active', tenantId: 'must-not-pass' },
+      { moduleKey: 'testing1', principalId: 'must-not-pass', state: 'active' },
+    ]),
   );
+  expect(modules).toEqual([
+    { moduleKey: 'future-generated', state: 'active' },
+    { moduleKey: 'testing1', state: 'active' },
+  ]);
+  expect(
+    ShellAuthenticationApi.groups.modules.endpoints.activeModules.payloadSchema,
+  ).toBeUndefined();
 });
 
 test('rejects malformed credentials through Effect Schema', async () => {

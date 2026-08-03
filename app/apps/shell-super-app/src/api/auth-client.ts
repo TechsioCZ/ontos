@@ -9,6 +9,10 @@ import type {
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
 import type {
+  ActiveModules,
+  ActiveModulesAuthenticationRequiredProblem,
+  ActiveModulesInternalProblem,
+  ActiveModulesUnavailableProblem,
   CurrentSession,
   AuthenticationInternalProblem,
   AuthenticationUnavailableProblem,
@@ -57,6 +61,15 @@ export type ShellAuthenticationClientEffect<Success> = Effect.Effect<
   ShellAuthenticationClientError
 >;
 
+export type ActiveModulesClientError =
+  | ActiveModulesAuthenticationRequiredProblem
+  | ActiveModulesUnavailableProblem
+  | ActiveModulesInternalProblem
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
+
+export type ActiveModulesClientEffect = Effect.Effect<ActiveModules, ActiveModulesClientError>;
+
 const createShellAuthenticationClient = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellAuthenticationClient> => {
@@ -97,6 +110,13 @@ export const currentSession = (
 ): ShellAuthenticationClientEffect<CurrentSession> =>
   createShellAuthenticationClient(options).pipe(
     Effect.flatMap((client) => client.authentication.currentSession({})),
+  );
+
+export const activeModules = (
+  options: ShellAuthenticationClientOptions = {},
+): ActiveModulesClientEffect =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.modules.activeModules({})),
   );
 
 export const signOut = (

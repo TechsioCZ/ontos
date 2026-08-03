@@ -27,3 +27,17 @@ test('includes the login route in the generated metadata manifest', () => {
     }),
   );
 });
+
+test('keeps the Czech and English active-module translation contracts aligned', () => {
+  expect(Object.keys(cs.shell.modules).toSorted()).toEqual(
+    Object.keys(en.shell.modules).toSorted(),
+  );
+  expect(Object.keys(cs.shell.modules.active).toSorted()).toEqual(
+    Object.keys(en.shell.modules.active).toSorted(),
+  );
+  expect(Object.keys(cs.shell.modules.state).toSorted()).toEqual(
+    Object.keys(en.shell.modules.state).toSorted(),
+  );
+  expect(en.shell.modules.state.active).toBe('Active');
+  expect(cs.shell.modules.state.active).toBe('Aktivní');
+});

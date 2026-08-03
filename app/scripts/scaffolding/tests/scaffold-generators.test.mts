@@ -154,7 +154,7 @@ const createFixture = async (): Promise<Fixture> => {
   await writeFixtureFile(
     root,
     'packages/core-runtime/src/index.ts',
-    `export const existingCoreSurface = true;\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
+    `export const existingCoreSurface = true;\n\n// <generated-core-action-exports>\n// </generated-core-action-exports>\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
   );
   await writeFixtureFile(
     root,
@@ -246,6 +246,8 @@ test('documents every command and treats --help as a write-free operation', asyn
       assert.match(result.help, new RegExp(`scaffold:${command}`, 'u'));
     }),
   );
+  assert.match(getHelpText('action'), /--vertical <vertical>/u);
+  assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
 });
 
 test('rejects malformed command contracts and leaves the fixture unchanged', async () => {
@@ -266,6 +268,36 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       ['action', ['--vertical', '', '--action', 'create-order'], /non-empty value/u],
       ['action', ['--vertical', '../billing', '--action', 'create-order'], /lower-kebab-case/u],
       ['action', ['--vertical', '/tmp/billing', '--action', 'create-order'], /lower-kebab-case/u],
+      [
+        'action',
+        [
+          '--vertical',
+          'inventory-stock',
+          '--scope',
+          'core',
+          '--module',
+          'core.modules',
+          '--action',
+          'create-order',
+        ],
+        /mutually exclusive/u,
+      ],
+      ['action', ['--scope', 'core', '--action', 'create-order'], /--module is required/u],
+      [
+        'action',
+        ['--scope', 'other', '--module', 'core.modules', '--action', 'create-order'],
+        /--scope core is required/u,
+      ],
+      [
+        'action',
+        ['--scope', 'core', '--module', 'billing.modules', '--action', 'create-order'],
+        /stable lowercase core/u,
+      ],
+      [
+        'action',
+        ['--scope', 'core', '--module', 'core.../modules', '--action', 'create-order'],
+        /stable lowercase core/u,
+      ],
       [
         'action',
         ['--vertical', 'missing', '--action', 'create-order'],
@@ -828,6 +860,106 @@ export const createOrder2Action = defineAction(
   });
 });
 
+test('generates Core-owned Actions only through the Core owner slot with atomic preflight', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'action', [
+      '--scope',
+      'core',
+      '--module',
+      'core.modules',
+      '--action',
+      'z-last-change',
+    ]);
+    await run(fixture, 'action', [
+      '--scope',
+      'core',
+      '--module',
+      'core.modules',
+      '--action',
+      'account-change',
+    ]);
+
+    const action = await readFixtureFile(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/account-change.action.ts',
+    );
+    assert.match(action, /@ontos-action-owner core\.modules/u);
+    assert.match(action, /actionKey: 'core\.modules\.account-change'/u);
+    assert.match(action, /from '\.\.\/\.\.\/actions\/definition\.ts'/u);
+    assert.doesNotMatch(action, /verticals|fetch\(/u);
+
+    const coreIndex = await readFixtureFile(fixture.root, 'packages/core-runtime/src/index.ts');
+    const accountExport =
+      "export { accountChangeAction } from './modules/actions/account-change.action.ts';";
+    const zExport =
+      "export { zLastChangeAction } from './modules/actions/z-last-change.action.ts';";
+    assert.ok(coreIndex.indexOf(accountExport) < coreIndex.indexOf(zExport));
+    assert.match(coreIndex, /export const existingCoreSurface = true/u);
+
+    const beforeOverwrite = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'action', [
+        '--scope',
+        'core',
+        '--module',
+        'core.modules',
+        '--action',
+        'account-change',
+      ]),
+      /refusing to overwrite/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeOverwrite);
+  });
+
+  await withFixture(async (fixture) => {
+    const indexPath = path.join(fixture.root, 'packages/core-runtime/src/index.ts');
+    await writeFile(
+      indexPath,
+      `export const existingCoreSurface = true;\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'action', [
+        '--scope',
+        'core',
+        '--module',
+        'core.modules',
+        '--action',
+        'create-order',
+      ]),
+      /generated owner file does not contain one valid/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+
+  await withFixture(async (fixture) => {
+    const indexPath = path.join(fixture.root, 'packages/core-runtime/src/index.ts');
+    const index = await readFile(indexPath, 'utf-8');
+    await writeFile(
+      indexPath,
+      index.replace(
+        '// <generated-core-action-exports>\n',
+        '// <generated-core-action-exports>\nexport const developerOwned = true;\n',
+      ),
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'action', [
+        '--scope',
+        'core',
+        '--module',
+        'core.modules',
+        '--action',
+        'create-order',
+      ]),
+      /unsupported developer content/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
 test('preflights the Action dependency patch before creating a file', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
@@ -1111,6 +1243,9 @@ export const stockAvailablePolicy = defineMicroverticalPolicy<unknown, 'inventor
       coreIndex,
       `export const existingCoreSurface = true;
 
+// <generated-core-action-exports>
+// </generated-core-action-exports>
+
 // <generated-global-policy-exports>
 export { accountOpenPolicy } from './policies/account-open.policy.ts';
 export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
@@ -1346,6 +1481,14 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
 
 const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<string, string>>> => {
   await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+  await run(fixture, 'action', [
+    '--scope',
+    'core',
+    '--module',
+    'core.modules',
+    '--action',
+    'change-tenant-state',
+  ]);
   await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
   await run(fixture, 'outbox-message', [
     '--vertical',
@@ -1411,6 +1554,7 @@ test('every generated TypeScript file is already formatter-stable', async () => 
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
     const generatedFiles = [
+      'packages/core-runtime/src/modules/actions/change-tenant-state.action.ts',
       'packages/core-runtime/src/policies/tenant-active.policy.ts',
       'verticals/inventory-stock/src/actions/create-order.action.ts',
       'verticals/inventory-stock/src/actions/create-order.orders-created.outbox-message.ts',
@@ -1499,6 +1643,7 @@ test('all generated files typecheck against the real workspace contracts', async
           types: ['react'],
         },
         include: [
+          'packages/core-runtime/src/modules/actions/**/*.ts',
           'packages/core-runtime/src/policies/**/*.ts',
           'verticals/inventory-stock/src/actions/**/*.ts',
           'verticals/inventory-stock/src/policies/**/*.ts',

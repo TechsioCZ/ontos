@@ -19,6 +19,19 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 - All implementation work: [UltraModern.js Implementation Rules](./docs/architecture/ULTRAMODERN.md)
 - User-facing frontend work: [Frontend Architecture Rules](./docs/frontend/FRONTEND.md)
 
+### Mandatory Codesmith Generators
+
+Run supported business-artifact generators from `app/` with the repository-managed toolchain.
+Actions support exactly one of these ownership forms:
+
+```bash
+mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>
+mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --action <action>
+```
+
+The Core form accepts only stable `core.*` module keys and writes only to the generated Core
+Action owner slot. Do not combine Core and MicroVertical ownership flags.
+
 ## Toolchain
 
 Run every pnpm command from the `app/` directory with the repository-managed toolchain:

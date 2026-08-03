@@ -45,6 +45,9 @@ const referenceTopologyPath = fileURLToPath(
   new URL('../../topology/reference-topology.json', import.meta.url),
 );
 const referenceTopology: unknown = JSON.parse(readFileSync(referenceTopologyPath, 'utf-8'));
+Object.assign(globalThis, {
+  ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
+});
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = Number(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT') ?? 3020);
 const envValue = (name: string) => {

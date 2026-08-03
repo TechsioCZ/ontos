@@ -241,6 +241,8 @@ const registration = () =>
     },
     (payload, context) =>
       Effect.gen(function* changeCounter() {
+        assert.equal(context.actionInvocationId, 'invocation-1');
+        assert.equal(Object.isFrozen(context), true);
         assert.equal('rollback' in context.transaction, false);
         assert.equal('transaction' in context.transaction, false);
         yield* context.recordDataAccess({

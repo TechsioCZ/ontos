@@ -120,6 +120,34 @@ export {
   ActionTrustedContextValidationError,
 } from './actions/errors.ts';
 export type { ActionCoreError } from './actions/errors.ts';
+export {
+  TenantModuleStateConcurrentChangeError,
+  TenantModuleStatePersistenceUnavailableError,
+  TenantModuleStateReadUnavailableError,
+  TenantModuleStateTenantMissingError,
+  TenantModuleStateUnchangedError,
+  TenantModuleStateUnsupportedChangeSourceError,
+} from './modules/tenant-module-state-errors.ts';
+export type { TenantModuleStateTransitionError } from './modules/tenant-module-state-errors.ts';
+export {
+  ActiveTenantModuleSchema,
+  TENANT_MODULE_STATES,
+  TenantModuleStateSchema,
+  TenantModuleStateRecordSchema,
+  TenantModuleStateService,
+  TenantModuleStateServiceLive,
+  makeTenantModuleStateService,
+} from './modules/tenant-module-state-service.ts';
+export type {
+  ActiveTenantModule,
+  TenantModuleState,
+  TenantModuleStateRecord,
+  TenantModuleStateServiceShape,
+} from './modules/tenant-module-state-service.ts';
+
+// <generated-core-action-exports>
+export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+// </generated-core-action-exports>
 
 // <generated-global-policy-exports>
 // </generated-global-policy-exports>

@@ -12,11 +12,17 @@ import type {
   EffectBffRuntime,
   EffectRuntimeLayer,
 } from '@modern-js/plugin-bff/effect-edge';
-import { CoreDatabaseLive, DatabaseConfigLive, PrincipalResolverLive } from '@app/core-runtime';
+import {
+  CoreDatabaseLive,
+  DatabaseConfigLive,
+  PrincipalResolverLive,
+  TenantModuleStateService,
+  TenantModuleStateServiceLive,
+} from '@app/core-runtime';
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { Cause, pipe } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
-import type { AuthenticationProblem } from '../shared/api.ts';
+import type { ActiveModulesProblem, AuthenticationProblem } from '../shared/api.ts';
 import { AuthConfigLive } from './auth/config.ts';
 import { AuthDatabaseLive } from './auth/db/client.ts';
 import {
@@ -26,6 +32,8 @@ import {
 import type { GatewayIssuerDependencies, GatewayIssuerError } from './auth/gateway-issuer.ts';
 import type { AuthenticationRuntimeError } from './auth/errors.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
+import { installedVerticalIds } from './verticals/installed-verticals.ts';
+import type { InstalledVerticalTopologyError } from './verticals/installed-verticals.ts';
 
 const requestHeaders = (headers: Readonly<Record<string, string | undefined>>): Headers => {
   const result = new Headers();
@@ -63,6 +71,57 @@ const failGatewayProblem = (gatewayProblem: GatewayContextProblem) =>
     ? bearerChallenge
     : Effect.void
   ).pipe(Effect.andThen(Effect.fail(gatewayProblem)));
+
+const failActiveModulesProblem = (modulesProblem: ActiveModulesProblem) =>
+  (modulesProblem._tag === 'ActiveModulesAuthenticationRequiredProblem'
+    ? bearerChallenge
+    : Effect.void
+  ).pipe(Effect.andThen(Effect.fail(modulesProblem)));
+
+const activeModulesAuthenticationRequiredProblem = (): ActiveModulesProblem => ({
+  _tag: 'ActiveModulesAuthenticationRequiredProblem',
+  detail: 'A valid Shell session is required.',
+  status: 401,
+  title: 'Module list authentication required',
+  type: 'https://ontos.dev/problems/module-list-authentication-required',
+});
+
+const activeModulesUnavailableProblem = (): ActiveModulesProblem => ({
+  _tag: 'ActiveModulesUnavailableProblem',
+  detail: 'Active MicroVerticals are temporarily unavailable. Please retry.',
+  retryable: true,
+  status: 503,
+  title: 'Active MicroVerticals unavailable',
+  type: 'https://ontos.dev/problems/active-modules-unavailable',
+});
+
+const activeModulesInternalProblem = (): ActiveModulesProblem => ({
+  _tag: 'ActiveModulesInternalProblem',
+  detail: 'The active MicroVertical list could not be loaded.',
+  status: 500,
+  title: 'Active MicroVertical list failed',
+  type: 'https://ontos.dev/problems/active-modules-internal',
+});
+
+const activeModulesAuthenticationProblem = (
+  error: AuthenticationRuntimeError,
+): ActiveModulesProblem => {
+  switch (error._tag) {
+    case 'InvalidCredentialsError':
+    case 'OntosIdentityForbiddenError': {
+      return activeModulesAuthenticationRequiredProblem();
+    }
+    case 'AuthenticationUnavailableError': {
+      return activeModulesUnavailableProblem();
+    }
+    case 'AuthenticationInternalError': {
+      return activeModulesInternalProblem();
+    }
+    default: {
+      return error;
+    }
+  }
+};
 
 const gatewayAuthenticationRequiredProblem = (): GatewayContextProblem => ({
   _tag: 'GatewayAuthenticationRequiredProblem',
@@ -255,8 +314,57 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
     ),
   );
 
+const makeModulesGroupLive = (
+  loadInstalledVerticalIds: Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError>,
+) =>
+  HttpApiBuilder.group(ShellAuthenticationApi, 'modules', (handlers) =>
+    handlers.handle('activeModules', ({ request }) =>
+      Effect.gen(function* activeModulesHandler() {
+        const authentication = yield* AuthenticationService;
+        const sessionResult = yield* authentication
+          .currentSession(requestHeaders(request.headers))
+          .pipe(
+            Effect.catch((error) =>
+              failActiveModulesProblem(activeModulesAuthenticationProblem(error)),
+            ),
+          );
+        yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
+        if (sessionResult.identity === null) {
+          return yield* failActiveModulesProblem(activeModulesAuthenticationRequiredProblem());
+        }
+
+        const moduleState = yield* TenantModuleStateService;
+        const activeModules = yield* moduleState
+          .listActiveTenantModules(sessionResult.identity.tenantId)
+          .pipe(Effect.catch(() => failActiveModulesProblem(activeModulesUnavailableProblem())));
+        const installed = yield* loadInstalledVerticalIds.pipe(
+          Effect.catch(() => failActiveModulesProblem(activeModulesInternalProblem())),
+        );
+
+        return activeModules
+          .filter((module) => installed.has(module.moduleKey))
+          .toSorted((left, right) => left.moduleKey.localeCompare(right.moduleKey));
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(
+                Effect.logError('Unexpected active MicroVertical list defect', cause),
+                {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                },
+              ).pipe(Effect.andThen(failActiveModulesProblem(activeModulesInternalProblem())))
+            : Effect.failCause(cause),
+        ),
+      ),
+    ),
+  );
+
 const coreDatabaseLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
 const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(coreDatabaseLive));
+const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
+  Layer.provide(coreDatabaseLive),
+  Layer.orDie,
+);
 const authDatabaseLive = AuthDatabaseLive.pipe(Layer.provide(AuthConfigLive));
 const authenticationDependenciesLive = Layer.mergeAll(
   AuthConfigLive,
@@ -271,13 +379,22 @@ const authenticationServiceLive = AuthenticationServiceLive.pipe(
 export const makeShellAuthenticationApiRuntime = (
   authenticationLayer: Layer.Layer<AuthenticationService>,
   issuerDependencies: GatewayIssuerDependencies,
+  moduleStateLayer: Layer.Layer<TenantModuleStateService> = tenantModuleStateServiceLive,
+  loadInstalledVerticalIds: Effect.Effect<
+    ReadonlySet<string>,
+    InstalledVerticalTopologyError
+  > = installedVerticalIds,
 ): EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> => {
   const layer = HttpApiBuilder.layer(ShellAuthenticationApi).pipe(
     Layer.provide(
-      Layer.merge(authenticationGroupLive, makeGatewayContextGroupLive(issuerDependencies)),
+      Layer.mergeAll(
+        authenticationGroupLive,
+        makeGatewayContextGroupLive(issuerDependencies),
+        makeModulesGroupLive(loadInstalledVerticalIds),
+      ),
     ),
-    Layer.provide(authenticationLayer),
+    Layer.provide(Layer.merge(authenticationLayer, moduleStateLayer)),
   ) satisfies EffectRuntimeLayer;
 
   return defineEffectBff({

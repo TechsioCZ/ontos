@@ -6,16 +6,16 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useState } from 'react';
 import { runEffectRequest, signOut } from '../../api/auth-client.ts';
-import type { CurrentSession } from '../../../shared/api.ts';
+import type { HomePageModel } from './page.data.ts';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 
 interface HomeViewProps {
-  readonly initialSession: CurrentSession;
+  readonly initialModel: HomePageModel;
 }
 
-export const HomeView = ({ initialSession }: HomeViewProps) => {
+export const HomeView = ({ initialModel }: HomeViewProps) => {
   const { language, t } = useModernI18n();
-  const [session, setSession] = useState(initialSession);
+  const [model, setModel] = useState(initialModel);
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
 
@@ -28,7 +28,7 @@ export const HomeView = ({ initialSession }: HomeViewProps) => {
     setLogoutFailed(false);
     void runEffectRequest(signOut({ locale: language }))
       .then(() => {
-        setSession({ state: 'anonymous' });
+        setModel({ state: 'anonymous' });
       })
       .catch(() => {
         setLogoutFailed(true);
@@ -38,7 +38,7 @@ export const HomeView = ({ initialSession }: HomeViewProps) => {
       });
   };
 
-  if (session.state === 'anonymous') {
+  if (model.state === 'anonymous') {
     return (
       <>
         <UltramodernRouteHead />
@@ -62,21 +62,41 @@ export const HomeView = ({ initialSession }: HomeViewProps) => {
           <dl className="grid gap-3">
             <div>
               <dt className="font-semibold">{t('shell.auth.identity.displayName')}</dt>
-              <dd>{session.identity.displayName}</dd>
+              <dd>{model.identity.displayName}</dd>
             </div>
             <div>
               <dt className="font-semibold">{t('shell.auth.identity.email')}</dt>
-              <dd>{session.identity.email}</dd>
+              <dd>{model.identity.email}</dd>
             </div>
             <div>
               <dt className="font-semibold">{t('shell.auth.identity.principal')}</dt>
-              <dd>{session.identity.principalId}</dd>
+              <dd>{model.identity.principalId}</dd>
             </div>
             <div>
               <dt className="font-semibold">{t('shell.auth.identity.tenant')}</dt>
-              <dd>{session.identity.tenantId}</dd>
+              <dd>{model.identity.tenantId}</dd>
             </div>
           </dl>
+          <ul
+            aria-describedby={
+              model.activeModules.state === 'unavailable' ? 'active-modules-unavailable' : undefined
+            }
+            aria-label={t('shell.modules.active.label')}
+          >
+            {model.activeModules.items.map((module) => (
+              <li key={module.moduleKey}>
+                {t('shell.modules.active.item', {
+                  moduleKey: module.moduleKey,
+                  state: t('shell.modules.state.active'),
+                })}
+              </li>
+            ))}
+          </ul>
+          {model.activeModules.state === 'unavailable' ? (
+            <StatusText aria-live="polite" id="active-modules-unavailable" showIcon status="error">
+              {t('shell.modules.active.unavailable')}
+            </StatusText>
+          ) : null}
           {logoutFailed ? (
             <StatusText aria-live="polite" showIcon status="error">
               {t('shell.auth.logout.failed')}
@@ -102,6 +122,6 @@ export const HomeView = ({ initialSession }: HomeViewProps) => {
 };
 
 export default function ShellHome() {
-  const initialSession = useLoaderData({ strict: false }) as CurrentSession;
-  return <HomeView initialSession={initialSession} />;
+  const initialModel = useLoaderData({ strict: false }) as HomePageModel;
+  return <HomeView initialModel={initialModel} />;
 }
