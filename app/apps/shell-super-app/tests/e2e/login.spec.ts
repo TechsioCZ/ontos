@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import { createAuthenticationFixture, e2eCredentials } from './auth-fixture.ts';
 
 let cleanupFixture: (() => Promise<void>) | undefined;
@@ -47,6 +48,47 @@ test('shows one generic error for invalid English credentials', ({ page }) =>
         expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
       ]),
     ));
+
+test('logs a user in without any server-error response', async ({ page }, testInfo) => {
+  const { baseURL } = testInfo.project.use;
+  if (typeof baseURL !== 'string') {
+    throw new TypeError('The login E2E test requires a configured base URL');
+  }
+
+  const applicationOrigin = new URL(baseURL).origin;
+  const serverErrors: string[] = [];
+
+  page.on('response', (response) => {
+    const responseURL = new URL(response.url());
+    if (
+      responseURL.origin === applicationOrigin &&
+      response.status() >= 500 &&
+      response.status() < 600
+    ) {
+      serverErrors.push(
+        `${response.request().method()} ${responseURL.pathname}${responseURL.search} returned ${response.status()}`,
+      );
+    }
+  });
+
+  await page.goto('/en/login');
+  await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
+  await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
+
+  const signInResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === shellAuthenticationApiContract.signInPath &&
+      response.request().method() === 'POST',
+  );
+  await page.getByRole('button', { name: 'Login' }).click();
+  const signInResponse = await signInResponsePromise;
+
+  expect(signInResponse.status(), 'The sign-in endpoint should accept valid credentials').toBe(200);
+  await expect(page).toHaveURL(/\/en\/?$/u);
+  await expect(page.getByText('E2E user')).toBeVisible();
+  await expect(page.getByText(e2eCredentials.email)).toBeVisible();
+  expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
+});
 
 test('persists an English session, logs out, clears the cookie, and stays anonymous', ({ page }) =>
   page
