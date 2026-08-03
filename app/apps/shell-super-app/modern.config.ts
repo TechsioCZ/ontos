@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
@@ -40,6 +41,10 @@ const appId = 'shell-super-app';
 const moduleFederationConfigPath = fileURLToPath(
   new URL('module-federation.config.ts', import.meta.url),
 );
+const referenceTopologyPath = fileURLToPath(
+  new URL('../../topology/reference-topology.json', import.meta.url),
+);
+const referenceTopology: unknown = JSON.parse(readFileSync(referenceTopologyPath, 'utf-8'));
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = Number(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT') ?? 3020);
 const envValue = (name: string) => {
@@ -232,6 +237,7 @@ export default defineConfig(
           '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
         },
         globalVars: {
+          ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
           ULTRAMODERN_SITE_URL: siteUrl,
         },
         mainEntryName: 'index',

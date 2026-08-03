@@ -19,6 +19,14 @@ import type {
   SignOutResponse,
 } from '../../shared/api.ts';
 
+export { issueGatewayContext } from '@app/shared-contracts';
+export type {
+  GatewayContextClientError,
+  GatewayContextClientOptions,
+  GatewayContextRequest,
+  GatewayContextResponse,
+} from '@app/shared-contracts';
+
 type ShellAuthenticationApiGroups =
   typeof ShellAuthenticationApi extends HttpApi.HttpApi<infer _ApiId, infer Groups>
     ? Groups

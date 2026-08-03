@@ -23,6 +23,10 @@ export interface PageScaffoldConfig {
   readonly vertical: string;
 }
 
+export interface ActionBoundaryScaffoldConfig {
+  readonly vertical: string;
+}
+
 export interface PolicyScaffoldConfig {
   readonly policy: string;
   readonly scope: 'global' | 'microvertical';
@@ -56,6 +60,12 @@ export interface PageScaffoldResult {
   readonly appId: string;
   readonly pagePath: string;
   readonly routeMetadataPath: string;
+}
+
+export interface ActionBoundaryScaffoldResult {
+  readonly appId: string;
+  readonly clientPath: string;
+  readonly serverPath: string;
 }
 
 export type JsonObject = Readonly<Record<string, unknown>>;
@@ -526,6 +536,39 @@ export const withCoreDependency = (vertical: VerticalMetadata): Mutation | undef
     return undefined;
   }
   dependencies['@app/core-runtime'] = 'workspace:*';
+  const sortedDependencies = Object.fromEntries(
+    Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+  return updateMutation(
+    vertical.packagePath,
+    vertical.packageContent,
+    patchJsonObjectProperty(vertical.packageContent, [], 'dependencies', sortedDependencies),
+  );
+};
+
+export const withExactDependencies = (
+  vertical: VerticalMetadata,
+  required: Readonly<Record<string, string>>,
+): Mutation | undefined => {
+  const dependenciesValue = vertical.packageJson['dependencies'];
+  const dependencies: MutableJsonObject =
+    dependenciesValue === undefined
+      ? {}
+      : { ...asJsonObject(dependenciesValue, `vertical ${vertical.slug} dependencies`) };
+  let changed = false;
+  for (const [name, version] of Object.entries(required)) {
+    const current = dependencies[name];
+    if (current !== undefined && current !== version) {
+      throw new Error(`vertical ${vertical.slug} has an incompatible ${name} dependency`);
+    }
+    if (current === undefined) {
+      dependencies[name] = version;
+      changed = true;
+    }
+  }
+  if (!changed) {
+    return undefined;
+  }
   const sortedDependencies = Object.fromEntries(
     Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
   );
