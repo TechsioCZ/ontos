@@ -15,7 +15,7 @@ This document defines state-changing Action execution. MicroVertical deployment 
 Process every Action request in this order:
 
 1. Decode the request and validate its structural input schema. A decoding or structural validation failure does not create an Action Invocation Log and does not enter the Action lifecycle. The Action handler remains responsible for domain invariants and may return a typed domain rejection.
-2. Resolve and validate trusted tenant, legal-entity, principal, authentication, and correlation context separately from the Action payload. A payload must never supply or override trusted identity.
+2. Resolve and validate trusted tenant, legal-entity, principal, authentication, and correlation context separately from the Action payload. A payload must never supply or override trusted identity. A Shell-user call crossing a MicroVertical seam obtains this context only after the receiving BFF verifies the Shell-issued EdDSA assertion for its exact topology app ID. The assertion proves authentication and context only; it grants no Action permission and carries no Policy decision or business payload.
 3. Insert or resolve the Action Invocation Log outside and before the business transaction. The invocation is the durable idempotency anchor. If it cannot be persisted, stop processing with a typed infrastructure failure.
 4. Reject request-hash conflicts and treat an already `succeeded` invocation as committed without rerunning the handler or replaying a stored result.
 5. Enter the authentication boundary and check the Action permission through Core's SpiceDB service. The descriptor `actionKey` is losslessly encoded as `ak_` plus unpadded base64url for SpiceDB's restricted object-id alphabet; the trusted `principalId` remains the exact subject identifier.
@@ -76,3 +76,10 @@ An Action handler may instantiate zero or more Domain Events. Adding a Domain Ev
 ## Public Action Failures
 
 Authentication, permission, policy, and domain rejections remain typed Effect errors throughout the Action lifecycle. At the Backend for Frontend (BFF) endpoint, map them exhaustively to the declared public error schemas and status codes in [Effect Error and HTTP Contracts](./ERRORS.md). Do not let an Action error escape as an exception, an untyped rejected Promise, or an ad hoc HTTP response.
+
+Authentication assertion failures occur before the Action lifecycle and must not create an Action
+Invocation Log or reach an Action handler. An endpoint maps missing, malformed, tampered, expired,
+or otherwise unusable assertions to its declared `401` Problem Details response with a
+`WWW-Authenticate: Bearer` challenge. Public-JWKS or verification configuration unavailability maps
+to a declared retryable `503`. These endpoint-specific mappings do not replace the separate Core
+permission and Policy mappings and do not justify a generic Action HTTP endpoint.

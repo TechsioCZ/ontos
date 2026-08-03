@@ -36,6 +36,15 @@ Unexpected defects are not expected failures. At the outer HTTP seam, log the fu
 
 Generated Action BFF endpoints must also map the complete Core Action error union. `ActionPolicyDenied` carries a stable Policy reason code and safe human-readable reason, but Core deliberately assigns no HTTP status: the endpoint maps the Policy's declared semantics to the correct public Problem Details schema, such as `403` for authorization-like denial, `409` for current-state conflict, or `422` for semantic ineligibility. `ActionPolicyEvaluationError` represents a sanitized evaluator defect or unavailable required capability and must map to the endpoint's declared operational failure, commonly a retryable `503` when appropriate. Neither error may fall through to an exception, generic Action endpoint, or ad hoc response.
 
+For the Shell-user MicroVertical Action identity boundary, the generated verifier keeps expected
+failures typed as missing, invalid, expired, scope-invalid, configuration, or verification
+unavailable errors. The owning endpoint must map missing, invalid, expired, and scope-invalid
+credentials to its declared `401` Problem Details schema and attach `WWW-Authenticate: Bearer`.
+Configuration or verification capability failures map to a declared retryable `503`. Never expose
+the assertion, a JWK, signature diagnostics, or claim contents in Problem Details or logs. A verified
+assertion supplies authentication context only; SpiceDB denial remains `403` and Policy failures
+retain their endpoint-specific semantics.
+
 ## Status Code Semantics
 
 Choose the status from the meaning of the failure, not from a generic domain-error default.

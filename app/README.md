@@ -171,6 +171,19 @@ The Shell authentication API is the deliberate Shell-owned instance of this topo
 Authentication and session mechanics remain a Shell/Core capability and must not be
 represented by an Auth MicroVertical.
 
+When an existing MicroVertical BFF begins accepting Shell-user Action calls, prepare its standard
+identity boundary exactly once:
+
+```bash
+mise exec -- pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>
+```
+
+The command generates a public-JWKS server verifier and a client adapter that obtains a fresh,
+audience-scoped Shell assertion for each invocation attempt. It does not generate an Action,
+permission, Policy, endpoint, Outbox Message, UI, or vertical. Continue to use
+`scaffold:action` independently; no Action may add a per-Action Shell identity endpoint or store an
+assertion in a route loader.
+
 Generated pnpm overrides pin the framework-compatible Effect cohort. Keep
 `effect` and `@effect/vitest` aligned with `pnpm-workspace.yaml`; do not add
 new direct package-level Effect versions unless the whole UltraModern cohort is

@@ -22,7 +22,8 @@
         "operations": [
           "signIn",
           "currentSession",
-          "signOut"
+          "signOut",
+          "issueGatewayContext"
         ]
       }
     },

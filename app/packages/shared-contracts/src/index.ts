@@ -1,3 +1,39 @@
+export {
+  GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
+  GATEWAY_ASSERTION_TTL_SECONDS,
+  GATEWAY_ASSERTION_VERSION,
+  GatewayAudienceInvalidProblemSchema,
+  GatewayAuthenticationRequiredProblemSchema,
+  GatewayContextApi,
+  GatewayContextApiGroup,
+  GatewayContextClaimsSchema,
+  GatewayContextProtectedHeaderSchema,
+  GatewayContextRequestSchema,
+  GatewayContextResponseSchema,
+  GatewayInternalProblemSchema,
+  GatewayTrustedPrincipalContextSchema,
+  GatewayUnavailableProblemSchema,
+  decodeGatewayContextClaims,
+  decodeGatewayContextProtectedHeader,
+  issueGatewayContext,
+  shellGatewayContextContract,
+} from './gateway-context.ts';
+export type {
+  GatewayAudienceInvalidProblem,
+  GatewayAuthenticationRequiredProblem,
+  GatewayContextClientEffect,
+  GatewayContextClientError,
+  GatewayContextClientOptions,
+  GatewayContextClaims,
+  GatewayContextProblem,
+  GatewayContextProtectedHeader,
+  GatewayContextRequest,
+  GatewayContextResponse,
+  GatewayInternalProblem,
+  GatewayTrustedPrincipalContext,
+  GatewayUnavailableProblem,
+} from './gateway-context.ts';
+
 export type UltramodernPublicSitemapChangeFrequency =
   | 'always'
   | 'hourly'

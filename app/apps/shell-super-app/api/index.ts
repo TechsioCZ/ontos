@@ -13,10 +13,17 @@ import type {
   EffectRuntimeLayer,
 } from '@modern-js/plugin-bff/effect-edge';
 import { CoreDatabaseLive, DatabaseConfigLive, PrincipalResolverLive } from '@app/core-runtime';
+import type { GatewayContextProblem } from '@app/shared-contracts';
+import { Cause, pipe } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import type { AuthenticationProblem } from '../shared/api.ts';
 import { AuthConfigLive } from './auth/config.ts';
 import { AuthDatabaseLive } from './auth/db/client.ts';
+import {
+  gatewayIssuerLiveDependencies,
+  issueGatewayContextAssertion,
+} from './auth/gateway-issuer.ts';
+import type { GatewayIssuerDependencies, GatewayIssuerError } from './auth/gateway-issuer.ts';
 import type { AuthenticationRuntimeError } from './auth/errors.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 
@@ -40,6 +47,78 @@ const forwardSetCookieHeaders = (headers: readonly string[]) =>
           response.pipe(HttpServerResponse.mergeCookies(Cookies.fromSetCookie(headers))),
         ),
       );
+
+const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
+  Effect.succeed(
+    HttpServerResponse.setHeader(
+      response,
+      'www-authenticate',
+      'Bearer realm="ontos-gateway", error="invalid_token"',
+    ),
+  ),
+);
+
+const failGatewayProblem = (gatewayProblem: GatewayContextProblem) =>
+  (gatewayProblem._tag === 'GatewayAuthenticationRequiredProblem'
+    ? bearerChallenge
+    : Effect.void
+  ).pipe(Effect.andThen(Effect.fail(gatewayProblem)));
+
+const gatewayAuthenticationRequiredProblem = (): GatewayContextProblem => ({
+  _tag: 'GatewayAuthenticationRequiredProblem',
+  detail: 'A valid Shell session is required.',
+  status: 401,
+  title: 'Gateway authentication required',
+  type: 'https://ontos.dev/problems/gateway-authentication-required',
+});
+
+const gatewayInternalProblem = (): GatewayContextProblem => ({
+  _tag: 'GatewayInternalProblem',
+  detail: 'Gateway authentication could not complete.',
+  status: 500,
+  title: 'Gateway authentication failed',
+  type: 'https://ontos.dev/problems/gateway-internal',
+});
+
+const gatewayAuthenticationProblem = (error: AuthenticationRuntimeError): GatewayContextProblem => {
+  switch (error._tag) {
+    case 'InvalidCredentialsError':
+    case 'OntosIdentityForbiddenError': {
+      return gatewayAuthenticationRequiredProblem();
+    }
+    case 'AuthenticationUnavailableError': {
+      return {
+        _tag: 'GatewayUnavailableProblem',
+        detail: 'Gateway authentication is temporarily unavailable. Please retry.',
+        retryable: true,
+        status: 503,
+        title: 'Gateway unavailable',
+        type: 'https://ontos.dev/problems/gateway-unavailable',
+      };
+    }
+    default: {
+      return gatewayInternalProblem();
+    }
+  }
+};
+
+const gatewayIssuerProblem = (error: GatewayIssuerError): GatewayContextProblem =>
+  error.code === 'gateway_audience_invalid'
+    ? {
+        _tag: 'GatewayAudienceInvalidProblem',
+        detail: 'The requested audience is not an available MicroVertical.',
+        status: 400,
+        title: 'Invalid gateway audience',
+        type: 'https://ontos.dev/problems/gateway-audience-invalid',
+      }
+    : {
+        _tag: 'GatewayUnavailableProblem',
+        detail: 'Gateway assertion issuance is temporarily unavailable. Please retry.',
+        retryable: true,
+        status: 503,
+        title: 'Gateway unavailable',
+        type: 'https://ontos.dev/problems/gateway-unavailable',
+      };
 
 const problem = (error: AuthenticationRuntimeError): AuthenticationProblem => {
   switch (error._tag) {
@@ -135,6 +214,47 @@ const authenticationGroupLive = HttpApiBuilder.group(
       ),
 );
 
+const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependencies) =>
+  HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
+    handlers.handle('issueGatewayContext', ({ payload, request }) =>
+      Effect.gen(function* issueGatewayContextHandler() {
+        const authentication = yield* AuthenticationService;
+        const sessionResult = yield* authentication
+          .currentSession(requestHeaders(request.headers))
+          .pipe(
+            Effect.catch((error) => pipe(error, gatewayAuthenticationProblem, failGatewayProblem)),
+          );
+        yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
+        if (sessionResult.identity === null) {
+          return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
+        }
+
+        return yield* issueGatewayContextAssertion(
+          {
+            audience: payload.audience,
+            principal: {
+              authMethod: 'session',
+              principalId: sessionResult.identity.principalId,
+              tenantId: sessionResult.identity.tenantId,
+            },
+          },
+          issuerDependencies,
+        ).pipe(Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)));
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(
+                Effect.logError('Unexpected Shell gateway assertion defect', cause),
+                {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                },
+              ).pipe(Effect.andThen(failGatewayProblem(gatewayInternalProblem())))
+            : Effect.failCause(cause),
+        ),
+      ),
+    ),
+  );
+
 const coreDatabaseLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
 const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(coreDatabaseLive));
 const authDatabaseLive = AuthDatabaseLive.pipe(Layer.provide(AuthConfigLive));
@@ -148,15 +268,27 @@ const authenticationServiceLive = AuthenticationServiceLive.pipe(
   Layer.orDie,
 );
 
-const layer = HttpApiBuilder.layer(ShellAuthenticationApi).pipe(
-  Layer.provide(authenticationGroupLive),
-  Layer.provide(authenticationServiceLive),
-) satisfies EffectRuntimeLayer;
+export const makeShellAuthenticationApiRuntime = (
+  authenticationLayer: Layer.Layer<AuthenticationService>,
+  issuerDependencies: GatewayIssuerDependencies,
+): EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
+  EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> => {
+  const layer = HttpApiBuilder.layer(ShellAuthenticationApi).pipe(
+    Layer.provide(
+      Layer.merge(authenticationGroupLive, makeGatewayContextGroupLive(issuerDependencies)),
+    ),
+    Layer.provide(authenticationLayer),
+  ) satisfies EffectRuntimeLayer;
 
-const apiRuntime: EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
-  EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> = defineEffectBff({
-  api: ShellAuthenticationApi,
-  layer,
-});
+  return defineEffectBff({
+    api: ShellAuthenticationApi,
+    layer,
+  });
+};
+
+const apiRuntime = makeShellAuthenticationApiRuntime(
+  authenticationServiceLive,
+  gatewayIssuerLiveDependencies,
+);
 
 export default apiRuntime;

@@ -347,7 +347,7 @@ const workspaceValidationContract = {
             runtimeFramework: 'effect',
             strictEffectApproach: true,
             prefix: '/shell-super-app-api',
-            operations: ['signIn', 'currentSession', 'signOut'],
+            operations: ['signIn', 'currentSession', 'signOut', 'issueGatewayContext'],
           },
         },
         moduleFederation: {
@@ -3704,6 +3704,7 @@ const requiredPaths = [
   ...(hasBackendSurfaces ? ['scripts/generate-node-backend-federation.mts'] : []),
   'scripts/generate-public-surface-assets.mts',
   'scripts/generate-tanstack-routes.mts',
+  'scripts/scaffolding/microvertical-action-boundary/scaffold.mts',
   'scripts/proof-cloudflare-version.mts',
   ...(hasDeliveryUnits ? ['scripts/proof-workerd-ssr.mts'] : []),
   ...(hasBackendSurfaces ? ['scripts/proof-node-backend-federation.mts'] : []),
@@ -3735,10 +3736,12 @@ const requiredPaths = [
   'apps/shell-super-app/src/routes/[lang]/page.tsx',
   ...shellRouteMetaPaths,
   'packages/core-runtime/package.json',
+  'packages/core-runtime/src/actions/principal-context.ts',
   'packages/core-runtime/src/index.ts',
   'packages/core-runtime/tsconfig.json',
   'packages/shared-contracts/package.json',
   'packages/shared-contracts/src/index.ts',
+  'packages/shared-contracts/src/gateway-context.ts',
   'packages/shared-contracts/tsconfig.json',
   'packages/shared-design-tokens/package.json',
   'packages/shared-design-tokens/src/index.ts',
@@ -4708,6 +4711,51 @@ assert(
   'Root must expose contract:check',
 );
 assert(
+  rootPackage.scripts?.['scaffold:microvertical-action-boundary'] ===
+    'node ./scripts/scaffolding/cli.mts microvertical-action-boundary',
+  'Root must expose the Codesmith MicroVertical Action-boundary command',
+);
+assert(
+  shellPackage.dependencies?.jose === '6.2.5',
+  'Shell must own the exact EdDSA signing dependency',
+);
+const sharedContractsPackage = readJson('packages/shared-contracts/package.json');
+assert(
+  sharedContractsPackage.dependencies?.effect === expectedEffectVersion &&
+    sharedContractsPackage.dependencies?.['@app/core-runtime'] === 'workspace:*',
+  'Shared gateway contracts must use the generated Effect cohort and canonical Core context',
+);
+const gatewayContractSource = readText('packages/shared-contracts/src/gateway-context.ts');
+assert(
+  gatewayContractSource.includes('GATEWAY_ASSERTION_VERSION = 1') &&
+    gatewayContractSource.includes('GATEWAY_ASSERTION_TTL_SECONDS = 300') &&
+    gatewayContractSource.includes('GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS = 30') &&
+    gatewayContractSource.includes("HttpApiEndpoint.post('issueGatewayContext'") &&
+    gatewayContractSource.includes("alg: Schema.Literal('EdDSA')") &&
+    gatewayContractSource.includes("from '@app/core-runtime/actions/principal-context'") &&
+    gatewayContractSource.includes("contentType: 'application/problem+json'"),
+  'Shared contracts must retain the versioned generic EdDSA gateway assertion protocol',
+);
+const gatewayAudienceSource = readText('apps/shell-super-app/api/auth/gateway-audiences.ts');
+const shellModernConfigSource = readText('apps/shell-super-app/modern.config.ts');
+assert(
+  shellModernConfigSource.includes(
+    "new URL('../../topology/reference-topology.json', import.meta.url)",
+  ) &&
+    shellModernConfigSource.includes("readFileSync(referenceTopologyPath, 'utf-8')") &&
+    shellModernConfigSource.includes('ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology') &&
+    gatewayAudienceSource.includes(
+      'Effect.suspend(() => deriveGatewayAudiences(ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY))',
+    ) &&
+    gatewayAudienceSource.includes("entry['kind'] !== 'vertical'"),
+  'Shell gateway audiences must derive exclusively from authoritative topology verticals',
+);
+assert(
+  !fs.existsSync(path.join(root, 'packages/shared-contracts/src/gateway-topology.generated.ts')) &&
+    !gatewayAudienceSource.includes('ultramodernGatewayAudienceTopology'),
+  'Shell gateway audiences must not introduce a second topology registry',
+);
+assert(
   rootPackage.scripts?.['api:check'] === 'node ./scripts/check-ultramodern-api-boundaries.mts',
   'Root must expose api:check',
 );
@@ -5401,6 +5449,37 @@ assert(!('effectServices' in topology), 'Default APIs must be vertical-owned, no
 
 for (const vertical of fullStackVerticals) {
   const packageJson = readJson(`${vertical.path}/package.json`);
+  const actionPrincipalPath = `${vertical.path}/api/auth/action-principal.ts`;
+  const actionGatewayPath = `${vertical.path}/src/api/action-gateway.ts`;
+  const hasActionPrincipal = fs.existsSync(path.join(root, actionPrincipalPath));
+  const hasActionGateway = fs.existsSync(path.join(root, actionGatewayPath));
+  assert(
+    hasActionPrincipal === hasActionGateway,
+    `${vertical.id} generated Action identity boundary must contain both server and client adapters`,
+  );
+  if (hasActionPrincipal) {
+    for (const boundaryPath of [actionPrincipalPath, actionGatewayPath]) {
+      const boundary = readText(boundaryPath);
+      assert(
+        boundary.includes('@generated by OntOS Codesmith MicroVertical Action Boundary v1') &&
+          boundary.includes(`@ontos-action-boundary-owner ${vertical.id}`) &&
+          boundary.includes(`@ontos-action-boundary-audience ${vertical.id}`) &&
+          boundary.includes(`ACTION_GATEWAY_AUDIENCE = '${vertical.id}'`),
+        `${boundaryPath} generated Action identity metadata is invalid`,
+      );
+    }
+    for (const [dependency, version] of Object.entries({
+      '@app/core-runtime': 'workspace:*',
+      '@app/shared-contracts': 'workspace:*',
+      effect: expectedEffectVersion,
+      jose: '6.2.5',
+    })) {
+      assert(
+        packageJson.dependencies?.[dependency] === version,
+        `${vertical.id} Action identity boundary dependency ${dependency} must equal ${version}`,
+      );
+    }
+  }
   const modernConfig = readText(`${vertical.path}/modern.config.ts`);
   // The browser Module Federation config and colocated route surfaces only
   // exist for UI-emitting units; a headless api-only unit emits none (G2a/P4).
