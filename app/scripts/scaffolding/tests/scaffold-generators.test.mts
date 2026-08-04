@@ -29,6 +29,11 @@ import { issueGatewayContextAssertion } from '../../../apps/shell-super-app/api/
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import { getHelpText, runScaffold } from '../cli.mts';
 import type { ScaffoldCommand } from '../cli.mts';
+import { renderOutboxWorkerSubscriptionCatalog } from '../../outbox-worker-subscription-catalog.mts';
+import {
+  assertPublishedOutboxDependencyUsage,
+  publishedOutboxContractExports,
+} from '../../published-outbox-contracts.mts';
 
 interface Fixture {
   readonly root: string;
@@ -108,6 +113,15 @@ const writeFixtureFile = async (
 const createVertical = async (root: string, vertical: FixtureVertical): Promise<void> => {
   await writeFixtureFile(
     root,
+    `verticals/${vertical.slug}/tsconfig.json`,
+    json({
+      compilerOptions: { composite: true },
+      include: ['src', 'shared'],
+      references: [],
+    }),
+  );
+  await writeFixtureFile(
+    root,
     `verticals/${vertical.slug}/package.json`,
     json({
       dependencies: { zeta: '1.0.0' },
@@ -155,6 +169,11 @@ const createFixture = async (): Promise<Fixture> => {
     root,
     'packages/core-runtime/src/index.ts',
     `export const existingCoreSurface = true;\n\n// <generated-core-action-exports>\n// </generated-core-action-exports>\n\n// <generated-global-policy-exports>\n// </generated-global-policy-exports>\n`,
+  );
+  await writeFixtureFile(
+    root,
+    'packages/core-runtime/src/outbox/subscriptions.generated.ts',
+    renderOutboxWorkerSubscriptionCatalog([]),
   );
   await writeFixtureFile(
     root,
@@ -236,6 +255,7 @@ test('documents every command and treats --help as a write-free operation', asyn
         'microvertical-action-boundary',
         'microvertical-page',
         'outbox-message',
+        'outbox-worker',
         'policy',
       ] as const
     ).map(async (command) => {
@@ -248,6 +268,42 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
+});
+
+test('recognizes only exact schema-only Outbox package subpaths as cross-vertical contracts', () => {
+  const producerPackage = {
+    exports: {
+      '.': './src/index.ts',
+      './outbox/orders-created': './shared/outbox/orders-created.ts',
+      './workers': './src/workers/index.ts',
+    },
+  };
+  assert.deepEqual(publishedOutboxContractExports(producerPackage), ['./outbox/orders-created']);
+  assert.doesNotThrow(() =>
+    assertPublishedOutboxDependencyUsage({
+      dependencyPackageJson: producerPackage,
+      dependencyPackageName: '@app/inventory-stock',
+      moduleSpecifiers: ['@app/inventory-stock/outbox/orders-created'],
+    }),
+  );
+  assert.throws(
+    () =>
+      assertPublishedOutboxDependencyUsage({
+        dependencyPackageJson: producerPackage,
+        dependencyPackageName: '@app/inventory-stock',
+        moduleSpecifiers: ['@app/inventory-stock/workers'],
+      }),
+    /not a published schema-only Outbox contract subpath/u,
+  );
+  assert.throws(
+    () =>
+      assertPublishedOutboxDependencyUsage({
+        dependencyPackageJson: { exports: { '.': './src/index.ts' } },
+        dependencyPackageName: '@app/inventory-stock',
+        moduleSpecifiers: ['@app/inventory-stock'],
+      }),
+    /not a published schema-only Outbox contract dependency/u,
+  );
 });
 
 test('rejects malformed command contracts and leaves the fixture unchanged', async () => {
@@ -319,6 +375,20 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
       [
         'outbox-message',
         ['--vertical', 'inventory-stock', '--action', 'create-order', '--topic', 'Not.Safe'],
+        /dot-separated/u,
+      ],
+      [
+        'outbox-worker',
+        [
+          '--vertical',
+          'billing',
+          '--worker',
+          'orders-logger',
+          '--producer',
+          'inventory-stock',
+          '--topic',
+          '../orders.created',
+        ],
         /dot-separated/u,
       ],
     ];
@@ -1068,18 +1138,18 @@ test('generates Action-owned Outbox Messages and sorts only the owned export slo
     );
     assert.equal(
       message,
-      `import { Schema } from 'effect';
-import type { OutboxMessage } from '@app/core-runtime';
+      `import type { OutboxMessage } from '@app/core-runtime';
+import {
+  OutboxPayloadSchema,
+  outboxProducerModuleKey,
+  outboxTopic,
+} from '@app/inventory-stock/outbox/orders-created';
+import type { OutboxPayload } from '@app/inventory-stock/outbox/orders-created';
 
-export const CreateOrderOrdersCreatedOutboxPayload = Schema.Struct({
-  data: Schema.Json,
-});
-export type CreateOrderOrdersCreatedOutboxPayload = Schema.Schema.Type<
-  typeof CreateOrderOrdersCreatedOutboxPayload
->;
-
-export const CreateOrderOrdersCreatedOutboxTopic = 'orders.created' as const;
-export const CreateOrderOrdersCreatedOutboxProducerModuleKey = 'inventory-stock' as const;
+export const CreateOrderOrdersCreatedOutboxPayload = OutboxPayloadSchema;
+export type CreateOrderOrdersCreatedOutboxPayload = OutboxPayload;
+export const CreateOrderOrdersCreatedOutboxProducerModuleKey = outboxProducerModuleKey;
+export const CreateOrderOrdersCreatedOutboxTopic = outboxTopic;
 
 export const createCreateOrderOrdersCreatedOutboxMessage = (
   payload: CreateOrderOrdersCreatedOutboxPayload,
@@ -1089,6 +1159,32 @@ export const createCreateOrderOrdersCreatedOutboxMessage = (
   topic: CreateOrderOrdersCreatedOutboxTopic,
 });
 `,
+    );
+    assert.equal(
+      await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/shared/outbox/orders-created.ts',
+      ),
+      `// @generated by OntOS Codesmith Outbox Message Contract v1
+// @ontos-outbox-producer inventory-stock
+// @ontos-outbox-topic orders.created
+import { Schema } from 'effect';
+
+export const OutboxPayloadSchema = Schema.Struct({
+  data: Schema.Json,
+});
+export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
+
+export const outboxTopic = 'orders.created' as const;
+export const outboxProducerModuleKey = 'inventory-stock' as const;
+`,
+    );
+    const producerPackage = JSON.parse(
+      await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
+    ) as { readonly exports: Readonly<Record<string, string>> };
+    assert.equal(
+      producerPackage.exports['./outbox/orders-created'],
+      './shared/outbox/orders-created.ts',
     );
     const action = await readFile(actionPath, 'utf-8');
     const createdExport =
@@ -1187,6 +1283,275 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
         assert.deepEqual(await snapshotTree(fixture.root), beforeCollision);
       }),
     );
+  });
+});
+
+test('generates isolated Outbox Workers from published contracts and composes a stable registry', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
+    await run(fixture, 'outbox-message', [
+      '--vertical',
+      'inventory-stock',
+      '--action',
+      'create-order',
+      '--topic',
+      'orders.created',
+    ]);
+    const producerBefore = Object.fromEntries(
+      Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
+        file.startsWith('verticals/inventory-stock/'),
+      ),
+    );
+
+    await run(fixture, 'outbox-worker', [
+      '--vertical',
+      'billing',
+      '--worker',
+      'orders-created-logger',
+      '--producer',
+      'inventory-stock',
+      '--topic',
+      'orders.created',
+    ]);
+    const worker = await readFixtureFile(
+      fixture.root,
+      'verticals/billing/src/workers/orders-created-logger.worker.ts',
+    );
+    assert.equal(
+      worker,
+      `// @generated by OntOS Codesmith Outbox Worker v1
+// @ontos-outbox-worker-key billing.orders-created-logger
+// @ontos-outbox-worker-owner billing
+// @ontos-outbox-worker-producer inventory-stock
+// @ontos-outbox-worker-topic orders.created
+import { Effect, Schema } from 'effect';
+import { defineOutboxWorker } from '@app/core-runtime';
+import {
+  OutboxPayloadSchema,
+  outboxProducerModuleKey,
+  outboxTopic,
+} from '@app/inventory-stock/outbox/orders-created';
+
+export class OrdersCreatedLoggerNotImplemented extends Schema.TaggedErrorClass<OrdersCreatedLoggerNotImplemented>()(
+  'OrdersCreatedLoggerNotImplemented',
+  {
+    code: Schema.Literal('outbox_worker_not_implemented'),
+    reason: Schema.String,
+  },
+) {}
+
+const handleOrdersCreatedLogger = () =>
+  Effect.fail(
+    new OrdersCreatedLoggerNotImplemented({
+      code: 'outbox_worker_not_implemented',
+      reason: 'The OrdersCreatedLogger Outbox Worker is not implemented',
+    }),
+  );
+
+export const ordersCreatedLoggerWorker = defineOutboxWorker(
+  {
+    consumerModuleKey: 'billing',
+    leaseDurationMs: 30_000,
+    payloadSchema: OutboxPayloadSchema,
+    producerModuleKey: outboxProducerModuleKey,
+    retryPolicy: {
+      initialBackoffMs: 1000,
+      maxAttempts: 5,
+      maxBackoffMs: 60_000,
+      multiplier: 2,
+    },
+    topic: outboxTopic,
+    workerKey: 'billing.orders-created-logger',
+  },
+  handleOrdersCreatedLogger,
+);
+`,
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, 'verticals/billing/src/workers/index.ts'),
+      `import type { AnyOutboxWorkerRegistration } from '@app/core-runtime';
+
+// <generated-outbox-worker-imports>
+import { ordersCreatedLoggerWorker } from './orders-created-logger.worker.ts';
+// </generated-outbox-worker-imports>
+
+export const outboxWorkers = Object.freeze([
+  // <generated-outbox-worker-registrations>
+  ordersCreatedLoggerWorker,
+  // </generated-outbox-worker-registrations>
+]) satisfies readonly AnyOutboxWorkerRegistration[];
+`,
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/layer.ts'),
+      `// @generated by scaffold:outbox-worker worker-host
+// @ontos-outbox-worker-host-owner billing
+import { Layer } from 'effect';
+import { OutboxWorkerInfrastructureLive } from '@app/core-runtime';
+
+/** Add owner-local repositories and services required by worker handlers here. */
+const outboxWorkerHandlerLayer = Layer.empty;
+
+export const outboxWorkerLayer = Layer.merge(
+  OutboxWorkerInfrastructureLive,
+  outboxWorkerHandlerLayer,
+);
+`,
+    );
+    assert.equal(
+      await readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/main.ts'),
+      `// @generated by scaffold:outbox-worker worker-host
+// @ontos-outbox-worker-host-owner billing
+import { startOutboxWorkerProcess } from '@app/core-runtime';
+import { outboxWorkerLayer } from './layer.ts';
+import { outboxWorkers } from '../workers/index.ts';
+
+startOutboxWorkerProcess({
+  claimOwnerPrefix: 'billing-outbox-worker',
+  layer: outboxWorkerLayer,
+  registrations: outboxWorkers,
+});
+`,
+    );
+    assert.equal(
+      await readFixtureFile(
+        fixture.root,
+        'packages/core-runtime/src/outbox/subscriptions.generated.ts',
+      ),
+      renderOutboxWorkerSubscriptionCatalog([
+        {
+          consumerModuleKey: 'billing',
+          producerModuleKey: 'inventory-stock',
+          topic: 'orders.created',
+          workerKey: 'billing.orders-created-logger',
+        },
+      ]),
+    );
+    const consumerPackage = JSON.parse(
+      await readFixtureFile(fixture.root, 'verticals/billing/package.json'),
+    ) as {
+      readonly dependencies: Readonly<Record<string, string>>;
+      readonly exports: Readonly<Record<string, string>>;
+      readonly scripts: Readonly<Record<string, string>>;
+    };
+    assert.equal(consumerPackage.dependencies['@app/core-runtime'], 'workspace:*');
+    assert.equal(consumerPackage.dependencies['@app/inventory-stock'], 'workspace:*');
+    assert.equal(consumerPackage.exports['./workers'], './src/workers/index.ts');
+    assert.equal(
+      consumerPackage.scripts['dev:worker'],
+      'node --experimental-strip-types ./src/worker-host/main.ts',
+    );
+    assert.equal(
+      consumerPackage.scripts['worker:start'],
+      'node --experimental-strip-types ./src/worker-host/main.ts',
+    );
+    const consumerTsconfig = JSON.parse(
+      await readFixtureFile(fixture.root, 'verticals/billing/tsconfig.json'),
+    ) as { readonly references: readonly { readonly path: string }[] };
+    assert.deepEqual(consumerTsconfig.references, [{ path: '../inventory-stock' }]);
+    const producerAfter = Object.fromEntries(
+      Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
+        file.startsWith('verticals/inventory-stock/'),
+      ),
+    );
+    assert.deepEqual(producerAfter, producerBefore);
+
+    await run(fixture, 'outbox-message', [
+      '--vertical',
+      'inventory-stock',
+      '--action',
+      'create-order',
+      '--topic',
+      'orders.shipped',
+    ]);
+    await run(fixture, 'outbox-worker', [
+      '--vertical',
+      'billing',
+      '--worker',
+      'orders-shipped-projector',
+      '--producer',
+      'inventory-stock',
+      '--topic',
+      'orders.shipped',
+    ]);
+    const registry = await readFixtureFile(fixture.root, 'verticals/billing/src/workers/index.ts');
+    assert.ok(
+      registry.indexOf('ordersCreatedLoggerWorker') <
+        registry.indexOf('ordersShippedProjectorWorker'),
+    );
+    const beforeRerun = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'outbox-worker', [
+        '--vertical',
+        'billing',
+        '--worker',
+        'orders-created-logger',
+        '--producer',
+        'inventory-stock',
+        '--topic',
+        'orders.created',
+      ]),
+      /refusing to overwrite/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
+  });
+});
+
+test('refuses unpublished or malformed Outbox contracts without partial consumer writes', async () => {
+  await withFixture(async (fixture) => {
+    const beforeUnpublished = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'outbox-worker', [
+        '--vertical',
+        'billing',
+        '--worker',
+        'orders-logger',
+        '--producer',
+        'inventory-stock',
+        '--topic',
+        'orders.missing',
+      ]),
+      /published producer Outbox contract is missing/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeUnpublished);
+
+    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
+    await run(fixture, 'outbox-message', [
+      '--vertical',
+      'inventory-stock',
+      '--action',
+      'create-order',
+      '--topic',
+      'orders.created',
+    ]);
+    const contractPath = path.join(
+      fixture.root,
+      'verticals/inventory-stock/shared/outbox/orders-created.ts',
+    );
+    const validContract = await readFile(contractPath, 'utf-8');
+    await writeFile(
+      contractPath,
+      validContract.replace(
+        '// @ontos-outbox-producer inventory-stock',
+        '// @ontos-outbox-producer billing',
+      ),
+      'utf-8',
+    );
+    const beforeMalformed = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'outbox-worker', [
+        '--vertical',
+        'billing',
+        '--worker',
+        'orders-logger',
+        '--producer',
+        'inventory-stock',
+        '--topic',
+        'orders.created',
+      ]),
+      /owner\/topic\/schema mismatch/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeMalformed);
   });
 });
 
@@ -1553,11 +1918,26 @@ test('all generators compose deterministically without crossing owner boundaries
 test('every generated TypeScript file is already formatter-stable', async () => {
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
+    await run(fixture, 'outbox-worker', [
+      '--vertical',
+      'billing',
+      '--worker',
+      'orders-created-logger',
+      '--producer',
+      'inventory-stock',
+      '--topic',
+      'orders.created',
+    ]);
     const generatedFiles = [
       'packages/core-runtime/src/modules/actions/change-tenant-state.action.ts',
       'packages/core-runtime/src/policies/tenant-active.policy.ts',
       'verticals/inventory-stock/src/actions/create-order.action.ts',
       'verticals/inventory-stock/src/actions/create-order.orders-created.outbox-message.ts',
+      'verticals/inventory-stock/shared/outbox/orders-created.ts',
+      'verticals/billing/src/workers/index.ts',
+      'verticals/billing/src/workers/orders-created-logger.worker.ts',
+      'verticals/billing/src/worker-host/layer.ts',
+      'verticals/billing/src/worker-host/main.ts',
       'verticals/inventory-stock/src/policies/stock-available.policy.ts',
       'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
       'verticals/inventory-stock/src/routes/[lang]/orders/route.meta.ts',
@@ -1583,6 +1963,16 @@ test('every generated TypeScript file is already formatter-stable', async () => 
 test('all generated files typecheck against the real workspace contracts', async () => {
   await withFixture(async (fixture) => {
     await runCombinedScenario(fixture);
+    await run(fixture, 'outbox-worker', [
+      '--vertical',
+      'billing',
+      '--worker',
+      'orders-created-logger',
+      '--producer',
+      'inventory-stock',
+      '--topic',
+      'orders.created',
+    ]);
     await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
     await mkdir(path.join(fixture.root, 'node_modules', '@types'), { recursive: true });
     await symlink(
@@ -1635,6 +2025,7 @@ test('all generated files typecheck against the real workspace contracts', async
             '@app/core-runtime/actions/principal-context': [
               path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
             ],
+            '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
             '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
           },
           skipLibCheck: true,
@@ -1646,6 +2037,9 @@ test('all generated files typecheck against the real workspace contracts', async
           'packages/core-runtime/src/modules/actions/**/*.ts',
           'packages/core-runtime/src/policies/**/*.ts',
           'verticals/inventory-stock/src/actions/**/*.ts',
+          'verticals/inventory-stock/shared/outbox/**/*.ts',
+          'verticals/billing/src/workers/**/*.ts',
+          'verticals/billing/src/worker-host/**/*.ts',
           'verticals/inventory-stock/src/policies/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.tsx',

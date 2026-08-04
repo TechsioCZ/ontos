@@ -8,6 +8,7 @@ import actionGenerator from './action/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
+import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
 import type {
   ActionScaffoldConfig,
@@ -16,6 +17,8 @@ import type {
   ActionBoundaryScaffoldResult,
   OutboxScaffoldConfig,
   OutboxScaffoldResult,
+  OutboxWorkerScaffoldConfig,
+  OutboxWorkerScaffoldResult,
   PageScaffoldConfig,
   PageScaffoldResult,
   PolicyScaffoldConfig,
@@ -27,12 +30,14 @@ export type ScaffoldCommand =
   | 'microvertical-action-boundary'
   | 'microvertical-page'
   | 'outbox-message'
+  | 'outbox-worker'
   | 'policy';
 
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
   | ActionScaffoldResult
   | OutboxScaffoldResult
+  | OutboxWorkerScaffoldResult
   | PageScaffoldResult
   | PolicyScaffoldResult;
 
@@ -40,6 +45,7 @@ type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
   | ActionScaffoldConfig
   | OutboxScaffoldConfig
+  | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
   | PolicyScaffoldConfig;
 
@@ -188,6 +194,30 @@ Options:
       action: flags['action'] ?? '',
       topic: flags['topic'] ?? '',
       vertical: flags['vertical'] ?? '',
+    }),
+  },
+  'outbox-worker': {
+    flags: ['producer', 'topic', 'vertical', 'worker'],
+    generator: outboxWorkerGenerator,
+    help: `Usage: pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic>
+
+Generate one typed, owner-local Outbox Worker from a producer's published topic contract.
+
+Required flags:
+  --vertical <vertical>  Existing consumer vertical folder (lower-kebab-case)
+  --worker <worker>      Worker name (lower-kebab-case)
+  --producer <producer>  Existing producer vertical folder (lower-kebab-case)
+  --topic <topic>        Exact published lowercase dot-separated topic
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['producer', 'topic', 'vertical', 'worker'],
+    toConfig: (flags) => ({
+      producer: flags['producer'] ?? '',
+      topic: flags['topic'] ?? '',
+      vertical: flags['vertical'] ?? '',
+      worker: flags['worker'] ?? '',
     }),
   },
   policy: {

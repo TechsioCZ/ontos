@@ -2,13 +2,16 @@ import { readFile } from 'node:fs/promises';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   ACTION_GENERATOR_HEADER,
+  OUTBOX_CONTRACT_GENERATOR_HEADER,
   OUTBOX_SLOT_END,
   OUTBOX_SLOT_START,
+  asJsonObject,
   createMutation,
   discoverVertical,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   isMissingFileError,
+  patchJsonObjectProperty,
   requireCanonicalSlug,
   requireTopic,
   resolveContainedPath,
@@ -27,18 +30,15 @@ const renderOutboxMessage = (vertical: VerticalMetadata, action: string, topic: 
   const actionType = toPascalCase(action);
   const topicType = toPascalCase(topicToSlug(topic));
   const base = `${actionType}${topicType}Outbox`;
-  return `import { Schema } from 'effect';
-import type { OutboxMessage } from '@app/core-runtime';
+  const contractSubpath = `@app/${vertical.slug}/outbox/${topicToSlug(topic)}`;
+  return `import type { OutboxMessage } from '@app/core-runtime';
+import { OutboxPayloadSchema, outboxProducerModuleKey, outboxTopic } from '${contractSubpath}';
+import type { OutboxPayload } from '${contractSubpath}';
 
-export const ${base}Payload = Schema.Struct({
-  data: Schema.Json,
-});
-export type ${base}Payload = Schema.Schema.Type<
-  typeof ${base}Payload
->;
-
-export const ${base}Topic = '${topic}' as const;
-export const ${base}ProducerModuleKey = '${vertical.appId}' as const;
+export const ${base}Payload = OutboxPayloadSchema;
+export type ${base}Payload = OutboxPayload;
+export const ${base}ProducerModuleKey = outboxProducerModuleKey;
+export const ${base}Topic = outboxTopic;
 
 export const create${base}Message = (
   payload: ${base}Payload,
@@ -49,6 +49,21 @@ export const create${base}Message = (
 });
 `;
 };
+
+const renderOutboxContract = (vertical: VerticalMetadata, topic: string): string =>
+  `${OUTBOX_CONTRACT_GENERATOR_HEADER}
+// @ontos-outbox-producer ${vertical.appId}
+// @ontos-outbox-topic ${topic}
+import { Schema } from 'effect';
+
+export const OutboxPayloadSchema = Schema.Struct({
+  data: Schema.Json,
+});
+export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
+
+export const outboxTopic = '${topic}' as const;
+export const outboxProducerModuleKey = '${vertical.appId}' as const;
+`;
 
 export const planOutboxScaffold = async (
   workspaceRoot: string,
@@ -101,6 +116,18 @@ export const planOutboxScaffold = async (
     'actions',
     `${action}.${topicSlug}.outbox-message.ts`,
   );
+  const contractPath = resolveContainedPath(
+    workspaceRoot,
+    'verticals',
+    vertical.slug,
+    'shared',
+    'outbox',
+    `${topicSlug}.ts`,
+  );
+  const contractMutation = await createMutation(
+    contractPath,
+    renderOutboxContract(vertical, topic),
+  );
   const messageMutation = await createMutation(
     messagePath,
     renderOutboxMessage(vertical, action, topic),
@@ -124,9 +151,31 @@ export const planOutboxScaffold = async (
   if (actionMutation === undefined) {
     throw new Error('Outbox Message Action export patch unexpectedly made no change');
   }
-  const mutations = [messageMutation, actionMutation];
+  const exportsValue = asJsonObject(
+    vertical.packageJson['exports'],
+    `vertical ${vertical.slug} package exports`,
+  );
+  const contractExport = `./outbox/${topicSlug}`;
+  if (exportsValue[contractExport] !== undefined) {
+    throw new Error(`Outbox contract export ${contractExport} already exists`);
+  }
+  const patchedExports = Object.fromEntries(
+    Object.entries({
+      ...exportsValue,
+      [contractExport]: `./shared/outbox/${topicSlug}.ts`,
+    }).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+  const packageMutation = updateMutation(
+    vertical.packagePath,
+    vertical.packageContent,
+    patchJsonObjectProperty(vertical.packageContent, [], 'exports', patchedExports),
+  );
+  if (packageMutation === undefined) {
+    throw new Error('Outbox Message package export patch unexpectedly made no change');
+  }
+  const mutations = [contractMutation, messageMutation, actionMutation, packageMutation];
   ensureUniqueMutationPaths(mutations);
-  return { mutations, result: { messagePath } };
+  return { mutations, result: { contractPath, messagePath } };
 };
 
 export default createCodesmithGenerator(planOutboxScaffold);

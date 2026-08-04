@@ -73,6 +73,8 @@ This increment resolves uncertain commits through an explicit server-side commit
 
 An Action handler may instantiate zero or more Domain Events. Adding a Domain Event returns an execution-local opaque reference. An Outbox Message may be added only with a Domain Event reference registered by that same execution. The Action runtime persists each message with a database foreign key to its Domain Event in the same business transaction. Orphan references and references from another execution are rejected before persistence.
 
+Cross-MicroVertical consumers use only the message producer's published schema-only contract and the post-commit lifecycle defined by [Outbox Worker Architecture](./OUTBOX_WORKERS.md). Worker execution never joins or extends the originating Action transaction.
+
 ## Public Action Failures
 
 Authentication, permission, policy, and domain rejections remain typed Effect errors throughout the Action lifecycle. At the Backend for Frontend (BFF) endpoint, map them exhaustively to the declared public error schemas and status codes in [Effect Error and HTTP Contracts](./ERRORS.md). Do not let an Action error escape as an exception, an untyped rejected Promise, or an ad hoc HTTP response.

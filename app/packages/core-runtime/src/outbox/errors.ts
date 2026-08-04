@@ -1,0 +1,68 @@
+/* eslint-disable max-classes-per-file -- The typed Outbox runtime error union is intentionally co-located. */
+import { Schema } from 'effect';
+
+const reason = { reason: Schema.String } as const;
+
+export class OutboxWorkerDescriptorError extends Schema.TaggedErrorClass<OutboxWorkerDescriptorError>()(
+  'OutboxWorkerDescriptorError',
+  { code: Schema.Literal('outbox_worker_descriptor_invalid'), ...reason },
+) {}
+
+export class OutboxPayloadDecodeError extends Schema.TaggedErrorClass<OutboxPayloadDecodeError>()(
+  'OutboxPayloadDecodeError',
+  { code: Schema.Literal('outbox_payload_invalid'), ...reason },
+) {}
+
+export class OutboxPersistenceError extends Schema.TaggedErrorClass<OutboxPersistenceError>()(
+  'OutboxPersistenceError',
+  { code: Schema.Literal('outbox_persistence_failed'), ...reason },
+) {}
+
+export class OutboxClaimLostError extends Schema.TaggedErrorClass<OutboxClaimLostError>()(
+  'OutboxClaimLostError',
+  { code: Schema.Literal('outbox_claim_lost'), ...reason },
+) {}
+
+export class OutboxModuleStateError extends Schema.TaggedErrorClass<OutboxModuleStateError>()(
+  'OutboxModuleStateError',
+  { code: Schema.Literal('outbox_consumer_module_inactive'), ...reason },
+) {}
+
+export class OutboxHandlerExecutionError extends Schema.TaggedErrorClass<OutboxHandlerExecutionError>()(
+  'OutboxHandlerExecutionError',
+  { code: Schema.Literal('outbox_handler_execution_failed'), ...reason },
+) {}
+
+export class OutboxPollerConfigError extends Schema.TaggedErrorClass<OutboxPollerConfigError>()(
+  'OutboxPollerConfigError',
+  { code: Schema.Literal('outbox_poller_config_invalid'), ...reason },
+) {}
+
+export type OutboxWorkerError =
+  | OutboxClaimLostError
+  | OutboxHandlerExecutionError
+  | OutboxModuleStateError
+  | OutboxPayloadDecodeError
+  | OutboxPollerConfigError
+  | OutboxPersistenceError
+  | OutboxWorkerDescriptorError;
+
+const persistenceCauses = new WeakMap<OutboxPersistenceError, unknown>();
+
+export const outboxPersistenceError = (cause: unknown): OutboxPersistenceError => {
+  const failure = new OutboxPersistenceError({
+    code: 'outbox_persistence_failed',
+    reason: 'The Outbox Worker persistence operation failed',
+  });
+  persistenceCauses.set(failure, cause);
+  return failure;
+};
+
+export const getOutboxPersistenceCause = (failure: OutboxPersistenceError): unknown =>
+  persistenceCauses.get(failure);
+
+export const sanitizeOutboxErrorMessage = (message: string): string =>
+  message
+    .replaceAll(/[\r\n\t]+/gu, ' ')
+    .trim()
+    .slice(0, 500) || 'Outbox Worker processing failed';

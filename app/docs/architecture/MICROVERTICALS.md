@@ -21,7 +21,7 @@ The vertical seam between MicroVerticals is non-negotiable:
 - Shared packages may contain stable contracts and genuinely cross-cutting infrastructure. They must not become a back door for sharing MicroVertical business logic or persistence models.
 - Executable Policies owned by a MicroVertical are private, owner-local business behavior. Another MicroVertical must not import, register, or execute them. The only cross-module Policy reference exception is the narrow global Policy contract implemented and owned by Shell/Core; an Action may reference a global Policy without gaining access to Core repositories or another module's services.
 - Synchronous communication may cross the seam only through the provider's published, contract-derived Effect client.
-- Asynchronous communication may cross the seam only through Outbox Messages and their published schemas.
+- Asynchronous communication may cross the seam only through Outbox Messages and their published schemas, using the lifecycle in [Outbox Worker Architecture](./OUTBOX_WORKERS.md).
 - Every synchronous request must propagate tenant, principal or service identity, and correlation context. The receiving MicroVertical authenticates and authorizes the request independently; co-location never implies trust.
 - Contract adapters must have equivalent observable behavior whether communication is in-process or over the network.
 

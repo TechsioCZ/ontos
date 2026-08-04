@@ -149,5 +149,50 @@ export type {
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
 // </generated-core-action-exports>
 
+export { defineOutboxWorker } from './outbox/definition.ts';
+export type {
+  AnyOutboxWorkerRegistration,
+  OutboxWorkerDescriptor,
+  OutboxWorkerHandler,
+  OutboxWorkerHandlerContext,
+  OutboxWorkerRegistration,
+  OutboxWorkerRequirements,
+  OutboxWorkerRetryPolicy,
+  OutboxWorkerSubscription,
+} from './outbox/definition.ts';
+export {
+  OutboxClaimLostError,
+  OutboxHandlerExecutionError,
+  OutboxModuleStateError,
+  OutboxPayloadDecodeError,
+  OutboxPollerConfigError,
+  OutboxPersistenceError,
+  OutboxWorkerDescriptorError,
+} from './outbox/errors.ts';
+export type { OutboxWorkerError } from './outbox/errors.ts';
+export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
+export type {
+  OutboxCycleRunner,
+  OutboxPollingConfig,
+  ParseOutboxPollingConfigInput,
+  RunOutboxPollingLoopInput,
+} from './outbox/poller.ts';
+export {
+  OutboxWorkerInfrastructureLive,
+  runOutboxWorkerProcess,
+  startOutboxWorkerProcess,
+} from './outbox/process.ts';
+export type {
+  RunOutboxWorkerProcessInput,
+  StartOutboxWorkerProcessInput,
+} from './outbox/process.ts';
+export { OutboxRuntime, OutboxRuntimeLive, runOutboxCycle } from './outbox/runtime.ts';
+export type {
+  OutboxCycleError,
+  OutboxCycleResult,
+  OutboxRuntimeService,
+  RunOutboxCycleInput,
+} from './outbox/runtime.ts';
+
 // <generated-global-policy-exports>
 // </generated-global-policy-exports>

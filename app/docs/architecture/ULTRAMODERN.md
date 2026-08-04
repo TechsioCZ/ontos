@@ -7,6 +7,7 @@ Follow these rules when writing code with MicroVerticals:
 - Keep pure synchronous transformations as plain TypeScript when Effect adds no behavior. Reusable presentation components may remain ordinary React; their route, feature, and data integration code must use the Effect-based BFF client.
 - Model expected failures as tagged, typed Effect errors. Do not throw, reject a Promise, return an untyped error object, or collapse an error into a string where the Effect error channel can represent it.
 - Follow [Effect Error and HTTP Contracts](./ERRORS.md) for every BFF endpoint and client.
+- Follow [Outbox Worker Architecture](./OUTBOX_WORKERS.md) for generated asynchronous consumers, typed payload decoding, delivery leases, retries, and checkpoints.
 - Always prefer direct object, method, and variable references over string constants.
 - Do not create an abstraction without a concrete reuse case.
 - Reuse existing concepts and files first. Add a concept, class, variable, or file only when the current requirement, documented architecture, or code readability requires it.

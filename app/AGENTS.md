@@ -13,6 +13,7 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 - **Actions:** Drive every state change through a typed Action and preserve its required lifecycle, transaction, event, and evidence rules. Follow [Action Execution](./docs/architecture/ACTIONS.md).
 - **Effect errors:** Use Effect end to end for application behavior, BFF contracts and clients, and expected failures. Every backend error response must come from a declared typed Effect error with the correct HTTP status. Follow [Effect Error and HTTP Contracts](./docs/architecture/ERRORS.md).
 - **Database access:** Keep PostgreSQL access typed through Drizzle schema references and query builders inside Effect services. Follow [Database Architecture](./docs/architecture/DATABASE.md).
+- **Outbox Workers:** Consume cross-MicroVertical facts only through published schema contracts and the Core-owned delivery runtime. Follow [Outbox Worker Architecture](./docs/architecture/OUTBOX_WORKERS.md).
 
 ### Task-Specific Rules
 
