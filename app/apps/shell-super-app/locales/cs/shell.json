@@ -35,6 +35,7 @@
       "switcher": "Jazyk"
     },
     "login": {
+      "back": "← Zpět na hlavní stránku",
       "error": {
         "forbidden": "Tento účet nemá přístup do OntOS.",
         "internal": "Přihlášení selhalo. Zkuste to znovu.",

@@ -20,6 +20,7 @@ const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => 
 }));
 
 const translations: Record<string, string> = {
+  'shell.login.back': '← Back to the home page',
   'shell.login.field.login': 'Login',
   'shell.login.field.password': 'Password',
   'shell.login.required.login': 'Enter your login.',
@@ -81,6 +82,9 @@ test('shows the required login controls through the UI kit', () => {
   expect(password.getAttribute('autocomplete')).toBe('current-password');
   expect(password.hasAttribute('required')).toBe(true);
   expect(submit.getAttribute('type')).toBe('submit');
+  expect(screen.getByRole('link', { name: '← Back to the home page' }).getAttribute('href')).toBe(
+    '/en',
+  );
 });
 
 test('shows both field errors and one Toast when both values are missing', () => {

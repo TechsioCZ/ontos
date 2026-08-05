@@ -19,6 +19,7 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 
 - All implementation work: [UltraModern.js Implementation Rules](./docs/architecture/ULTRAMODERN.md)
 - User-facing frontend work: [Frontend Architecture Rules](./docs/frontend/FRONTEND.md)
+- When using Figma, follow: [Figma Rules](./docs/frontend/FIGMA.md)
 
 ### Mandatory Codesmith Generators
 

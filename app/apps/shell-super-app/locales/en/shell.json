@@ -35,6 +35,7 @@
       "switcher": "Language"
     },
     "login": {
+      "back": "← Back to the home page",
       "error": {
         "forbidden": "This account is not permitted to access OntOS.",
         "internal": "Login failed. Try again.",

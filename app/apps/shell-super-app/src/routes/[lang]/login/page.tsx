@@ -2,6 +2,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { useRef, useState } from 'react';
@@ -109,47 +110,54 @@ export default function LoginPage() {
   return (
     <>
       <UltramodernRouteHead />
-      <main className="flex min-h-screen items-center justify-center bg-(--color-page-bg) px-4 py-10 text-(--color-page-fg)">
-        <section className="w-full max-w-md bg-(--color-surface) p-6 sm:p-8">
-          <h1 className="text-2xl font-bold">{t('shell.login.title')}</h1>
-          <form className="mt-8 flex flex-col gap-6" noValidate onSubmit={handleSubmit}>
-            <FormInput
-              aria-invalid={validation.loginMissing || undefined}
-              autoComplete="username"
-              helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
-              id="login"
-              label={t('shell.login.field.login')}
-              name="login"
-              ref={loginRef}
-              required
-              type="text"
-              validateStatus={validation.loginMissing ? 'error' : 'default'}
-            />
-            <FormInput
-              aria-invalid={validation.passwordMissing || undefined}
-              autoComplete="current-password"
-              helpText={validation.passwordMissing ? t('shell.login.required.password') : undefined}
-              id="password"
-              label={t('shell.login.field.password')}
-              name="password"
-              ref={passwordRef}
-              required
-              type="password"
-              validateStatus={validation.passwordMissing ? 'error' : 'default'}
-            />
-            <Button
-              block
-              disabled={submitting}
-              isLoading={submitting}
-              loadingText={t('shell.login.pending')}
-              size="md"
-              theme="solid"
-              type="submit"
-              variant="primary"
-            >
-              {t('shell.login.submit')}
-            </Button>
-          </form>
+      <main className="flex min-h-screen items-center justify-center bg-(--color-page-bg) px-4 py-10 text-(--color-page-fg) md:px-20 md:pt-[120px] md:pb-10">
+        <section className="flex w-full max-w-[360px] flex-col">
+          <Link className="self-center" href={`/${language}`}>
+            {t('shell.login.back')}
+          </Link>
+          <div className="mt-6">
+            <h1 className="text-2xl font-bold">{t('shell.login.title')}</h1>
+            <form className="mt-4 flex flex-col gap-4" noValidate onSubmit={handleSubmit}>
+              <FormInput
+                aria-invalid={validation.loginMissing || undefined}
+                autoComplete="username"
+                helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
+                id="login"
+                label={t('shell.login.field.login')}
+                name="login"
+                ref={loginRef}
+                required
+                type="text"
+                validateStatus={validation.loginMissing ? 'error' : 'default'}
+              />
+              <FormInput
+                aria-invalid={validation.passwordMissing || undefined}
+                autoComplete="current-password"
+                helpText={
+                  validation.passwordMissing ? t('shell.login.required.password') : undefined
+                }
+                id="password"
+                label={t('shell.login.field.password')}
+                name="password"
+                ref={passwordRef}
+                required
+                type="password"
+                validateStatus={validation.passwordMissing ? 'error' : 'default'}
+              />
+              <Button
+                block
+                disabled={submitting}
+                isLoading={submitting}
+                loadingText={t('shell.login.pending')}
+                size="md"
+                theme="solid"
+                type="submit"
+                variant="primary"
+              >
+                {t('shell.login.submit')}
+              </Button>
+            </form>
+          </div>
         </section>
       </main>
       <Toaster />
