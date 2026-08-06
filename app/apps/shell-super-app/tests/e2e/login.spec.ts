@@ -21,6 +21,8 @@ test('renders the exact anonymous English and Czech home states', ({ page }) =>
         expect(page.getByRole('link')).toHaveCount(1),
         expect(page.getByRole('button')).toHaveCount(0),
         expect(page.getByRole('checkbox')).toHaveCount(0),
+        expect(page.locator('header[aria-label]')).toHaveCount(0),
+        expect(page.getByRole('complementary')).toHaveCount(0),
         expect(page.getByRole('region')).toHaveCount(0),
       ]),
     )
@@ -31,9 +33,27 @@ test('renders the exact anonymous English and Czech home states', ({ page }) =>
         expect(page.getByRole('link')).toHaveCount(1),
         expect(page.getByRole('button')).toHaveCount(0),
         expect(page.getByRole('checkbox')).toHaveCount(0),
+        expect(page.locator('header[aria-label]')).toHaveCount(0),
+        expect(page.getByRole('complementary')).toHaveCount(0),
         expect(page.getByRole('region')).toHaveCount(0),
       ]),
     ));
+
+test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({
+  page,
+}) => {
+  const expectDashboardAbsent = () =>
+    Promise.all([
+      expect(page.locator('header[aria-label]')).toHaveCount(0),
+      expect(page.getByRole('complementary')).toHaveCount(0),
+      expect(page.locator('button[aria-haspopup="menu"]')).toHaveCount(0),
+    ]);
+
+  await page.goto('/en/login');
+  await expectDashboardAbsent();
+  await page.goto('/cs/login');
+  await expectDashboardAbsent();
+});
 
 test('shows one generic error for invalid English credentials', ({ page }) =>
   page
@@ -85,8 +105,10 @@ test('logs a user in without any server-error response', async ({ page }, testIn
 
   expect(signInResponse.status(), 'The sign-in endpoint should accept valid credentials').toBe(200);
   await expect(page).toHaveURL(/\/en\/?$/u);
-  await expect(page.getByText('E2E user')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible();
   await expect(page.getByText(e2eCredentials.email)).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
+  await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
@@ -99,25 +121,27 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(() => expect(page).toHaveURL(/\/en\/?$/u))
     .then(() =>
       Promise.all([
-        expect(page.getByText('E2E user')).toBeVisible(),
+        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
         expect(page.getByText(e2eCredentials.email)).toBeVisible(),
-        expect(page.getByRole('button', { name: 'Logout' })).toHaveCount(1),
-        expect(page.getByRole('link')).toHaveCount(0),
+        expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
       ]),
     )
     .then(() => page.reload())
-    .then(() => expect(page.getByRole('button', { name: 'Logout' })).toBeVisible())
-    .then(() => page.getByRole('button', { name: 'Logout' }).click())
+    .then(() => expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
+    .then(() => page.getByRole('button', { name: 'E2E user' }).click())
+    .then(() => page.getByRole('menuitem', { name: 'Logout' }).click())
     .then(() =>
       Promise.all([
         expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
         expect(page.getByRole('button')).toHaveCount(0),
+        expect(page.locator('header[aria-label]')).toHaveCount(0),
+        expect(page.getByRole('complementary')).toHaveCount(0),
       ]),
     )
     .then(() => page.reload())
     .then(() => expect(page.getByRole('link', { name: 'Login' })).toBeVisible()));
 
-test('keeps the Czech authenticated state on logout failure and succeeds on retry', ({ page }) => {
+test('keeps keyboard logout operable after a Czech failure and succeeds on retry', ({ page }) => {
   let failLogout = true;
 
   return page
@@ -137,15 +161,30 @@ test('keeps the Czech authenticated state on logout failure and succeeds on retr
         return route.continue();
       }),
     )
-    .then(() => page.getByRole('button', { name: 'Odhlásit se' }).click())
+    .then(() => page.getByRole('button', { name: 'E2E user' }).focus())
+    .then(() => page.keyboard.press('Enter'))
+    .then(() =>
+      expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
+        'data-highlighted',
+        '',
+      ),
+    )
+    .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
     .then(() =>
       Promise.all([
-        expect(page.getByText('E2E user')).toBeVisible(),
+        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
         expect(page.getByText('Odhlášení selhalo. Zkuste to znovu.')).toBeVisible(),
-        expect(page.getByRole('button', { name: 'Odhlásit se' })).toBeVisible(),
+        expect(page.getByRole('button', { name: 'E2E user' })).toBeFocused(),
       ]),
     )
-    .then(() => page.getByRole('button', { name: 'Odhlásit se' }).click())
+    .then(() => page.keyboard.press('Enter'))
+    .then(() =>
+      expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
+        'data-highlighted',
+        '',
+      ),
+    )
+    .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
     .then(() => expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible());
 });
 
@@ -162,3 +201,24 @@ test('keeps the login form keyboard- and mobile-usable', ({ page }) =>
         expect(page.getByText('Zadejte heslo.')).toBeInViewport(),
       ]),
     ));
+
+test('keeps the authenticated dashboard reachable without horizontal overflow at 375px', async ({
+  page,
+}) => {
+  await page.setViewportSize({ height: 667, width: 375 });
+  await page.goto('/en/login');
+  await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
+  await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await page.getByRole('button', { name: 'Login' }).click();
+  await expect(page).toHaveURL(/\/en\/?$/u);
+
+  await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
+  await expect(page.locator('header[aria-label="Dashboard header"]')).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
+  await expect(page.getByRole('region', { name: 'Authenticated identity' })).toBeInViewport();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+});

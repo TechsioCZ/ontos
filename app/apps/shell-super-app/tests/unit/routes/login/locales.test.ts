@@ -41,3 +41,29 @@ test('keeps the Czech and English active-module translation contracts aligned', 
   expect(en.shell.modules.state.active).toBe('Active');
   expect(cs.shell.modules.state.active).toBe('Aktivní');
 });
+
+test('keeps the exact Czech and English dashboard translation contracts aligned', () => {
+  expect(Object.keys(cs.shell.dashboard).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard).toSorted(),
+  );
+  expect(Object.keys(cs.shell.dashboard.account).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard.account).toSorted(),
+  );
+  expect(Object.keys(cs.shell.dashboard.header).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard.header).toSorted(),
+  );
+  expect(Object.keys(cs.shell.dashboard.home).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard.home).toSorted(),
+  );
+  expect(Object.keys(cs.shell.dashboard.navigation).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard.navigation).toSorted(),
+  );
+  expect(Object.keys(cs.shell.dashboard.sidebar).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard.sidebar).toSorted(),
+  );
+  expect(Object.keys(cs.shell.dashboard.tenant).toSorted()).toEqual(
+    Object.keys(en.shell.dashboard.tenant).toSorted(),
+  );
+  expect(en.shell.dashboard.home.title).toBe('Home');
+  expect(cs.shell.dashboard.home.title).toBe('Domů');
+});

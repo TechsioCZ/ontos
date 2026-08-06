@@ -18,6 +18,29 @@
     "boundaries": {
       "toggle": "zobrazit hranice týmů"
     },
+    "dashboard": {
+      "account": {
+        "label": "Nabídka účtu"
+      },
+      "brand": "OntOS",
+      "header": {
+        "label": "Záhlaví přehledu"
+      },
+      "home": {
+        "title": "Domů"
+      },
+      "navigation": {
+        "home": "Domů",
+        "label": "Navigace přehledu"
+      },
+      "sidebar": {
+        "label": "Postranní panel přehledu"
+      },
+      "tenant": {
+        "empty": "Přepínání tenantů není dostupné",
+        "label": "Tenant"
+      }
+    },
     "hero": {
       "cardOne": "Přidejte první business vertical příkazem create <domain> --vertical, až ho opravdu potřebujete.",
       "cardOneKicker": "Verticaly",

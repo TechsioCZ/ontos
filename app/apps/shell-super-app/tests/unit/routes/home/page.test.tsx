@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactNode } from 'react';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
 
@@ -19,6 +20,15 @@ const translations: Record<string, string> = {
   'shell.auth.logout.action': 'Logout',
   'shell.auth.logout.failed': 'Logout failed. Try again.',
   'shell.auth.logout.pending': 'Logging out…',
+  'shell.dashboard.account.label': 'Account menu',
+  'shell.dashboard.brand': 'OntOS',
+  'shell.dashboard.header.label': 'Dashboard header',
+  'shell.dashboard.home.title': 'Home',
+  'shell.dashboard.navigation.home': 'Home',
+  'shell.dashboard.navigation.label': 'Dashboard navigation',
+  'shell.dashboard.sidebar.label': 'Dashboard sidebar',
+  'shell.dashboard.tenant.empty': 'Tenant switching unavailable',
+  'shell.dashboard.tenant.label': 'Tenant',
   'shell.modules.active.item': '{{moduleKey}}: {{state}}',
   'shell.modules.active.label': 'Active MicroVerticals',
   'shell.modules.active.unavailable': 'Active MicroVerticals are temporarily unavailable.',
@@ -26,6 +36,19 @@ const translations: Record<string, string> = {
 };
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  Link: ({
+    children,
+    to,
+    ...props
+  }: {
+    children: ReactNode;
+    to: string;
+    [key: string]: unknown;
+  }) => (
+    <a href={`/en${to === '/' ? '/' : to}`} {...props}>
+      {children}
+    </a>
+  ),
   useLocalizedLocation: () => ({
     alternates: {
       cs: '/cs/',
@@ -91,18 +114,25 @@ test('anonymous home contains exactly one localized login link and no module lis
   expect(screen.getAllByRole('link')).toHaveLength(1);
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.queryByRole('list')).toBeNull();
+  expect(screen.queryByRole('complementary')).toBeNull();
+  expect(screen.queryByRole('banner')).toBeNull();
   expect(document.body.textContent?.trim()).toBe('Login');
 });
 
 test('authenticated home preserves identity and renders one ordered semantic active list', () => {
   render(<HomeView initialModel={authenticatedModel()} />);
 
-  expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+  expect(screen.getAllByText('Ada Lovelace')).toHaveLength(2);
   expect(screen.getByText('ada@example.test')).toBeTruthy();
   expect(screen.getByText('principal-1')).toBeTruthy();
   expect(screen.getByText('tenant-1')).toBeTruthy();
-  expect(screen.getAllByRole('button', { name: 'Logout' })).toHaveLength(1);
-  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Ada Lovelace' })).toBeTruthy();
+  expect(screen.getByRole('heading', { level: 1, name: 'Home' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/en/');
+  expect(screen.getByRole('link', { name: 'future-generated' }).getAttribute('href')).toBe(
+    '/en/future-generated',
+  );
+  expect(screen.getByRole('link', { name: 'testing1' }).getAttribute('href')).toBe('/en/testing1');
   const list = screen.getByRole('list', { name: 'Active MicroVerticals' });
   expect(list.querySelectorAll('li')).toHaveLength(2);
   expect([...list.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
@@ -126,7 +156,7 @@ test('zero active modules renders the same empty list without additional content
   const list = screen.getByRole('list', { name: 'Active MicroVerticals' });
   expect(list.querySelectorAll('li')).toHaveLength(0);
   expect(screen.queryByText('Active MicroVerticals are temporarily unavailable.')).toBeNull();
-  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.getAllByRole('link')).toHaveLength(1);
 });
 
 test('unavailable module read retains identity, an empty associated list, and localized feedback', () => {
@@ -139,12 +169,13 @@ test('unavailable module read retains identity, an empty associated list, and lo
     />,
   );
 
-  expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+  expect(screen.getAllByText('Ada Lovelace')).toHaveLength(2);
   const list = screen.getByRole('list', { name: 'Active MicroVerticals' });
   expect(list.querySelectorAll('li')).toHaveLength(0);
   expect(list.getAttribute('aria-describedby')).toBe('active-modules-unavailable');
   expect(screen.getByText('Active MicroVerticals are temporarily unavailable.')).toBeTruthy();
-  expect(screen.getAllByRole('button')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Ada Lovelace' })).toBeTruthy();
+  expect(screen.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeTruthy();
 });
 
 test('the list contains no inactive, foreign-tenant, or non-installed module values', () => {
@@ -169,11 +200,14 @@ test('successful logout removes identity and list together', async () => {
   const user = userEvent.setup();
   render(<HomeView initialModel={authenticatedModel()} />);
 
-  await user.click(screen.getByRole('button', { name: 'Logout' }));
+  await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
   expect(signOutMock).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('link', { name: 'Login' })).toBeTruthy();
   expect(screen.queryByRole('button')).toBeNull();
   expect(screen.queryByRole('list')).toBeNull();
+  expect(screen.queryByRole('complementary')).toBeNull();
+  expect(screen.queryByRole('banner')).toBeNull();
 });
 
 test('failed logout preserves identity and list while exposing the existing retry', async () => {
@@ -181,9 +215,35 @@ test('failed logout preserves identity and list while exposing the existing retr
   runEffectRequestMock.mockImplementationOnce(() => Promise.reject(new Error('unavailable')));
   render(<HomeView initialModel={authenticatedModel()} />);
 
-  await user.click(screen.getByRole('button', { name: 'Logout' }));
-  expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
+  expect(screen.getAllByText('Ada Lovelace')).toHaveLength(2);
   expect(screen.getByText('Logout failed. Try again.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Logout' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Ada Lovelace' })).toBeTruthy();
   expect(screen.getByRole('list', { name: 'Active MicroVerticals' })).toBeTruthy();
+
+  await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
+  expect(signOutMock).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('link', { name: 'Login' })).toBeTruthy();
+});
+
+test('pending logout keeps one disabled command and prevents duplicate invocation', async () => {
+  const logoutRequest = Promise.withResolvers<{ signedOut: true }>();
+  runEffectRequestMock.mockImplementationOnce(() => logoutRequest.promise);
+  const user = userEvent.setup();
+  render(<HomeView initialModel={authenticatedModel()} />);
+
+  await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
+  await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
+  expect(signOutMock).toHaveBeenCalledTimes(1);
+
+  await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
+  const pendingCommand = await screen.findByRole('menuitem', { name: 'Logging out…' });
+  expect(pendingCommand.getAttribute('aria-disabled')).toBe('true');
+  await user.click(pendingCommand);
+  expect(signOutMock).toHaveBeenCalledTimes(1);
+
+  logoutRequest.resolve({ signedOut: true });
+  expect(await screen.findByRole('link', { name: 'Login' })).toBeTruthy();
 });

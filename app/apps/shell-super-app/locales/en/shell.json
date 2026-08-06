@@ -18,6 +18,29 @@
     "boundaries": {
       "toggle": "show team boundaries"
     },
+    "dashboard": {
+      "account": {
+        "label": "Account menu"
+      },
+      "brand": "OntOS",
+      "header": {
+        "label": "Dashboard header"
+      },
+      "home": {
+        "title": "Home"
+      },
+      "navigation": {
+        "home": "Home",
+        "label": "Dashboard navigation"
+      },
+      "sidebar": {
+        "label": "Dashboard sidebar"
+      },
+      "tenant": {
+        "empty": "Tenant switching unavailable",
+        "label": "Tenant"
+      }
+    },
     "hero": {
       "cardOne": "Add the first business vertical with create <domain> --vertical when the product needs one.",
       "cardOneKicker": "Verticals",
