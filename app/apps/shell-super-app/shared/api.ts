@@ -45,6 +45,23 @@ export interface ActiveModule {
 
 export type ActiveModules = readonly ActiveModule[];
 
+export interface AvailableTenant {
+  readonly name: string;
+  readonly tenantId: string;
+}
+
+export interface AvailableTenantsResponse {
+  readonly tenants: readonly AvailableTenant[];
+}
+
+export interface SwitchTenantPayload {
+  readonly tenantId: string;
+}
+
+export interface SwitchTenantResponse {
+  readonly selectedTenantId: string;
+}
+
 interface ProblemDetails {
   readonly detail: string;
   readonly status: number;
@@ -92,6 +109,30 @@ export type ActiveModulesProblem =
   | ActiveModulesUnavailableProblem
   | ActiveModulesInternalProblem;
 
+export interface TenantAuthenticationRequiredProblem extends ProblemDetails {
+  readonly _tag: 'TenantAuthenticationRequiredProblem';
+}
+
+export interface TenantAccessForbiddenProblem extends ProblemDetails {
+  readonly _tag: 'TenantAccessForbiddenProblem';
+}
+
+export interface TenantCapabilityUnavailableProblem extends ProblemDetails {
+  readonly _tag: 'TenantCapabilityUnavailableProblem';
+  readonly retryable: true;
+}
+
+export interface TenantInternalProblem extends ProblemDetails {
+  readonly _tag: 'TenantInternalProblem';
+}
+
+export type AvailableTenantsProblem =
+  | TenantAuthenticationRequiredProblem
+  | TenantCapabilityUnavailableProblem
+  | TenantInternalProblem;
+
+export type SwitchTenantProblem = AvailableTenantsProblem | TenantAccessForbiddenProblem;
+
 export const SafeAuthenticatedIdentitySchema: Schema.Codec<SafeAuthenticatedIdentity> =
   Schema.Struct({
     displayName: Schema.String,
@@ -133,6 +174,27 @@ export const ActiveModuleSchema: Schema.Codec<ActiveModule> = Schema.Struct({
 });
 
 export const ActiveModulesSchema: Schema.Codec<ActiveModules> = Schema.Array(ActiveModuleSchema);
+
+const TenantIdSchema = Schema.String.check(Schema.isUUID());
+
+export const AvailableTenantSchema: Schema.Codec<AvailableTenant> = Schema.Struct({
+  name: Schema.String,
+  tenantId: TenantIdSchema,
+});
+
+export const AvailableTenantsResponseSchema: Schema.Codec<AvailableTenantsResponse> = Schema.Struct(
+  {
+    tenants: Schema.Array(AvailableTenantSchema),
+  },
+);
+
+export const SwitchTenantPayloadSchema: Schema.Codec<SwitchTenantPayload> = Schema.Struct({
+  tenantId: TenantIdSchema,
+});
+
+export const SwitchTenantResponseSchema: Schema.Codec<SwitchTenantResponse> = Schema.Struct({
+  selectedTenantId: TenantIdSchema,
+});
 
 const authenticationProblemFields = {
   detail: Schema.String,
@@ -184,6 +246,29 @@ export const ActiveModulesInternalProblemSchema = Schema.TaggedStruct(
   authenticationProblemFields,
 ).pipe(HttpApiSchema.status(500));
 
+export const TenantAuthenticationRequiredProblemSchema = Schema.TaggedStruct(
+  'TenantAuthenticationRequiredProblem',
+  authenticationProblemFields,
+).pipe(HttpApiSchema.status(401));
+
+export const TenantAccessForbiddenProblemSchema = Schema.TaggedStruct(
+  'TenantAccessForbiddenProblem',
+  authenticationProblemFields,
+).pipe(HttpApiSchema.status(403));
+
+export const TenantCapabilityUnavailableProblemSchema = Schema.TaggedStruct(
+  'TenantCapabilityUnavailableProblem',
+  {
+    ...authenticationProblemFields,
+    retryable: Schema.Literal(true),
+  },
+).pipe(HttpApiSchema.status(503));
+
+export const TenantInternalProblemSchema = Schema.TaggedStruct(
+  'TenantInternalProblem',
+  authenticationProblemFields,
+).pipe(HttpApiSchema.status(500));
+
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
     HttpApiGroup.make('authentication')
@@ -223,6 +308,31 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       ),
   )
   .add(
+    HttpApiGroup.make('tenants')
+      .add(
+        HttpApiEndpoint.get('availableTenants', '/auth/tenants', {
+          error: [
+            TenantAuthenticationRequiredProblemSchema,
+            TenantCapabilityUnavailableProblemSchema,
+            TenantInternalProblemSchema,
+          ],
+          success: AvailableTenantsResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('switchTenant', '/auth/tenant/switch', {
+          error: [
+            TenantAuthenticationRequiredProblemSchema,
+            TenantAccessForbiddenProblemSchema,
+            TenantCapabilityUnavailableProblemSchema,
+            TenantInternalProblemSchema,
+          ],
+          payload: SwitchTenantPayloadSchema,
+          success: SwitchTenantResponseSchema,
+        }),
+      ),
+  )
+  .add(
     HttpApiGroup.make('modules').add(
       HttpApiEndpoint.get('activeModules', '/modules/active', {
         error: [
@@ -239,9 +349,11 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
 export const shellAuthenticationApiContract = {
   activeModulesPath: '/shell-super-app-api/modules/active',
   apiPrefix: '/shell-super-app-api',
+  availableTenantsPath: '/shell-super-app-api/auth/tenants',
   currentSessionPath: '/shell-super-app-api/auth/session',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
   signInPath: '/shell-super-app-api/auth/sign-in',
   signOutPath: '/shell-super-app-api/auth/sign-out',
+  switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
 } as const;

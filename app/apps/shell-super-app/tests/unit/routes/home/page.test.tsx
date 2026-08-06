@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import { HomeView } from '../../../../src/routes/[lang]/page.tsx';
 import type { HomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
+import type { SwitchTenantClientError } from '../../../../src/api/auth-client.ts';
 
-const { runEffectRequestMock, signOutMock } = rstest.hoisted(() => ({
-  runEffectRequestMock: rstest.fn(() => Promise.resolve({ signedOut: true })),
-  signOutMock: rstest.fn(() => ({ operation: 'signOut' })),
-}));
+const { navigateMock, runEffectRequestMock, signOutMock, switchTenantMock } = rstest.hoisted(
+  () => ({
+    navigateMock: rstest.fn(),
+    runEffectRequestMock: rstest.fn(),
+    signOutMock: rstest.fn(),
+    switchTenantMock: rstest.fn(),
+  }),
+);
 
 const translations: Record<string, string> = {
   'shell.auth.identity.displayName': 'Name',
@@ -27,8 +33,10 @@ const translations: Record<string, string> = {
   'shell.dashboard.navigation.home': 'Home',
   'shell.dashboard.navigation.label': 'Dashboard navigation',
   'shell.dashboard.sidebar.label': 'Dashboard sidebar',
-  'shell.dashboard.tenant.empty': 'Tenant switching unavailable',
-  'shell.dashboard.tenant.label': 'Tenant',
+  'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
+  'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
+  'shell.dashboard.tenant.pending': 'Switching tenant…',
+  'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
   'shell.modules.active.item': '{{moduleKey}}: {{state}}',
   'shell.modules.active.label': 'Active MicroVerticals',
   'shell.modules.active.unavailable': 'Active MicroVerticals are temporarily unavailable.',
@@ -68,9 +76,15 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   }),
 }));
 
+rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+  useLoaderData: rstest.fn(),
+  useNavigate: () => navigateMock,
+}));
+
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
   runEffectRequest: runEffectRequestMock,
   signOut: signOutMock,
+  switchTenant: switchTenantMock,
 }));
 
 const defaultActiveModules: Extract<HomePageModel, { state: 'authenticated' }>['activeModules'] = {
@@ -95,10 +109,22 @@ const authenticatedModel = (
     tenantId: 'tenant-1',
   },
   state: 'authenticated',
+  tenants: {
+    items: [
+      { name: 'Alpha tenant', tenantId: 'tenant-1' },
+      { name: 'Zeta tenant', tenantId: 'tenant-2' },
+    ],
+    state: 'available',
+  },
 });
 
 beforeEach(() => {
-  runEffectRequestMock.mockImplementation(() => Promise.resolve({ signedOut: true }));
+  navigateMock.mockResolvedValue();
+  runEffectRequestMock.mockImplementation((request: Effect.Effect<unknown, unknown>) =>
+    Effect.runPromise(request),
+  );
+  signOutMock.mockReturnValue(Effect.succeed({ signedOut: true }));
+  switchTenantMock.mockReturnValue(Effect.succeed({ selectedTenantId: 'tenant-2' }));
 });
 
 afterEach(() => {
@@ -246,4 +272,75 @@ test('pending logout keeps one disabled command and prevents duplicate invocatio
 
   logoutRequest.resolve({ signedOut: true });
   expect(await screen.findByRole('link', { name: 'Login' })).toBeTruthy();
+});
+
+test('dispatches one exact tenant target, keeps old context pending, and reloads after success', async () => {
+  const tenantRequest = Promise.withResolvers<{ selectedTenantId: string }>();
+  switchTenantMock.mockImplementationOnce(() => Effect.promise(() => tenantRequest.promise));
+  const user = userEvent.setup();
+  render(<HomeView initialModel={authenticatedModel()} />);
+
+  await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
+  await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
+  expect(switchTenantMock).toHaveBeenCalledWith({ tenantId: 'tenant-2' }, { locale: 'en' });
+  expect(switchTenantMock).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('Switching tenant…')).toBeTruthy();
+  expect(screen.getByText('tenant-1')).toBeTruthy();
+  expect(navigateMock).not.toHaveBeenCalled();
+  const pendingSelect = screen.getByRole('combobox', { name: 'Current tenant' });
+  expect(pendingSelect.hasAttribute('disabled')).toBe(true);
+  await user.click(pendingSelect);
+  expect(switchTenantMock).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(switchTenantMock.mock.calls)).not.toMatch(
+    /password|credential|session|token/iu,
+  );
+
+  tenantRequest.resolve({ selectedTenantId: 'tenant-2' });
+  await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
+});
+
+test('suppresses selecting the already current tenant', async () => {
+  const user = userEvent.setup();
+  render(<HomeView initialModel={authenticatedModel()} />);
+
+  await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
+  await user.click(await screen.findByRole('option', { name: 'Alpha tenant' }));
+
+  expect(switchTenantMock).not.toHaveBeenCalled();
+  expect(runEffectRequestMock).not.toHaveBeenCalled();
+});
+
+test('retains the prior tenant after failure and succeeds on retry', async () => {
+  switchTenantMock.mockImplementationOnce(() =>
+    Effect.fail({ _tag: 'HttpClientError' } as SwitchTenantClientError),
+  );
+  const user = userEvent.setup();
+  render(<HomeView initialModel={authenticatedModel()} />);
+
+  await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
+  await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
+  expect(await screen.findByText('Tenant switching failed. Try again.')).toBeTruthy();
+  expect(screen.getAllByText('Alpha tenant').length).toBeGreaterThan(0);
+  expect(screen.getByText('tenant-1')).toBeTruthy();
+  expect(navigateMock).not.toHaveBeenCalled();
+
+  await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
+  await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
+  await waitFor(() => expect(navigateMock).toHaveBeenCalledTimes(1));
+  expect(switchTenantMock).toHaveBeenCalledTimes(2);
+});
+
+test('reloads stale authenticated chrome when switching reports an anonymous session', async () => {
+  switchTenantMock.mockImplementationOnce(() =>
+    Effect.fail({
+      _tag: 'TenantAuthenticationRequiredProblem',
+    } as SwitchTenantClientError),
+  );
+  const user = userEvent.setup();
+  render(<HomeView initialModel={authenticatedModel()} />);
+
+  await user.click(screen.getByRole('combobox', { name: 'Current tenant' }));
+  await user.click(await screen.findByRole('option', { name: 'Zeta tenant' }));
+  await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '.' }));
+  expect(screen.queryByText('Tenant switching failed. Try again.')).toBeNull();
 });

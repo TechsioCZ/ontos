@@ -12,6 +12,11 @@ import {
 } from './principal-resolver-errors.ts';
 import type { PrincipalResolutionError } from './principal-resolver-errors.ts';
 
+export interface AvailableTenant {
+  readonly name: string;
+  readonly tenantId: string;
+}
+
 export interface ResolvedPrincipalIdentity {
   readonly displayName: string;
   readonly principalId: string;
@@ -19,18 +24,30 @@ export interface ResolvedPrincipalIdentity {
 }
 
 export interface PrincipalResolutionRecord {
+  readonly bindingCreatedAt: Date;
   readonly bindingRevokedAt: Date | null;
   readonly bindingStatus: string;
   readonly displayName: string;
   readonly principalId: string;
   readonly principalStatus: string;
   readonly tenantId: string;
+  readonly tenantName: string;
   readonly tenantStatus: string;
 }
 
-export const classifyPrincipalResolution = (
+const compareText = (left: string, right: string): number => {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+};
+
+const eligibleRecords = (
   records: readonly PrincipalResolutionRecord[],
-): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> => {
+): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolutionError> => {
   if (records.length === 0) {
     return Effect.fail(new PrincipalBindingMissingError());
   }
@@ -38,39 +55,89 @@ export const classifyPrincipalResolution = (
   const activeBindings = records.filter(
     (record) => record.bindingStatus === 'active' && record.bindingRevokedAt === null,
   );
-
   if (activeBindings.length === 0) {
     return Effect.fail(new PrincipalBindingInactiveError());
   }
 
-  if (activeBindings.length > 1) {
-    return Effect.fail(new PrincipalBindingAmbiguousError());
-  }
-
-  const [identity] = activeBindings;
-
-  if (identity === undefined) {
-    return Effect.fail(new PrincipalBindingMissingError());
-  }
-
-  if (identity.principalStatus !== 'active') {
+  const activePrincipals = activeBindings.filter((record) => record.principalStatus === 'active');
+  if (activePrincipals.length === 0) {
     return Effect.fail(new PrincipalInactiveError());
   }
 
-  if (identity.tenantStatus !== 'active') {
+  const activeTenants = activePrincipals.filter((record) => record.tenantStatus === 'active');
+  if (activeTenants.length === 0) {
     return Effect.fail(new TenantInactiveError());
   }
 
-  return Effect.succeed({
-    displayName: identity.displayName,
-    principalId: identity.principalId,
-    tenantId: identity.tenantId,
-  });
+  const tenantIds = new Set(activeTenants.map((record) => record.tenantId));
+  if (tenantIds.size !== activeTenants.length) {
+    return Effect.fail(new PrincipalBindingAmbiguousError());
+  }
+
+  return Effect.succeed(activeTenants);
 };
 
+const toResolvedIdentity = (record: PrincipalResolutionRecord): ResolvedPrincipalIdentity => ({
+  displayName: record.displayName,
+  principalId: record.principalId,
+  tenantId: record.tenantId,
+});
+
+export const classifyAvailableTenants = (
+  records: readonly PrincipalResolutionRecord[],
+): Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError> =>
+  eligibleRecords(records).pipe(
+    Effect.map((eligible) =>
+      eligible
+        .map((record) => ({ name: record.tenantName, tenantId: record.tenantId }))
+        .toSorted(
+          (left, right) =>
+            compareText(left.name, right.name) || compareText(left.tenantId, right.tenantId),
+        ),
+    ),
+  );
+
+export const classifyDefaultPrincipal = (
+  records: readonly PrincipalResolutionRecord[],
+): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> =>
+  eligibleRecords(records).pipe(
+    Effect.map((eligible) =>
+      eligible.toSorted(
+        (left, right) =>
+          left.bindingCreatedAt.getTime() - right.bindingCreatedAt.getTime() ||
+          compareText(left.tenantId, right.tenantId),
+      ),
+    ),
+    Effect.flatMap(([first]) =>
+      first === undefined
+        ? Effect.fail(new PrincipalBindingMissingError())
+        : Effect.succeed(toResolvedIdentity(first)),
+    ),
+  );
+
+export const classifySelectedPrincipal = (
+  records: readonly PrincipalResolutionRecord[],
+  selectedTenantId: string,
+): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> =>
+  eligibleRecords(records).pipe(
+    Effect.flatMap((eligible) => {
+      const selected = eligible.find((record) => record.tenantId === selectedTenantId);
+      return selected === undefined
+        ? Effect.fail(new PrincipalBindingMissingError())
+        : Effect.succeed(toResolvedIdentity(selected));
+    }),
+  );
+
 export interface PrincipalResolverShape {
-  readonly resolveBetterAuthUser: (
+  readonly listAvailableTenants: (
     betterAuthUserId: string,
+  ) => Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError>;
+  readonly resolveDefaultBetterAuthUser: (
+    betterAuthUserId: string,
+  ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
+  readonly resolveBetterAuthUserForTenant: (
+    betterAuthUserId: string,
+    tenantId: string,
   ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
 }
 
@@ -80,8 +147,11 @@ export class PrincipalResolver extends Context.Service<PrincipalResolver, Princi
 
 export const makePrincipalResolver = (
   database: Context.Service.Shape<typeof CoreDatabase>,
-): PrincipalResolverShape => ({
-  resolveBetterAuthUser: (betterAuthUserId) =>
+): PrincipalResolverShape => {
+  const loadRecords = (
+    betterAuthUserId: string,
+    tenantId?: string,
+  ): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolverUnavailableError> =>
     Effect.tryPromise({
       catch: () =>
         new PrincipalResolverUnavailableError({
@@ -90,12 +160,14 @@ export const makePrincipalResolver = (
       try: () =>
         database.executor
           .select({
+            bindingCreatedAt: principalAuthBindings.createdAt,
             bindingRevokedAt: principalAuthBindings.revokedAt,
             bindingStatus: principalAuthBindings.status,
             displayName: principals.displayName,
             principalId: principals.principalId,
             principalStatus: principals.status,
             tenantId: tenants.tenantId,
+            tenantName: tenants.name,
             tenantStatus: tenants.status,
           })
           .from(principalAuthBindings)
@@ -112,10 +184,22 @@ export const makePrincipalResolver = (
               eq(principalAuthBindings.provider, 'better_auth'),
               eq(principalAuthBindings.subjectType, 'user'),
               eq(principalAuthBindings.providerSubjectId, betterAuthUserId),
+              ...(tenantId === undefined ? [] : [eq(principalAuthBindings.tenantId, tenantId)]),
             ),
           ),
-    }).pipe(Effect.flatMap(classifyPrincipalResolution)),
-});
+    });
+
+  return {
+    listAvailableTenants: (betterAuthUserId) =>
+      loadRecords(betterAuthUserId).pipe(Effect.flatMap(classifyAvailableTenants)),
+    resolveBetterAuthUserForTenant: (betterAuthUserId, tenantId) =>
+      loadRecords(betterAuthUserId, tenantId).pipe(
+        Effect.flatMap((records) => classifySelectedPrincipal(records, tenantId)),
+      ),
+    resolveDefaultBetterAuthUser: (betterAuthUserId) =>
+      loadRecords(betterAuthUserId).pipe(Effect.flatMap(classifyDefaultPrincipal)),
+  };
+};
 
 export const PrincipalResolverLive = Layer.effect(
   PrincipalResolver,

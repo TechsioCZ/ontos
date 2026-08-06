@@ -22,7 +22,17 @@ import {
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { Cause, pipe } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
-import type { ActiveModulesProblem, AuthenticationProblem } from '../shared/api.ts';
+import type {
+  ActiveModulesProblem,
+  AuthenticationInternalProblem,
+  AuthenticationProblem,
+  AvailableTenantsProblem,
+  SwitchTenantProblem,
+  TenantAccessForbiddenProblem,
+  TenantAuthenticationRequiredProblem,
+  TenantCapabilityUnavailableProblem,
+  TenantInternalProblem,
+} from '../shared/api.ts';
 import { AuthConfigLive } from './auth/config.ts';
 import { AuthDatabaseLive } from './auth/db/client.ts';
 import {
@@ -30,7 +40,7 @@ import {
   issueGatewayContextAssertion,
 } from './auth/gateway-issuer.ts';
 import type { GatewayIssuerDependencies, GatewayIssuerError } from './auth/gateway-issuer.ts';
-import type { AuthenticationRuntimeError } from './auth/errors.ts';
+import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import { installedVerticalIds } from './verticals/installed-verticals.ts';
 import type { InstalledVerticalTopologyError } from './verticals/installed-verticals.ts';
@@ -179,6 +189,14 @@ const gatewayIssuerProblem = (error: GatewayIssuerError): GatewayContextProblem 
         type: 'https://ontos.dev/problems/gateway-unavailable',
       };
 
+const authenticationInternalProblem = (): AuthenticationInternalProblem => ({
+  _tag: 'AuthenticationInternalProblem',
+  detail: 'Authentication could not complete.',
+  status: 500,
+  title: 'Authentication failed',
+  type: 'https://ontos.dev/problems/authentication-internal',
+});
+
 const problem = (error: AuthenticationRuntimeError): AuthenticationProblem => {
   switch (error._tag) {
     case 'InvalidCredentialsError': {
@@ -209,25 +227,77 @@ const problem = (error: AuthenticationRuntimeError): AuthenticationProblem => {
       };
     }
     case 'AuthenticationInternalError': {
-      return {
-        _tag: 'AuthenticationInternalProblem',
-        detail: 'Authentication could not complete.',
-        status: 500,
-        title: 'Authentication failed',
-        type: 'https://ontos.dev/problems/authentication-internal',
-      };
+      return authenticationInternalProblem();
     }
     default: {
-      return {
-        _tag: 'AuthenticationInternalProblem',
-        detail: 'Authentication could not complete.',
-        status: 500,
-        title: 'Authentication failed',
-        type: 'https://ontos.dev/problems/authentication-internal',
-      };
+      return authenticationInternalProblem();
     }
   }
 };
+
+const tenantAuthenticationRequiredProblem = (): TenantAuthenticationRequiredProblem => ({
+  _tag: 'TenantAuthenticationRequiredProblem',
+  detail: 'A valid Shell session is required.',
+  status: 401,
+  title: 'Tenant session authentication required',
+  type: 'https://ontos.dev/problems/tenant-authentication-required',
+});
+
+const tenantAccessForbiddenProblem = (): TenantAccessForbiddenProblem => ({
+  _tag: 'TenantAccessForbiddenProblem',
+  detail: 'The requested tenant is not available to this session.',
+  status: 403,
+  title: 'Tenant access forbidden',
+  type: 'https://ontos.dev/problems/tenant-access-forbidden',
+});
+
+const tenantCapabilityUnavailableProblem = (): TenantCapabilityUnavailableProblem => ({
+  _tag: 'TenantCapabilityUnavailableProblem',
+  detail: 'Tenant context is temporarily unavailable. Please retry.',
+  retryable: true,
+  status: 503,
+  title: 'Tenant context unavailable',
+  type: 'https://ontos.dev/problems/tenant-capability-unavailable',
+});
+
+const tenantInternalProblem = (): TenantInternalProblem => ({
+  _tag: 'TenantInternalProblem',
+  detail: 'Tenant context could not be loaded or changed.',
+  status: 500,
+  title: 'Tenant context failed',
+  type: 'https://ontos.dev/problems/tenant-internal',
+});
+
+const tenantAuthenticationProblem = (
+  error: AuthenticationRuntimeError,
+): AvailableTenantsProblem => {
+  switch (error._tag) {
+    case 'InvalidCredentialsError':
+    case 'OntosIdentityForbiddenError': {
+      return tenantAuthenticationRequiredProblem();
+    }
+    case 'AuthenticationUnavailableError': {
+      return tenantCapabilityUnavailableProblem();
+    }
+    case 'AuthenticationInternalError': {
+      return tenantInternalProblem();
+    }
+    default: {
+      return error;
+    }
+  }
+};
+
+const tenantProblem = (error: SwitchTenantRuntimeError): SwitchTenantProblem =>
+  error._tag === 'TenantAccessForbiddenError'
+    ? tenantAccessForbiddenProblem()
+    : tenantAuthenticationProblem(error);
+
+const failTenantProblem = <Failure extends SwitchTenantProblem>(tenantFailure: Failure) =>
+  (tenantFailure._tag === 'TenantAuthenticationRequiredProblem'
+    ? bearerChallenge
+    : Effect.void
+  ).pipe(Effect.andThen(Effect.fail(tenantFailure)));
 
 const authenticationGroupLive = HttpApiBuilder.group(
   ShellAuthenticationApi,
@@ -259,7 +329,19 @@ const authenticationGroupLive = HttpApiBuilder.group(
                 identity: result.identity,
                 state: 'authenticated',
               } as const);
-        }).pipe(Effect.mapError(problem)),
+        }).pipe(
+          Effect.mapError(problem),
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(
+                  Effect.logError('Unexpected Shell current-session defect', cause),
+                  {
+                    correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                  },
+                ).pipe(Effect.andThen(Effect.fail(authenticationInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
       )
       .handle('signOut', ({ request }) =>
         Effect.gen(function* signOutHandler() {
@@ -271,6 +353,46 @@ const authenticationGroupLive = HttpApiBuilder.group(
           };
         }).pipe(Effect.mapError(problem)),
       ),
+);
+
+const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', (handlers) =>
+  handlers
+    .handle('availableTenants', ({ request }) =>
+      Effect.gen(function* availableTenantsHandler() {
+        const authentication = yield* AuthenticationService;
+        const result = yield* authentication
+          .availableTenants(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => failTenantProblem(tenantAuthenticationProblem(error))));
+        yield* forwardSetCookieHeaders(result.setCookieHeaders);
+        return { tenants: result.tenants };
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(Effect.logError('Unexpected tenant list defect', cause), {
+                correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              }).pipe(Effect.andThen(failTenantProblem(tenantInternalProblem())))
+            : Effect.failCause(cause),
+        ),
+      ),
+    )
+    .handle('switchTenant', ({ payload, request }) =>
+      Effect.gen(function* switchTenantHandler() {
+        const authentication = yield* AuthenticationService;
+        const result = yield* authentication
+          .switchTenant(payload.tenantId, requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => failTenantProblem(tenantProblem(error))));
+        yield* forwardSetCookieHeaders(result.setCookieHeaders);
+        return { selectedTenantId: result.selectedTenantId };
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(Effect.logError('Unexpected tenant switch defect', cause), {
+                correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              }).pipe(Effect.andThen(failTenantProblem(tenantInternalProblem())))
+            : Effect.failCause(cause),
+        ),
+      ),
+    ),
 );
 
 const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependencies) =>
@@ -390,6 +512,7 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provide(
       Layer.mergeAll(
         authenticationGroupLive,
+        tenantGroupLive,
         makeGatewayContextGroupLive(issuerDependencies),
         makeModulesGroupLive(loadInstalledVerticalIds),
       ),

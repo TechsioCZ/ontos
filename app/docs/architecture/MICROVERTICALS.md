@@ -87,6 +87,14 @@ authentication BFF, and the private `auth` schema. Core owns only non-secret
 principal auth bindings and active principal/tenant resolution. Do not create an
 Auth vertical, remote, package, delivery unit, or Module Federation boundary.
 
+One Better Auth user may have active bindings to multiple tenant-scoped Principals. Exactly one
+nullable active tenant ID on the current Better Auth session selects which eligible Principal and
+Tenant become trusted context for reads, gateway assertions, and Actions. Core Principal Auth
+Bindings remain the tenant-access authority: the selected session field grants no permission and
+must be revalidated against an active binding, Principal, and Tenant on every session resolution.
+This does not introduce a global Principal, Better Auth Organization/member tables, an Auth
+MicroVertical, or a generic context store.
+
 ### Shell-user Action identity
 
 For a Shell-authenticated user calling an Action owned by an independently deployed

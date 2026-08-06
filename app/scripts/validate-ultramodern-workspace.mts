@@ -352,7 +352,14 @@ const workspaceValidationContract = {
             runtimeFramework: 'effect',
             strictEffectApproach: true,
             prefix: '/shell-super-app-api',
-            operations: ['signIn', 'currentSession', 'signOut', 'issueGatewayContext'],
+            operations: [
+              'signIn',
+              'currentSession',
+              'signOut',
+              'availableTenants',
+              'switchTenant',
+              'issueGatewayContext',
+            ],
           },
         },
         moduleFederation: {

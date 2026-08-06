@@ -37,8 +37,10 @@
         "label": "Dashboard sidebar"
       },
       "tenant": {
-        "empty": "Tenant switching unavailable",
-        "label": "Tenant"
+        "accessibleLabel": "Current tenant",
+        "failed": "Tenant switching failed. Try again.",
+        "pending": "Switching tenant…",
+        "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
       }
     },
     "hero": {

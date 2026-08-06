@@ -37,8 +37,10 @@
         "label": "Postranní panel přehledu"
       },
       "tenant": {
-        "empty": "Přepínání tenantů není dostupné",
-        "label": "Tenant"
+        "accessibleLabel": "Aktuální tenant",
+        "failed": "Přepnutí tenantu selhalo. Zkuste to znovu.",
+        "pending": "Přepínám tenant…",
+        "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
       }
     },
     "hero": {

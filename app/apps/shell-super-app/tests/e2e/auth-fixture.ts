@@ -9,6 +9,7 @@ import {
   coreDatabaseSchema,
   principalAuthBindings,
   principals,
+  tenantModuleStates,
   tenants,
 } from '@app/core-runtime/db/schema';
 import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
@@ -18,8 +19,18 @@ export const e2eCredentials = {
   password: 'e2e-correct-horse-battery-staple',
 } as const;
 
-const tenantId = '50000000-0000-4000-8000-000000000001';
-const principalId = '60000000-0000-4000-8000-000000000001';
+export const e2eTenants = {
+  first: {
+    name: 'E2E Alpha tenant',
+    principalId: '60000000-0000-4000-8000-000000000001',
+    tenantId: '50000000-0000-4000-8000-000000000001',
+  },
+  second: {
+    name: 'E2E Zeta tenant',
+    principalId: '60000000-0000-4000-8000-000000000002',
+    tenantId: '50000000-0000-4000-8000-000000000002',
+  },
+} as const;
 
 export const createAuthenticationFixture = async () => {
   loadDotenv({
@@ -70,9 +81,24 @@ export const createAuthenticationFixture = async () => {
     );
     await coreDatabase
       .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.principalId, principalId));
-    await coreDatabase.delete(principals).where(eq(principals.principalId, principalId));
-    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
+      .where(eq(principalAuthBindings.principalId, e2eTenants.first.principalId));
+    await coreDatabase
+      .delete(principalAuthBindings)
+      .where(eq(principalAuthBindings.principalId, e2eTenants.second.principalId));
+    await coreDatabase
+      .delete(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, e2eTenants.first.tenantId));
+    await coreDatabase
+      .delete(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
+    await coreDatabase
+      .delete(principals)
+      .where(eq(principals.principalId, e2eTenants.first.principalId));
+    await coreDatabase
+      .delete(principals)
+      .where(eq(principals.principalId, e2eTenants.second.principalId));
+    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.first.tenantId));
+    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, e2eTenants.second.tenantId));
   };
 
   await cleanup();
@@ -83,28 +109,62 @@ export const createAuthenticationFixture = async () => {
       password: e2eCredentials.password,
     },
   });
-  await coreDatabase.insert(tenants).values({
-    defaultLocale: 'en',
-    name: 'E2E authentication tenant',
-    slug: 'e2e-authentication-tenant',
-    status: 'active',
-    tenantId,
-  });
-  await coreDatabase.insert(principals).values({
-    displayName: 'E2E user',
-    kind: 'human',
-    principalId,
-    status: 'active',
-    tenantId,
-  });
-  await coreDatabase.insert(principalAuthBindings).values({
-    principalId,
-    provider: 'better_auth',
-    providerSubjectId: createdUser.user.id,
-    status: 'active',
-    subjectType: 'user',
-    tenantId,
-  });
+  await coreDatabase.insert(tenants).values([
+    {
+      defaultLocale: 'en',
+      name: e2eTenants.first.name,
+      slug: 'e2e-alpha-tenant',
+      status: 'active',
+      tenantId: e2eTenants.first.tenantId,
+    },
+    {
+      defaultLocale: 'en',
+      name: e2eTenants.second.name,
+      slug: 'e2e-zeta-tenant',
+      status: 'active',
+      tenantId: e2eTenants.second.tenantId,
+    },
+  ]);
+  await coreDatabase.insert(principals).values([
+    {
+      displayName: 'E2E user',
+      kind: 'human',
+      principalId: e2eTenants.first.principalId,
+      status: 'active',
+      tenantId: e2eTenants.first.tenantId,
+    },
+    {
+      displayName: 'E2E user second tenant',
+      kind: 'human',
+      principalId: e2eTenants.second.principalId,
+      status: 'active',
+      tenantId: e2eTenants.second.tenantId,
+    },
+  ]);
+  await coreDatabase.insert(principalAuthBindings).values([
+    {
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      principalId: e2eTenants.first.principalId,
+      provider: 'better_auth',
+      providerSubjectId: createdUser.user.id,
+      status: 'active',
+      subjectType: 'user',
+      tenantId: e2eTenants.first.tenantId,
+    },
+    {
+      createdAt: new Date('2026-02-01T00:00:00.000Z'),
+      principalId: e2eTenants.second.principalId,
+      provider: 'better_auth',
+      providerSubjectId: createdUser.user.id,
+      status: 'active',
+      subjectType: 'user',
+      tenantId: e2eTenants.second.tenantId,
+    },
+  ]);
+  await coreDatabase.insert(tenantModuleStates).values([
+    { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
+    { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
+  ]);
 
   return async () => {
     try {

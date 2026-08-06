@@ -14,13 +14,24 @@ interface DashboardNavigationItem {
   readonly moduleKey: string;
 }
 
+interface DashboardTenantItem {
+  readonly name: string;
+  readonly tenantId: string;
+}
+
 export interface AuthenticatedDashboardLayoutProps {
   readonly activeModules: readonly DashboardNavigationItem[];
   readonly children: ReactNode;
   readonly currentModuleKey?: string;
+  readonly currentTenantId: string;
   readonly identity: DashboardAccount;
   readonly logoutPending: boolean;
   readonly onLogout: () => void;
+  readonly onTenantChange: (tenantId: string) => void;
+  readonly tenantChoices: readonly DashboardTenantItem[];
+  readonly tenantState: 'available' | 'unavailable';
+  readonly tenantSwitchFailed: boolean;
+  readonly tenantSwitchPending: boolean;
   readonly title: string;
 }
 
@@ -28,9 +39,15 @@ export const AuthenticatedDashboardLayout = ({
   activeModules,
   children,
   currentModuleKey,
+  currentTenantId,
   identity,
   logoutPending,
   onLogout,
+  onTenantChange,
+  tenantChoices,
+  tenantState,
+  tenantSwitchFailed,
+  tenantSwitchPending,
   title,
 }: AuthenticatedDashboardLayoutProps) => {
   const { t } = useModernI18n();
@@ -42,6 +59,29 @@ export const AuthenticatedDashboardLayout = ({
       value: 'logout',
     },
   ];
+  const tenantItems = tenantChoices.map(({ name, tenantId }) => ({
+    displayValue: name,
+    label: name,
+    value: tenantId,
+  }));
+  let tenantStatus: 'default' | 'error' | 'warning' = 'default';
+  if (tenantSwitchFailed) {
+    tenantStatus = 'error';
+  } else if (tenantState === 'unavailable') {
+    tenantStatus = 'warning';
+  }
+  let tenantStatusText: string | null = null;
+  if (tenantSwitchPending) {
+    tenantStatusText = t('shell.dashboard.tenant.pending');
+  } else if (tenantSwitchFailed) {
+    tenantStatusText = t('shell.dashboard.tenant.failed');
+  } else if (tenantState === 'unavailable') {
+    tenantStatusText = t('shell.dashboard.tenant.unavailable');
+  }
+  const tenantSelectDisabled =
+    tenantState === 'unavailable' ||
+    tenantSwitchPending ||
+    !tenantItems.some((item) => item.value !== currentTenantId);
 
   return (
     <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-(--color-page-bg) text-(--color-page-fg) md:flex-row">
@@ -50,16 +90,48 @@ export const AuthenticatedDashboardLayout = ({
         className="flex w-full shrink-0 flex-col gap-6 bg-(--color-surface) p-4 md:w-64"
       >
         <p>{t('shell.dashboard.brand')}</p>
-        <Select disabled items={[]} name="tenant" value={[]}>
-          <Select.Label>{t('shell.dashboard.tenant.label')}</Select.Label>
+        <Select
+          disabled={tenantSelectDisabled}
+          items={tenantItems}
+          name="tenant"
+          onValueChange={({ value }) => {
+            const [tenantId] = value;
+            if (value.length === 1 && tenantId !== undefined && tenantId !== currentTenantId) {
+              onTenantChange(tenantId);
+            }
+          }}
+          validateStatus={tenantStatus}
+          value={[currentTenantId]}
+        >
+          <Select.Label>{t('shell.dashboard.tenant.accessibleLabel')}</Select.Label>
           <Select.Control>
-            <Select.Trigger aria-label={t('shell.dashboard.tenant.label')}>
-              <Select.ValueText placeholder={t('shell.dashboard.tenant.empty')} />
+            <Select.Trigger
+              aria-describedby={tenantStatusText === null ? undefined : 'tenant-switch-status'}
+              aria-label={t('shell.dashboard.tenant.accessibleLabel')}
+            >
+              <Select.ValueText placeholder={t('shell.dashboard.tenant.unavailable')} />
             </Select.Trigger>
           </Select.Control>
           <Select.Positioner>
-            <Select.Content />
+            <Select.Content>
+              {tenantItems.map((item) => (
+                <Select.Item item={item} key={item.value}>
+                  <Select.ItemText />
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
           </Select.Positioner>
+          {tenantStatusText === null ? null : (
+            <Select.StatusText
+              aria-live="polite"
+              id="tenant-switch-status"
+              showIcon
+              status={tenantStatus}
+            >
+              {tenantStatusText}
+            </Select.StatusText>
+          )}
         </Select>
         <nav aria-label={t('shell.dashboard.navigation.label')}>
           <ul className="flex flex-col gap-2">

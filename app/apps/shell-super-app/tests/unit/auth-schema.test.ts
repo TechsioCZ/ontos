@@ -1,5 +1,6 @@
 import { expect, test } from '@rstest/core';
-import { AUTH_SCHEMA_NAME, AUTH_TABLE_INVENTORY } from '../../api/auth/db/schema.ts';
+import { getTableColumns } from 'drizzle-orm';
+import { AUTH_SCHEMA_NAME, AUTH_TABLE_INVENTORY, session } from '../../api/auth/db/schema.ts';
 import { compareAuthCatalog, expectedAuthTableCatalog } from '../../api/auth/db/catalog.ts';
 
 test('owns the exact Better Auth model inside the auth schema', () => {
@@ -11,6 +12,14 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'auth.account',
     'auth.verification',
   ]);
+});
+
+test('stores one nullable typed active tenant on the private session row', () => {
+  const { activeTenantId } = getTableColumns(session);
+  expect(activeTenantId.name).toBe('active_tenant_id');
+  expect(activeTenantId.columnType).toBe('PgUUID');
+  expect(activeTenantId.dataType).toBe('string');
+  expect(activeTenantId.notNull).toBe(false);
 });
 
 test('reports missing and unexpected authentication tables', () => {

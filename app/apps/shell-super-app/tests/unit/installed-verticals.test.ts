@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { expect, test } from '@rstest/core';
 import { Effect } from 'effect';
 import {
@@ -6,7 +7,17 @@ import {
 } from '../../api/verticals/installed-verticals.ts';
 
 test('derives installed vertical IDs from the injected topology without hardcoded registrations', async () => {
-  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual(['testing1']);
+  const topology = JSON.parse(
+    fs.readFileSync(
+      new URL('../../../../topology/reference-topology.json', import.meta.url),
+      'utf-8',
+    ),
+  ) as Record<string, unknown>;
+  const expectedInstalledIds = (topology['verticals'] as readonly Record<string, unknown>[]).map(
+    (vertical) => vertical['id'],
+  );
+
+  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual(expectedInstalledIds);
   const valid = await Effect.runPromise(
     deriveInstalledVerticalIds({
       sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],

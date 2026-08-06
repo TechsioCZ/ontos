@@ -10,6 +10,14 @@ This document defines state-changing Action execution. MicroVertical deployment 
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
 
+Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
+and active tenant selection—are Shell-owned authentication mechanics, not canonical business-state
+mutations. They use the strict typed Auth BFF and must not update Core business tables or emit
+Domain Events. Core Principal Auth Bindings remain the tenant-access authority, and a selected
+tenant ID stored on the Auth session grants no permission. Any later canonical Core or
+MicroVertical state change still requires an Action; authentication mechanics do not provide a
+bypass.
+
 ## Invocation Lifecycle
 
 Process every Action request in this order:

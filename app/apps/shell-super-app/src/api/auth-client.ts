@@ -13,6 +13,13 @@ import type {
   ActiveModulesAuthenticationRequiredProblem,
   ActiveModulesInternalProblem,
   ActiveModulesUnavailableProblem,
+  AvailableTenantsResponse,
+  SwitchTenantPayload,
+  SwitchTenantResponse,
+  TenantAccessForbiddenProblem,
+  TenantAuthenticationRequiredProblem,
+  TenantCapabilityUnavailableProblem,
+  TenantInternalProblem,
   CurrentSession,
   AuthenticationInternalProblem,
   AuthenticationUnavailableProblem,
@@ -70,6 +77,22 @@ export type ActiveModulesClientError =
 
 export type ActiveModulesClientEffect = Effect.Effect<ActiveModules, ActiveModulesClientError>;
 
+export type AvailableTenantsClientError =
+  | TenantAuthenticationRequiredProblem
+  | TenantCapabilityUnavailableProblem
+  | TenantInternalProblem
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
+
+export type SwitchTenantClientError = AvailableTenantsClientError | TenantAccessForbiddenProblem;
+
+export type AvailableTenantsClientEffect = Effect.Effect<
+  AvailableTenantsResponse,
+  AvailableTenantsClientError
+>;
+
+export type SwitchTenantClientEffect = Effect.Effect<SwitchTenantResponse, SwitchTenantClientError>;
+
 const createShellAuthenticationClient = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellAuthenticationClient> => {
@@ -117,6 +140,21 @@ export const activeModules = (
 ): ActiveModulesClientEffect =>
   createShellAuthenticationClient(options).pipe(
     Effect.flatMap((client) => client.modules.activeModules({})),
+  );
+
+export const availableTenants = (
+  options: ShellAuthenticationClientOptions = {},
+): AvailableTenantsClientEffect =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.tenants.availableTenants({})),
+  );
+
+export const switchTenant = (
+  payload: SwitchTenantPayload,
+  options: ShellAuthenticationClientOptions = {},
+): SwitchTenantClientEffect =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.tenants.switchTenant({ payload })),
   );
 
 export const signOut = (

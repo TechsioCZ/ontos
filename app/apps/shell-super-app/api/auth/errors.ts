@@ -11,6 +11,11 @@ export class OntosIdentityForbiddenError extends Schema.TaggedErrorClass<OntosId
   {},
 ) {}
 
+export class TenantAccessForbiddenError extends Schema.TaggedErrorClass<TenantAccessForbiddenError>()(
+  'TenantAccessForbiddenError',
+  {},
+) {}
+
 export class AuthenticationUnavailableError extends Schema.TaggedErrorClass<AuthenticationUnavailableError>()(
   'AuthenticationUnavailableError',
   {},
@@ -26,3 +31,5 @@ export type AuthenticationRuntimeError =
   | OntosIdentityForbiddenError
   | AuthenticationUnavailableError
   | AuthenticationInternalError;
+
+export type SwitchTenantRuntimeError = AuthenticationRuntimeError | TenantAccessForbiddenError;

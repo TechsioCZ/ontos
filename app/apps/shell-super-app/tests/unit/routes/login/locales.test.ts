@@ -64,6 +64,12 @@ test('keeps the exact Czech and English dashboard translation contracts aligned'
   expect(Object.keys(cs.shell.dashboard.tenant).toSorted()).toEqual(
     Object.keys(en.shell.dashboard.tenant).toSorted(),
   );
+  expect(Object.keys(en.shell.dashboard.tenant).toSorted()).toEqual([
+    'accessibleLabel',
+    'failed',
+    'pending',
+    'unavailable',
+  ]);
   expect(en.shell.dashboard.home.title).toBe('Home');
   expect(cs.shell.dashboard.home.title).toBe('Domů');
 });

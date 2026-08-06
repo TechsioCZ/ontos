@@ -5,14 +5,16 @@ import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
 };
 import { loader } from '../../../../src/routes/[lang]/page.data.ts';
 
-const { activeModulesMock, currentSessionMock } = rstest.hoisted(() => ({
+const { activeModulesMock, availableTenantsMock, currentSessionMock } = rstest.hoisted(() => ({
   activeModulesMock: rstest.fn(),
+  availableTenantsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
   ...actualAuthClient,
   activeModules: activeModulesMock,
+  availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
   runEffectRequest: Effect.runPromise,
 }));
@@ -40,6 +42,14 @@ beforeEach(() => {
       { moduleKey: 'testing1', state: 'active' as const },
     ]),
   );
+  availableTenantsMock.mockReturnValue(
+    Effect.succeed({
+      tenants: [
+        { name: 'Alpha tenant', tenantId: 'tenant-1' },
+        { name: 'Zeta tenant', tenantId: 'tenant-2' },
+      ],
+    }),
+  );
 });
 
 test('resolves the session first and returns a serializable authenticated page model', async () => {
@@ -55,12 +65,23 @@ test('resolves the session first and returns a serializable authenticated page m
     },
     identity,
     state: 'authenticated',
+    tenants: {
+      items: [
+        { name: 'Alpha tenant', tenantId: 'tenant-1' },
+        { name: 'Zeta tenant', tenantId: 'tenant-2' },
+      ],
+      state: 'available',
+    },
   });
   expect(currentSessionMock).toHaveBeenCalledWith({
     baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
     cookie: 'session=test-session',
   });
   expect(activeModulesMock).toHaveBeenCalledWith({
+    baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
+    cookie: 'session=test-session',
+  });
+  expect(availableTenantsMock).toHaveBeenCalledWith({
     baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
     cookie: 'session=test-session',
   });
@@ -74,6 +95,7 @@ test('does not request modules for an anonymous session', async () => {
 
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
   expect(activeModulesMock).not.toHaveBeenCalled();
+  expect(availableTenantsMock).not.toHaveBeenCalled();
 });
 
 test('maps a typed module-client failure to unavailable without discarding identity', async () => {
@@ -92,7 +114,57 @@ test('maps a typed module-client failure to unavailable without discarding ident
     activeModules: { items: [], state: 'unavailable' },
     identity,
     state: 'authenticated',
+    tenants: {
+      items: [
+        { name: 'Alpha tenant', tenantId: 'tenant-1' },
+        { name: 'Zeta tenant', tenantId: 'tenant-2' },
+      ],
+      state: 'available',
+    },
   });
+});
+
+test('maps a tenant failure to a current-tenant fallback without discarding modules', async () => {
+  availableTenantsMock.mockReturnValueOnce(
+    Effect.fail({
+      _tag: 'TenantCapabilityUnavailableProblem' as const,
+      detail: 'safe',
+      retryable: true as const,
+      status: 503,
+      title: 'safe',
+      type: 'safe',
+    }),
+  );
+
+  expect(await loader({ request: request() })).toEqual({
+    activeModules: {
+      items: [
+        { moduleKey: 'future-generated', state: 'active' },
+        { moduleKey: 'testing1', state: 'active' },
+      ],
+      state: 'available',
+    },
+    identity,
+    state: 'authenticated',
+    tenants: {
+      items: [{ name: 'tenant-1', tenantId: 'tenant-1' }],
+      state: 'unavailable',
+    },
+  });
+});
+
+test('tears down stale authenticated data when the tenant read requires authentication', async () => {
+  availableTenantsMock.mockReturnValueOnce(
+    Effect.fail({
+      _tag: 'TenantAuthenticationRequiredProblem' as const,
+      detail: 'safe',
+      status: 401,
+      title: 'safe',
+      type: 'safe',
+    }),
+  );
+
+  expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
 });
 
 test('keeps the previous anonymous fallback for a session-client failure', async () => {
@@ -108,4 +180,5 @@ test('keeps the previous anonymous fallback for a session-client failure', async
 
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
   expect(activeModulesMock).not.toHaveBeenCalled();
+  expect(availableTenantsMock).not.toHaveBeenCalled();
 });

@@ -1,10 +1,12 @@
 /* eslint-disable promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Effect } from 'effect';
 import { useState } from 'react';
-import { runEffectRequest, signOut } from '../../api/auth-client.ts';
+import { runEffectRequest, signOut, switchTenant } from '../../api/auth-client.ts';
+import type { SwitchTenantClientError } from '../../api/auth-client.ts';
 import type { HomePageModel } from './page.data.ts';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
@@ -13,11 +15,34 @@ interface HomeViewProps {
   readonly initialModel: HomePageModel;
 }
 
+type TenantSwitchFailureState = 'authentication-required' | 'failed';
+
+const tenantSwitchFailureState = (error: SwitchTenantClientError): TenantSwitchFailureState => {
+  switch (error._tag) {
+    case 'TenantAuthenticationRequiredProblem': {
+      return 'authentication-required';
+    }
+    case 'TenantAccessForbiddenProblem':
+    case 'TenantCapabilityUnavailableProblem':
+    case 'TenantInternalProblem':
+    case 'HttpClientError':
+    case 'SchemaError': {
+      return 'failed';
+    }
+    default: {
+      return error;
+    }
+  }
+};
+
 export const HomeView = ({ initialModel }: HomeViewProps) => {
   const { language, t } = useModernI18n();
+  const navigate = useNavigate();
   const [model, setModel] = useState(initialModel);
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
+  const [tenantSwitchPending, setTenantSwitchPending] = useState(false);
+  const [tenantSwitchFailed, setTenantSwitchFailed] = useState(false);
 
   const handleLogout = () => {
     if (logoutPending) {
@@ -35,6 +60,41 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
       })
       .finally(() => {
         setLogoutPending(false);
+      });
+  };
+
+  const handleTenantChange = (tenantId: string) => {
+    if (
+      model.state === 'anonymous' ||
+      tenantSwitchPending ||
+      tenantId.length === 0 ||
+      tenantId === model.identity.tenantId
+    ) {
+      return;
+    }
+
+    setTenantSwitchPending(true);
+    setTenantSwitchFailed(false);
+    void runEffectRequest(
+      switchTenant({ tenantId }, { locale: language }).pipe(
+        Effect.match({
+          onFailure: tenantSwitchFailureState,
+          onSuccess: () => 'switched' as const,
+        }),
+      ),
+    )
+      .then((outcome) => {
+        if (outcome === 'authentication-required' || outcome === 'switched') {
+          void navigate({ reloadDocument: true, to: '.' });
+          return;
+        }
+        setTenantSwitchFailed(true);
+      })
+      .catch(() => {
+        setTenantSwitchFailed(true);
+      })
+      .finally(() => {
+        setTenantSwitchPending(false);
       });
   };
 
@@ -56,9 +116,15 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
       <UltramodernRouteHead />
       <AuthenticatedDashboardLayout
         activeModules={model.activeModules.items.map(({ moduleKey }) => ({ moduleKey }))}
+        currentTenantId={model.identity.tenantId}
         identity={{ displayName: model.identity.displayName }}
         logoutPending={logoutPending}
         onLogout={handleLogout}
+        onTenantChange={handleTenantChange}
+        tenantChoices={model.tenants.items}
+        tenantState={model.tenants.state}
+        tenantSwitchFailed={tenantSwitchFailed}
+        tenantSwitchPending={tenantSwitchPending}
         title={t('shell.dashboard.home.title')}
       >
         <section

@@ -23,6 +23,8 @@
           "signIn",
           "currentSession",
           "signOut",
+          "availableTenants",
+          "switchTenant",
           "issueGatewayContext"
         ]
       }

@@ -60,6 +60,5 @@ const assertGracefulShutdown = async (signal: 'SIGINT' | 'SIGTERM'): Promise<voi
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   test(`${signal} interrupts polling and disposes the managed worker runtime`, () =>
-    assertGracefulShutdown(signal),
-  );
+    assertGracefulShutdown(signal));
 }

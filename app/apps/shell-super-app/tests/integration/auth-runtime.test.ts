@@ -5,12 +5,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { eq } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Layer } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
+  PrincipalResolverUnavailableError,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
   makePrincipalResolver,
@@ -500,6 +501,493 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   } finally {
     await Promise.all(handlers.map(({ dispose }) => dispose()));
     await rm(generatedFixtureRoot, { force: true, recursive: true });
+    await cleanup();
+    await Promise.all([authPool.end(), corePool.end()]);
+  }
+});
+
+test('selects, lists, switches, revalidates, and upgrades a multi-tenant session', async () => {
+  const multiEmail = 'better-auth-multi-tenant@example.test';
+  const firstTenantId = '31000000-0000-4000-8000-000000000001';
+  const secondTenantId = '31000000-0000-4000-8000-000000000002';
+  const firstPrincipalId = '41000000-0000-4000-8000-000000000001';
+  const secondPrincipalId = '41000000-0000-4000-8000-000000000002';
+  const configuration = await Effect.runPromise(loadAuthConfig());
+  const corePool = new Pool({ connectionString: configuration.connectionString });
+  const authPool = new Pool({ connectionString: configuration.connectionString });
+  const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
+  const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
+  const resolver = makePrincipalResolver({ executor: coreDatabase });
+  const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
+    allowFixtureSignUp: true,
+  });
+  const moduleStateLayer = Layer.succeed(
+    TenantModuleStateService,
+    makeTenantModuleStateService({ executor: coreDatabase }),
+  );
+  const handlers: { readonly dispose: () => Promise<void> }[] = [];
+
+  const cleanup = async () => {
+    const existingUsers = await authDatabase
+      .select({ id: user.id })
+      .from(user)
+      .where(eq(user.email, multiEmail));
+    const existingUserIds = existingUsers.map(({ id }) => id);
+    if (existingUserIds.length > 0) {
+      await coreDatabase
+        .delete(principalAuthBindings)
+        .where(inArray(principalAuthBindings.providerSubjectId, existingUserIds));
+      await authDatabase.delete(session).where(inArray(session.userId, existingUserIds));
+      await authDatabase.delete(account).where(inArray(account.userId, existingUserIds));
+      await authDatabase.delete(user).where(inArray(user.id, existingUserIds));
+    }
+    await coreDatabase
+      .delete(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, firstTenantId));
+    await coreDatabase
+      .delete(tenantModuleStates)
+      .where(eq(tenantModuleStates.tenantId, secondTenantId));
+    await coreDatabase.delete(principals).where(eq(principals.principalId, firstPrincipalId));
+    await coreDatabase.delete(principals).where(eq(principals.principalId, secondPrincipalId));
+    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, firstTenantId));
+    await coreDatabase.delete(tenants).where(eq(tenants.tenantId, secondTenantId));
+  };
+
+  try {
+    await cleanup();
+    const betterAuthUserId = await Effect.runPromise(
+      authentication.createFixtureUser(multiEmail, 'Multi tenant fixture', password),
+    );
+    await coreDatabase.insert(tenants).values([
+      {
+        defaultLocale: 'en',
+        name: 'Zeta tenant',
+        slug: 'multi-zeta-tenant',
+        status: 'active',
+        tenantId: firstTenantId,
+      },
+      {
+        defaultLocale: 'en',
+        name: 'Alpha tenant',
+        slug: 'multi-alpha-tenant',
+        status: 'active',
+        tenantId: secondTenantId,
+      },
+    ]);
+    await coreDatabase.insert(principals).values([
+      {
+        displayName: 'First tenant principal',
+        kind: 'human',
+        principalId: firstPrincipalId,
+        status: 'active',
+        tenantId: firstTenantId,
+      },
+      {
+        displayName: 'Second tenant principal',
+        kind: 'human',
+        principalId: secondPrincipalId,
+        status: 'active',
+        tenantId: secondTenantId,
+      },
+    ]);
+    await coreDatabase.insert(principalAuthBindings).values([
+      {
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        principalId: firstPrincipalId,
+        provider: 'better_auth',
+        providerSubjectId: betterAuthUserId,
+        status: 'active',
+        subjectType: 'user',
+        tenantId: firstTenantId,
+      },
+      {
+        createdAt: new Date('2026-02-01T00:00:00.000Z'),
+        principalId: secondPrincipalId,
+        provider: 'better_auth',
+        providerSubjectId: betterAuthUserId,
+        status: 'active',
+        subjectType: 'user',
+        tenantId: secondTenantId,
+      },
+    ]);
+    await coreDatabase.insert(tenantModuleStates).values([
+      { moduleKey: 'first-module', state: 'active', tenantId: firstTenantId },
+      { moduleKey: 'second-module', state: 'active', tenantId: secondTenantId },
+    ]);
+
+    const signIn = await Effect.runPromise(
+      authentication.signIn(multiEmail, password, new Headers({ origin: configuration.baseUrl })),
+    );
+    assert.equal(signIn.identity.tenantId, firstTenantId);
+    assert.equal(signIn.identity.principalId, firstPrincipalId);
+    const authenticatedCookie = cookieHeader(signIn.setCookieHeaders);
+    const authenticatedHeaders = new Headers({
+      cookie: authenticatedCookie,
+      origin: configuration.baseUrl,
+    });
+    const initialSessions = await authDatabase
+      .select({ activeTenantId: session.activeTenantId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(initialSessions[0]?.activeTenantId, firstTenantId);
+
+    const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
+    const privateJwk = await exportJWK(pair.privateKey);
+    const runtime = makeShellAuthenticationApiRuntime(
+      Layer.succeed(AuthenticationService, authentication),
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('61000000-0000-4000-8000-000000000001'),
+        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadConfig: Effect.succeed({
+          issuer: 'https://shell.example.test',
+          privateJwk: {
+            alg: 'EdDSA',
+            crv: 'Ed25519',
+            d: privateJwk.d ?? '',
+            kid: 'multi-tenant-current',
+            kty: 'OKP',
+            use: 'sig',
+            x: privateJwk.x ?? '',
+          },
+        }),
+      },
+      moduleStateLayer,
+      Effect.succeed(new Set(['first-module', 'second-module'])),
+    ).createHandler();
+    handlers.push(runtime);
+
+    const anonymousAvailableResponse = await runtime.handler(
+      new Request(`${configuration.baseUrl}/auth/tenants`, {
+        headers: { origin: configuration.baseUrl },
+      }),
+    );
+    assert.equal(anonymousAvailableResponse.status, 401);
+    assert.match(anonymousAvailableResponse.headers.get('www-authenticate') ?? '', /^Bearer /u);
+
+    const availableResponse = await runtime.handler(
+      new Request(`${configuration.baseUrl}/auth/tenants`, { headers: authenticatedHeaders }),
+    );
+    assert.equal(availableResponse.status, 200);
+    assert.deepEqual(await availableResponse.json(), {
+      tenants: [
+        { name: 'Alpha tenant', tenantId: secondTenantId },
+        { name: 'Zeta tenant', tenantId: firstTenantId },
+      ],
+    });
+    assert.doesNotMatch(
+      JSON.stringify(await authentication.availableTenants(authenticatedHeaders)),
+      /principalId|sessionId|token|bindingId|password/u,
+    );
+
+    const firstModules = await runtime.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, { headers: authenticatedHeaders }),
+    );
+    assert.deepEqual(await firstModules.json(), [{ moduleKey: 'first-module', state: 'active' }]);
+
+    const forbiddenResponse = await runtime.handler(
+      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+        body: JSON.stringify({ tenantId: '31000000-0000-4000-8000-000000000099' }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    assert.equal(forbiddenResponse.status, 403);
+    const sessionsAfterForbiddenSwitch = await authDatabase
+      .select({ activeTenantId: session.activeTenantId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(sessionsAfterForbiddenSwitch[0]?.activeTenantId, firstTenantId);
+
+    await coreDatabase
+      .update(principals)
+      .set({ status: 'disabled' })
+      .where(eq(principals.principalId, secondPrincipalId));
+    const inactiveTargetResponse = await runtime.handler(
+      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+        body: JSON.stringify({ tenantId: secondTenantId }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    assert.equal(inactiveTargetResponse.status, 403);
+    const sessionsAfterInactiveSwitch = await authDatabase
+      .select({ activeTenantId: session.activeTenantId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(sessionsAfterInactiveSwitch[0]?.activeTenantId, firstTenantId);
+    await coreDatabase
+      .update(principals)
+      .set({ status: 'active' })
+      .where(eq(principals.principalId, secondPrincipalId));
+
+    const resolverUnavailableAuthentication = makeAuthenticationService(
+      configuration,
+      authDatabase,
+      {
+        ...resolver,
+        resolveBetterAuthUserForTenant: (userId, selectedTenantId) =>
+          selectedTenantId === secondTenantId
+            ? Effect.fail(
+                new PrincipalResolverUnavailableError({ reason: 'Injected resolver outage' }),
+              )
+            : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
+      },
+    );
+    const resolverUnavailableRuntime = makeShellAuthenticationApiRuntime(
+      Layer.succeed(AuthenticationService, resolverUnavailableAuthentication),
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('61000000-0000-4000-8000-000000000002'),
+        loadAudiences: Effect.succeed(new Set()),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+    ).createHandler();
+    handlers.push(resolverUnavailableRuntime);
+    const resolverUnavailableResponse = await resolverUnavailableRuntime.handler(
+      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+        body: JSON.stringify({ tenantId: secondTenantId }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    assert.equal(resolverUnavailableResponse.status, 503);
+    const sessionsAfterResolverFailure = await authDatabase
+      .select({ activeTenantId: session.activeTenantId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(sessionsAfterResolverFailure[0]?.activeTenantId, firstTenantId);
+
+    // Drizzle has no query-builder failure injection. This temporary trigger raises PostgreSQL's
+    // connection-failure class for the fixed test tenant through the real Better Auth adapter path.
+    await authDatabase.execute(
+      sql.raw(`
+        CREATE OR REPLACE FUNCTION auth.tenant_switch_test_fail_persistence()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $function$
+        BEGIN
+          IF NEW.active_tenant_id = '31000000-0000-4000-8000-000000000002'::uuid THEN
+            RAISE EXCEPTION 'injected auth persistence outage' USING ERRCODE = '08006';
+          END IF;
+          RETURN NEW;
+        END;
+        $function$
+      `),
+    );
+    await authDatabase.execute(
+      sql.raw(`
+        CREATE TRIGGER tenant_switch_test_persistence_failure
+        BEFORE UPDATE ON auth.session
+        FOR EACH ROW
+        EXECUTE FUNCTION auth.tenant_switch_test_fail_persistence()
+      `),
+    );
+    try {
+      const persistenceUnavailableResponse = await runtime.handler(
+        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+          body: JSON.stringify({ tenantId: secondTenantId }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: authenticatedCookie,
+            origin: configuration.baseUrl,
+          }),
+          method: 'POST',
+        }),
+      );
+      assert.equal(persistenceUnavailableResponse.status, 503);
+      const sessionsAfterPersistenceFailure = await authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId));
+      assert.equal(sessionsAfterPersistenceFailure[0]?.activeTenantId, firstTenantId);
+    } finally {
+      await authDatabase.execute(
+        sql.raw(`
+          DROP TRIGGER IF EXISTS tenant_switch_test_persistence_failure ON auth.session
+        `),
+      );
+      await authDatabase.execute(
+        sql.raw(`
+          DROP FUNCTION IF EXISTS auth.tenant_switch_test_fail_persistence()
+        `),
+      );
+    }
+
+    const switchResponse = await runtime.handler(
+      new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+        body: JSON.stringify({ tenantId: secondTenantId }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    assert.equal(switchResponse.status, 200);
+    assert.deepEqual(await switchResponse.json(), { selectedTenantId: secondTenantId });
+    const sessionsAfterSwitch = await authDatabase
+      .select({ activeTenantId: session.activeTenantId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(sessionsAfterSwitch[0]?.activeTenantId, secondTenantId);
+    const currentSessionAfterSwitch = await Effect.runPromise(
+      authentication.currentSession(authenticatedHeaders),
+    );
+    assert.equal(currentSessionAfterSwitch.identity?.principalId, secondPrincipalId);
+    const idempotentSwitch = await Effect.runPromise(
+      authentication.switchTenant(secondTenantId, authenticatedHeaders),
+    );
+    assert.equal(idempotentSwitch.selectedTenantId, secondTenantId);
+
+    const secondModules = await runtime.handler(
+      new Request(`${configuration.baseUrl}/modules/active`, { headers: authenticatedHeaders }),
+    );
+    assert.deepEqual(await secondModules.json(), [{ moduleKey: 'second-module', state: 'active' }]);
+    const assertionResponse = await runtime.handler(
+      new Request(`${configuration.baseUrl}/auth/gateway-context`, {
+        body: JSON.stringify({ audience: 'inventory-stock' }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedCookie,
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    const assertion = (await assertionResponse.json()) as { readonly token: string };
+    const verified = await jwtVerify(assertion.token, pair.publicKey, {
+      algorithms: ['EdDSA'],
+      audience: 'inventory-stock',
+      currentDate: new Date(1_700_000_001_000),
+      issuer: 'https://shell.example.test',
+    });
+    assert.deepEqual(verified.payload.principal, {
+      authMethod: 'session',
+      principalId: secondPrincipalId,
+      tenantId: secondTenantId,
+    });
+
+    // A non-unavailability persistence rejection is an unexpected defect. The real Better Auth
+    // adapter must roll it back, while each owning HTTP boundary logs and returns a redacted 500.
+    await authDatabase.execute(
+      sql.raw(`
+        CREATE OR REPLACE FUNCTION auth.tenant_switch_test_fail_internal_persistence()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $function$
+        BEGIN
+          IF NEW.active_tenant_id = '31000000-0000-4000-8000-000000000001'::uuid THEN
+            RAISE EXCEPTION 'secret auth persistence defect' USING ERRCODE = 'P0001';
+          END IF;
+          RETURN NEW;
+        END;
+        $function$
+      `),
+    );
+    await authDatabase.execute(
+      sql.raw(`
+        CREATE TRIGGER tenant_switch_test_internal_persistence_failure
+        BEFORE UPDATE ON auth.session
+        FOR EACH ROW
+        EXECUTE FUNCTION auth.tenant_switch_test_fail_internal_persistence()
+      `),
+    );
+    try {
+      const unexpectedSwitchResponse = await runtime.handler(
+        new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
+          body: JSON.stringify({ tenantId: firstTenantId }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: authenticatedCookie,
+            origin: configuration.baseUrl,
+            'x-correlation-id': 'unexpected-switch-persistence-test',
+          }),
+          method: 'POST',
+        }),
+      );
+      assert.equal(unexpectedSwitchResponse.status, 500);
+      assert.doesNotMatch(
+        await unexpectedSwitchResponse.text(),
+        /secret auth persistence defect|P0001/u,
+      );
+      const sessionsAfterUnexpectedSwitchFailure = await authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId));
+      assert.equal(sessionsAfterUnexpectedSwitchFailure[0]?.activeTenantId, secondTenantId);
+
+      await authDatabase
+        .update(session)
+        .set({ activeTenantId: null })
+        .where(eq(session.userId, betterAuthUserId));
+      const unexpectedLegacyUpgradeResponse = await runtime.handler(
+        new Request(`${configuration.baseUrl}/auth/session`, {
+          headers: new Headers({
+            cookie: authenticatedCookie,
+            origin: configuration.baseUrl,
+            'x-correlation-id': 'unexpected-legacy-upgrade-test',
+          }),
+        }),
+      );
+      assert.equal(unexpectedLegacyUpgradeResponse.status, 500);
+      assert.doesNotMatch(
+        await unexpectedLegacyUpgradeResponse.text(),
+        /secret auth persistence defect|P0001/u,
+      );
+      const sessionsAfterUnexpectedLegacyUpgrade = await authDatabase
+        .select({ activeTenantId: session.activeTenantId })
+        .from(session)
+        .where(eq(session.userId, betterAuthUserId));
+      assert.equal(sessionsAfterUnexpectedLegacyUpgrade[0]?.activeTenantId, null);
+    } finally {
+      await authDatabase.execute(
+        sql.raw(`
+          DROP TRIGGER IF EXISTS tenant_switch_test_internal_persistence_failure ON auth.session
+        `),
+      );
+      await authDatabase.execute(
+        sql.raw(`
+          DROP FUNCTION IF EXISTS auth.tenant_switch_test_fail_internal_persistence()
+        `),
+      );
+    }
+
+    const upgradedSession = await Effect.runPromise(
+      authentication.currentSession(authenticatedHeaders),
+    );
+    assert.equal(upgradedSession.identity?.tenantId, firstTenantId);
+    const upgradedSessionRows = await authDatabase
+      .select({ activeTenantId: session.activeTenantId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(upgradedSessionRows[0]?.activeTenantId, firstTenantId);
+
+    await Effect.runPromise(authentication.switchTenant(secondTenantId, authenticatedHeaders));
+    await coreDatabase
+      .update(principalAuthBindings)
+      .set({ status: 'revoked' })
+      .where(eq(principalAuthBindings.tenantId, secondTenantId));
+    const revokedSession = await Effect.runPromise(
+      Effect.flip(authentication.currentSession(authenticatedHeaders)),
+    );
+    assert.equal(revokedSession._tag, 'OntosIdentityForbiddenError');
+  } finally {
+    await Promise.all(handlers.map(({ dispose }) => dispose()));
     await cleanup();
     await Promise.all([authPool.end(), corePool.end()]);
   }

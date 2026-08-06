@@ -1,6 +1,6 @@
 /* eslint-disable sort-keys -- Columns preserve the Better Auth CLI model order. */
 import { relations } from 'drizzle-orm';
-import { boolean, index, pgSchema, text, timestamp } from 'drizzle-orm/pg-core';
+import { boolean, index, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 export const AUTH_SCHEMA_NAME = 'auth';
 export const AUTH_TABLE_INVENTORY = ['user', 'session', 'account', 'verification'] as const;
@@ -30,6 +30,7 @@ export const session = authSchema.table(
     userId: text('user_id')
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
+    activeTenantId: uuid('active_tenant_id'),
   },
   (table) => [index('auth_session_user_id_idx').on(table.userId)],
 );

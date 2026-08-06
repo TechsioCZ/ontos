@@ -20,7 +20,7 @@ const principalOne = '20000000-0000-4000-8000-000000000001';
 const principalTwo = '20000000-0000-4000-8000-000000000002';
 const subject = 'better-auth-integration-subject';
 
-test('resolves one tenant and observes ambiguity, revocation, and inactive owners', async () => {
+test('lists and selects multiple tenant-scoped principals and fails closed after access changes', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
   const database = drizzle({ client: pool, schema: coreDatabaseSchema });
@@ -102,22 +102,36 @@ test('resolves one tenant and observes ambiguity, revocation, and inactive owner
       },
     ]);
 
-    const ambiguous = await Effect.runPromise(Effect.flip(resolver.resolveBetterAuthUser(subject)));
-    assert.equal(ambiguous._tag, 'PrincipalBindingAmbiguousError');
-
-    await database
-      .delete(principalAuthBindings)
-      .where(eq(principalAuthBindings.tenantId, tenantTwo));
-    const resolved = await Effect.runPromise(resolver.resolveBetterAuthUser(subject));
-    assert.equal(resolved.tenantId, tenantOne);
-    assert.equal(resolved.principalId, principalOne);
+    assert.deepEqual(await Effect.runPromise(resolver.listAvailableTenants(subject)), [
+      { name: 'Resolver tenant one', tenantId: tenantOne },
+      { name: 'Resolver tenant two', tenantId: tenantTwo },
+    ]);
+    const resolvedOne = await Effect.runPromise(
+      resolver.resolveBetterAuthUserForTenant(subject, tenantOne),
+    );
+    const resolvedTwo = await Effect.runPromise(
+      resolver.resolveBetterAuthUserForTenant(subject, tenantTwo),
+    );
+    assert.equal(resolvedOne.principalId, principalOne);
+    assert.equal(resolvedTwo.principalId, principalTwo);
+    const foreignResolution = await Effect.runPromise(
+      Effect.flip(
+        resolver.resolveBetterAuthUserForTenant('foreign-better-auth-subject', tenantOne),
+      ),
+    );
+    assert.equal(foreignResolution._tag, 'PrincipalBindingMissingError');
 
     await database
       .update(principalAuthBindings)
       .set({ status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, tenantOne));
-    const revoked = await Effect.runPromise(Effect.flip(resolver.resolveBetterAuthUser(subject)));
-    assert.equal(revoked._tag, 'PrincipalBindingInactiveError');
+    assert.deepEqual(await Effect.runPromise(resolver.listAvailableTenants(subject)), [
+      { name: 'Resolver tenant two', tenantId: tenantTwo },
+    ]);
+    const revokedResolution = await Effect.runPromise(
+      Effect.flip(resolver.resolveBetterAuthUserForTenant(subject, tenantOne)),
+    );
+    assert.equal(revokedResolution._tag, 'PrincipalBindingInactiveError');
 
     await database
       .update(principalAuthBindings)
@@ -128,7 +142,7 @@ test('resolves one tenant and observes ambiguity, revocation, and inactive owner
       .set({ status: 'disabled' })
       .where(eq(principals.principalId, principalOne));
     const inactivePrincipal = await Effect.runPromise(
-      Effect.flip(resolver.resolveBetterAuthUser(subject)),
+      Effect.flip(resolver.resolveBetterAuthUserForTenant(subject, tenantOne)),
     );
     assert.equal(inactivePrincipal._tag, 'PrincipalInactiveError');
 
@@ -141,7 +155,7 @@ test('resolves one tenant and observes ambiguity, revocation, and inactive owner
       .set({ status: 'suspended' })
       .where(eq(tenants.tenantId, tenantOne));
     const inactiveTenant = await Effect.runPromise(
-      Effect.flip(resolver.resolveBetterAuthUser(subject)),
+      Effect.flip(resolver.resolveBetterAuthUserForTenant(subject, tenantOne)),
     );
     assert.equal(inactiveTenant._tag, 'TenantInactiveError');
   } finally {

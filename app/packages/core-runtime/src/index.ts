@@ -10,10 +10,13 @@ export type { PrincipalResolutionError } from './auth/principal-resolver-errors.
 export {
   PrincipalResolver,
   PrincipalResolverLive,
-  classifyPrincipalResolution,
+  classifyAvailableTenants,
+  classifyDefaultPrincipal,
+  classifySelectedPrincipal,
   makePrincipalResolver,
 } from './auth/principal-resolver.ts';
 export type {
+  AvailableTenant,
   PrincipalResolutionRecord,
   PrincipalResolverShape,
   ResolvedPrincipalIdentity,

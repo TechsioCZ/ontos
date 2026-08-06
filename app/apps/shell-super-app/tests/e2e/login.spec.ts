@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
-import { createAuthenticationFixture, e2eCredentials } from './auth-fixture.ts';
+import { createAuthenticationFixture, e2eCredentials, e2eTenants } from './auth-fixture.ts';
 
 let cleanupFixture: (() => Promise<void>) | undefined;
 
@@ -141,6 +141,91 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(() => page.reload())
     .then(() => expect(page.getByRole('link', { name: 'Login' })).toBeVisible()));
 
+test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
+  page,
+}) => {
+  await page.goto('/en/login');
+  await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
+  await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await page.getByRole('button', { name: 'Login' }).click();
+  await expect(page).toHaveURL(/\/en\/?$/u);
+
+  const tenant = page.getByRole('combobox', { name: 'Current tenant' });
+  await expect(tenant).toContainText(e2eTenants.first.name);
+  await expect(page.getByText(e2eTenants.first.tenantId)).toBeVisible();
+  await tenant.click();
+  const switchResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === shellAuthenticationApiContract.switchTenantPath &&
+      response.request().method() === 'POST',
+  );
+  await Promise.all([
+    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    page.getByRole('option', { name: e2eTenants.second.name }).click(),
+  ]);
+  const switchResponse = await switchResponsePromise;
+  expect(switchResponse.status()).toBe(200);
+  await expect(page.getByRole('combobox', { name: 'Current tenant' })).toContainText(
+    e2eTenants.second.name,
+  );
+  await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
+  await expect(page.getByText(e2eTenants.second.principalId)).toBeVisible();
+  await expect(page.getByText(e2eTenants.second.tenantId)).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('combobox', { name: 'Current tenant' })).toContainText(
+    e2eTenants.second.name,
+  );
+  await expect(page.getByRole('button', { name: 'E2E user second tenant' })).toBeVisible();
+});
+
+test('retains Czech tenant context after one failed switch and supports keyboard retry', async ({
+  page,
+}) => {
+  let failSwitch = true;
+  await page.goto('/cs/login');
+  await page
+    .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
+    .fill(e2eCredentials.email);
+  await page.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
+  await page.getByRole('button', { name: 'Přihlásit se' }).click();
+  await expect(page).toHaveURL(/\/cs\/?$/u);
+  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, (route) => {
+    if (failSwitch) {
+      failSwitch = false;
+      return route.abort('failed');
+    }
+    return route.continue();
+  });
+
+  const tenant = page.getByRole('combobox', { name: 'Aktuální tenant' });
+  await expect(tenant).toContainText(e2eTenants.first.name);
+  await tenant.click();
+  await page.getByRole('option', { name: e2eTenants.second.name }).click();
+  await expect(page.getByText('Přepnutí tenantu selhalo. Zkuste to znovu.')).toBeVisible();
+  await expect(tenant).toContainText(e2eTenants.first.name);
+  await expect(page.getByText(e2eTenants.first.tenantId)).toBeVisible();
+
+  await tenant.focus();
+  await page.keyboard.press('Enter');
+  const secondTenantOption = page.getByRole('option', { name: e2eTenants.second.name });
+  await expect(secondTenantOption).toBeVisible();
+  if ((await secondTenantOption.getAttribute('data-highlighted')) === null) {
+    await page.keyboard.press('ArrowDown');
+  }
+  if ((await secondTenantOption.getAttribute('data-highlighted')) === null) {
+    await page.keyboard.press('ArrowDown');
+  }
+  await expect(secondTenantOption).toHaveAttribute('data-highlighted', '');
+  await Promise.all([
+    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    page.keyboard.press('Enter'),
+  ]);
+  await expect(page.getByRole('combobox', { name: 'Aktuální tenant' })).toContainText(
+    e2eTenants.second.name,
+  );
+});
+
 test('keeps keyboard logout operable after a Czech failure and succeeds on retry', ({ page }) => {
   let failLogout = true;
 
@@ -211,11 +296,23 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await page.getByRole('button', { name: 'Login' }).click();
   await expect(page).toHaveURL(/\/en\/?$/u);
+  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, (route) =>
+    route.abort('failed'),
+  );
 
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
   await expect(page.locator('header[aria-label="Dashboard header"]')).toBeInViewport();
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
   await expect(page.getByRole('region', { name: 'Authenticated identity' })).toBeInViewport();
+  await expect(page.getByRole('link', { name: 'Home' })).toBeInViewport();
+  const tenant = page.getByRole('combobox', { name: 'Current tenant' });
+  await expect(tenant).toBeInViewport();
+  await tenant.click();
+  const secondTenant = page.getByRole('option', { name: e2eTenants.second.name });
+  await expect(secondTenant).toBeInViewport();
+  await secondTenant.click();
+  await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
+  await expect(tenant).toContainText(e2eTenants.first.name);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,

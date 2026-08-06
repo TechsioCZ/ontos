@@ -1,5 +1,10 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/no-useless-undefined -- Better Auth hooks are Promise callbacks while the public service remains Effect-based. */
-import type { PrincipalResolverShape, ResolvedPrincipalIdentity } from '@app/core-runtime';
+import type {
+  AvailableTenant,
+  PrincipalResolutionError,
+  PrincipalResolverShape,
+  ResolvedPrincipalIdentity,
+} from '@app/core-runtime';
 import { PrincipalResolver } from '@app/core-runtime';
 import { APIError, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
@@ -14,8 +19,9 @@ import {
   AuthenticationUnavailableError,
   InvalidCredentialsError,
   OntosIdentityForbiddenError,
+  TenantAccessForbiddenError,
 } from './errors.ts';
-import type { AuthenticationRuntimeError } from './errors.ts';
+import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './errors.ts';
 
 const FORBIDDEN_IDENTITY_CODE = 'ONTOS_IDENTITY_FORBIDDEN';
 const IDENTITY_UNAVAILABLE_CODE = 'ONTOS_IDENTITY_UNAVAILABLE';
@@ -41,7 +47,35 @@ export interface SignOutResult {
   readonly setCookieHeaders: readonly string[];
 }
 
+export interface AvailableTenantsResult {
+  readonly setCookieHeaders: readonly string[];
+  readonly tenants: readonly AvailableTenant[];
+}
+
+export interface SwitchTenantResult {
+  readonly selectedTenantId: string;
+  readonly setCookieHeaders: readonly string[];
+}
+
+interface AnonymousResolvedSession {
+  readonly setCookieHeaders: readonly string[];
+  readonly state: 'anonymous';
+}
+
+interface AuthenticatedResolvedSession {
+  readonly identity: SafeAuthenticatedIdentity;
+  readonly selectedTenantId: string;
+  readonly setCookieHeaders: readonly string[];
+  readonly state: 'authenticated';
+  readonly userId: string;
+}
+
+type ResolvedSession = AnonymousResolvedSession | AuthenticatedResolvedSession;
+
 export interface AuthenticationServiceShape {
+  readonly availableTenants: (
+    requestHeaders: Headers,
+  ) => Effect.Effect<AvailableTenantsResult, AuthenticationRuntimeError>;
   readonly createFixtureUser: (
     email: string,
     name: string,
@@ -58,6 +92,10 @@ export interface AuthenticationServiceShape {
   readonly signOut: (
     requestHeaders: Headers,
   ) => Effect.Effect<SignOutResult, AuthenticationRuntimeError>;
+  readonly switchTenant: (
+    tenantId: string,
+    requestHeaders: Headers,
+  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError>;
 }
 
 export class AuthenticationService extends Context.Service<
@@ -71,26 +109,57 @@ const isTagged = (value: unknown): value is { readonly _tag: string } =>
 const isResolverUnavailable = (error: unknown) =>
   isTagged(error) && error._tag === 'PrincipalResolverUnavailableError';
 
+const mapResolverError = (
+  error: PrincipalResolutionError,
+): AuthenticationUnavailableError | OntosIdentityForbiddenError =>
+  error._tag === 'PrincipalResolverUnavailableError'
+    ? new AuthenticationUnavailableError()
+    : new OntosIdentityForbiddenError();
+
 const resolveForSession = (
   resolver: PrincipalResolverShape,
   betterAuthUserId: string,
 ): Promise<ResolvedPrincipalIdentity> =>
-  Effect.runPromise(resolver.resolveBetterAuthUser(betterAuthUserId)).catch((error: unknown) => {
-    if (isResolverUnavailable(error)) {
-      throw new APIError('SERVICE_UNAVAILABLE', {
-        code: IDENTITY_UNAVAILABLE_CODE,
-        message: 'Authentication is temporarily unavailable',
-      });
-    }
+  Effect.runPromise(resolver.resolveDefaultBetterAuthUser(betterAuthUserId)).catch(
+    (error: unknown) => {
+      if (isResolverUnavailable(error)) {
+        throw new APIError('SERVICE_UNAVAILABLE', {
+          code: IDENTITY_UNAVAILABLE_CODE,
+          message: 'Authentication is temporarily unavailable',
+        });
+      }
 
-    throw new APIError('FORBIDDEN', {
-      code: FORBIDDEN_IDENTITY_CODE,
-      message: 'The authenticated identity cannot access OntOS',
-    });
-  });
+      throw new APIError('FORBIDDEN', {
+        code: FORBIDDEN_IDENTITY_CODE,
+        message: 'The authenticated identity cannot access OntOS',
+      });
+    },
+  );
 
 const setCookieHeaders = (headers: Headers): readonly string[] =>
   typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+
+const isDatabaseUnavailable = (error: unknown, depth = 0): boolean => {
+  if (depth > 3 || typeof error !== 'object' || error === null) {
+    return false;
+  }
+
+  if ('code' in error) {
+    const { code } = error;
+    if (
+      typeof code === 'string' &&
+      (/^(?:08|40|53|55|57|58)/u.test(code) ||
+        code === 'ECONNREFUSED' ||
+        code === 'ECONNRESET' ||
+        code === 'EPIPE' ||
+        code === 'ETIMEDOUT')
+    ) {
+      return true;
+    }
+  }
+
+  return 'cause' in error && isDatabaseUnavailable(error.cause, depth + 1);
+};
 
 const toSafeIdentity = (
   email: string,
@@ -102,7 +171,7 @@ const toSafeIdentity = (
   tenantId: principal.tenantId,
 });
 
-const mapRuntimeError = (error: unknown): AuthenticationRuntimeError => {
+const mapKnownRuntimeError = (error: unknown): AuthenticationRuntimeError | undefined => {
   if (error instanceof APIError) {
     const code =
       typeof error.body === 'object' && error.body !== null && 'code' in error.body
@@ -113,7 +182,7 @@ const mapRuntimeError = (error: unknown): AuthenticationRuntimeError => {
       return new OntosIdentityForbiddenError();
     }
 
-    if (code === IDENTITY_UNAVAILABLE_CODE || error.statusCode >= 500) {
+    if (code === IDENTITY_UNAVAILABLE_CODE || error.statusCode === 503) {
       return new AuthenticationUnavailableError();
     }
 
@@ -122,7 +191,35 @@ const mapRuntimeError = (error: unknown): AuthenticationRuntimeError => {
     }
   }
 
+  if (isDatabaseUnavailable(error)) {
+    return new AuthenticationUnavailableError();
+  }
+
+  return undefined;
+};
+
+const mapRuntimeError = (error: unknown): AuthenticationRuntimeError => {
+  const knownError = mapKnownRuntimeError(error);
+  if (knownError !== undefined) {
+    return knownError;
+  }
+
+  if (error instanceof APIError && error.statusCode >= 500) {
+    return new AuthenticationUnavailableError();
+  }
+
   return new AuthenticationInternalError();
+};
+
+const mapSessionUpdateError = (error: unknown): AuthenticationRuntimeError => {
+  const knownError = mapKnownRuntimeError(error);
+  if (knownError !== undefined) {
+    return knownError;
+  }
+
+  // Effect.tryPromise treats a catch-mapper throw as a defect. Keep the private rejection intact so
+  // the owning HTTP boundary can log its full cause with correlation context before returning 500.
+  throw error;
 };
 
 const fallbackClearingCookies = (configuration: AuthConfigValue): readonly string[] => {
@@ -162,7 +259,13 @@ export const makeAuthenticationService = (
     databaseHooks: {
       session: {
         create: {
-          before: (session) => resolveForSession(resolver, session.userId).then(() => undefined),
+          before: (session) =>
+            resolveForSession(resolver, session.userId).then((principal) => ({
+              data: {
+                ...session,
+                activeTenantId: principal.tenantId,
+              },
+            })),
         },
       },
     },
@@ -175,26 +278,132 @@ export const makeAuthenticationService = (
       disabled: true,
     },
     secret: configuration.secret,
+    session: {
+      additionalFields: {
+        activeTenantId: {
+          input: true,
+          required: false,
+          type: 'string',
+        },
+      },
+    },
     trustedOrigins: [...configuration.trustedOrigins],
   });
 
-  const resolveIdentity = (user: {
+  const resolveIdentity = (
+    user: {
+      readonly email: string;
+      readonly id: string;
+    },
+    tenantId: string,
+  ): Effect.Effect<
+    SafeAuthenticatedIdentity,
+    AuthenticationUnavailableError | OntosIdentityForbiddenError
+  > =>
+    resolver.resolveBetterAuthUserForTenant(user.id, tenantId).pipe(
+      Effect.map((principal) => toSafeIdentity(user.email, principal)),
+      Effect.mapError(mapResolverError),
+    );
+
+  const resolveDefaultIdentity = (user: {
     readonly email: string;
     readonly id: string;
   }): Effect.Effect<
     SafeAuthenticatedIdentity,
     AuthenticationUnavailableError | OntosIdentityForbiddenError
   > =>
-    resolver.resolveBetterAuthUser(user.id).pipe(
+    resolver.resolveDefaultBetterAuthUser(user.id).pipe(
       Effect.map((principal) => toSafeIdentity(user.email, principal)),
-      Effect.mapError((error) =>
-        error._tag === 'PrincipalResolverUnavailableError'
-          ? new AuthenticationUnavailableError()
-          : new OntosIdentityForbiddenError(),
+      Effect.mapError(mapResolverError),
+    );
+
+  const getSession = (requestHeaders: Headers) =>
+    Effect.tryPromise({
+      catch: mapRuntimeError,
+      try: () =>
+        auth.api.getSession({
+          headers: requestHeaders,
+          returnHeaders: true,
+        }),
+    });
+
+  const readResolvedSession = (
+    requestHeaders: Headers,
+  ): Effect.Effect<ResolvedSession, AuthenticationRuntimeError> =>
+    getSession(requestHeaders).pipe(
+      Effect.flatMap((result): Effect.Effect<ResolvedSession, AuthenticationRuntimeError> => {
+        if (result.response === null) {
+          return Effect.succeed({
+            setCookieHeaders: setCookieHeaders(result.headers),
+            state: 'anonymous' as const,
+          });
+        }
+
+        const { response } = result;
+        const selectedTenantId = response.session.activeTenantId;
+        if (typeof selectedTenantId === 'string') {
+          return resolveIdentity(response.user, selectedTenantId).pipe(
+            Effect.map((identity) => ({
+              identity,
+              selectedTenantId,
+              setCookieHeaders: setCookieHeaders(result.headers),
+              state: 'authenticated' as const,
+              userId: response.user.id,
+            })),
+          );
+        }
+
+        return resolveDefaultIdentity(response.user).pipe(
+          Effect.flatMap((identity) =>
+            Effect.tryPromise({
+              catch: mapSessionUpdateError,
+              try: () =>
+                auth.api.updateSession({
+                  body: { activeTenantId: identity.tenantId },
+                  headers: requestHeaders,
+                  returnHeaders: true,
+                }),
+            }).pipe(
+              Effect.map((updated) => ({
+                identity,
+                selectedTenantId: identity.tenantId,
+                setCookieHeaders: [
+                  ...setCookieHeaders(result.headers),
+                  ...setCookieHeaders(updated.headers),
+                ],
+                state: 'authenticated' as const,
+                userId: response.user.id,
+              })),
+            ),
+          ),
+        );
+      }),
+    );
+
+  const authenticatedSession = (
+    requestHeaders: Headers,
+  ): Effect.Effect<AuthenticatedResolvedSession, AuthenticationRuntimeError> =>
+    readResolvedSession(requestHeaders).pipe(
+      Effect.flatMap((resolved) =>
+        resolved.state === 'anonymous'
+          ? Effect.fail(new InvalidCredentialsError())
+          : Effect.succeed(resolved),
       ),
     );
 
   return {
+    availableTenants: (requestHeaders) =>
+      authenticatedSession(requestHeaders).pipe(
+        Effect.flatMap((resolved) =>
+          resolver.listAvailableTenants(resolved.userId).pipe(
+            Effect.map((tenants) => ({
+              setCookieHeaders: resolved.setCookieHeaders,
+              tenants,
+            })),
+            Effect.mapError(mapResolverError),
+          ),
+        ),
+      ),
     createFixtureUser: (email, name, password) =>
       options.allowFixtureSignUp === true
         ? Effect.tryPromise({
@@ -210,34 +419,15 @@ export const makeAuthenticationService = (
           }).pipe(Effect.map((result) => result.user.id))
         : Effect.fail(new AuthenticationInternalError()),
     currentSession: (requestHeaders) =>
-      Effect.tryPromise({
-        catch: mapRuntimeError,
-        try: () =>
-          auth.api.getSession({
-            headers: requestHeaders,
-            returnHeaders: true,
-          }),
-      }).pipe(
-        Effect.flatMap(
-          (
-            result,
-          ): Effect.Effect<
-            CurrentSessionResult,
-            AuthenticationUnavailableError | OntosIdentityForbiddenError
-          > =>
-            result.response === null
-              ? Effect.succeed<CurrentSessionResult>({
-                  identity: null,
-                  setCookieHeaders: setCookieHeaders(result.headers),
-                })
-              : resolveIdentity(result.response.user).pipe(
-                  Effect.map(
-                    (identity): CurrentSessionResult => ({
-                      identity,
-                      setCookieHeaders: setCookieHeaders(result.headers),
-                    }),
-                  ),
-                ),
+      readResolvedSession(requestHeaders).pipe(
+        Effect.map(
+          (resolved): CurrentSessionResult =>
+            resolved.state === 'anonymous'
+              ? { identity: null, setCookieHeaders: resolved.setCookieHeaders }
+              : {
+                  identity: resolved.identity,
+                  setCookieHeaders: resolved.setCookieHeaders,
+                },
         ),
       ),
     signIn: (email, password, requestHeaders) =>
@@ -254,7 +444,7 @@ export const makeAuthenticationService = (
           }),
       }).pipe(
         Effect.flatMap((result) =>
-          resolveIdentity(result.response.user).pipe(
+          resolveDefaultIdentity(result.response.user).pipe(
             Effect.map((identity) => ({
               identity,
               setCookieHeaders: setCookieHeaders(result.headers),
@@ -281,6 +471,42 @@ export const makeAuthenticationService = (
           Effect.succeed({
             setCookieHeaders: fallbackClearingCookies(configuration),
           }),
+        ),
+      ),
+    switchTenant: (tenantId, requestHeaders) =>
+      authenticatedSession(requestHeaders).pipe(
+        Effect.flatMap((resolved) =>
+          resolver.resolveBetterAuthUserForTenant(resolved.userId, tenantId).pipe(
+            Effect.mapError((error: PrincipalResolutionError) =>
+              error._tag === 'PrincipalResolverUnavailableError'
+                ? new AuthenticationUnavailableError()
+                : new TenantAccessForbiddenError(),
+            ),
+            Effect.flatMap(() =>
+              tenantId === resolved.selectedTenantId
+                ? Effect.succeed({
+                    selectedTenantId: tenantId,
+                    setCookieHeaders: resolved.setCookieHeaders,
+                  })
+                : Effect.tryPromise({
+                    catch: mapSessionUpdateError,
+                    try: () =>
+                      auth.api.updateSession({
+                        body: { activeTenantId: tenantId },
+                        headers: requestHeaders,
+                        returnHeaders: true,
+                      }),
+                  }).pipe(
+                    Effect.map((updated) => ({
+                      selectedTenantId: tenantId,
+                      setCookieHeaders: [
+                        ...resolved.setCookieHeaders,
+                        ...setCookieHeaders(updated.headers),
+                      ],
+                    })),
+                  ),
+            ),
+          ),
         ),
       ),
   };

@@ -1,9 +1,21 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader composes typed Effect callbacks until the single runtime boundary. */
-import { activeModules, currentSession, runEffectRequest } from '../../api/auth-client.ts';
-import type { ActiveModulesClientError } from '../../api/auth-client.ts';
+import {
+  activeModules,
+  availableTenants,
+  currentSession,
+  runEffectRequest,
+} from '../../api/auth-client.ts';
+import type {
+  ActiveModulesClientError,
+  AvailableTenantsClientError,
+} from '../../api/auth-client.ts';
 import { Effect } from 'effect';
 import { shellAuthenticationApiContract } from '../../../shared/api.ts';
-import type { ActiveModules, SafeAuthenticatedIdentity } from '../../../shared/api.ts';
+import type {
+  ActiveModules,
+  AvailableTenant,
+  SafeAuthenticatedIdentity,
+} from '../../../shared/api.ts';
 
 interface HomeLoaderArguments {
   readonly request: Request;
@@ -19,6 +31,9 @@ export interface AuthenticatedHomePageModel {
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly identity: SafeAuthenticatedIdentity;
   readonly state: 'authenticated';
+  readonly tenants:
+    | { readonly items: readonly AvailableTenant[]; readonly state: 'available' }
+    | { readonly items: readonly [AvailableTenant]; readonly state: 'unavailable' };
 }
 
 export type HomePageModel = AnonymousHomePageModel | AuthenticatedHomePageModel;
@@ -32,6 +47,16 @@ const unavailableModules = (_error: ActiveModulesClientError) => ({
   state: 'unavailable' as const,
 });
 
+const unavailableTenants = (tenantId: string) => ({
+  items: [{ name: tenantId, tenantId }] as const,
+  state: 'unavailable' as const,
+});
+
+const tenantRead = (error: AvailableTenantsClientError, tenantId: string) =>
+  error._tag === 'TenantAuthenticationRequiredProblem'
+    ? ({ state: 'stale' } as const)
+    : unavailableTenants(tenantId);
+
 export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> => {
   const cookie = request.headers.get('cookie');
   const options = {
@@ -44,20 +69,28 @@ export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel>
       Effect.flatMap((session) =>
         session.state === 'anonymous'
           ? Effect.succeed<HomePageModel>(anonymousModel)
-          : activeModules(options).pipe(
-              Effect.map(
-                (items): HomePageModel => ({
-                  activeModules: { items, state: 'available' },
-                  identity: session.identity,
-                  state: 'authenticated',
-                }),
+          : Effect.all({
+              activeModules: activeModules(options).pipe(
+                Effect.map((items) => ({ items, state: 'available' as const })),
+                Effect.catch((error) => Effect.succeed(unavailableModules(error))),
               ),
-              Effect.catch((error) =>
-                Effect.succeed<HomePageModel>({
-                  activeModules: unavailableModules(error),
-                  identity: session.identity,
-                  state: 'authenticated',
-                }),
+              tenants: availableTenants(options).pipe(
+                Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+                Effect.catch((error) =>
+                  Effect.succeed(tenantRead(error, session.identity.tenantId)),
+                ),
+              ),
+            }).pipe(
+              Effect.map(
+                ({ activeModules: modules, tenants }): HomePageModel =>
+                  tenants.state === 'stale'
+                    ? anonymousModel
+                    : {
+                        activeModules: modules,
+                        identity: session.identity,
+                        state: 'authenticated',
+                        tenants,
+                      },
               ),
             ),
       ),
