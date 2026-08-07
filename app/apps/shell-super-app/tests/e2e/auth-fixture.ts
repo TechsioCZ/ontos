@@ -7,6 +7,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import {
   coreDatabaseSchema,
+  legalEntities,
   principalAuthBindings,
   principals,
   tenantModuleStates,
@@ -21,11 +22,13 @@ export const e2eCredentials = {
 
 export const e2eTenants = {
   first: {
+    legalEntityId: '55000000-0000-4000-8000-000000000001',
     name: 'E2E Alpha tenant',
     principalId: '60000000-0000-4000-8000-000000000001',
     tenantId: '50000000-0000-4000-8000-000000000001',
   },
   second: {
+    legalEntityId: '55000000-0000-4000-8000-000000000002',
     name: 'E2E Zeta tenant',
     principalId: '60000000-0000-4000-8000-000000000002',
     tenantId: '50000000-0000-4000-8000-000000000002',
@@ -92,6 +95,12 @@ export const createAuthenticationFixture = async () => {
       .delete(tenantModuleStates)
       .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
     await coreDatabase
+      .delete(legalEntities)
+      .where(eq(legalEntities.tenantId, e2eTenants.first.tenantId));
+    await coreDatabase
+      .delete(legalEntities)
+      .where(eq(legalEntities.tenantId, e2eTenants.second.tenantId));
+    await coreDatabase
       .delete(principals)
       .where(eq(principals.principalId, e2eTenants.first.principalId));
     await coreDatabase
@@ -137,6 +146,24 @@ export const createAuthenticationFixture = async () => {
       displayName: 'E2E user second tenant',
       kind: 'human',
       principalId: e2eTenants.second.principalId,
+      status: 'active',
+      tenantId: e2eTenants.second.tenantId,
+    },
+  ]);
+  await coreDatabase.insert(legalEntities).values([
+    {
+      legalEntityId: e2eTenants.first.legalEntityId,
+      legalName: 'E2E Alpha company',
+      registrationCountry: 'CZ',
+      registrationNumber: 'E2E-ALPHA',
+      status: 'active',
+      tenantId: e2eTenants.first.tenantId,
+    },
+    {
+      legalEntityId: e2eTenants.second.legalEntityId,
+      legalName: 'E2E Zeta company',
+      registrationCountry: 'CZ',
+      registrationNumber: 'E2E-ZETA',
       status: 'active',
       tenantId: e2eTenants.second.tenantId,
     },

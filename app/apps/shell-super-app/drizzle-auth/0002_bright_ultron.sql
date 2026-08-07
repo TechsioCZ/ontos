@@ -1,0 +1,1 @@
+ALTER TABLE "auth"."session" ADD COLUMN "active_legal_entity_id" uuid;

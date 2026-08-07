@@ -29,6 +29,7 @@ const contract = (
     readonly api?: readonly object[];
     readonly components?: readonly object[];
     readonly outboxSubscriptions?: readonly object[];
+    readonly shellContributions?: object;
   } = {},
 ) => ({
   deployment: { appId, buildMarker: `${appId}-independent-build` },
@@ -69,10 +70,20 @@ const contract = (
       reports: [],
       resourceTypes: [],
       search: [],
+      shellContributions: overrides.shellContributions ?? {
+        mediaAttachments: [],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [],
+        search: [],
+        timelines: [],
+      },
     },
   },
   runtime: { outboxSubscriptions: overrides.outboxSubscriptions ?? [] },
-  schemaVersion: '1',
+  schemaVersion: '2',
 });
 
 const PropertyApi = HttpApi.make('PropertyApi').add(
@@ -153,6 +164,16 @@ const propertyManifest = defineOntosModuleManifest({
     reports: [],
     resourceTypes: [],
     search: [],
+    shellContributions: {
+      mediaAttachments: [],
+      navigation: [],
+      pages: [],
+      publicComponents: [],
+      reports: [],
+      resourceDetails: [],
+      search: [],
+      timelines: [],
+    },
   },
 });
 

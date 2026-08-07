@@ -311,6 +311,7 @@ const deriveContract = async (
         reports: owner.manifest.publicSurface.reports,
         resourceTypes: owner.manifest.publicSurface.resourceTypes,
         search: owner.manifest.publicSurface.search,
+        shellContributions: owner.manifest.publicSurface.shellContributions,
       },
     },
     runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },

@@ -1,102 +1,24 @@
 /* eslint-disable promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect } from 'effect';
 import { useState } from 'react';
-import { runEffectRequest, signOut, switchTenant } from '../../api/auth-client.ts';
-import type { SwitchTenantClientError } from '../../api/auth-client.ts';
 import type { HomePageModel } from './page.data.ts';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
+import { useShellControls } from '../use-shell-controls.ts';
 
 interface HomeViewProps {
   readonly initialModel: HomePageModel;
 }
 
-type TenantSwitchFailureState = 'authentication-required' | 'failed';
-
-const tenantSwitchFailureState = (error: SwitchTenantClientError): TenantSwitchFailureState => {
-  switch (error._tag) {
-    case 'TenantAuthenticationRequiredProblem': {
-      return 'authentication-required';
-    }
-    case 'TenantAccessForbiddenProblem':
-    case 'TenantCapabilityUnavailableProblem':
-    case 'TenantInternalProblem':
-    case 'HttpClientError':
-    case 'SchemaError': {
-      return 'failed';
-    }
-    default: {
-      return error;
-    }
-  }
-};
-
 export const HomeView = ({ initialModel }: HomeViewProps) => {
   const { language, t } = useModernI18n();
-  const navigate = useNavigate();
   const [model, setModel] = useState(initialModel);
-  const [logoutPending, setLogoutPending] = useState(false);
-  const [logoutFailed, setLogoutFailed] = useState(false);
-  const [tenantSwitchPending, setTenantSwitchPending] = useState(false);
-  const [tenantSwitchFailed, setTenantSwitchFailed] = useState(false);
-
-  const handleLogout = () => {
-    if (logoutPending) {
-      return;
-    }
-
-    setLogoutPending(true);
-    setLogoutFailed(false);
-    void runEffectRequest(signOut({ locale: language }))
-      .then(() => {
-        setModel({ state: 'anonymous' });
-      })
-      .catch(() => {
-        setLogoutFailed(true);
-      })
-      .finally(() => {
-        setLogoutPending(false);
-      });
-  };
-
-  const handleTenantChange = (tenantId: string) => {
-    if (
-      model.state === 'anonymous' ||
-      tenantSwitchPending ||
-      tenantId.length === 0 ||
-      tenantId === model.identity.tenantId
-    ) {
-      return;
-    }
-
-    setTenantSwitchPending(true);
-    setTenantSwitchFailed(false);
-    void runEffectRequest(
-      switchTenant({ tenantId }, { locale: language }).pipe(
-        Effect.match({
-          onFailure: tenantSwitchFailureState,
-          onSuccess: () => 'switched' as const,
-        }),
-      ),
-    )
-      .then((outcome) => {
-        if (outcome === 'authentication-required' || outcome === 'switched') {
-          void navigate({ reloadDocument: true, to: '.' });
-          return;
-        }
-        setTenantSwitchFailed(true);
-      })
-      .catch(() => {
-        setTenantSwitchFailed(true);
-      })
-      .finally(() => {
-        setTenantSwitchPending(false);
-      });
-  };
+  const controls = useShellControls(model.state === 'authenticated' ? model : undefined, () =>
+    setModel({ state: 'anonymous' }),
+  );
 
   if (model.state === 'anonymous') {
     return (
@@ -111,20 +33,42 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     );
   }
 
+  if (model.state === 'unavailable') {
+    return (
+      <>
+        <UltramodernRouteHead />
+        <main className="flex min-h-screen items-center justify-center bg-(--color-page-bg) p-4">
+          <StatusText aria-live="polite" showIcon status="error">
+            {t('shell.dashboard.unavailable')}
+          </StatusText>
+        </main>
+      </>
+    );
+  }
+
   return (
     <>
       <UltramodernRouteHead />
       <AuthenticatedDashboardLayout
-        activeModules={model.activeModules.items.map(({ moduleKey }) => ({ moduleKey }))}
+        {...(model.selectedLegalEntityId === undefined
+          ? {}
+          : { currentLegalEntityId: model.selectedLegalEntityId })}
         currentTenantId={model.identity.tenantId}
         identity={{ displayName: model.identity.displayName }}
-        logoutPending={logoutPending}
-        onLogout={handleLogout}
-        onTenantChange={handleTenantChange}
+        legalEntityChoices={model.legalEntities.items}
+        legalEntityState={model.legalEntities.state}
+        legalEntitySwitchFailed={controls.legalEntitySwitchFailed}
+        legalEntitySwitchPending={controls.legalEntitySwitchPending}
+        logoutPending={controls.logoutPending}
+        navigation={model.navigation.items}
+        onLegalEntityChange={controls.handleLegalEntityChange}
+        onLogout={controls.handleLogout}
+        onSearch={controls.handleSearch}
+        onTenantChange={controls.handleTenantChange}
         tenantChoices={model.tenants.items}
         tenantState={model.tenants.state}
-        tenantSwitchFailed={tenantSwitchFailed}
-        tenantSwitchPending={tenantSwitchPending}
+        tenantSwitchFailed={controls.tenantSwitchFailed}
+        tenantSwitchPending={controls.tenantSwitchPending}
         title={t('shell.dashboard.home.title')}
       >
         <section
@@ -148,28 +92,34 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
               <dt className="font-semibold">{t('shell.auth.identity.tenant')}</dt>
               <dd>{model.identity.tenantId}</dd>
             </div>
+            {model.contextState === 'authenticated' ? (
+              <div>
+                <dt className="font-semibold">{t('shell.auth.identity.legalEntity')}</dt>
+                <dd>{model.selectedLegalEntityId}</dd>
+              </div>
+            ) : null}
           </dl>
-          <ul
-            aria-describedby={
-              model.activeModules.state === 'unavailable' ? 'active-modules-unavailable' : undefined
-            }
-            aria-label={t('shell.modules.active.label')}
-          >
-            {model.activeModules.items.map((module) => (
-              <li key={module.moduleKey}>
-                {t('shell.modules.active.item', {
-                  moduleKey: module.moduleKey,
-                  state: t('shell.modules.state.active'),
-                })}
-              </li>
-            ))}
-          </ul>
-          {model.activeModules.state === 'unavailable' ? (
-            <StatusText aria-live="polite" id="active-modules-unavailable" showIcon status="error">
-              {t('shell.modules.active.unavailable')}
+          {model.contextState === 'selection_required' ? (
+            <StatusText aria-live="polite" showIcon status="warning">
+              {t('shell.dashboard.legalEntity.selectionRequired')}
             </StatusText>
           ) : null}
-          {logoutFailed ? (
+          {model.contextState === 'access_blocked' ? (
+            <StatusText aria-live="polite" showIcon status="error">
+              {t('shell.dashboard.legalEntity.accessBlocked')}
+            </StatusText>
+          ) : null}
+          {model.navigation.state === 'unavailable' ? (
+            <StatusText
+              aria-live="polite"
+              id="module-navigation-unavailable"
+              showIcon
+              status="error"
+            >
+              {t('shell.modules.unavailable')}
+            </StatusText>
+          ) : null}
+          {controls.logoutFailed ? (
             <StatusText aria-live="polite" showIcon status="error">
               {t('shell.auth.logout.failed')}
             </StatusText>

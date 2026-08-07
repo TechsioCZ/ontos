@@ -2,8 +2,10 @@ import { Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
+import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
+import type { OntosShellContributions } from './shell-contribution.ts';
 
-export const ONTOS_MODULE_CONTRACT_SCHEMA_VERSION = '1' as const;
+export const ONTOS_MODULE_CONTRACT_SCHEMA_VERSION = '2' as const;
 export const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.json' as const;
 export const ONTOS_MODULE_CONTRACT_MAX_BYTES = 1024 * 1024;
 export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;
@@ -133,6 +135,7 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   reports: Schema.Array(OntosReportDescriptorSchema),
   resourceTypes: Schema.Array(OntosResourceTypeSchema),
   search: Schema.Array(OntosSearchDescriptorSchema),
+  shellContributions: OntosShellContributionsSchema,
 });
 
 export const OntosSerializedModuleManifestSchema = Schema.Struct({
@@ -190,6 +193,7 @@ export interface OntosAuthoredPublicSurface {
   readonly reports: readonly OntosReportDescriptor[];
   readonly resourceTypes: readonly OntosResourceType[];
   readonly search: readonly OntosSearchDescriptor[];
+  readonly shellContributions: OntosShellContributions;
 }
 
 export interface OntosModuleManifestInput {
@@ -257,7 +261,16 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   assertExactKeys(input, ['activation', 'module', 'publicSurface'], 'manifest');
   assertExactKeys(
     input.publicSurface,
-    ['actions', 'api', 'components', 'events', 'reports', 'resourceTypes', 'search'],
+    [
+      'actions',
+      'api',
+      'components',
+      'events',
+      'reports',
+      'resourceTypes',
+      'search',
+      'shellContributions',
+    ],
     'manifest public surface',
   );
   exactDecode(OntosModuleIdentitySchema, input.module);
@@ -367,6 +380,21 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   if (Object.values(input.publicSurface.components).some((value) => typeof value !== 'function')) {
     throw new TypeError('public component entries must reference callable component values');
   }
+  const componentKeys = new Set(
+    Object.keys(input.publicSurface.components).map((key) => `${input.module.id}.${key}`),
+  );
+  const apiKeys = new Set(
+    Object.keys(input.publicSurface.api).map((key) => `${input.module.id}.${key}`),
+  );
+  const shellContributions = validateShellContributions(input.publicSurface.shellContributions, {
+    actionKeys: new Set(actionKeys),
+    apiKeys,
+    componentKeys,
+    moduleId: input.module.id,
+    reportKeys: new Set(reports.map(({ key }) => key)),
+    resourceTypeKeys: resourceSet,
+    searchKeys: new Set(search.map(({ key }) => key)),
+  });
 
   const manifest = {
     activation: freezePlain({
@@ -394,6 +422,16 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
         ),
       ),
       search: Object.freeze(search.map((value) => freezePlain({ ...value }))),
+      shellContributions: freezePlain({
+        mediaAttachments: [...shellContributions.mediaAttachments],
+        navigation: [...shellContributions.navigation],
+        pages: [...shellContributions.pages],
+        publicComponents: [...shellContributions.publicComponents],
+        reports: [...shellContributions.reports],
+        resourceDetails: [...shellContributions.resourceDetails],
+        search: [...shellContributions.search],
+        timelines: [...shellContributions.timelines],
+      }),
     }),
   } as unknown as Input;
   return Object.freeze(manifest);

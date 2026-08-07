@@ -4,6 +4,7 @@
       "identity": {
         "displayName": "Jméno",
         "email": "E-mail",
+        "legalEntity": "Právní subjekt",
         "principal": "Principal",
         "tenant": "Tenant",
         "title": "Přihlášená identita"
@@ -29,6 +30,15 @@
       "home": {
         "title": "Domů"
       },
+      "legalEntity": {
+        "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",
+        "accessibleLabel": "Aktuální právní subjekt",
+        "failed": "Přepnutí právního subjektu selhalo. Zkuste to znovu.",
+        "pending": "Přepínám právní subjekt…",
+        "placeholder": "Vyberte právní subjekt",
+        "selectionRequired": "Před použitím modulů vyberte jeden právní subjekt.",
+        "unavailable": "Výběr právních subjektů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
+      },
       "navigation": {
         "home": "Domů",
         "label": "Navigace přehledu"
@@ -36,12 +46,13 @@
       "sidebar": {
         "label": "Postranní panel přehledu"
       },
-      "tenant": {
+    "tenant": {
         "accessibleLabel": "Aktuální tenant",
         "failed": "Přepnutí tenantu selhalo. Zkuste to znovu.",
         "pending": "Přepínám tenant…",
-        "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
-      }
+      "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
+    },
+    "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu."
     },
     "hero": {
       "cardOne": "Přidejte první business vertical příkazem create <domain> --vertical, až ho opravdu potřebujete.",
@@ -94,8 +105,55 @@
         "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
       },
       "state": {
-        "active": "Aktivní"
-      }
+        "active": "Aktivní",
+        "deprecated": "Zastaralý",
+        "readOnly": "Jen pro čtení"
+      },
+      "unavailable": "Přístup k modulu je dočasně nedostupný. Zkuste to znovu."
+    },
+    "moduleTarget": {
+      "forbidden": "K otevření tohoto modulu nemáte oprávnění.",
+      "loading": "Načítání modulu…",
+      "not_found": "Tento modul není v aktuálním kontextu dostupný.",
+      "selection_required": "Před otevřením modulu vyberte právní subjekt.",
+      "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
+      "title": "Modul",
+      "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
+    },
+    "search": {
+      "empty": "Nebyly nalezeny žádné autorizované výsledky.",
+      "label": "Hledat v tomto právním subjektu",
+      "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
+      "selection_required": "Před vyhledáváním vyberte právní subjekt.",
+      "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
+      "submit": "Hledat",
+      "title": "Výsledky hledání",
+      "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu."
+    },
+    "resource": {
+      "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
+      "media": {
+        "absent": "Tento zdroj nepodporuje mediální přílohy.",
+        "attach": "Připojit médium",
+        "available": "Mediální přílohy jsou dostupné.",
+        "failed": "Připojení média se nepodařilo zahájit. Zkuste to znovu.",
+        "forbidden": "K připojení média nemáte oprávnění.",
+        "pending": "Zahajuje se připojení média…",
+        "read_only": "Mediální přílohy jsou zakázány, když je modul jen pro čtení nebo zastaralý.",
+        "success": "Připojení média bylo zahájeno.",
+        "title": "Média",
+        "unavailable": "Autorizace médií je dočasně nedostupná."
+      },
+      "not_found": "Tento zdroj nebyl v aktuálním kontextu nalezen.",
+      "selection_required": "Před otevřením zdroje vyberte právní subjekt.",
+      "seoDescription": "Autorizovaný detail zdroje OntOS.",
+      "timeline": {
+        "empty": "Nejsou dostupné žádné události časové osy.",
+        "lagging": "Nedávná aktivita se může stále zpracovávat.",
+        "title": "Časová osa"
+      },
+      "title": "Zdroj",
+      "unavailable": "Zdroj je dočasně nedostupný. Zkuste to znovu."
     },
     "remoteUnavailable": "Remote vertical je nedostupný",
     "remotes": {},

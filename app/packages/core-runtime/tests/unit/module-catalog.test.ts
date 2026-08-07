@@ -31,10 +31,20 @@ const contract = (
       reports: [],
       resourceTypes: [],
       search: [],
+      shellContributions: {
+        mediaAttachments: [],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [],
+        search: [],
+        timelines: [],
+      },
     },
   },
   runtime: { outboxSubscriptions },
-  schemaVersion: '1',
+  schemaVersion: '2',
 });
 
 test('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {

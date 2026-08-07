@@ -11,6 +11,10 @@ import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
+import publicComponentGenerator from './public-component/scaffold.mts';
+import moduleApiGenerator from './module-api/scaffold.mts';
+import reportGenerator from './report/scaffold.mts';
+import searchProviderGenerator from './search-provider/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
@@ -26,6 +30,8 @@ import type {
   PageScaffoldResult,
   PolicyScaffoldConfig,
   PolicyScaffoldResult,
+  GovernedContributionScaffoldConfig,
+  GovernedContributionScaffoldResult,
 } from './shared.mts';
 
 export type ScaffoldCommand =
@@ -33,14 +39,19 @@ export type ScaffoldCommand =
   | 'microvertical-action-boundary'
   | 'microvertical-page'
   | 'module-contract'
+  | 'module-api'
   | 'outbox-message'
   | 'outbox-worker'
-  | 'policy';
+  | 'policy'
+  | 'public-component'
+  | 'report'
+  | 'search-provider';
 
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
   | ActionScaffoldResult
   | ModuleContractScaffoldResult
+  | GovernedContributionScaffoldResult
   | OutboxScaffoldResult
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
@@ -50,6 +61,7 @@ type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
   | ActionScaffoldConfig
   | ModuleContractScaffoldConfig
+  | GovernedContributionScaffoldConfig
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
@@ -201,6 +213,23 @@ Options:
       vertical: flags['vertical'] ?? '',
     }),
   },
+  'module-api': {
+    flags: ['name', 'vertical'],
+    generator: moduleApiGenerator,
+    help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name>
+
+Generate one typed owner-local module API contract and generated Effect client adapter.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --name <name>          API name (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['name', 'vertical'],
+    toConfig: (flags) => ({ name: flags['name'] ?? '', vertical: flags['vertical'] ?? '' }),
+  },
   'outbox-message': {
     flags: ['action', 'topic', 'vertical'],
     generator: outboxMessageGenerator,
@@ -276,6 +305,67 @@ Options:
         ...(vertical === undefined ? {} : { vertical }),
       };
     },
+  },
+  'public-component': {
+    flags: ['name', 'vertical'],
+    generator: publicComponentGenerator,
+    help: `Usage: pnpm scaffold:public-component -- --vertical <vertical> --name <name>
+
+Generate one owner-local public component with safe Shell contribution and lazy registration.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --name <name>          Component name (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['name', 'vertical'],
+    toConfig: (flags) => ({ name: flags['name'] ?? '', vertical: flags['vertical'] ?? '' }),
+  },
+  report: {
+    flags: ['name', 'resource', 'vertical'],
+    generator: reportGenerator,
+    help: `Usage: pnpm scaffold:report -- --vertical <vertical> --name <name> --resource <resource>
+
+Generate one owner-local report provider with a generated Effect adapter and safe Shell binding.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --name <name>          Report name (lower-kebab-case)
+  --resource <resource>  Existing owner-local resource key (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['name', 'resource', 'vertical'],
+    toConfig: (flags) => ({
+      name: flags['name'] ?? '',
+      resource: flags['resource'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
+  },
+  'search-provider': {
+    flags: ['name', 'resource', 'vertical'],
+    generator: searchProviderGenerator,
+    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource>
+
+Generate one owner-local search provider with a generated Effect adapter and safe Shell binding.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --name <name>          Provider name (lower-kebab-case)
+  --resource <resource>  Existing owner-local resource key (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['name', 'resource', 'vertical'],
+    toConfig: (flags) => ({
+      name: flags['name'] ?? '',
+      resource: flags['resource'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
   },
 };
 

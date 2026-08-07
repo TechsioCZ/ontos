@@ -1,17 +1,24 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed callback combinators are not Promise callback chains. */
-import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
+import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
+import {
+  SPICEDB_CHECK_TIMEOUT_MS,
+  acquireSpiceDbClientResource,
+  createSpiceDbPermissionClient,
+  fullyConsistent,
+} from './client.ts';
+
+export { SPICEDB_CHECK_TIMEOUT_MS } from './client.ts';
 
 export const SPICEDB_ACTION_OBJECT_TYPE = 'action';
 export const SPICEDB_PRINCIPAL_OBJECT_TYPE = 'principal';
 export const SPICEDB_RESTRICTION_PERMISSION = 'is_restricted';
 export const SPICEDB_EXECUTE_PERMISSION = 'execute';
-export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
 /** Losslessly maps dotted Action keys into SpiceDB's restricted object-id alphabet. */
 export const toSpiceDbActionObjectId = (actionKey: string): string =>
@@ -52,42 +59,12 @@ const checkFailure = (): ActionPermissionCheckError =>
 export const createPermissionCheckClient: PermissionClientFactory = (
   configuration,
   timeoutMilliseconds,
-) => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    configuration.insecureLocal
-      ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-      : v1.ClientSecurity.SECURE,
-    undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
-  );
-
-  return {
-    checkPermission: (request) => client.promises.checkPermission(request),
-    close: () => {
-      client.close();
-    },
-  };
-};
+) => createSpiceDbPermissionClient(configuration, timeoutMilliseconds);
 
 export const acquirePermissionClientResource = (
   acquire: () => PermissionCheckClient,
 ): Effect.Effect<PermissionCheckClient, ActionPermissionCheckError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.try({
-      catch: () => checkFailure(),
-      try: acquire,
-    }),
-    (client) => Effect.sync(() => client.close()),
-  );
-
-const fullyConsistent = v1.Consistency.create({
-  requirement: {
-    fullyConsistent: true,
-    oneofKind: 'fullyConsistent',
-  },
-});
+  acquireSpiceDbClientResource(acquire, checkFailure);
 
 const actionReference = (actionKey: string) =>
   v1.ObjectReference.create({

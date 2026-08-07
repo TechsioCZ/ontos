@@ -22,6 +22,24 @@ export type {
   ResolvedPrincipalIdentity,
 } from './auth/principal-resolver.ts';
 export {
+  LegalEntityContext,
+  LegalEntityContextAmbiguousError,
+  LegalEntityContextInactiveError,
+  LegalEntityContextInvalidError,
+  LegalEntityContextLive,
+  LegalEntityContextMissingError,
+  LegalEntityContextUnavailableError,
+  classifyActiveLegalEntities,
+  classifySelectedLegalEntity,
+  makeLegalEntityContext,
+} from './auth/legal-entity-context.ts';
+export type {
+  LegalEntityContextError,
+  LegalEntityContextRecord,
+  LegalEntityContextShape,
+  SafeLegalEntity,
+} from './auth/legal-entity-context.ts';
+export {
   CoreDatabase,
   CoreDatabaseLive,
   DatabaseConnectionError,
@@ -46,6 +64,22 @@ export {
   coreDatabaseSchema,
 } from './db/schema.ts';
 export type { CoreDatabaseExecutor, CoreDbExecutor, CoreTransaction } from './db/types.ts';
+export {
+  ContextAccess,
+  ContextAccessLive,
+  makeContextAccess,
+  makeContextAccessLive,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
+} from './permissions/context-access.ts';
+export type {
+  ContextAccessClientFactory,
+  ContextAccessDecision,
+  ContextAccessResult,
+  ContextAccessShape,
+  ResourceAccessTarget,
+} from './permissions/context-access.ts';
 export { defineAction, isActionRegistration } from './actions/definition.ts';
 export type {
   ActionAuditProfile,
@@ -172,7 +206,12 @@ export {
   ModuleStateDeniedError,
 } from './modules/module-state-gate-errors.ts';
 export type { ModuleStateGateError } from './modules/module-state-gate-errors.ts';
-export { ModuleStateGate, ModuleStateGateLive } from './modules/module-state-gate.ts';
+export {
+  ModuleStateGate,
+  ModuleStateGateLive,
+  decideModuleStateAccess,
+  tenantStatesAllowingAccess,
+} from './modules/module-state-gate.ts';
 export type { ModuleStateGateShape, ModuleStateSnapshot } from './modules/module-state-gate.ts';
 export {
   ModuleEntrypointGateway,
@@ -214,6 +253,22 @@ export {
   decodeOntosModuleDeploymentContract,
   defineOntosModuleManifest,
 } from './modules/manifest.ts';
+export {
+  OntosShellContributionsSchema,
+  ShellMediaAttachmentContributionSchema,
+  ShellNavigationContributionSchema,
+  ShellPageContributionSchema,
+  ShellPublicComponentContributionSchema,
+  ShellReportContributionSchema,
+  ShellResourceDetailContributionSchema,
+  ShellSearchContributionSchema,
+  ShellTimelineContributionSchema,
+  validateShellContributions,
+} from './modules/shell-contribution.ts';
+export type {
+  OntosShellContributions,
+  ShellContributionReferenceSets,
+} from './modules/shell-contribution.ts';
 export type {
   OntosActionContract,
   OntosApiContract,
@@ -252,10 +307,13 @@ export {
   defineVerticalRuntimeRegistration,
   extractVerticalRuntimeSafeDescriptors,
   getVerticalRuntimeActions,
+  getVerticalRuntimeEntrypoints,
   getVerticalRuntimeOutboxWorkers,
 } from './modules/runtime-registration.ts';
 export type {
   VerticalRuntimeRegistration,
+  VerticalRuntimeEntrypointBindings,
+  VerticalRuntimeEntrypointThunk,
   VerticalRuntimeRegistrationInput,
   VerticalRuntimeSafeDescriptors,
 } from './modules/runtime-registration.ts';

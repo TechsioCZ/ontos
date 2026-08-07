@@ -40,6 +40,8 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.account.label': 'Account menu',
         'shell.dashboard.brand': 'OntOS',
         'shell.dashboard.header.label': 'Dashboard header',
+        'shell.dashboard.legalEntity.accessibleLabel': 'Current legal entity',
+        'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
@@ -60,7 +62,9 @@ rstest.mock('@techsio/ui-kit/molecules/menu', () => ({
 
 rstest.mock('@techsio/ui-kit/molecules/select', () => ({
   Select: Object.assign((props: ComponentProps<typeof ActualSelect>) => {
-    tenantValueChangeHandlers.push(props.onValueChange);
+    if (props.name === 'tenant') {
+      tenantValueChangeHandlers.push(props.onValueChange);
+    }
     return <ActualSelect {...props} />;
   }, ActualSelect),
 }));
@@ -72,16 +76,37 @@ const identity = {
   tenantId: 'tenant-1',
 };
 
-const activeModules = [
-  { moduleKey: 'future-generated', state: 'active' as const },
-  { moduleKey: 'testing.one', state: 'active' as const },
+const navigation = [
+  {
+    enabled: true,
+    href: '/modules/future-generated',
+    label: 'Future generated',
+    moduleId: 'future-generated',
+    state: 'active' as const,
+    unavailable: false,
+  },
+  {
+    enabled: true,
+    href: '/modules/testing.one',
+    label: 'Testing one',
+    moduleId: 'testing.one',
+    state: 'active' as const,
+    unavailable: false,
+  },
 ];
 const homeTitle = 'Home';
 const homeOverviewTitle = 'Home overview';
 const noopLogout = rstest.fn();
 const noopTenantChange = rstest.fn();
 const tenantProps = {
+  currentLegalEntityId: 'legal-entity-1',
   currentTenantId: 'tenant-1',
+  legalEntityChoices: [{ legalEntityId: 'legal-entity-1', legalName: 'Alpha entity' }],
+  legalEntityState: 'available' as const,
+  legalEntitySwitchFailed: false,
+  legalEntitySwitchPending: false,
+  onLegalEntityChange: rstest.fn(),
+  onSearch: rstest.fn(),
   onTenantChange: noopTenantChange,
   tenantChoices: [
     { name: 'Alpha tenant', tenantId: 'tenant-1' },
@@ -111,7 +136,7 @@ test('renders the default Home dashboard contract and preserves page children', 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -130,29 +155,29 @@ test('renders the default Home dashboard contract and preserves page children', 
   expect(tenantSelect.hasAttribute('disabled')).toBe(false);
   expect(screen.getAllByText('Alpha tenant').length).toBeGreaterThan(0);
 
-  const navigation = screen.getByRole('navigation', { name: 'Dashboard navigation' });
-  const links = [...navigation.querySelectorAll('a')];
+  const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
+  const links = [...navigationElement.querySelectorAll('a')];
   expect(links.map((link) => link.textContent)).toEqual([
     'Home',
-    'future-generated',
-    'testing.one',
+    'Future generated',
+    'Testing one',
   ]);
   expect(links.map((link) => link.getAttribute('href'))).toEqual([
     '/en/',
-    '/en/future-generated',
-    '/en/testing.one',
+    '/en/modules/future-generated',
+    '/en/modules/testing.one',
   ]);
   expect(links[0]?.getAttribute('aria-current')).toBe('page');
   expect(links.slice(1).every((link) => link.tabIndex === 0)).toBe(true);
-  expect(navigation.textContent).not.toContain('inactive');
+  expect(navigationElement.textContent).not.toContain('inactive');
 });
 
 test('supports an alternate title and current MicroVertical without changing children', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
-      currentModuleKey="testing.one"
+      navigation={navigation}
+      currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -165,7 +190,7 @@ test('supports an alternate title and current MicroVertical without changing chi
   expect(screen.getByRole('heading', { level: 1, name: 'Testing workspace' })).toBeTruthy();
   expect(screen.getByText('Stable child content')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Home' }).hasAttribute('aria-current')).toBe(false);
-  expect(screen.getByRole('link', { name: 'testing.one' }).getAttribute('aria-current')).toBe(
+  expect(screen.getByRole('link', { name: 'Testing one' }).getAttribute('aria-current')).toBe(
     'page',
   );
 });
@@ -174,7 +199,7 @@ test('keeps Home as the only navigation link when no active modules are supplied
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={[]}
+      navigation={[]}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -195,7 +220,7 @@ test('renders the account Menu last and dispatches only the logout command by ke
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={onLogout}
@@ -227,7 +252,7 @@ test('retains the account trigger and disables the sole command while logout is 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending
       onLogout={onLogout}
@@ -251,7 +276,7 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -284,7 +309,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   const { rerender } = render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -301,7 +326,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -318,7 +343,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -336,7 +361,7 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}
@@ -356,7 +381,7 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      activeModules={activeModules}
+      navigation={navigation}
       identity={identity}
       logoutPending={false}
       onLogout={noopLogout}

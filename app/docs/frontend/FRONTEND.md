@@ -179,6 +179,13 @@ Keep state in the lowest appropriate owner:
 - Server data belongs in loaders or query caches.
 - Cross-feature interactive state belongs in an application store.
 
+The authenticated Shell is server-composed. Its layout receives plain navigation and legal-entity
+view models, keeps search persistent, and uses full document reloads after successful tenant or
+legal-entity switches. Direct module, search, and ResourceRef routes map typed loader results to
+explicit selection-required, empty, partial, forbidden, not-found, unavailable/retry, and resolved
+states. Disabled module and media affordances remain semantic, non-interactive content with an
+accessible explanation; inaccessible items are never guessed into links.
+
 ## Hooks and React Effects
 
 Classify hooks by responsibility:

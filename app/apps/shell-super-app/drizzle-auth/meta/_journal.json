@@ -15,6 +15,13 @@
       "when": 1786012128324,
       "tag": "0001_clumsy_blacklash",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786104619430,
+      "tag": "0002_bright_ultron",
+      "breakpoints": true
     }
   ]
 }

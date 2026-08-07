@@ -104,6 +104,12 @@ must be revalidated against an active binding, Principal, and Tenant on every se
 This does not introduce a global Principal, Better Auth Organization/member tables, an Auth
 MicroVertical, or a generic context store.
 
+Authenticated Shell composition also requires exactly one active, tenant-owned, authorized legal
+entity persisted on that session. Tenant changes clear the legal entity; stale, cross-tenant,
+inactive, or newly denied selections fail closed. Browser switch payloads contain only the requested
+ID. The Shell assertion includes the revalidated legal-entity ID, while every receiver authorizes
+module/resource/Action access independently.
+
 ### Shell-user Action identity
 
 For a Shell-authenticated user calling an Action owned by an independently deployed

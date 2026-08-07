@@ -21,11 +21,13 @@ For example, deployment `property-registry` may publish module `property.registr
 2. The owner-authored `vertical.manifest.ts` contains an Effect Schema-validated value referencing
    real typed Actions, Effect API values, Module Federation component values, payload Schemas, and
    plain public descriptors.
-3. The owning build emits a deterministic versioned JSON deployment contract. Shell fetches only
+3. The owning build emits a deterministic versioned JSON deployment contract, including only safe
+   semantic Shell contribution bindings. Shell fetches only
    allowlisted contracts and builds an immutable catalog indexed independently by `appId` and
    `moduleId`.
-4. `vertical.registration.ts` binds private executable Actions and workers for the owning process.
-   Only safe descriptors may be projected into the deployment contract.
+4. `vertical.registration.ts` binds private executable Actions, pages, components, APIs, search,
+   reports, and workers for the owning process. Only safe descriptors may be projected into the
+   deployment contract.
 
 Tenant activation is separate from installation. Deployment and allowlist configuration install a
 known capability; tenant module state decides whether that installed module is active for a tenant.
@@ -33,7 +35,7 @@ known capability; tenant module state decides whether that installed module is a
 ## Network and artifact contract
 
 Every MicroVertical deployment serves the immutable document at
-`/.well-known/ontos-module-manifest.json`. The document uses schema version `1`, media type
+`/.well-known/ontos-module-manifest.json`. The document uses schema version `2`, media type
 `application/json`, `Cache-Control: no-cache`, a strong build-marker ETag, and is limited to 1 MiB.
 Shell loads it with a five-second deadline, redirect following disabled, and exact topology `appId`
 matching. Contract URLs must use HTTPS except loopback HTTP during development. Credentials,
@@ -44,6 +46,13 @@ resources, public events, search, reports, and schema-free Outbox subscriptions.
 contain a function, Effect program, React component, handler, Policy, migration, route, repository,
 database metadata, source path, import/export specifier, fixture, test, secret, or arbitrary private
 runtime value.
+
+Shell contributions bind stable navigation/page, public-component, API-backed resource detail and
+timeline, search, report, and media targets to descriptors already owned by the same manifest.
+They may contain semantic keys, ordering, and grouping metadata, but never URLs, import specifiers,
+remote strings, functions, schemas, routes, or source paths. The Installed Module Catalog rejects
+the entire snapshot when one binding is missing, duplicated, cross-owned, or role/access
+incompatible.
 
 ## Import and execution boundaries
 
@@ -78,6 +87,16 @@ mise exec -- pnpm scaffold:module-contract -- --vertical property-registry --mod
 All later business generators read the generated module-ID marker and patch only explicit
 generator-owned slots. They fail without a consistent package, topology entry, manifest, and private
 registration.
+
+Use the category generator before authoring each supported public artifact:
+
+```bash
+mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview
+mise exec -- pnpm scaffold:public-component -- --vertical property-registry --component unit-card
+mise exec -- pnpm scaffold:module-api -- --vertical property-registry --api resource-api
+mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --provider unit-search
+mise exec -- pnpm scaffold:report -- --vertical property-registry --report unit-inventory
+```
 
 ## Repository documentation follow-up
 

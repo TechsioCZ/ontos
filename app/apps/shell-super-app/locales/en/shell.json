@@ -4,6 +4,7 @@
       "identity": {
         "displayName": "Name",
         "email": "Email",
+        "legalEntity": "Legal entity",
         "principal": "Principal",
         "tenant": "Tenant",
         "title": "Authenticated identity"
@@ -29,6 +30,15 @@
       "home": {
         "title": "Home"
       },
+      "legalEntity": {
+        "accessBlocked": "No legal entity is available for this account.",
+        "accessibleLabel": "Current legal entity",
+        "failed": "Legal-entity switching failed. Try again.",
+        "pending": "Switching legal entity…",
+        "placeholder": "Select a legal entity",
+        "selectionRequired": "Select one legal entity before using modules.",
+        "unavailable": "Legal-entity choices are temporarily unavailable. Reload the page to try again."
+      },
       "navigation": {
         "home": "Home",
         "label": "Dashboard navigation"
@@ -36,12 +46,13 @@
       "sidebar": {
         "label": "Dashboard sidebar"
       },
-      "tenant": {
+    "tenant": {
         "accessibleLabel": "Current tenant",
         "failed": "Tenant switching failed. Try again.",
         "pending": "Switching tenant…",
-        "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
-      }
+      "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
+    },
+    "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again."
     },
     "hero": {
       "cardOne": "Add the first business vertical with create <domain> --vertical when the product needs one.",
@@ -94,8 +105,55 @@
         "unavailable": "Active MicroVerticals are temporarily unavailable. Reload the page to try again."
       },
       "state": {
-        "active": "Active"
-      }
+        "active": "Active",
+        "deprecated": "Deprecated",
+        "readOnly": "Read only"
+      },
+      "unavailable": "Module access is temporarily unavailable. Try again."
+    },
+    "moduleTarget": {
+      "forbidden": "You do not have permission to open this module.",
+      "loading": "Loading module…",
+      "not_found": "This module is not available in the current context.",
+      "selection_required": "Select a legal entity before opening a module.",
+      "seoDescription": "An authorized OntOS module workspace.",
+      "title": "Module",
+      "unavailable": "The module is temporarily unavailable. Try again."
+    },
+    "search": {
+      "empty": "No authorized results found.",
+      "label": "Search this legal entity",
+      "partial": "Some search providers are temporarily unavailable. The available results are shown.",
+      "selection_required": "Select a legal entity before searching.",
+      "seoDescription": "Search authorized resources in the selected OntOS context.",
+      "submit": "Search",
+      "title": "Search results",
+      "unavailable": "Search is temporarily unavailable. Try again."
+    },
+    "resource": {
+      "forbidden": "You do not have permission to view this resource.",
+      "media": {
+        "absent": "This resource does not support media attachments.",
+        "attach": "Attach media",
+        "available": "Media attachments are available.",
+        "failed": "Media attachment could not be started. Try again.",
+        "forbidden": "You do not have permission to attach media.",
+        "pending": "Starting media attachment…",
+        "read_only": "Media attachments are disabled while the module is read only or deprecated.",
+        "success": "Media attachment was started.",
+        "title": "Media",
+        "unavailable": "Media authorization is temporarily unavailable."
+      },
+      "not_found": "This resource was not found in the current context.",
+      "selection_required": "Select a legal entity before opening a resource.",
+      "seoDescription": "An authorized OntOS resource detail.",
+      "timeline": {
+        "empty": "No timeline events are available.",
+        "lagging": "Recent activity may still be processing.",
+        "title": "Timeline"
+      },
+      "title": "Resource",
+      "unavailable": "The resource is temporarily unavailable. Try again."
     },
     "remoteUnavailable": "Remote vertical unavailable",
     "remotes": {},

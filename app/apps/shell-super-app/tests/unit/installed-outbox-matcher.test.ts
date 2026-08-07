@@ -31,10 +31,20 @@ const contract = (
       reports: [],
       resourceTypes: [],
       search: [],
+      shellContributions: {
+        mediaAttachments: [],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [],
+        search: [],
+        timelines: [],
+      },
     },
   },
   runtime: { outboxSubscriptions },
-  schemaVersion: '1',
+  schemaVersion: '2',
 });
 
 test('passes a dormant subscription with an absent producer to Core matching', async () => {

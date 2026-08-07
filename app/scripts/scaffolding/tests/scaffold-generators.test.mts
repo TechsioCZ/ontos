@@ -120,6 +120,11 @@ const writeFixtureFile = async (
 const createVertical = async (root: string, vertical: FixtureVertical): Promise<void> => {
   await writeFixtureFile(
     root,
+    `verticals/${vertical.slug}/module-federation.config.ts`,
+    'export default { exposes: {} };\n',
+  );
+  await writeFixtureFile(
+    root,
     `verticals/${vertical.slug}/tsconfig.json`,
     json({
       compilerOptions: { composite: true },
@@ -186,6 +191,15 @@ const createFixture = async (): Promise<Fixture> => {
     root,
     'apps/shell-super-app/src/sentinel.ts',
     'export const shell = true;\n',
+  );
+  await writeFixtureFile(
+    root,
+    'apps/shell-super-app/src/api/vertical-clients.ts',
+    `export const ultramodernVerticalClients = [
+  // @ontos-codegen-start shell-page-clients
+  // @ontos-codegen-end shell-page-clients
+] as const;
+`,
   );
   await createVertical(root, inventoryVertical);
   await createVertical(root, billingVertical);
@@ -269,9 +283,13 @@ test('documents every command and treats --help as a write-free operation', asyn
         'microvertical-action-boundary',
         'microvertical-page',
         'module-contract',
+        'module-api',
         'outbox-message',
         'outbox-worker',
         'policy',
+        'public-component',
+        'report',
+        'search-provider',
       ] as const
     ).map(async (command) => {
       const result = await runScaffold(command, ['--', '--help'], {
@@ -283,6 +301,133 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
+});
+
+test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
+  await withFixture(async (fixture) => {
+    const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
+    const manifest = await readFile(manifestPath, 'utf8');
+    await writeFile(
+      manifestPath,
+      manifest.replace(
+        '    resourceTypes: [],',
+        `    resourceTypes: [
+      {
+        capabilities: {
+          graphVisible: false,
+          linkable: true,
+          mediaAttachable: false,
+          searchable: true,
+          timelineVisible: false,
+        },
+        description: 'Inventory item.',
+        key: 'inventory.stock.item',
+        label: 'Inventory item',
+        owningModuleId: 'inventory.stock',
+      },
+    ],`,
+      ),
+      'utf8',
+    );
+
+    await run(fixture, 'module-api', [
+      '--vertical',
+      'inventory-stock',
+      '--name',
+      'resource-detail',
+    ]);
+    await run(fixture, 'public-component', [
+      '--vertical',
+      'inventory-stock',
+      '--name',
+      'inventory-summary',
+    ]);
+    await run(fixture, 'public-component', [
+      '--vertical',
+      'inventory-stock',
+      '--name',
+      'inventory-alerts',
+    ]);
+    await run(fixture, 'search-provider', [
+      '--vertical',
+      'inventory-stock',
+      '--name',
+      'inventory-items',
+      '--resource',
+      'item',
+    ]);
+    await run(fixture, 'report', [
+      '--vertical',
+      'inventory-stock',
+      '--name',
+      'stock-levels',
+      '--resource',
+      'item',
+    ]);
+
+    const [nextManifest, registration, federation] = await Promise.all([
+      readFile(manifestPath, 'utf8'),
+      readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.registration.ts'),
+      readFixtureFile(fixture.root, 'verticals/inventory-stock/module-federation.config.ts'),
+    ]);
+    assert.match(nextManifest, /inventory\.stock\.component\.inventory-summary/u);
+    assert.match(nextManifest, /inventory\.stock\.search\.inventory-items/u);
+    assert.match(nextManifest, /inventory\.stock\.report\.stock-levels/u);
+    assert.match(registration, /import\('\.\/src\/api\/resource-detail-client\.ts'\)/u);
+    assert.match(registration, /import\('\.\/src\/api\/inventory-items-search-client\.ts'\)/u);
+    assert.match(registration, /import\('\.\/src\/api\/stock-levels-report-client\.ts'\)/u);
+    assert.match(federation, /\.\/InventoryAlerts/u);
+    assert.match(federation, /\.\/InventorySummary/u);
+    assert.doesNotMatch(nextManifest, /import\('/u);
+    const searchClient = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
+    );
+    const reportClient = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/api/stock-levels-report-client.ts',
+    );
+    assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi\)/u);
+    assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi\)/u);
+    assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
+    assert.doesNotMatch(reportClient, /\.provider\.ts|import\(/u);
+    assert.match(
+      await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
+      ),
+      /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
+    );
+
+    const beforeRepeat = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'public-component', [
+        '--vertical',
+        'inventory-stock',
+        '--name',
+        'inventory-summary',
+      ]),
+      /refusing to overwrite/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
+    await assert.rejects(
+      run(fixture, 'module-api', ['--vertical', 'inventory-stock', '--name', '../unsafe']),
+      /lower-kebab-case/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRepeat);
+
+    const billingFederationPath = path.join(
+      fixture.root,
+      'verticals/billing/module-federation.config.ts',
+    );
+    await writeFile(billingFederationPath, 'export default {};\n', 'utf8');
+    const beforeUnpatchable = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'public-component', ['--vertical', 'billing', '--name', 'billing-summary']),
+      /exposes object is missing/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeUnpatchable);
+  });
 });
 
 test('recognizes only exact schema-only Outbox package subpaths as cross-vertical contracts', () => {
@@ -1712,7 +1857,7 @@ test('generates an accessible translated private page, patches every locale, and
       `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
-export default function PurchaseOrdersPage() {
+export const PurchaseOrdersPage = () => {
   const { t } = useModernI18n();
   const headingId = 'purchase-orders-heading';
 
@@ -1742,8 +1887,34 @@ export default function PurchaseOrdersPage() {
       </main>
     </>
   );
-}
+};
+
+export default PurchaseOrdersPage;
 `,
+    );
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+    const registration = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+    const federation = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/module-federation.config.ts',
+    );
+    const shellClients = await readFixtureFile(
+      fixture.root,
+      'apps/shell-super-app/src/api/vertical-clients.ts',
+    );
+    assert.match(manifest, /inventory\.stock\.navigation\.purchase-orders/u);
+    assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
+    assert.match(registration, /page-purchase-orders/u);
+    assert.match(federation, /\.\/PagePurchaseOrders/u);
+    assert.match(
+      shellClients,
+      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('verticalInventoryStock\/PagePurchaseOrders'\)/u,
     );
     assert.equal(
       await readFixtureFile(

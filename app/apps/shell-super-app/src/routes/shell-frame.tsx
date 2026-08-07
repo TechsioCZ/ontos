@@ -1,17 +1,27 @@
+/* eslint-disable complexity, no-nested-ternary, unicorn/no-nested-ternary -- The responsive Shell layout derives accessible selector and navigation states from closed props. */
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@techsio/ui-kit/atoms/link';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Menu } from '@techsio/ui-kit/molecules/menu';
 import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { Select } from '@techsio/ui-kit/molecules/select';
+import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
-import type { ReactNode } from 'react';
+import { useState } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 
 interface DashboardAccount {
   readonly displayName: string;
 }
 
 interface DashboardNavigationItem {
-  readonly moduleKey: string;
+  readonly enabled: boolean;
+  readonly href?: string;
+  readonly label: string;
+  readonly moduleId: string;
+  readonly state: 'active' | 'deprecated' | 'read_only';
+  readonly unavailable: boolean;
 }
 
 interface DashboardTenantItem {
@@ -19,14 +29,27 @@ interface DashboardTenantItem {
   readonly tenantId: string;
 }
 
+interface DashboardLegalEntityItem {
+  readonly legalEntityId: string;
+  readonly legalName: string;
+}
+
 export interface AuthenticatedDashboardLayoutProps {
-  readonly activeModules: readonly DashboardNavigationItem[];
+  readonly navigation: readonly DashboardNavigationItem[];
   readonly children: ReactNode;
-  readonly currentModuleKey?: string;
+  readonly currentModuleId?: string;
+  readonly currentLegalEntityId?: string;
   readonly currentTenantId: string;
   readonly identity: DashboardAccount;
+  readonly homeCurrent?: boolean;
   readonly logoutPending: boolean;
+  readonly legalEntityChoices: readonly DashboardLegalEntityItem[];
+  readonly legalEntityState: 'available' | 'unavailable';
+  readonly legalEntitySwitchFailed: boolean;
+  readonly legalEntitySwitchPending: boolean;
   readonly onLogout: () => void;
+  readonly onLegalEntityChange: (legalEntityId: string) => void;
+  readonly onSearch: (query: string) => void;
   readonly onTenantChange: (tenantId: string) => void;
   readonly tenantChoices: readonly DashboardTenantItem[];
   readonly tenantState: 'available' | 'unavailable';
@@ -36,13 +59,21 @@ export interface AuthenticatedDashboardLayoutProps {
 }
 
 export const AuthenticatedDashboardLayout = ({
-  activeModules,
+  navigation,
   children,
-  currentModuleKey,
+  currentModuleId,
+  currentLegalEntityId,
   currentTenantId,
   identity,
+  homeCurrent = true,
   logoutPending,
+  legalEntityChoices,
+  legalEntityState,
+  legalEntitySwitchFailed,
+  legalEntitySwitchPending,
   onLogout,
+  onLegalEntityChange,
+  onSearch,
   onTenantChange,
   tenantChoices,
   tenantState,
@@ -51,6 +82,7 @@ export const AuthenticatedDashboardLayout = ({
   title,
 }: AuthenticatedDashboardLayoutProps) => {
   const { t } = useModernI18n();
+  const [searchValue, setSearchValue] = useState('');
   const accountItems: MenuItem[] = [
     {
       disabled: logoutPending,
@@ -63,6 +95,11 @@ export const AuthenticatedDashboardLayout = ({
     displayValue: name,
     label: name,
     value: tenantId,
+  }));
+  const legalEntityItems = legalEntityChoices.map(({ legalEntityId, legalName }) => ({
+    displayValue: legalName,
+    label: legalName,
+    value: legalEntityId,
   }));
   let tenantStatus: 'default' | 'error' | 'warning' = 'default';
   if (tenantSwitchFailed) {
@@ -82,6 +119,18 @@ export const AuthenticatedDashboardLayout = ({
     tenantState === 'unavailable' ||
     tenantSwitchPending ||
     !tenantItems.some((item) => item.value !== currentTenantId);
+  const legalEntityStatus = legalEntitySwitchFailed
+    ? 'error'
+    : legalEntityState === 'unavailable'
+      ? 'warning'
+      : 'default';
+  const legalEntityStatusText = legalEntitySwitchPending
+    ? t('shell.dashboard.legalEntity.pending')
+    : legalEntitySwitchFailed
+      ? t('shell.dashboard.legalEntity.failed')
+      : legalEntityState === 'unavailable'
+        ? t('shell.dashboard.legalEntity.unavailable')
+        : null;
 
   return (
     <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-(--color-page-bg) text-(--color-page-fg) md:flex-row">
@@ -133,26 +182,111 @@ export const AuthenticatedDashboardLayout = ({
             </Select.StatusText>
           )}
         </Select>
+        <Select
+          disabled={legalEntityState === 'unavailable' || legalEntitySwitchPending}
+          items={legalEntityItems}
+          name="legalEntity"
+          onValueChange={({ value }) => {
+            const [legalEntityId] = value;
+            if (
+              value.length === 1 &&
+              legalEntityId !== undefined &&
+              legalEntityId !== currentLegalEntityId
+            ) {
+              onLegalEntityChange(legalEntityId);
+            }
+          }}
+          validateStatus={legalEntityStatus}
+          value={currentLegalEntityId === undefined ? [] : [currentLegalEntityId]}
+        >
+          <Select.Label>{t('shell.dashboard.legalEntity.accessibleLabel')}</Select.Label>
+          <Select.Control>
+            <Select.Trigger
+              aria-describedby={
+                legalEntityStatusText === null ? undefined : 'legal-entity-switch-status'
+              }
+            >
+              <Select.ValueText placeholder={t('shell.dashboard.legalEntity.placeholder')} />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {legalEntityItems.map((item) => (
+                <Select.Item item={item} key={item.value}>
+                  <Select.ItemText />
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+          {legalEntityStatusText === null ? null : (
+            <Select.StatusText
+              aria-live="polite"
+              id="legal-entity-switch-status"
+              showIcon
+              status={legalEntityStatus}
+            >
+              {legalEntityStatusText}
+            </Select.StatusText>
+          )}
+        </Select>
+        <SearchForm
+          onSubmit={(event: FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            const query = searchValue.trim();
+            if (query.length > 0) {
+              onSearch(query);
+            }
+          }}
+          onValueChange={setSearchValue}
+          value={searchValue}
+        >
+          <SearchForm.Label>{t('shell.search.label')}</SearchForm.Label>
+          <SearchForm.Control>
+            <SearchForm.Input />
+            <SearchForm.ClearButton />
+            <SearchForm.Button showSearchIcon>{t('shell.search.submit')}</SearchForm.Button>
+          </SearchForm.Control>
+        </SearchForm>
         <nav aria-label={t('shell.dashboard.navigation.label')}>
           <ul className="flex flex-col gap-2">
             <li>
               <Link
-                aria-current={currentModuleKey === undefined ? 'page' : undefined}
+                aria-current={homeCurrent && currentModuleId === undefined ? 'page' : undefined}
                 as={LocalizedLink}
                 to="/"
               >
                 {t('shell.dashboard.navigation.home')}
               </Link>
             </li>
-            {activeModules.map((module) => (
-              <li key={module.moduleKey}>
-                <Link
-                  aria-current={currentModuleKey === module.moduleKey ? 'page' : undefined}
-                  as={LocalizedLink}
-                  to={`/${module.moduleKey}`}
-                >
-                  {module.moduleKey}
-                </Link>
+            {navigation.map((module) => (
+              <li className="flex flex-wrap items-center gap-2" key={module.moduleId}>
+                {module.enabled && module.href !== undefined ? (
+                  <Link
+                    aria-current={currentModuleId === module.moduleId ? 'page' : undefined}
+                    as={LocalizedLink}
+                    to={module.href}
+                  >
+                    {module.label}
+                  </Link>
+                ) : (
+                  <span aria-disabled="true">{module.label}</span>
+                )}
+                {module.state === 'read_only' ? (
+                  <Badge size="sm" variant="warning">
+                    {t('shell.modules.state.readOnly')}
+                  </Badge>
+                ) : null}
+                {module.state === 'deprecated' ? (
+                  <Badge size="sm" variant="warning">
+                    {t('shell.modules.state.deprecated')}
+                  </Badge>
+                ) : null}
+                {module.unavailable ? (
+                  <StatusText showIcon size="sm" status="warning">
+                    {t('shell.modules.unavailable')}
+                  </StatusText>
+                ) : null}
               </li>
             ))}
           </ul>

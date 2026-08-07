@@ -39,6 +39,19 @@ The owning build emits `/.well-known/ontos-module-manifest.json`. Shell discover
 environment-overlay allowlist entries and never imports a remote vertical's manifest or private
 registration. Deployment installation and per-tenant activation remain separate operations.
 
+Codesmith governs every Shell-visible artifact and patches safe descriptors plus owner-private
+runtime registration atomically:
+
+```bash
+pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
+pnpm scaffold:public-component -- --vertical <vertical> --component <component>
+pnpm scaffold:module-api -- --vertical <vertical> --api <api>
+pnpm scaffold:search-provider -- --vertical <vertical> --provider <provider>
+pnpm scaffold:report -- --vertical <vertical> --report <report>
+pnpm check:module-contracts
+pnpm module-entrypoints:check
+```
+
 ## Private-First Public Surfaces
 
 Generated app routes are private and non-indexable by default. Author route

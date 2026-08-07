@@ -8,6 +8,7 @@ import type {
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
 import { decodeOntosModuleDeploymentContract } from './manifest.ts';
+import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
 export class OntosModuleCatalogValidationError extends Schema.TaggedErrorClass<OntosModuleCatalogValidationError>()(
@@ -61,6 +62,20 @@ const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDep
   }
   if (contract.manifest.module.kind !== 'business_module') {
     throw invalid('V0 deployments may claim only one business module');
+  }
+  const { publicSurface } = contract.manifest;
+  try {
+    validateShellContributions(publicSurface.shellContributions, {
+      actionKeys: new Set(publicSurface.actions.map(({ actionKey }) => actionKey)),
+      apiKeys: new Set(publicSurface.api.map(({ key }) => key)),
+      componentKeys: new Set(publicSurface.components.map(({ key }) => key)),
+      moduleId: contract.manifest.module.id,
+      reportKeys: new Set(publicSurface.reports.map(({ key }) => key)),
+      resourceTypeKeys: new Set(publicSurface.resourceTypes.map(({ key }) => key)),
+      searchKeys: new Set(publicSurface.search.map(({ key }) => key)),
+    });
+  } catch {
+    throw invalid('deployment contract contains invalid Shell contribution references');
   }
   return contract;
 };

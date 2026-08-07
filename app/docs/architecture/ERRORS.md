@@ -34,6 +34,11 @@ Internal domain and infrastructure errors may be more detailed than the public c
 
 Module entrypoint failures from [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md) remain typed and sanitized across every boundary. A definite tenant-state denial normally maps to a declared `403`; an unavailable/indeterminate gate check maps to a declared retryable `503`. Frontend integrations must handle both explicitly before any private implementation or remote is loaded.
 
+Shell composition uses `401` for a missing session, `409` when legal-entity selection is required,
+`403` for definite module/resource denial, `404` for safely undiscoverable targets, retryable `503`
+for catalog/state/context/authorization/provider uncertainty, and a redacted declared `500` only
+after logging an unexpected Effect cause. HTTP status and Problem Details `status` must match.
+
 Unexpected defects are not expected failures. At the outer HTTP seam, log the full Effect cause with correlation context, then convert it to a declared, non-sensitive typed `InternalServerError` with status `500`. No defect may escape as an unstructured backend response.
 
 Generated Action BFF endpoints must also map the complete Core Action error union. `ActionPolicyDenied` carries a stable Policy reason code and safe human-readable reason, but Core deliberately assigns no HTTP status: the endpoint maps the Policy's declared semantics to the correct public Problem Details schema, such as `403` for authorization-like denial, `409` for current-state conflict, or `422` for semantic ineligibility. `ActionPolicyEvaluationError` represents a sanitized evaluator defect or unavailable required capability and must map to the endpoint's declared operational failure, commonly a retryable `503` when appropriate. Neither error may fall through to an exception, generic Action endpoint, or ad hoc response.

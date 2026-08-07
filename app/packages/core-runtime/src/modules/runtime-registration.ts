@@ -7,6 +7,7 @@ import type {
   OntosModuleManifest,
   OntosOutboxSubscriptionContract,
 } from './manifest.ts';
+import type { OntosShellContributions } from './shell-contribution.ts';
 
 const runtimeRegistrationBrand: unique symbol = Symbol(
   '@app/core-runtime/modules/runtime-registration',
@@ -14,7 +15,9 @@ const runtimeRegistrationBrand: unique symbol = Symbol(
 
 interface PrivateVerticalRuntime {
   readonly actions: readonly OntosManifestActionValue[];
+  readonly entrypoints: VerticalRuntimeEntrypointBindings;
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
+  readonly shellContributions: OntosShellContributions;
 }
 
 const privateRuntime = new WeakMap<object, PrivateVerticalRuntime>();
@@ -28,9 +31,28 @@ export interface VerticalRuntimeRegistrationInput<
   Manifest extends OntosModuleManifest = OntosModuleManifest,
 > {
   readonly actions: readonly OntosManifestActionValue[];
+  readonly entrypoints?: VerticalRuntimeEntrypointBindings;
   readonly manifest: Manifest;
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
 }
+
+export type VerticalRuntimeEntrypointThunk = () => unknown;
+
+export interface VerticalRuntimeEntrypointBindings {
+  readonly api: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
+  readonly components: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
+  readonly pages: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
+  readonly reports: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
+  readonly search: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
+}
+
+const emptyEntrypoints = (): VerticalRuntimeEntrypointBindings => ({
+  api: {},
+  components: {},
+  pages: {},
+  reports: {},
+  search: {},
+});
 
 const assertUnique = (values: readonly string[], label: string): void => {
   const seen = new Set<string>();
@@ -45,7 +67,7 @@ const assertUnique = (values: readonly string[], label: string): void => {
 export const defineVerticalRuntimeRegistration = <const Manifest extends OntosModuleManifest>(
   input: VerticalRuntimeRegistrationInput<Manifest>,
 ): VerticalRuntimeRegistration<Manifest['module']['id']> => {
-  const allowed = new Set(['actions', 'manifest', 'outboxWorkers']);
+  const allowed = new Set(['actions', 'entrypoints', 'manifest', 'outboxWorkers']);
   for (const key of Reflect.ownKeys(input)) {
     if (typeof key !== 'string' || !allowed.has(key)) {
       throw new TypeError(`runtime registration contains unsupported field ${String(key)}`);
@@ -70,13 +92,33 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
       throw new TypeError('runtime Outbox Worker owner must match the manifest module ID');
     }
   }
+  const entrypoints = input.entrypoints ?? emptyEntrypoints();
+  const entrypointCategories = new Set(['api', 'components', 'pages', 'reports', 'search']);
+  for (const key of Reflect.ownKeys(entrypoints)) {
+    if (typeof key !== 'string' || !entrypointCategories.has(key)) {
+      throw new TypeError(`runtime entrypoints contain unsupported field ${String(key)}`);
+    }
+  }
+  for (const [category, bindings] of Object.entries(entrypoints)) {
+    if (Object.values(bindings).some((value) => typeof value !== 'function')) {
+      throw new TypeError(`runtime ${category} entrypoints must be lazy thunks`);
+    }
+  }
   const registration = Object.freeze({
     [runtimeRegistrationBrand]: true as const,
     moduleId: input.manifest.module.id,
   });
   privateRuntime.set(registration, {
     actions: Object.freeze([...input.actions]),
+    entrypoints: Object.freeze({
+      api: Object.freeze({ ...entrypoints.api }),
+      components: Object.freeze({ ...entrypoints.components }),
+      pages: Object.freeze({ ...entrypoints.pages }),
+      reports: Object.freeze({ ...entrypoints.reports }),
+      search: Object.freeze({ ...entrypoints.search }),
+    }),
     outboxWorkers: workers,
+    shellContributions: input.manifest.publicSurface.shellContributions,
   });
   return registration;
 };
@@ -101,10 +143,16 @@ export const getVerticalRuntimeOutboxWorkers = (
   registration: VerticalRuntimeRegistration,
 ): readonly AnyOutboxWorkerRegistration[] => requirePrivateRuntime(registration).outboxWorkers;
 
+/** Owner-local runtime seam; lazy executable values never appear on the registration object. */
+export const getVerticalRuntimeEntrypoints = (
+  registration: VerticalRuntimeRegistration,
+): VerticalRuntimeEntrypointBindings => requirePrivateRuntime(registration).entrypoints;
+
 export interface VerticalRuntimeSafeDescriptors {
   readonly actions: readonly OntosActionContract[];
   readonly moduleId: OntosModuleId;
   readonly outboxSubscriptions: readonly OntosOutboxSubscriptionContract[];
+  readonly shellContributions: OntosShellContributions;
 }
 
 /** Build-tool seam. Returns copied, frozen data and never returns a handler or Schema value. */
@@ -140,5 +188,6 @@ export const extractVerticalRuntimeSafeDescriptors = (
         )
         .toSorted((left, right) => left.workerKey.localeCompare(right.workerKey)),
     ),
+    shellContributions: runtime.shellContributions,
   });
 };

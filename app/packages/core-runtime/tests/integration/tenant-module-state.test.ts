@@ -66,10 +66,20 @@ const installedContract = (moduleId: string): OntosModuleDeploymentContract => (
       reports: [],
       resourceTypes: [],
       search: [],
+      shellContributions: {
+        mediaAttachments: [],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [],
+        search: [],
+        timelines: [],
+      },
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '1',
+  schemaVersion: '2',
 });
 
 const installedCatalog: InstalledModuleCatalog = Object.freeze({

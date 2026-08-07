@@ -41,10 +41,20 @@ const contract = (appId: string, moduleId: string) => ({
       reports: [],
       resourceTypes: [],
       search: [],
+      shellContributions: {
+        mediaAttachments: [],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [],
+        search: [],
+        timelines: [],
+      },
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '1',
+  schemaVersion: '2',
 });
 
 const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>

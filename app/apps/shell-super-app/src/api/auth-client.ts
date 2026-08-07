@@ -9,11 +9,12 @@ import type {
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
 import type {
-  ActiveModules,
-  ActiveModulesAuthenticationRequiredProblem,
-  ActiveModulesInternalProblem,
-  ActiveModulesUnavailableProblem,
+  AvailableLegalEntitiesResponse,
   AvailableTenantsResponse,
+  LegalEntityAccessForbiddenProblem,
+  MediaAttachmentResponse,
+  SwitchLegalEntityPayload,
+  SwitchLegalEntityResponse,
   SwitchTenantPayload,
   SwitchTenantResponse,
   TenantAccessForbiddenProblem,
@@ -28,6 +29,19 @@ import type {
   SignInPayload,
   SignInResponse,
   SignOutResponse,
+  ResolveModuleTargetPayload,
+  ResolvedModuleTarget,
+  ShellAuthenticationRequiredProblem,
+  ShellCapabilityUnavailableProblem,
+  ShellComposition,
+  ShellInternalProblem,
+  ShellSelectionRequiredProblem,
+  ShellTargetForbiddenProblem,
+  ShellTargetNotFoundProblem,
+  ResourceRef,
+  ShellResourceResponse,
+  ShellSearchPayload,
+  ShellSearchResponse,
 } from '../../shared/api.ts';
 
 export { issueGatewayContext } from '@app/shared-contracts';
@@ -68,15 +82,6 @@ export type ShellAuthenticationClientEffect<Success> = Effect.Effect<
   ShellAuthenticationClientError
 >;
 
-export type ActiveModulesClientError =
-  | ActiveModulesAuthenticationRequiredProblem
-  | ActiveModulesUnavailableProblem
-  | ActiveModulesInternalProblem
-  | HttpClientError.HttpClientError
-  | Schema.SchemaError;
-
-export type ActiveModulesClientEffect = Effect.Effect<ActiveModules, ActiveModulesClientError>;
-
 export type AvailableTenantsClientError =
   | TenantAuthenticationRequiredProblem
   | TenantCapabilityUnavailableProblem
@@ -92,6 +97,36 @@ export type AvailableTenantsClientEffect = Effect.Effect<
 >;
 
 export type SwitchTenantClientEffect = Effect.Effect<SwitchTenantResponse, SwitchTenantClientError>;
+
+export type AvailableLegalEntitiesClientEffect = Effect.Effect<
+  AvailableLegalEntitiesResponse,
+  AvailableTenantsClientError
+>;
+
+export type SwitchLegalEntityClientError =
+  | AvailableTenantsClientError
+  | LegalEntityAccessForbiddenProblem;
+
+export type SwitchLegalEntityClientEffect = Effect.Effect<
+  SwitchLegalEntityResponse,
+  SwitchLegalEntityClientError
+>;
+
+export type ShellCompositionClientError =
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError
+  | ShellAuthenticationRequiredProblem
+  | ShellCapabilityUnavailableProblem
+  | ShellInternalProblem;
+
+export type ShellTargetClientError =
+  | ShellCompositionClientError
+  | ShellSelectionRequiredProblem
+  | ShellTargetForbiddenProblem
+  | ShellTargetNotFoundProblem;
+
+export type ShellSearchClientError = ShellCompositionClientError | ShellSelectionRequiredProblem;
+export type ShellResourceClientError = ShellTargetClientError;
 
 const createShellAuthenticationClient = (
   options: ShellAuthenticationClientOptions = {},
@@ -135,13 +170,6 @@ export const currentSession = (
     Effect.flatMap((client) => client.authentication.currentSession({})),
   );
 
-export const activeModules = (
-  options: ShellAuthenticationClientOptions = {},
-): ActiveModulesClientEffect =>
-  createShellAuthenticationClient(options).pipe(
-    Effect.flatMap((client) => client.modules.activeModules({})),
-  );
-
 export const availableTenants = (
   options: ShellAuthenticationClientOptions = {},
 ): AvailableTenantsClientEffect =>
@@ -155,6 +183,60 @@ export const switchTenant = (
 ): SwitchTenantClientEffect =>
   createShellAuthenticationClient(options).pipe(
     Effect.flatMap((client) => client.tenants.switchTenant({ payload })),
+  );
+
+export const availableLegalEntities = (
+  options: ShellAuthenticationClientOptions = {},
+): AvailableLegalEntitiesClientEffect =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.legalEntities.availableLegalEntities({})),
+  );
+
+export const switchLegalEntity = (
+  payload: SwitchLegalEntityPayload,
+  options: ShellAuthenticationClientOptions = {},
+): SwitchLegalEntityClientEffect =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.legalEntities.switchLegalEntity({ payload })),
+  );
+
+export const shellComposition = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.composition.shellComposition({})),
+  );
+
+export const resolveModuleTarget = (
+  payload: ResolveModuleTargetPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.composition.resolveModuleTarget({ payload })),
+  );
+
+export const searchResources = (
+  payload: ShellSearchPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ShellSearchResponse, ShellSearchClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.resources.search({ payload })),
+  );
+
+export const resourceDetail = (
+  payload: ResourceRef,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ShellResourceResponse, ShellResourceClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.resources.resourceDetail({ payload })),
+  );
+
+export const attachResourceMedia = (
+  payload: ResourceRef,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<MediaAttachmentResponse, ShellResourceClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.resources.attachMedia({ payload })),
   );
 
 export const signOut = (

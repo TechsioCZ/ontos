@@ -34,3 +34,16 @@ export const loadModuleEntrypointComposition = <Value, AuthorizationError, LoadE
       gateway.run({ ...load, snapshot }),
     )(loads);
   });
+
+/** A resolved BFF target is the capability token that permits the browser-side lazy registry lookup. */
+export const resolveThenLoadModuleTarget = <
+  Target,
+  Value,
+  ResolutionError,
+  LoadError,
+  Requirements,
+>(
+  resolution: Effect.Effect<Target, ResolutionError, Requirements>,
+  load: (target: Target) => Effect.Effect<Value, LoadError, Requirements>,
+): Effect.Effect<Value, ResolutionError | LoadError, Requirements> =>
+  resolution.pipe(Effect.flatMap((target) => Effect.suspend(() => load(target))));

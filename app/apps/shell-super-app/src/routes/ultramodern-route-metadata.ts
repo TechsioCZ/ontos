@@ -51,12 +51,101 @@ export const ultramodernRouteMetadata = [
     publicSurface: 'private-app-screen',
     titleKey: 'shell.login.title',
   },
+  {
+    canonicalPath: '/modules/:moduleId',
+    descriptionKey: 'shell.moduleTarget.seoDescription',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.module-target',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
+    id: 'shell-module-target',
+    indexable: false,
+    localisedPaths: {
+      cs: '/modules/:moduleId',
+      en: '/modules/:moduleId',
+    },
+    mfBoundaryId: 'shellSuperApp',
+    namespace: 'shell',
+    ownerAppId: 'shell-super-app',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'shell.moduleTarget.title',
+  },
+  {
+    canonicalPath: '/resources/:moduleId/:resourceType/:resourceId',
+    descriptionKey: 'shell.resource.seoDescription',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.resource-detail',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
+    id: 'shell-resource-detail',
+    indexable: false,
+    localisedPaths: {
+      cs: '/zdroje/:moduleId/:resourceType/:resourceId',
+      en: '/resources/:moduleId/:resourceType/:resourceId',
+    },
+    mfBoundaryId: 'shellSuperApp',
+    namespace: 'shell',
+    ownerAppId: 'shell-super-app',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'shell.resource.title',
+  },
+  {
+    canonicalPath: '/search',
+    descriptionKey: 'shell.search.seoDescription',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.search',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
+    id: 'shell-search',
+    indexable: false,
+    localisedPaths: {
+      cs: '/hledat',
+      en: '/search',
+    },
+    mfBoundaryId: 'shellSuperApp',
+    namespace: 'shell',
+    ownerAppId: 'shell-super-app',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'shell.search.title',
+  },
 ] as const;
 
 export const ultramodernLocalisedUrls = {
+  '/hledat': {
+    cs: '/hledat',
+    en: '/search',
+  },
   '/login': {
     cs: '/login',
     en: '/login',
+  },
+  '/modules/:moduleId': {
+    cs: '/modules/:moduleId',
+    en: '/modules/:moduleId',
+  },
+  '/resources/:moduleId/:resourceType/:resourceId': {
+    cs: '/zdroje/:moduleId/:resourceType/:resourceId',
+    en: '/resources/:moduleId/:resourceType/:resourceId',
+  },
+  '/search': {
+    cs: '/hledat',
+    en: '/search',
+  },
+  '/zdroje/:moduleId/:resourceType/:resourceId': {
+    cs: '/zdroje/:moduleId/:resourceType/:resourceId',
+    en: '/resources/:moduleId/:resourceType/:resourceId',
   },
 } as const;
 

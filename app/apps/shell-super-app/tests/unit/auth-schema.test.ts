@@ -14,12 +14,16 @@ test('owns the exact Better Auth model inside the auth schema', () => {
   ]);
 });
 
-test('stores one nullable typed active tenant on the private session row', () => {
-  const { activeTenantId } = getTableColumns(session);
+test('stores one nullable typed active tenant and legal entity on the private session row', () => {
+  const { activeLegalEntityId, activeTenantId } = getTableColumns(session);
   expect(activeTenantId.name).toBe('active_tenant_id');
   expect(activeTenantId.columnType).toBe('PgUUID');
   expect(activeTenantId.dataType).toBe('string');
   expect(activeTenantId.notNull).toBe(false);
+  expect(activeLegalEntityId.name).toBe('active_legal_entity_id');
+  expect(activeLegalEntityId.columnType).toBe('PgUUID');
+  expect(activeLegalEntityId.dataType).toBe('string');
+  expect(activeLegalEntityId.notNull).toBe(false);
 });
 
 test('reports missing and unexpected authentication tables', () => {

@@ -5,27 +5,49 @@ import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
 };
 import { loader } from '../../../../src/routes/[lang]/page.data.ts';
 
-const { activeModulesMock, availableTenantsMock, currentSessionMock } = rstest.hoisted(() => ({
-  activeModulesMock: rstest.fn(),
+const {
+  availableLegalEntitiesMock,
+  availableTenantsMock,
+  currentSessionMock,
+  shellCompositionMock,
+} = rstest.hoisted(() => ({
+  availableLegalEntitiesMock: rstest.fn(),
   availableTenantsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
+  shellCompositionMock: rstest.fn(),
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
   ...actualAuthClient,
-  activeModules: activeModulesMock,
+  availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
   runEffectRequest: Effect.runPromise,
+  shellComposition: shellCompositionMock,
 }));
 
 const identity = {
   displayName: 'Ada Lovelace',
   email: 'ada@example.test',
+  legalEntityId: 'legal-1',
+  legalName: 'Alpha company',
   principalId: 'principal-1',
   tenantId: 'tenant-1',
 };
-
+const navigation = [
+  {
+    appId: 'future-generated',
+    enabled: true,
+    groupKey: 'shell.navigation.modules',
+    href: '/modules/future.generated',
+    label: 'Future generated',
+    moduleId: 'future.generated',
+    order: 10,
+    state: 'active' as const,
+    unavailable: false,
+    writable: true,
+  },
+];
 const request = () =>
   ({
     headers: {
@@ -36,12 +58,14 @@ const request = () =>
 
 beforeEach(() => {
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
-  activeModulesMock.mockReturnValue(
-    Effect.succeed([
-      { moduleKey: 'future-generated', state: 'active' as const },
-      { moduleKey: 'testing1', state: 'active' as const },
-    ]),
+  availableLegalEntitiesMock.mockReturnValue(
+    Effect.succeed({
+      legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+      selectedLegalEntityId: 'legal-1',
+      state: 'authenticated',
+    }),
   );
+  shellCompositionMock.mockReturnValue(Effect.succeed({ navigation, state: 'available' as const }));
   availableTenantsMock.mockReturnValue(
     Effect.succeed({
       tenants: [
@@ -52,18 +76,16 @@ beforeEach(() => {
   );
 });
 
-test('resolves the session first and returns a serializable authenticated page model', async () => {
-  const model = await loader({ request: request() });
-
-  expect(model).toEqual({
-    activeModules: {
-      items: [
-        { moduleKey: 'future-generated', state: 'active' },
-        { moduleKey: 'testing1', state: 'active' },
-      ],
+test('resolves trusted context before returning one serializable composition', async () => {
+  expect(await loader({ request: request() })).toEqual({
+    contextState: 'authenticated',
+    identity,
+    legalEntities: {
+      items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       state: 'available',
     },
-    identity,
+    navigation: { items: navigation, state: 'available' },
+    selectedLegalEntityId: 'legal-1',
     state: 'authenticated',
     tenants: {
       items: [
@@ -72,113 +94,59 @@ test('resolves the session first and returns a serializable authenticated page m
       ],
       state: 'available',
     },
-  });
-  expect(currentSessionMock).toHaveBeenCalledWith({
-    baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
-    cookie: 'session=test-session',
-  });
-  expect(activeModulesMock).toHaveBeenCalledWith({
-    baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
-    cookie: 'session=test-session',
-  });
-  expect(availableTenantsMock).toHaveBeenCalledWith({
-    baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
-    cookie: 'session=test-session',
   });
   expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
-    activeModulesMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
   );
 });
 
-test('does not request modules for an anonymous session', async () => {
+test('does not request composition for an anonymous session', async () => {
   currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
-
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
-  expect(activeModulesMock).not.toHaveBeenCalled();
+  expect(shellCompositionMock).not.toHaveBeenCalled();
   expect(availableTenantsMock).not.toHaveBeenCalled();
 });
 
-test('maps a typed module-client failure to unavailable without discarding identity', async () => {
-  activeModulesMock.mockReturnValueOnce(
-    Effect.fail({
-      _tag: 'ActiveModulesUnavailableProblem' as const,
-      detail: 'safe',
-      retryable: true as const,
-      status: 503,
-      title: 'safe',
-      type: 'safe',
-    }),
+test('maps composition failure to unavailable without discarding verified context', async () => {
+  shellCompositionMock.mockReturnValueOnce(
+    Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }),
   );
-
-  expect(await loader({ request: request() })).toEqual({
-    activeModules: { items: [], state: 'unavailable' },
+  expect(await loader({ request: request() })).toMatchObject({
+    contextState: 'authenticated',
     identity,
+    navigation: { items: [], state: 'unavailable' },
     state: 'authenticated',
-    tenants: {
-      items: [
-        { name: 'Alpha tenant', tenantId: 'tenant-1' },
-        { name: 'Zeta tenant', tenantId: 'tenant-2' },
-      ],
-      state: 'available',
-    },
   });
 });
 
-test('maps a tenant failure to a current-tenant fallback without discarding modules', async () => {
+test('maps tenant failure to the current-tenant fallback without discarding composition', async () => {
   availableTenantsMock.mockReturnValueOnce(
-    Effect.fail({
-      _tag: 'TenantCapabilityUnavailableProblem' as const,
-      detail: 'safe',
-      retryable: true as const,
-      status: 503,
-      title: 'safe',
-      type: 'safe',
-    }),
+    Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' }),
   );
-
-  expect(await loader({ request: request() })).toEqual({
-    activeModules: {
-      items: [
-        { moduleKey: 'future-generated', state: 'active' },
-        { moduleKey: 'testing1', state: 'active' },
-      ],
-      state: 'available',
-    },
-    identity,
-    state: 'authenticated',
-    tenants: {
-      items: [{ name: 'tenant-1', tenantId: 'tenant-1' }],
-      state: 'unavailable',
-    },
+  expect(await loader({ request: request() })).toMatchObject({
+    navigation: { items: navigation, state: 'available' },
+    tenants: { items: [{ name: 'tenant-1', tenantId: 'tenant-1' }], state: 'unavailable' },
   });
 });
 
-test('tears down stale authenticated data when the tenant read requires authentication', async () => {
-  availableTenantsMock.mockReturnValueOnce(
-    Effect.fail({
-      _tag: 'TenantAuthenticationRequiredProblem' as const,
-      detail: 'safe',
-      status: 401,
-      title: 'safe',
-      type: 'safe',
-    }),
+test('keeps legal-entity acquisition failure explicit without claiming choices are available', async () => {
+  availableLegalEntitiesMock.mockReturnValueOnce(
+    Effect.fail({ _tag: 'TenantCapabilityUnavailableProblem' }),
   );
-
-  expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
+  expect(await loader({ request: request() })).toMatchObject({
+    legalEntities: { items: [], state: 'unavailable' },
+    state: 'authenticated',
+  });
 });
 
-test('keeps the previous anonymous fallback for a session-client failure', async () => {
-  currentSessionMock.mockReturnValueOnce(
-    Effect.fail({
-      _tag: 'AuthenticationUnavailableProblem' as const,
-      detail: 'safe',
-      status: 503,
-      title: 'safe',
-      type: 'safe',
-    }),
-  );
+test('does not collapse an authentication infrastructure failure into an anonymous session', async () => {
+  currentSessionMock.mockReturnValueOnce(Effect.fail({ _tag: 'AuthenticationUnavailableProblem' }));
+  expect(await loader({ request: request() })).toEqual({ state: 'unavailable' });
+});
 
+test('tears down stale authenticated data when tenant context requires authentication', async () => {
+  availableTenantsMock.mockReturnValueOnce(
+    Effect.fail({ _tag: 'TenantAuthenticationRequiredProblem' }),
+  );
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
-  expect(activeModulesMock).not.toHaveBeenCalled();
-  expect(availableTenantsMock).not.toHaveBeenCalled();
 });

@@ -1,3 +1,4 @@
+/* eslint-disable no-nested-ternary -- Typed authentication errors map inline to the same closed Shell Problem Details union. */
 import {
   Cookies,
   defineEffectBff,
@@ -14,7 +15,10 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import {
   CoreDatabaseLive,
+  ContextAccess,
+  ContextAccessLive,
   DatabaseConfigLive,
+  LegalEntityContextLive,
   OutboxRuntimeLive,
   PrincipalResolverLive,
   TenantModuleStateService,
@@ -25,10 +29,17 @@ import type { GatewayContextProblem } from '@app/shared-contracts';
 import { Cause, pipe } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
 import type {
-  ActiveModulesProblem,
   AuthenticationInternalProblem,
   AuthenticationProblem,
   AvailableTenantsProblem,
+  LegalEntityAccessForbiddenProblem,
+  LegalEntityProblem,
+  ShellAuthenticationRequiredProblem,
+  ShellCapabilityUnavailableProblem,
+  ShellInternalProblem,
+  ShellSelectionRequiredProblem,
+  ShellTargetForbiddenProblem,
+  ShellTargetNotFoundProblem,
   SwitchTenantProblem,
   TenantAccessForbiddenProblem,
   TenantAuthenticationRequiredProblem,
@@ -43,6 +54,7 @@ import {
 } from './auth/gateway-issuer.ts';
 import type { GatewayIssuerDependencies, GatewayIssuerError } from './auth/gateway-issuer.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
+import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import {
   ShellInstalledModuleCatalog,
@@ -50,6 +62,17 @@ import {
 } from './modules/installed-module-catalog.ts';
 import type { InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { makeInstalledOutboxMatcherLayer } from './modules/installed-outbox-matcher.ts';
+import { makeShellComposition } from './modules/shell-composition.ts';
+import {
+  makeShellResourceDetail,
+  makeShellMediaAttachment,
+  makeShellSearch,
+  ShellProviderUnavailableError,
+} from './modules/shell-resources.ts';
+import type {
+  ShellResourceProviderGateway,
+  ShellSearchProviderGateway,
+} from './modules/shell-resources.ts';
 
 const requestHeaders = (headers: Readonly<Record<string, string | undefined>>): Headers => {
   const result = new Headers();
@@ -87,57 +110,6 @@ const failGatewayProblem = (gatewayProblem: GatewayContextProblem) =>
     ? bearerChallenge
     : Effect.void
   ).pipe(Effect.andThen(Effect.fail(gatewayProblem)));
-
-const failActiveModulesProblem = (modulesProblem: ActiveModulesProblem) =>
-  (modulesProblem._tag === 'ActiveModulesAuthenticationRequiredProblem'
-    ? bearerChallenge
-    : Effect.void
-  ).pipe(Effect.andThen(Effect.fail(modulesProblem)));
-
-const activeModulesAuthenticationRequiredProblem = (): ActiveModulesProblem => ({
-  _tag: 'ActiveModulesAuthenticationRequiredProblem',
-  detail: 'A valid Shell session is required.',
-  status: 401,
-  title: 'Module list authentication required',
-  type: 'https://ontos.dev/problems/module-list-authentication-required',
-});
-
-const activeModulesUnavailableProblem = (): ActiveModulesProblem => ({
-  _tag: 'ActiveModulesUnavailableProblem',
-  detail: 'Active MicroVerticals are temporarily unavailable. Please retry.',
-  retryable: true,
-  status: 503,
-  title: 'Active MicroVerticals unavailable',
-  type: 'https://ontos.dev/problems/active-modules-unavailable',
-});
-
-const activeModulesInternalProblem = (): ActiveModulesProblem => ({
-  _tag: 'ActiveModulesInternalProblem',
-  detail: 'The active MicroVertical list could not be loaded.',
-  status: 500,
-  title: 'Active MicroVertical list failed',
-  type: 'https://ontos.dev/problems/active-modules-internal',
-});
-
-const activeModulesAuthenticationProblem = (
-  error: AuthenticationRuntimeError,
-): ActiveModulesProblem => {
-  switch (error._tag) {
-    case 'InvalidCredentialsError':
-    case 'OntosIdentityForbiddenError': {
-      return activeModulesAuthenticationRequiredProblem();
-    }
-    case 'AuthenticationUnavailableError': {
-      return activeModulesUnavailableProblem();
-    }
-    case 'AuthenticationInternalError': {
-      return activeModulesInternalProblem();
-    }
-    default: {
-      return error;
-    }
-  }
-};
 
 const gatewayAuthenticationRequiredProblem = (): GatewayContextProblem => ({
   _tag: 'GatewayAuthenticationRequiredProblem',
@@ -305,6 +277,81 @@ const failTenantProblem = <Failure extends SwitchTenantProblem>(tenantFailure: F
     : Effect.void
   ).pipe(Effect.andThen(Effect.fail(tenantFailure)));
 
+const legalEntityAccessForbiddenProblem = (): LegalEntityAccessForbiddenProblem => ({
+  _tag: 'LegalEntityAccessForbiddenProblem',
+  detail: 'The requested legal entity is not available to this session.',
+  status: 403,
+  title: 'Legal-entity access forbidden',
+  type: 'https://ontos.dev/problems/legal-entity-access-forbidden',
+});
+
+const failLegalEntityProblem = <Failure extends LegalEntityProblem>(failure: Failure) =>
+  (failure._tag === 'TenantAuthenticationRequiredProblem' ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(failure)),
+  );
+
+const shellAuthenticationRequiredProblem = (): ShellAuthenticationRequiredProblem => ({
+  _tag: 'ShellAuthenticationRequiredProblem',
+  detail: 'A valid Shell session is required.',
+  status: 401,
+  title: 'Shell authentication required',
+  type: 'https://ontos.dev/problems/shell-authentication-required',
+});
+
+const shellCapabilityUnavailableProblem = (): ShellCapabilityUnavailableProblem => ({
+  _tag: 'ShellCapabilityUnavailableProblem',
+  detail: 'The Shell capability is temporarily unavailable. Please retry.',
+  retryable: true,
+  status: 503,
+  title: 'Shell capability unavailable',
+  type: 'https://ontos.dev/problems/shell-capability-unavailable',
+});
+
+const shellInternalProblem = (): ShellInternalProblem => ({
+  _tag: 'ShellInternalProblem',
+  detail: 'The Shell request could not be completed.',
+  status: 500,
+  title: 'Shell request failed',
+  type: 'https://ontos.dev/problems/shell-internal',
+});
+
+const shellSelectionRequiredProblem = (): ShellSelectionRequiredProblem => ({
+  _tag: 'ShellSelectionRequiredProblem',
+  detail: 'Select one legal entity before opening a module.',
+  status: 409,
+  title: 'Legal-entity selection required',
+  type: 'https://ontos.dev/problems/legal-entity-selection-required',
+});
+
+const shellTargetForbiddenProblem = (): ShellTargetForbiddenProblem => ({
+  _tag: 'ShellTargetForbiddenProblem',
+  detail: 'The requested module is forbidden in the selected context.',
+  status: 403,
+  title: 'Module target forbidden',
+  type: 'https://ontos.dev/problems/module-target-forbidden',
+});
+
+const shellTargetNotFoundProblem = (): ShellTargetNotFoundProblem => ({
+  _tag: 'ShellTargetNotFoundProblem',
+  detail: 'The requested module target was not found.',
+  status: 404,
+  title: 'Module target not found',
+  type: 'https://ontos.dev/problems/module-target-not-found',
+});
+
+type ShellProblem =
+  | ShellAuthenticationRequiredProblem
+  | ShellCapabilityUnavailableProblem
+  | ShellInternalProblem
+  | ShellSelectionRequiredProblem
+  | ShellTargetForbiddenProblem
+  | ShellTargetNotFoundProblem;
+
+const failShellProblem = <Failure extends ShellProblem>(failure: Failure) =>
+  (failure._tag === 'ShellAuthenticationRequiredProblem' ? bearerChallenge : Effect.void).pipe(
+    Effect.andThen(Effect.fail(failure)),
+  );
+
 const authenticationGroupLive = HttpApiBuilder.group(
   ShellAuthenticationApi,
   'authentication',
@@ -327,14 +374,29 @@ const authenticationGroupLive = HttpApiBuilder.group(
       .handle('currentSession', ({ request }) =>
         Effect.gen(function* currentSessionHandler() {
           const authentication = yield* AuthenticationService;
-          const result = yield* authentication.currentSession(requestHeaders(request.headers));
+          const result = yield* authentication.resolveShellContext(requestHeaders(request.headers));
           yield* forwardSetCookieHeaders(result.setCookieHeaders);
-          return result.identity === null
-            ? ({ state: 'anonymous' } as const)
-            : ({
+          switch (result.state) {
+            case 'anonymous': {
+              return { state: 'anonymous' } as const;
+            }
+            case 'authenticated': {
+              return { identity: result.identity, state: 'authenticated' } as const;
+            }
+            case 'selection_required': {
+              return {
+                availableLegalEntities: result.availableLegalEntities,
                 identity: result.identity,
-                state: 'authenticated',
-              } as const);
+                state: 'selection_required',
+              } as const;
+            }
+            case 'access_blocked': {
+              return { identity: result.identity, state: 'access_blocked' } as const;
+            }
+            default: {
+              return result;
+            }
+          }
         }).pipe(
           Effect.mapError(problem),
           Effect.catchCause((cause) =>
@@ -358,6 +420,70 @@ const authenticationGroupLive = HttpApiBuilder.group(
             signedOut: true as const,
           };
         }).pipe(Effect.mapError(problem)),
+      ),
+);
+
+const legalEntityGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'legalEntities',
+  (handlers) =>
+    handlers
+      .handle('availableLegalEntities', ({ request }) =>
+        Effect.gen(function* availableLegalEntitiesHandler() {
+          const authentication = yield* AuthenticationService;
+          const result = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(
+              Effect.catch((error) => failLegalEntityProblem(tenantAuthenticationProblem(error))),
+            );
+          yield* forwardSetCookieHeaders(result.setCookieHeaders);
+          if (result.state === 'anonymous') {
+            return yield* failLegalEntityProblem(tenantAuthenticationRequiredProblem());
+          }
+          return {
+            legalEntities: result.availableLegalEntities,
+            ...(result.state === 'authenticated'
+              ? { selectedLegalEntityId: result.identity.legalEntityId }
+              : {}),
+            state: result.state,
+          };
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(Effect.logError('Unexpected legal-entity list defect', cause), {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                }).pipe(Effect.andThen(failLegalEntityProblem(tenantInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
+      )
+      .handle('switchLegalEntity', ({ payload, request }) =>
+        Effect.gen(function* switchLegalEntityHandler() {
+          const authentication = yield* AuthenticationService;
+          const result = yield* authentication
+            .switchLegalEntity(payload.legalEntityId, requestHeaders(request.headers))
+            .pipe(
+              Effect.catch(
+                (error: AuthenticationRuntimeError | LegalEntitySelectionForbiddenError) =>
+                  failLegalEntityProblem(
+                    error._tag === 'LegalEntitySelectionForbiddenError'
+                      ? legalEntityAccessForbiddenProblem()
+                      : tenantAuthenticationProblem(error),
+                  ),
+              ),
+            );
+          yield* forwardSetCookieHeaders(result.setCookieHeaders);
+          return { selectedLegalEntityId: result.selectedLegalEntityId };
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(
+                  Effect.logError('Unexpected legal-entity switch defect', cause),
+                  { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
+                ).pipe(Effect.andThen(failLegalEntityProblem(tenantInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
       ),
 );
 
@@ -401,18 +527,357 @@ const tenantGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'tenants', 
     ),
 );
 
+const compositionGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'composition',
+  (handlers) =>
+    handlers
+      .handle('shellComposition', ({ request }) =>
+        Effect.gen(function* shellCompositionHandler() {
+          const authentication = yield* AuthenticationService;
+          const session = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(
+              Effect.catch((error) =>
+                failShellProblem(
+                  error._tag === 'AuthenticationInternalError'
+                    ? shellInternalProblem()
+                    : error._tag === 'AuthenticationUnavailableError'
+                      ? shellCapabilityUnavailableProblem()
+                      : shellAuthenticationRequiredProblem(),
+                ),
+              ),
+            );
+          yield* forwardSetCookieHeaders(session.setCookieHeaders);
+          if (session.state === 'anonymous') {
+            return yield* failShellProblem(shellAuthenticationRequiredProblem());
+          }
+          if (session.state === 'access_blocked') {
+            return { navigation: [], state: 'access_blocked' } as const;
+          }
+          const catalog = yield* ShellInstalledModuleCatalog;
+          const moduleStates = yield* TenantModuleStateService;
+          const contextAccess = yield* ContextAccess;
+          return yield* makeShellComposition({
+            catalog: catalog.load,
+            contextAccess,
+            moduleStates,
+          })
+            .compose({
+              ...(session.state === 'authenticated'
+                ? { legalEntityId: session.identity.legalEntityId }
+                : {}),
+              principalId: session.identity.principalId,
+              tenantId: session.identity.tenantId,
+            })
+            .pipe(Effect.mapError(shellCapabilityUnavailableProblem));
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(Effect.logError('Unexpected Shell composition defect', cause), {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                }).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
+      )
+      .handle('resolveModuleTarget', ({ payload, request }) =>
+        Effect.gen(function* resolveModuleTargetHandler() {
+          const authentication = yield* AuthenticationService;
+          const session = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(
+              Effect.catch((error) =>
+                failShellProblem(
+                  error._tag === 'AuthenticationInternalError'
+                    ? shellInternalProblem()
+                    : error._tag === 'AuthenticationUnavailableError'
+                      ? shellCapabilityUnavailableProblem()
+                      : shellAuthenticationRequiredProblem(),
+                ),
+              ),
+            );
+          yield* forwardSetCookieHeaders(session.setCookieHeaders);
+          if (session.state === 'anonymous') {
+            return yield* failShellProblem(shellAuthenticationRequiredProblem());
+          }
+          if (session.state !== 'authenticated') {
+            return yield* failShellProblem(shellSelectionRequiredProblem());
+          }
+          const catalog = yield* ShellInstalledModuleCatalog;
+          const moduleStates = yield* TenantModuleStateService;
+          const contextAccess = yield* ContextAccess;
+          const resolution = yield* makeShellComposition({
+            catalog: catalog.load,
+            contextAccess,
+            moduleStates,
+          })
+            .resolveModuleTarget(
+              {
+                legalEntityId: session.identity.legalEntityId,
+                principalId: session.identity.principalId,
+                tenantId: session.identity.tenantId,
+              },
+              { moduleId: payload.moduleId },
+            )
+            .pipe(Effect.mapError(shellCapabilityUnavailableProblem));
+          switch (resolution.outcome) {
+            case 'resolved': {
+              return {
+                appId: resolution.appId,
+                componentKey: resolution.page.componentKey,
+                entrypointKey: resolution.page.entrypoint.entrypointKey,
+                moduleId: resolution.moduleId,
+                writable: resolution.writable,
+              };
+            }
+            case 'forbidden': {
+              return yield* failShellProblem(shellTargetForbiddenProblem());
+            }
+            case 'not_found': {
+              return yield* failShellProblem(shellTargetNotFoundProblem());
+            }
+            case 'selection_required': {
+              return yield* failShellProblem(shellSelectionRequiredProblem());
+            }
+            case 'unavailable': {
+              return yield* failShellProblem(shellCapabilityUnavailableProblem());
+            }
+            default: {
+              return resolution;
+            }
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(Effect.logError('Unexpected module target defect', cause), {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                }).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
+      ),
+);
+
+export interface ShellResourceGateways {
+  readonly resource: ShellResourceProviderGateway;
+  readonly search: ShellSearchProviderGateway;
+}
+
+const unavailableResourceGateways: ShellResourceGateways = {
+  resource: {
+    detail: () => Effect.fail(new ShellProviderUnavailableError()),
+    timeline: () => Effect.fail(new ShellProviderUnavailableError()),
+  },
+  search: {
+    search: () => Effect.fail(new ShellProviderUnavailableError()),
+  },
+};
+
+const makeResourcesGroupLive = (gateways: ShellResourceGateways) =>
+  HttpApiBuilder.group(ShellAuthenticationApi, 'resources', (handlers) =>
+    handlers
+      .handle('search', ({ payload, request }) =>
+        Effect.gen(function* searchHandler() {
+          const authentication = yield* AuthenticationService;
+          const session = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(
+              Effect.catch((error) =>
+                failShellProblem(
+                  error._tag === 'AuthenticationUnavailableError'
+                    ? shellCapabilityUnavailableProblem()
+                    : error._tag === 'AuthenticationInternalError'
+                      ? shellInternalProblem()
+                      : shellAuthenticationRequiredProblem(),
+                ),
+              ),
+            );
+          yield* forwardSetCookieHeaders(session.setCookieHeaders);
+          if (session.state === 'anonymous') {
+            return yield* failShellProblem(shellAuthenticationRequiredProblem());
+          }
+          if (session.state !== 'authenticated') {
+            return yield* failShellProblem(shellSelectionRequiredProblem());
+          }
+          const catalog = yield* ShellInstalledModuleCatalog;
+          const moduleStates = yield* TenantModuleStateService;
+          const contextAccess = yield* ContextAccess;
+          return yield* makeShellSearch(
+            { catalog: catalog.load, contextAccess, moduleStates },
+            gateways.search,
+          )
+            .search(
+              {
+                correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                legalEntityId: session.identity.legalEntityId,
+                principalId: session.identity.principalId,
+                tenantId: session.identity.tenantId,
+              },
+              payload.query,
+            )
+            .pipe(Effect.mapError(shellCapabilityUnavailableProblem));
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(Effect.logError('Unexpected Shell search defect', cause), {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                }).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
+      )
+      .handle('resourceDetail', ({ payload, request }) =>
+        Effect.gen(function* resourceDetailHandler() {
+          const authentication = yield* AuthenticationService;
+          const session = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(
+              Effect.catch((error) =>
+                failShellProblem(
+                  error._tag === 'AuthenticationUnavailableError'
+                    ? shellCapabilityUnavailableProblem()
+                    : error._tag === 'AuthenticationInternalError'
+                      ? shellInternalProblem()
+                      : shellAuthenticationRequiredProblem(),
+                ),
+              ),
+            );
+          yield* forwardSetCookieHeaders(session.setCookieHeaders);
+          if (session.state === 'anonymous') {
+            return yield* failShellProblem(shellAuthenticationRequiredProblem());
+          }
+          if (session.state !== 'authenticated') {
+            return yield* failShellProblem(shellSelectionRequiredProblem());
+          }
+          const catalog = yield* ShellInstalledModuleCatalog;
+          const moduleStates = yield* TenantModuleStateService;
+          const contextAccess = yield* ContextAccess;
+          const dependencies = { catalog: catalog.load, contextAccess, moduleStates };
+          const context = {
+            correlationId: request.headers['x-correlation-id'] ?? 'missing',
+            legalEntityId: session.identity.legalEntityId,
+            principalId: session.identity.principalId,
+            tenantId: session.identity.tenantId,
+          };
+          const resolution = yield* makeShellResourceDetail(
+            dependencies,
+            gateways.resource,
+          ).resolve(context, payload);
+          switch (resolution.outcome) {
+            case 'forbidden': {
+              return yield* failShellProblem(shellTargetForbiddenProblem());
+            }
+            case 'not_found': {
+              return yield* failShellProblem(shellTargetNotFoundProblem());
+            }
+            case 'unavailable': {
+              return yield* failShellProblem(shellCapabilityUnavailableProblem());
+            }
+            case 'resolved': {
+              return {
+                detail: resolution.detail,
+                media: resolution.media,
+                projectionLagging: resolution.projectionLagging,
+                ref: payload,
+                timeline: resolution.timeline,
+              };
+            }
+            default: {
+              return resolution;
+            }
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(
+                  Effect.logError('Unexpected Shell resource-detail defect', cause),
+                  { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
+                ).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
+      )
+      .handle('attachMedia', ({ payload, request }) =>
+        Effect.gen(function* attachMediaHandler() {
+          const authentication = yield* AuthenticationService;
+          const session = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(
+              Effect.catch((error) =>
+                failShellProblem(
+                  error._tag === 'AuthenticationUnavailableError'
+                    ? shellCapabilityUnavailableProblem()
+                    : error._tag === 'AuthenticationInternalError'
+                      ? shellInternalProblem()
+                      : shellAuthenticationRequiredProblem(),
+                ),
+              ),
+            );
+          yield* forwardSetCookieHeaders(session.setCookieHeaders);
+          if (session.state === 'anonymous') {
+            return yield* failShellProblem(shellAuthenticationRequiredProblem());
+          }
+          if (session.state !== 'authenticated') {
+            return yield* failShellProblem(shellSelectionRequiredProblem());
+          }
+          const catalog = yield* ShellInstalledModuleCatalog;
+          const moduleStates = yield* TenantModuleStateService;
+          const contextAccess = yield* ContextAccess;
+          const resolution = yield* makeShellMediaAttachment(
+            { catalog: catalog.load, contextAccess, moduleStates },
+            gateways.resource,
+          ).attach(
+            {
+              correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              legalEntityId: session.identity.legalEntityId,
+              principalId: session.identity.principalId,
+              tenantId: session.identity.tenantId,
+            },
+            payload,
+          );
+          switch (resolution.outcome) {
+            case 'resolved': {
+              return resolution.result;
+            }
+            case 'forbidden': {
+              return yield* failShellProblem(shellTargetForbiddenProblem());
+            }
+            case 'not_found': {
+              return yield* failShellProblem(shellTargetNotFoundProblem());
+            }
+            case 'unavailable': {
+              return yield* failShellProblem(shellCapabilityUnavailableProblem());
+            }
+            default: {
+              return resolution;
+            }
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause)
+              ? Effect.annotateLogs(
+                  Effect.logError('Unexpected Shell media-attachment defect', cause),
+                  { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
+                ).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+              : Effect.failCause(cause),
+          ),
+        ),
+      ),
+  );
+
 const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependencies) =>
   HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
     handlers.handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
         const authentication = yield* AuthenticationService;
         const sessionResult = yield* authentication
-          .currentSession(requestHeaders(request.headers))
+          .resolveShellContext(requestHeaders(request.headers))
           .pipe(
             Effect.catch((error) => pipe(error, gatewayAuthenticationProblem, failGatewayProblem)),
           );
         yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
-        if (sessionResult.identity === null) {
+        if (sessionResult.state !== 'authenticated') {
           return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
         }
 
@@ -421,6 +886,7 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
             audience: payload.audience,
             principal: {
               authMethod: 'session',
+              legalEntityId: sessionResult.identity.legalEntityId,
               principalId: sessionResult.identity.principalId,
               tenantId: sessionResult.identity.tenantId,
             },
@@ -442,59 +908,9 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
     ),
   );
 
-const makeModulesGroupLive = () =>
-  HttpApiBuilder.group(ShellAuthenticationApi, 'modules', (handlers) =>
-    handlers.handle('activeModules', ({ request }) =>
-      Effect.gen(function* activeModulesHandler() {
-        const authentication = yield* AuthenticationService;
-        const sessionResult = yield* authentication
-          .currentSession(requestHeaders(request.headers))
-          .pipe(
-            Effect.catch((error) =>
-              pipe(error, activeModulesAuthenticationProblem, failActiveModulesProblem),
-            ),
-          );
-        yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
-        if (sessionResult.identity === null) {
-          return yield* failActiveModulesProblem(activeModulesAuthenticationRequiredProblem());
-        }
-
-        const moduleState = yield* TenantModuleStateService;
-        const activeModules = yield* moduleState
-          .listActiveTenantModules(sessionResult.identity.tenantId)
-          .pipe(Effect.catch(() => failActiveModulesProblem(activeModulesUnavailableProblem())));
-        const catalogService = yield* ShellInstalledModuleCatalog;
-        const installed = yield* catalogService.load.pipe(
-          Effect.catch((error) =>
-            failActiveModulesProblem(
-              error._tag === 'InstalledModuleCatalogUnavailableError'
-                ? activeModulesUnavailableProblem()
-                : activeModulesInternalProblem(),
-            ),
-          ),
-        );
-        const installedModuleIds = new Set(installed.moduleIds);
-
-        return activeModules
-          .filter((module) => installedModuleIds.has(module.moduleKey))
-          .toSorted((left, right) => left.moduleKey.localeCompare(right.moduleKey));
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Cause.hasDies(cause)
-            ? Effect.annotateLogs(
-                Effect.logError('Unexpected active MicroVertical list defect', cause),
-                {
-                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
-                },
-              ).pipe(Effect.andThen(failActiveModulesProblem(activeModulesInternalProblem())))
-            : Effect.failCause(cause),
-        ),
-      ),
-    ),
-  );
-
 const coreDatabaseLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
 const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(coreDatabaseLive));
+const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(coreDatabaseLive));
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
   Layer.provide(coreDatabaseLive),
   Layer.orDie,
@@ -503,6 +919,8 @@ const authDatabaseLive = AuthDatabaseLive.pipe(Layer.provide(AuthConfigLive));
 const authenticationDependenciesLive = Layer.mergeAll(
   AuthConfigLive,
   authDatabaseLive,
+  ContextAccessLive,
+  legalEntityContextLive,
   principalResolverLive,
 );
 const authenticationServiceLive = AuthenticationServiceLive.pipe(
@@ -518,6 +936,8 @@ export const makeShellAuthenticationApiRuntime = (
     | Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>
     | undefined = undefined,
   enableInstalledOutboxMatcher = false,
+  contextAccessLayer: Layer.Layer<ContextAccess> = ContextAccessLive,
+  resourceGateways: ShellResourceGateways = unavailableResourceGateways,
 ): EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> => {
   const moduleCatalogLayer =
@@ -534,12 +954,16 @@ export const makeShellAuthenticationApiRuntime = (
       Layer.mergeAll(
         authenticationGroupLive,
         tenantGroupLive,
+        legalEntityGroupLive,
+        compositionGroupLive,
+        makeResourcesGroupLive(resourceGateways),
         makeGatewayContextGroupLive(issuerDependencies),
-        makeModulesGroupLive(),
         outboxMatcherLayer,
       ),
     ),
-    Layer.provide(Layer.mergeAll(authenticationLayer, moduleStateLayer, moduleCatalogLayer)),
+    Layer.provide(
+      Layer.mergeAll(authenticationLayer, moduleStateLayer, moduleCatalogLayer, contextAccessLayer),
+    ),
   ) satisfies EffectRuntimeLayer;
 
   return defineEffectBff({

@@ -13,6 +13,7 @@ import {
   defineVerticalRuntimeRegistration,
   extractVerticalRuntimeSafeDescriptors,
   getVerticalRuntimeActions,
+  getVerticalRuntimeEntrypoints,
 } from '../../src/modules/runtime-registration.ts';
 
 const componentValue = () => null;
@@ -71,6 +72,16 @@ const emptyManifestInput = () => ({
     reports: [] as const,
     resourceTypes: [] as const,
     search: [] as const,
+    shellContributions: {
+      mediaAttachments: [] as const,
+      navigation: [] as const,
+      pages: [] as const,
+      publicComponents: [] as const,
+      reports: [] as const,
+      resourceDetails: [] as const,
+      search: [] as const,
+      timelines: [] as const,
+    },
   },
 });
 
@@ -143,10 +154,18 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
           resourceType: 'property.unit',
         },
       ],
+      shellContributions: emptyManifestInput().publicSurface.shellContributions,
     },
   });
   const registration = defineVerticalRuntimeRegistration({
     actions: [action],
+    entrypoints: {
+      api: { resource: () => apiValue },
+      components: { dashboard: () => componentValue },
+      pages: {},
+      reports: {},
+      search: {},
+    },
     manifest,
     outboxWorkers: [],
   });
@@ -157,6 +176,10 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
   assert.equal(manifest.publicSurface.components['PropertyUnitCard'], componentValue);
   assert.deepEqual(Object.keys(registration), ['moduleId']);
   assert.equal(getVerticalRuntimeActions(registration)[0], action);
+  assert.equal(
+    getVerticalRuntimeEntrypoints(registration).components['dashboard']?.(),
+    componentValue,
+  );
   assert.deepEqual(descriptors, {
     actions: [
       {
@@ -169,8 +192,10 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
     ],
     moduleId: 'property.registry',
     outboxSubscriptions: [],
+    shellContributions: emptyManifestInput().publicSurface.shellContributions,
   });
   assert.equal(JSON.stringify(descriptors).includes('handler'), false);
+  assert.equal(JSON.stringify(descriptors).includes('dashboard'), false);
 });
 
 test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
@@ -301,6 +326,7 @@ test('deployment contract decoding is exact and versioned', () => {
         reports: [],
         resourceTypes: [],
         search: [],
+        shellContributions: emptyManifestInput().publicSurface.shellContributions,
       },
     },
     runtime: { outboxSubscriptions: [] },
@@ -308,7 +334,7 @@ test('deployment contract decoding is exact and versioned', () => {
   };
 
   assert.deepEqual(decodeOntosModuleDeploymentContract(contract), contract);
-  assert.equal(contract.schemaVersion, '1');
+  assert.equal(contract.schemaVersion, '2');
   assert.throws(() =>
     decodeOntosModuleDeploymentContract({ ...contract, sourcePath: './private.ts' }),
   );

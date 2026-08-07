@@ -2,12 +2,13 @@ import { expect, test } from '@rstest/core';
 import { Effect, Schema } from 'effect';
 import {
   CurrentSessionSchema,
-  ActiveModulesSchema,
+  AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
   SignInPayloadSchema,
   ShellAuthenticationApi,
   SwitchTenantPayloadSchema,
   SwitchTenantResponseSchema,
+  SwitchLegalEntityPayloadSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
 
@@ -25,27 +26,75 @@ test('publishes the existing authentication operations and one generic gateway o
     ShellAuthenticationApi.groups.authentication.endpoints,
   ).toSorted();
   const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
-  const moduleEndpoints = Object.keys(ShellAuthenticationApi.groups.modules.endpoints);
+  const legalEntityEndpoints = Object.keys(
+    ShellAuthenticationApi.groups.legalEntities.endpoints,
+  ).toSorted();
   const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
+  const resourceEndpoints = Object.keys(
+    ShellAuthenticationApi.groups.resources.endpoints,
+  ).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext']);
-  expect(moduleEndpoints).toEqual(['activeModules']);
+  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
+  expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
   expect(shellAuthenticationApiContract).toEqual({
-    activeModulesPath: '/shell-super-app-api/modules/active',
     apiPrefix: '/shell-super-app-api',
+    availableLegalEntitiesPath: '/shell-super-app-api/auth/legal-entities',
     availableTenantsPath: '/shell-super-app-api/auth/tenants',
+    compositionPath: '/shell-super-app-api/shell/composition',
     currentSessionPath: '/shell-super-app-api/auth/session',
     issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
+    mediaAttachmentPath: '/shell-super-app-api/shell/resource/media-attachment',
     ownerId: 'shell-super-app',
+    resolveModuleTargetPath: '/shell-super-app-api/shell/module-target',
+    resourceDetailPath: '/shell-super-app-api/shell/resource',
+    searchPath: '/shell-super-app-api/shell/search',
     signInPath: '/shell-super-app-api/auth/sign-in',
     signOutPath: '/shell-super-app-api/auth/sign-out',
+    switchLegalEntityPath: '/shell-super-app-api/auth/legal-entity/switch',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
+  expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
+    /testing|actionKey/u,
+  );
+});
+
+test('publishes exact legal-entity endpoints with an ID-only switch payload', async () => {
+  const { availableLegalEntities, switchLegalEntity } =
+    ShellAuthenticationApi.groups.legalEntities.endpoints;
+  expect({ method: availableLegalEntities.method, path: availableLegalEntities.path }).toEqual({
+    method: 'GET',
+    path: '/auth/legal-entities',
+  });
+  expect({ method: switchLegalEntity.method, path: switchLegalEntity.path }).toEqual({
+    method: 'POST',
+    path: '/auth/legal-entity/switch',
+  });
+  const legalEntityId = '35000000-0000-4000-8000-000000000001';
   expect(
-    [...authenticationEndpoints, ...gatewayEndpoints, ...moduleEndpoints].join(':'),
-  ).not.toMatch(/testing|actionKey/u);
+    await Effect.runPromise(
+      Schema.decodeUnknownEffect(SwitchLegalEntityPayloadSchema)({
+        authorization: 'must-not-pass',
+        legalEntityId,
+        tenantId: 'must-not-pass',
+      }),
+    ),
+  ).toEqual({ legalEntityId });
+  expect(
+    await Effect.runPromise(
+      Schema.decodeUnknownEffect(AvailableLegalEntitiesResponseSchema)({
+        legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
+        selectedLegalEntityId: legalEntityId,
+        state: 'authenticated',
+      }),
+    ),
+  ).toEqual({
+    legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
+    selectedLegalEntityId: legalEntityId,
+    state: 'authenticated',
+  });
 });
 
 test('publishes exact tenant methods, paths, and declared failure statuses', () => {
@@ -98,22 +147,6 @@ test('validates tenant UUIDs and strips all non-contract fields', async () => {
   expect(invalidPayload._tag).toBe('SchemaError');
 });
 
-test('decodes only ordered active-module response fields and accepts no request tenant', async () => {
-  const modules = await Effect.runPromise(
-    Schema.decodeUnknownEffect(ActiveModulesSchema)([
-      { moduleKey: 'future-generated', state: 'active', tenantId: 'must-not-pass' },
-      { moduleKey: 'testing1', principalId: 'must-not-pass', state: 'active' },
-    ]),
-  );
-  expect(modules).toEqual([
-    { moduleKey: 'future-generated', state: 'active' },
-    { moduleKey: 'testing1', state: 'active' },
-  ]);
-  expect(
-    ShellAuthenticationApi.groups.modules.endpoints.activeModules.payloadSchema,
-  ).toBeUndefined();
-});
-
 test('rejects malformed credentials through Effect Schema', async () => {
   const error = await Effect.runPromise(
     Effect.flip(
@@ -132,6 +165,8 @@ test('decodes only safe current-session identity fields', async () => {
       identity: {
         displayName: 'Ada',
         email: 'ada@example.test',
+        legalEntityId: '35000000-0000-4000-8000-000000000001',
+        legalName: 'Alpha legal entity',
         password: 'must-not-pass',
         principalId: 'principal-id',
         tenantId: 'tenant-id',
@@ -144,6 +179,8 @@ test('decodes only safe current-session identity fields', async () => {
     identity: {
       displayName: 'Ada',
       email: 'ada@example.test',
+      legalEntityId: '35000000-0000-4000-8000-000000000001',
+      legalName: 'Alpha legal entity',
       principalId: 'principal-id',
       tenantId: 'tenant-id',
     },

@@ -283,7 +283,7 @@ test('generates conservative owner files and patches only package and tsconfig o
       manifest: './vertical.manifest.ts',
       moduleId: 'property.registry',
       registration: './vertical.registration.ts',
-      schemaVersion: 1,
+      schemaVersion: 2,
     });
     const tsconfig = JSON.parse(
       await readFile(path.join(root, 'verticals/property-registry/tsconfig.json'), 'utf-8'),
@@ -313,7 +313,10 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
           "import { defineOntosModuleManifest } from '@app/core-runtime';",
           "import { defineOntosModuleManifest } from '@app/core-runtime';\nimport { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';\n\nconst PropertyApi = HttpApi.make('PropertyApi').add(\n  HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),\n);",
         )
-        .replace('    api: {},', '    api: { PropertyApi },'),
+        .replace(
+          '      // <generated-module-manifest-apis>\n      // </generated-module-manifest-apis>',
+          '      // <generated-module-manifest-apis>\n      PropertyApi,\n      // </generated-module-manifest-apis>',
+        ),
       'utf-8',
     );
     const first = await generateOntosModuleContract({
@@ -356,7 +359,7 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     };
     assert.equal(document.deployment.appId, 'property-registry');
     assert.equal(document.manifest.module.id, 'property.registry');
-    assert.equal(document.schemaVersion, '1');
+    assert.equal(document.schemaVersion, '2');
     assert.equal(Object.hasOwn(document.manifest, 'dependencies'), false);
     assert.deepEqual(document.manifest.publicSurface.api[0]?.operationKeys, ['property.listUnits']);
     assert.doesNotMatch(firstContent, /vertical\.registration|function|handler|sourcePath/u);

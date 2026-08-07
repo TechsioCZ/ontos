@@ -39,6 +39,25 @@ const tenantId = '30000000-0000-4000-8000-000000000001';
 const foreignTenantId = '30000000-0000-4000-8000-000000000002';
 const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
+const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
+
+const legalEntitySelectionOptions = {
+  contextAccess: {
+    legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
+      Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
+      Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
+    resources: () => Effect.succeed([]),
+  },
+  legalEntityContext: {
+    listActiveForTenant: () =>
+      Effect.succeed([{ legalEntityId: fixtureLegalEntityId, legalName: 'Fixture legal entity' }]),
+    validateSelection: (_tenantId: string, legalEntityId: string) =>
+      legalEntityId === fixtureLegalEntityId
+        ? Effect.succeed({ legalEntityId, legalName: 'Fixture legal entity' })
+        : Effect.die('missing fixture legal entity'),
+  },
+} as const;
 
 const cookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
@@ -62,6 +81,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,
+    ...legalEntitySelectionOptions,
   });
   const authenticationLayer = Layer.succeed(AuthenticationService, authentication);
   const moduleStateLayer = Layer.succeed(
@@ -173,7 +193,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.match(anonymousGatewayResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
 
     const anonymousModulesResponse = await unavailableHandler.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, {
+      new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: { origin: configuration.baseUrl },
       }),
     );
@@ -217,14 +237,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
 
     const activeModulesResponse = await unavailableHandler.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, {
+      new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: authenticatedHeaders,
       }),
     );
     assert.equal(activeModulesResponse.status, 200);
-    assert.deepEqual(await activeModulesResponse.json(), [
-      { moduleKey: 'testing1', state: 'active' },
-    ]);
+    assert.deepEqual(await activeModulesResponse.json(), { navigation: [], state: 'available' });
 
     const refreshingRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
@@ -234,6 +252,27 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
             identity: current.identity,
             setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
           }),
+        resolveShellContext: () =>
+          current.identity === null
+            ? Effect.succeed({
+                setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
+                state: 'anonymous' as const,
+              })
+            : Effect.succeed({
+                availableLegalEntities: [
+                  {
+                    legalEntityId: fixtureLegalEntityId,
+                    legalName: 'Fixture legal entity',
+                  },
+                ],
+                identity: {
+                  ...current.identity,
+                  legalEntityId: fixtureLegalEntityId,
+                  legalName: 'Fixture legal entity',
+                },
+                setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
+                state: 'authenticated' as const,
+              }),
       }),
       {
         currentTimeSeconds: Effect.succeed(1_700_000_000),
@@ -246,7 +285,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     ).createHandler();
     handlers.push(refreshingRuntime);
     const refreshedModulesResponse = await refreshingRuntime.handler(
-      new Request(`${configuration.baseUrl}/modules/active`),
+      new Request(`${configuration.baseUrl}/shell/composition`),
     );
     assert.equal(refreshedModulesResponse.status, 200);
     assert.ok(
@@ -264,6 +303,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         loadConfig: parseGatewayIssuerConfig({}),
       },
       Layer.succeed(TenantModuleStateService, {
+        getTenantModuleStates: () =>
+          Effect.fail(
+            new TenantModuleStateReadUnavailableError({
+              code: 'tenant_module_state_read_unavailable',
+              reason: `secret SQL failure for ${tenantId}`,
+            }),
+          ),
         listActiveTenantModules: () =>
           Effect.fail(
             new TenantModuleStateReadUnavailableError({
@@ -276,7 +322,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     ).createHandler();
     handlers.push(unavailableModulesHandler);
     const unavailableModulesResponse = await unavailableModulesHandler.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, {
+      new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: authenticatedHeaders,
       }),
     );
@@ -353,6 +399,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     });
     assert.deepEqual(verifiedAssertion.payload.principal, {
       authMethod: 'session',
+      legalEntityId: fixtureLegalEntityId,
       principalId,
       tenantId,
     });
@@ -412,7 +459,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
           },
         }),
       ),
-      { authMethod: 'session', principalId, tenantId },
+      { authMethod: 'session', legalEntityId: fixtureLegalEntityId, principalId, tenantId },
     );
 
     const invalidAudienceResponse = await issuingHandler.handler(
@@ -470,7 +517,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(revoked._tag, 'OntosIdentityForbiddenError');
     const forbiddenModulesResponse = await unavailableHandler.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, {
+      new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: authenticatedHeaders,
       }),
     );
@@ -503,7 +550,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(anonymous.identity, null);
     const expiredModulesResponse = await unavailableHandler.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, {
+      new Request(`${configuration.baseUrl}/shell/composition`, {
         headers: authenticatedHeaders,
       }),
     );
@@ -531,6 +578,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,
+    ...legalEntitySelectionOptions,
   });
   const moduleStateLayer = Layer.succeed(
     TenantModuleStateService,
@@ -692,9 +740,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     );
 
     const firstModules = await runtime.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, { headers: authenticatedHeaders }),
+      new Request(`${configuration.baseUrl}/shell/composition`, { headers: authenticatedHeaders }),
     );
-    assert.deepEqual(await firstModules.json(), [{ moduleKey: 'first-module', state: 'active' }]);
+    assert.deepEqual(await firstModules.json(), { navigation: [], state: 'available' });
 
     const forbiddenResponse = await runtime.handler(
       new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
@@ -752,6 +800,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
               )
             : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
       },
+      legalEntitySelectionOptions,
     );
     const resolverUnavailableRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, resolverUnavailableAuthentication),
@@ -866,9 +915,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     assert.equal(idempotentSwitch.selectedTenantId, secondTenantId);
 
     const secondModules = await runtime.handler(
-      new Request(`${configuration.baseUrl}/modules/active`, { headers: authenticatedHeaders }),
+      new Request(`${configuration.baseUrl}/shell/composition`, { headers: authenticatedHeaders }),
     );
-    assert.deepEqual(await secondModules.json(), [{ moduleKey: 'second-module', state: 'active' }]);
+    assert.deepEqual(await secondModules.json(), { navigation: [], state: 'available' });
     const assertionResponse = await runtime.handler(
       new Request(`${configuration.baseUrl}/auth/gateway-context`, {
         body: JSON.stringify({ audience: 'inventory-stock' }),
@@ -889,6 +938,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     });
     assert.deepEqual(verified.payload.principal, {
       authMethod: 'session',
+      legalEntityId: fixtureLegalEntityId,
       principalId: secondPrincipalId,
       tenantId: secondTenantId,
     });

@@ -42,8 +42,9 @@ deferred Effect or loader thunk; it never receives an eagerly resolved private i
 
 This is the only matrix. Runtime adapters call the Core decision function instead of maintaining
 local state lists. `historical_read` is explicit and never a fallback from a denied normal read.
-Normal Shell navigation is a separate product decision: the current `activeModules` contract stays
-exact-active. A later navigation feature may show `read_only` and `deprecated` with indicators.
+Normal Shell navigation includes installed, authorized `active`, `read_only`, and `deprecated`
+modules. The latter two remain readable and visibly non-writable. Definite permission denial omits
+normal navigation; authorization uncertainty preserves an otherwise eligible item as disabled.
 
 Missing state is a definite denial. An unavailable database read, malformed persisted state,
 undeclared snapshot key, absent trusted tenant context, or other indeterminate check is a
@@ -91,6 +92,17 @@ Page/public-component composition uses the approved Shell lazy adapter: collect 
 set, prepare one snapshot, evaluate every load, then call loader thunks. Raw `loadRemote(...)`
 strings, eager remote imports, and one state request per component are forbidden. Module APIs need
 verified trusted tenant context and the server gateway; write APIs delegate to registered Actions.
+
+The Shell first establishes exactly one trusted tenant and active legal entity. Composition then
+uses one tenant-state batch and one module-permission batch. Every direct target independently
+rechecks installation/reference, selected context, lifecycle, and permission before a generated
+lazy registry is consulted. Only a `resolved` outcome may execute a remote thunk.
+
+Search filters safe providers through the same context/state/module checks, then bulk-filters
+ResourceRefs by resource permission. Zero providers/results is successful, mixed provider success
+is partial `200`, and total provider failure is retryable. Resource detail and timeline providers
+run only after catalog/type/state/module/resource gates. Media discoverability additionally requires
+an active writable module, `mediaAttachable`, a declared binding, and resource permission.
 
 ## Generator and registration enforcement
 

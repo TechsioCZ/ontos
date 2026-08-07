@@ -3,10 +3,22 @@ import path from 'node:path';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 import {
+  MODULE_MANIFEST_COMPONENT_SLOT_END,
+  MODULE_MANIFEST_COMPONENT_SLOT_START,
+  MODULE_MANIFEST_IMPORT_SLOT_END,
+  MODULE_MANIFEST_IMPORT_SLOT_START,
+  MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+  MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+  MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
+  MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
+  MODULE_REGISTRATION_PAGE_SLOT_END,
+  MODULE_REGISTRATION_PAGE_SLOT_START,
   asJsonObject,
   createMutation,
   discoverOntosModule,
   ensureUniqueMutationPaths,
+  insertModuleFederationExposure,
+  insertSortedSlot,
   isMissingFileError,
   patchJsonObjectProperty,
   pathExists,
@@ -39,6 +51,8 @@ const namespacePattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 const moduleFederationNamePattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const localePattern = /^[a-z]{2}(?:-[A-Z]{2})?$/u;
 const pageStarterLocales = new Set(['cs', 'en']);
+const SHELL_PAGE_CLIENT_SLOT_START = '// @ontos-codegen-start shell-page-clients';
+const SHELL_PAGE_CLIENT_SLOT_END = '// @ontos-codegen-end shell-page-clients';
 
 const discoverPageVertical = async (
   workspaceRoot: string,
@@ -136,7 +150,7 @@ const renderPage = (vertical: PageVerticalMetadata, page: string): string => {
   return `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
-export default function ${componentName}() {
+export const ${componentName} = () => {
   const { t } = useModernI18n();
   const headingId = '${page}-heading';
 
@@ -166,8 +180,71 @@ export default function ${componentName}() {
       </main>
     </>
   );
-}
+};
+
+export default ${componentName};
 `;
+};
+
+const pageWiring = (vertical: PageVerticalMetadata, page: string) => {
+  const componentName = `${toPascalCase(page)}Page`;
+  const componentKey = `${vertical.moduleId}.page-${page}`;
+  const contributionKey = `${vertical.moduleId}.page.${page}`;
+  const entrypoint = `{ access: 'read', entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
+  return {
+    componentName,
+    componentKey,
+    contributionKey,
+    manifestImport: `import { ${componentName} } from './src/routes/[lang]/${page}/page.tsx';`,
+    manifestComponent: `'page-${page}': ${componentName},`,
+    manifestNavigation: `{ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' },`,
+    manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint} },`,
+    registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${page}/page.tsx'),`,
+    shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${vertical.mfBoundaryId}/Page${toPascalCase(page)}') },`,
+  } as const;
+};
+
+const patchPageWiring = (
+  vertical: PageVerticalMetadata,
+  page: string,
+): { readonly manifest: string; readonly registration: string } => {
+  const wiring = pageWiring(vertical, page);
+  let manifest = insertSortedSlot(
+    vertical.manifestContent,
+    MODULE_MANIFEST_IMPORT_SLOT_START,
+    MODULE_MANIFEST_IMPORT_SLOT_END,
+    [wiring.manifestImport],
+    (candidate) => /^import \{ [A-Za-z][A-Za-z0-9]* \} from '.+';$/u.test(candidate),
+  );
+  manifest = insertSortedSlot(
+    manifest,
+    MODULE_MANIFEST_COMPONENT_SLOT_START,
+    MODULE_MANIFEST_COMPONENT_SLOT_END,
+    [wiring.manifestComponent],
+    (candidate) => candidate.endsWith(','),
+  );
+  manifest = insertSortedSlot(
+    manifest,
+    MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
+    MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
+    [wiring.manifestPage],
+    (candidate) => candidate.endsWith(','),
+  );
+  manifest = insertSortedSlot(
+    manifest,
+    MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+    MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+    [wiring.manifestNavigation],
+    (candidate) => candidate.endsWith(','),
+  );
+  const registration = insertSortedSlot(
+    vertical.registrationContent,
+    MODULE_REGISTRATION_PAGE_SLOT_START,
+    MODULE_REGISTRATION_PAGE_SLOT_END,
+    [wiring.registrationPage],
+    (candidate) => candidate.endsWith(','),
+  );
+  return { manifest, registration };
 };
 
 const renderRouteMetadata = (vertical: PageVerticalMetadata, page: string): string => {
@@ -302,7 +379,32 @@ const isExactGeneratedPage = async (
       return JSON.stringify(pages[pageKey]) === JSON.stringify(localizedPageCopy(locale));
     }),
   );
-  return localeMatches.every(Boolean);
+  if (!localeMatches.every(Boolean)) {
+    return false;
+  }
+  const wiring = pageWiring(vertical, page);
+  const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
+  const federation = await readFile(federationPath, 'utf8');
+  const shellClients = await readFile(
+    resolveContainedPath(
+      workspaceRoot,
+      'apps',
+      'shell-super-app',
+      'src',
+      'api',
+      'vertical-clients.ts',
+    ),
+    'utf8',
+  );
+  return (
+    vertical.manifestContent.includes(wiring.manifestImport) &&
+    vertical.manifestContent.includes(wiring.manifestComponent) &&
+    vertical.manifestContent.includes(wiring.manifestPage) &&
+    vertical.manifestContent.includes(wiring.manifestNavigation) &&
+    vertical.registrationContent.includes(wiring.registrationPage) &&
+    federation.includes(`'./Page${toPascalCase(page)}'`) &&
+    shellClients.includes(wiring.shellClient)
+  );
 };
 
 export const planPageScaffold = async (
@@ -348,7 +450,57 @@ export const planPageScaffold = async (
   const localeMutations = await Promise.all(
     vertical.locales.map((locale) => patchLocale(workspaceRoot, vertical, locale, page)),
   );
-  const mutations = [pageMutation, routeMutation, ...localeMutations];
+  const wiring = patchPageWiring(vertical, page);
+  const manifestMutation = updateMutation(
+    vertical.manifestPath,
+    vertical.manifestContent,
+    wiring.manifest,
+  );
+  const registrationMutation = updateMutation(
+    vertical.registrationPath,
+    vertical.registrationContent,
+    wiring.registration,
+  );
+  const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
+  const federationContent = await readFile(federationPath, 'utf8');
+  const federationMutation = updateMutation(
+    federationPath,
+    federationContent,
+    insertModuleFederationExposure(
+      federationContent,
+      `./Page${toPascalCase(page)}`,
+      `./src/routes/[lang]/${page}/page.tsx`,
+    ),
+  );
+  const shellClientsPath = resolveContainedPath(
+    workspaceRoot,
+    'apps',
+    'shell-super-app',
+    'src',
+    'api',
+    'vertical-clients.ts',
+  );
+  const shellClientsContent = await readFile(shellClientsPath, 'utf8');
+  const shellClientsMutation = updateMutation(
+    shellClientsPath,
+    shellClientsContent,
+    insertSortedSlot(
+      shellClientsContent,
+      SHELL_PAGE_CLIENT_SLOT_START,
+      SHELL_PAGE_CLIENT_SLOT_END,
+      [pageWiring(vertical, page).shellClient],
+      (candidate) => candidate.endsWith(','),
+    ),
+  );
+  const mutations = [
+    pageMutation,
+    routeMutation,
+    ...localeMutations,
+    manifestMutation,
+    registrationMutation,
+    federationMutation,
+    shellClientsMutation,
+  ].filter((mutation) => mutation !== undefined);
   ensureUniqueMutationPaths(mutations);
   return {
     mutations,

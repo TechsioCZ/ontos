@@ -12,7 +12,10 @@ import type {
   ModuleStateSnapshot,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { loadModuleEntrypointComposition } from '../../src/routes/module-entrypoint-loader.ts';
+import {
+  loadModuleEntrypointComposition,
+  resolveThenLoadModuleTarget,
+} from '../../src/routes/module-entrypoint-loader.ts';
 
 const trustedContext: TrustedPrincipalContext = {
   authMethod: 'session',
@@ -188,4 +191,37 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
   );
   expect(remoteFailure).toEqual({ _tag: 'RemoteLoadUnavailable' });
   expect(mapFakeUnavailableUiState(remoteFailure)).toBe('unavailable');
+});
+
+test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
+  'never invokes a remote loader after a %s target resolution',
+  async (outcome) => {
+    let loads = 0;
+    await expect(
+      Effect.runPromise(
+        resolveThenLoadModuleTarget(Effect.fail({ outcome }), () =>
+          Effect.sync(() => {
+            loads += 1;
+            return 'unreachable';
+          }),
+        ),
+      ),
+    ).rejects.toEqual({ outcome });
+    expect(loads).toBe(0);
+  },
+);
+
+test('invokes the lazy registry only after receiving an approved target', async () => {
+  let loads = 0;
+  const target = { appId: 'inventory-app', componentKey: 'inventory.stock.page' };
+  const result = await Effect.runPromise(
+    resolveThenLoadModuleTarget(Effect.succeed(target), (approved) =>
+      Effect.sync(() => {
+        loads += 1;
+        return approved.componentKey;
+      }),
+    ),
+  );
+  expect(result).toBe('inventory.stock.page');
+  expect(loads).toBe(1);
 });

@@ -35,10 +35,40 @@ export const MODULE_MANIFEST_IMPORT_SLOT_START = '// <generated-module-manifest-
 export const MODULE_MANIFEST_IMPORT_SLOT_END = '// </generated-module-manifest-imports>';
 export const MODULE_MANIFEST_ACTION_SLOT_START = '// <generated-module-manifest-actions>';
 export const MODULE_MANIFEST_ACTION_SLOT_END = '// </generated-module-manifest-actions>';
+export const MODULE_MANIFEST_API_SLOT_START = '// <generated-module-manifest-apis>';
+export const MODULE_MANIFEST_API_SLOT_END = '// </generated-module-manifest-apis>';
+export const MODULE_MANIFEST_COMPONENT_SLOT_START = '// <generated-module-manifest-components>';
+export const MODULE_MANIFEST_COMPONENT_SLOT_END = '// </generated-module-manifest-components>';
+export const MODULE_MANIFEST_REPORT_SLOT_START = '// <generated-module-manifest-reports>';
+export const MODULE_MANIFEST_REPORT_SLOT_END = '// </generated-module-manifest-reports>';
+export const MODULE_MANIFEST_SEARCH_SLOT_START = '// <generated-module-manifest-search>';
+export const MODULE_MANIFEST_SEARCH_SLOT_END = '// </generated-module-manifest-search>';
+export const MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START = '// <generated-module-shell-navigation>';
+export const MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END = '// </generated-module-shell-navigation>';
+export const MODULE_MANIFEST_SHELL_PAGE_SLOT_START = '// <generated-module-shell-pages>';
+export const MODULE_MANIFEST_SHELL_PAGE_SLOT_END = '// </generated-module-shell-pages>';
+export const MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START = '// <generated-module-shell-components>';
+export const MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END = '// </generated-module-shell-components>';
+export const MODULE_MANIFEST_SHELL_REPORT_SLOT_START = '// <generated-module-shell-reports>';
+export const MODULE_MANIFEST_SHELL_REPORT_SLOT_END = '// </generated-module-shell-reports>';
+export const MODULE_MANIFEST_SHELL_SEARCH_SLOT_START = '// <generated-module-shell-search>';
+export const MODULE_MANIFEST_SHELL_SEARCH_SLOT_END = '// </generated-module-shell-search>';
 export const MODULE_REGISTRATION_IMPORT_SLOT_START = '// <generated-module-registration-imports>';
 export const MODULE_REGISTRATION_IMPORT_SLOT_END = '// </generated-module-registration-imports>';
 export const MODULE_REGISTRATION_ACTION_SLOT_START = '// <generated-module-registration-actions>';
 export const MODULE_REGISTRATION_ACTION_SLOT_END = '// </generated-module-registration-actions>';
+export const MODULE_REGISTRATION_API_SLOT_START = '// <generated-module-registration-apis>';
+export const MODULE_REGISTRATION_API_SLOT_END = '// </generated-module-registration-apis>';
+export const MODULE_REGISTRATION_COMPONENT_SLOT_START =
+  '// <generated-module-registration-components>';
+export const MODULE_REGISTRATION_COMPONENT_SLOT_END =
+  '// </generated-module-registration-components>';
+export const MODULE_REGISTRATION_PAGE_SLOT_START = '// <generated-module-registration-pages>';
+export const MODULE_REGISTRATION_PAGE_SLOT_END = '// </generated-module-registration-pages>';
+export const MODULE_REGISTRATION_REPORT_SLOT_START = '// <generated-module-registration-reports>';
+export const MODULE_REGISTRATION_REPORT_SLOT_END = '// </generated-module-registration-reports>';
+export const MODULE_REGISTRATION_SEARCH_SLOT_START = '// <generated-module-registration-search>';
+export const MODULE_REGISTRATION_SEARCH_SLOT_END = '// </generated-module-registration-search>';
 export const MODULE_REGISTRATION_WORKER_SLOT_START = '// <generated-module-registration-workers>';
 export const MODULE_REGISTRATION_WORKER_SLOT_END = '// </generated-module-registration-workers>';
 
@@ -73,6 +103,12 @@ export interface OutboxWorkerScaffoldConfig {
 
 export interface PageScaffoldConfig {
   readonly page: string;
+  readonly vertical: string;
+}
+
+export interface GovernedContributionScaffoldConfig {
+  readonly name: string;
+  readonly resource?: string;
   readonly vertical: string;
 }
 
@@ -124,6 +160,11 @@ export interface PageScaffoldResult {
   readonly appId: string;
   readonly pagePath: string;
   readonly routeMetadataPath: string;
+}
+
+export interface GovernedContributionScaffoldResult {
+  readonly artifactPath: string;
+  readonly clientPath?: string;
 }
 
 export interface ActionBoundaryScaffoldResult {
@@ -209,6 +250,69 @@ export const pathExists = async (targetPath: string): Promise<boolean> => {
     }
     throw error;
   }
+};
+
+export const insertModuleFederationExposure = (
+  content: string,
+  exposureKey: string,
+  sourcePath: string,
+): string => {
+  const propertyIndex = content.search(/\bexposes\s*:/u);
+  if (propertyIndex < 0) {
+    throw new Error('generated Module Federation exposes object is missing');
+  }
+  const openIndex = content.indexOf('{', propertyIndex);
+  if (openIndex < 0) {
+    throw new Error('generated Module Federation exposes object is malformed');
+  }
+  let quote: "'" | '"' | '`' | undefined;
+  let escaped = false;
+  let depth = 0;
+  let closeIndex = -1;
+  for (let index = openIndex; index < content.length; index += 1) {
+    const character = content[index];
+    if (quote !== undefined) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+    } else if (character === '{') {
+      depth += 1;
+    } else if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        closeIndex = index;
+        break;
+      }
+    }
+  }
+  if (closeIndex < 0) {
+    throw new Error('generated Module Federation exposes object is malformed');
+  }
+  const body = content.slice(openIndex + 1, closeIndex);
+  if (
+    body.includes(`'${exposureKey}'`) ||
+    body.includes(`"${exposureKey}"`) ||
+    body.includes(`\`${exposureKey}\``)
+  ) {
+    throw new Error(`Module Federation exposure ${exposureKey} already exists`);
+  }
+  const lineStart = content.lastIndexOf('\n', propertyIndex) + 1;
+  const indentation = content.slice(lineStart, propertyIndex).match(/^\s*/u)?.[0] ?? '';
+  const memberIndentation = `${indentation}  `;
+  const exposure = `'${exposureKey}': '${sourcePath}'`;
+  const nextBody =
+    body.trim().length === 0
+      ? `\n${memberIndentation}${exposure},\n${indentation}`
+      : `${body.trimEnd().replace(/,?$/u, ',')}\n${memberIndentation}${exposure},\n${indentation}`;
+  return `${content.slice(0, openIndex + 1)}${nextBody}${content.slice(closeIndex)}`;
 };
 
 export const resolveContainedPath = (

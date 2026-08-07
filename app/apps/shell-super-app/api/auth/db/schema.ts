@@ -31,6 +31,7 @@ export const session = authSchema.table(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     activeTenantId: uuid('active_tenant_id'),
+    activeLegalEntityId: uuid('active_legal_entity_id'),
   },
   (table) => [index('auth_session_user_id_idx').on(table.userId)],
 );

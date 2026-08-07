@@ -112,6 +112,32 @@ test('logs a user in without any server-error response', async ({ page }, testIn
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
+test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({
+  page,
+}) => {
+  await page.goto('/en/login');
+  await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
+  await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await page.getByRole('button', { name: 'Login' }).click();
+  await expect(page).toHaveURL(/\/en\/?$/u);
+
+  const expectPersistentShell = async (path: string, status: string) => {
+    await page.goto(path);
+    await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
+    await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
+    await expect(page.getByText(status)).toBeVisible();
+  };
+  await expectPersistentShell('/en/search', 'Select a legal entity before searching.');
+  await expectPersistentShell(
+    '/en/modules/not-installed',
+    'Select a legal entity before opening a module.',
+  );
+  await expectPersistentShell(
+    '/en/resources/not-installed/example/missing',
+    'Select a legal entity before opening a resource.',
+  );
+});
+
 test('persists an English session, logs out, clears the cookie, and stays anonymous', ({ page }) =>
   page
     .goto('/en/login')

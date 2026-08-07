@@ -108,10 +108,20 @@ const inventoryStockContract: OntosModuleDeploymentContract = {
       reports: [],
       resourceTypes: [],
       search: [],
+      shellContributions: {
+        mediaAttachments: [],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [],
+        search: [],
+        timelines: [],
+      },
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '1',
+  schemaVersion: '2',
 };
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
