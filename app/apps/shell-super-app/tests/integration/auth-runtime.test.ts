@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Layer } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
   PrincipalResolverUnavailableError,
+  ContextAccess,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
   makePrincipalResolver,
@@ -20,11 +21,13 @@ import {
 import type { InstalledModuleCatalog } from '@app/core-runtime';
 import {
   coreDatabaseSchema,
+  dataAccessEvents,
+  legalEntities,
   principalAuthBindings,
   principals,
   tenantModuleStates,
   tenants,
-} from '@app/core-runtime/db/schema';
+} from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
@@ -40,6 +43,7 @@ const foreignTenantId = '30000000-0000-4000-8000-000000000002';
 const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
+const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
 
 const legalEntitySelectionOptions = {
   contextAccess: {
@@ -58,6 +62,7 @@ const legalEntitySelectionOptions = {
         : Effect.die('missing fixture legal entity'),
   },
 } as const;
+const contextAccessLayer = Layer.succeed(ContextAccess, legalEntitySelectionOptions.contextAccess);
 
 const cookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
@@ -92,6 +97,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
   const generatedFixtureRoot = await mkdtemp(path.join(tmpdir(), 'ontos-auth-runtime-'));
 
   const cleanup = async () => {
+    await coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
     const existingUsers = await authDatabase
       .select({ id: user.id })
       .from(user)
@@ -116,6 +122,9 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       .delete(tenantModuleStates)
       .where(eq(tenantModuleStates.tenantId, foreignTenantId));
     await coreDatabase.delete(principals).where(eq(principals.principalId, principalId));
+    await coreDatabase
+      .delete(legalEntities)
+      .where(eq(legalEntities.legalEntityId, fixtureLegalEntityId));
     await coreDatabase.delete(tenants).where(eq(tenants.tenantId, tenantId));
     await coreDatabase.delete(tenants).where(eq(tenants.tenantId, foreignTenantId));
   };
@@ -146,7 +155,16 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       status: 'active',
       tenantId,
     });
+    await coreDatabase.insert(legalEntities).values({
+      legalEntityId: fixtureLegalEntityId,
+      legalName: 'Fixture legal entity',
+      registrationCountry: 'CZ',
+      registrationNumber: 'AUTH-RUNTIME-1',
+      status: 'active',
+      tenantId,
+    });
     await coreDatabase.insert(principalAuthBindings).values({
+      principalAuthBindingId: fixtureAuthBindingId,
       principalId,
       provider: 'better_auth',
       providerSubjectId: betterAuthUserId,
@@ -179,6 +197,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       },
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
+      false,
+      contextAccessLayer,
     );
     const unavailableHandler = anonymousRuntime.createHandler();
     handlers.push(unavailableHandler);
@@ -243,6 +263,28 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(activeModulesResponse.status, 200);
     assert.deepEqual(await activeModulesResponse.json(), { navigation: [], state: 'available' });
+    const [compositionEvidence] = await coreDatabase
+      .select({
+        authBindingId: dataAccessEvents.authBindingId,
+        evidencePayloadJson: dataAccessEvents.evidencePayloadJson,
+        outcome: dataAccessEvents.outcome,
+        outcomeCode: dataAccessEvents.outcomeCode,
+        resultCount: dataAccessEvents.resultCount,
+      })
+      .from(dataAccessEvents)
+      .where(
+        and(
+          eq(dataAccessEvents.tenantId, tenantId),
+          eq(dataAccessEvents.queryHash, 'core.shell.composition'),
+        ),
+      );
+    assert.deepEqual(compositionEvidence, {
+      authBindingId: fixtureAuthBindingId,
+      evidencePayloadJson: null,
+      outcome: 'allowed',
+      outcomeCode: 'read_allowed',
+      resultCount: 0,
+    });
 
     const refreshingRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, {
@@ -270,6 +312,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
                   legalEntityId: fixtureLegalEntityId,
                   legalName: 'Fixture legal entity',
                 },
+                principal: {
+                  authBindingId: '45000000-0000-4000-8000-000000000001',
+                  authMethod: 'session' as const,
+                  legalEntityId: fixtureLegalEntityId,
+                  principalId: current.identity.principalId,
+                  tenantId: current.identity.tenantId,
+                },
                 setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
                 state: 'authenticated' as const,
               }),
@@ -282,6 +331,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       },
       moduleStateLayer,
       Effect.succeed(installedCatalog(['testing1'])),
+      false,
+      contextAccessLayer,
     ).createHandler();
     handlers.push(refreshingRuntime);
     const refreshedModulesResponse = await refreshingRuntime.handler(
@@ -294,6 +345,29 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         .some((header) => header.startsWith('refreshed-session=value')),
     );
 
+    const unavailableModuleStates = {
+      getTenantModuleStates: () =>
+        Effect.fail(
+          new TenantModuleStateReadUnavailableError({
+            code: 'tenant_module_state_read_unavailable',
+            reason: `secret SQL failure for ${tenantId}`,
+          }),
+        ),
+      listActiveTenantModules: () =>
+        Effect.fail(
+          new TenantModuleStateReadUnavailableError({
+            code: 'tenant_module_state_read_unavailable',
+            reason: `secret SQL failure for ${tenantId}`,
+          }),
+        ),
+      listTenantModuleStates: () =>
+        Effect.fail(
+          new TenantModuleStateReadUnavailableError({
+            code: 'tenant_module_state_read_unavailable',
+            reason: `secret SQL failure for ${tenantId}`,
+          }),
+        ),
+    };
     const unavailableModulesHandler = makeShellAuthenticationApiRuntime(
       authenticationLayer,
       {
@@ -302,23 +376,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         loadAudiences: Effect.succeed(new Set(['testing1'])),
         loadConfig: parseGatewayIssuerConfig({}),
       },
-      Layer.succeed(TenantModuleStateService, {
-        getTenantModuleStates: () =>
-          Effect.fail(
-            new TenantModuleStateReadUnavailableError({
-              code: 'tenant_module_state_read_unavailable',
-              reason: `secret SQL failure for ${tenantId}`,
-            }),
-          ),
-        listActiveTenantModules: () =>
-          Effect.fail(
-            new TenantModuleStateReadUnavailableError({
-              code: 'tenant_module_state_read_unavailable',
-              reason: `secret SQL failure for ${tenantId}`,
-            }),
-          ),
-      }),
+      Layer.succeed(TenantModuleStateService, unavailableModuleStates),
       Effect.succeed(installedCatalog(['testing1'])),
+      false,
+      contextAccessLayer,
+      undefined,
+      () => unavailableModuleStates,
     ).createHandler();
     handlers.push(unavailableModulesHandler);
     const unavailableModulesResponse = await unavailableModulesHandler.handler(
@@ -398,6 +461,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       issuer: 'https://shell.example.test',
     });
     assert.deepEqual(verifiedAssertion.payload.principal, {
+      authBindingId: fixtureAuthBindingId,
       authMethod: 'session',
       legalEntityId: fixtureLegalEntityId,
       principalId,
@@ -459,7 +523,13 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
           },
         }),
       ),
-      { authMethod: 'session', legalEntityId: fixtureLegalEntityId, principalId, tenantId },
+      {
+        authBindingId: fixtureAuthBindingId,
+        authMethod: 'session',
+        legalEntityId: fixtureLegalEntityId,
+        principalId,
+        tenantId,
+      },
     );
 
     const invalidAudienceResponse = await issuingHandler.handler(
@@ -570,15 +640,46 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const secondTenantId = '31000000-0000-4000-8000-000000000002';
   const firstPrincipalId = '41000000-0000-4000-8000-000000000001';
   const secondPrincipalId = '41000000-0000-4000-8000-000000000002';
+  const firstLegalEntityId = '36000000-0000-4000-8000-000000000001';
+  const secondLegalEntityId = '36000000-0000-4000-8000-000000000002';
+  const firstAuthBindingId = '46000000-0000-4000-8000-000000000001';
+  const secondAuthBindingId = '46000000-0000-4000-8000-000000000002';
+  const legalEntityByTenant = new Map([
+    [firstTenantId, { legalEntityId: firstLegalEntityId, legalName: 'First legal entity' }],
+    [secondTenantId, { legalEntityId: secondLegalEntityId, legalName: 'Second legal entity' }],
+  ]);
+  const multiLegalEntitySelectionOptions = {
+    contextAccess: legalEntitySelectionOptions.contextAccess,
+    legalEntityContext: {
+      listActiveForTenant: (selectedTenantId: string) =>
+        Effect.succeed(legalEntityByTenant.get(selectedTenantId)).pipe(
+          Effect.map((selected) => (selected === undefined ? [] : [selected])),
+        ),
+      validateSelection: (selectedTenantId: string, legalEntityId: string) => {
+        const selected = legalEntityByTenant.get(selectedTenantId);
+        return selected?.legalEntityId === legalEntityId
+          ? Effect.succeed(selected)
+          : Effect.die('missing multi-tenant fixture legal entity');
+      },
+    },
+  } as const;
+  const multiContextAccessLayer = Layer.succeed(
+    ContextAccess,
+    multiLegalEntitySelectionOptions.contextAccess,
+  );
   const configuration = await Effect.runPromise(loadAuthConfig());
+  const adminPool = new Pool({
+    connectionString: process.env['DATABASE_ADMIN_URL'] ?? configuration.connectionString,
+  });
   const corePool = new Pool({ connectionString: configuration.connectionString });
   const authPool = new Pool({ connectionString: configuration.connectionString });
   const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
   const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
+  const adminAuthDatabase = drizzle({ client: adminPool, schema: authDatabaseSchema });
   const resolver = makePrincipalResolver({ executor: coreDatabase });
   const authentication = makeAuthenticationService(configuration, authDatabase, resolver, {
     allowFixtureSignUp: true,
-    ...legalEntitySelectionOptions,
+    ...multiLegalEntitySelectionOptions,
   });
   const moduleStateLayer = Layer.succeed(
     TenantModuleStateService,
@@ -587,6 +688,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   const handlers: { readonly dispose: () => Promise<void> }[] = [];
 
   const cleanup = async () => {
+    await coreDatabase
+      .delete(dataAccessEvents)
+      .where(inArray(dataAccessEvents.tenantId, [firstTenantId, secondTenantId]));
     const existingUsers = await authDatabase
       .select({ id: user.id })
       .from(user)
@@ -608,6 +712,9 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       .where(eq(tenantModuleStates.tenantId, secondTenantId));
     await coreDatabase.delete(principals).where(eq(principals.principalId, firstPrincipalId));
     await coreDatabase.delete(principals).where(eq(principals.principalId, secondPrincipalId));
+    await coreDatabase
+      .delete(legalEntities)
+      .where(inArray(legalEntities.legalEntityId, [firstLegalEntityId, secondLegalEntityId]));
     await coreDatabase.delete(tenants).where(eq(tenants.tenantId, firstTenantId));
     await coreDatabase.delete(tenants).where(eq(tenants.tenantId, secondTenantId));
   };
@@ -649,9 +756,28 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         tenantId: secondTenantId,
       },
     ]);
+    await coreDatabase.insert(legalEntities).values([
+      {
+        legalEntityId: firstLegalEntityId,
+        legalName: 'First legal entity',
+        registrationCountry: 'CZ',
+        registrationNumber: 'AUTH-MULTI-1',
+        status: 'active',
+        tenantId: firstTenantId,
+      },
+      {
+        legalEntityId: secondLegalEntityId,
+        legalName: 'Second legal entity',
+        registrationCountry: 'CZ',
+        registrationNumber: 'AUTH-MULTI-2',
+        status: 'active',
+        tenantId: secondTenantId,
+      },
+    ]);
     await coreDatabase.insert(principalAuthBindings).values([
       {
         createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        principalAuthBindingId: firstAuthBindingId,
         principalId: firstPrincipalId,
         provider: 'better_auth',
         providerSubjectId: betterAuthUserId,
@@ -661,6 +787,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       },
       {
         createdAt: new Date('2026-02-01T00:00:00.000Z'),
+        principalAuthBindingId: secondAuthBindingId,
         principalId: secondPrincipalId,
         provider: 'better_auth',
         providerSubjectId: betterAuthUserId,
@@ -713,6 +840,8 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       },
       moduleStateLayer,
       Effect.succeed(installedCatalog(['first-module', 'second-module'])),
+      false,
+      multiContextAccessLayer,
     ).createHandler();
     handlers.push(runtime);
 
@@ -800,7 +929,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
               )
             : resolver.resolveBetterAuthUserForTenant(userId, selectedTenantId),
       },
-      legalEntitySelectionOptions,
+      multiLegalEntitySelectionOptions,
     );
     const resolverUnavailableRuntime = makeShellAuthenticationApiRuntime(
       Layer.succeed(AuthenticationService, resolverUnavailableAuthentication),
@@ -833,7 +962,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
 
     // Drizzle has no query-builder failure injection. This temporary trigger raises PostgreSQL's
     // connection-failure class for the fixed test tenant through the real Better Auth adapter path.
-    await authDatabase.execute(
+    await adminAuthDatabase.execute(
       sql.raw(`
         CREATE OR REPLACE FUNCTION auth.tenant_switch_test_fail_persistence()
         RETURNS trigger
@@ -848,7 +977,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         $function$
       `),
     );
-    await authDatabase.execute(
+    await adminAuthDatabase.execute(
       sql.raw(`
         CREATE TRIGGER tenant_switch_test_persistence_failure
         BEFORE UPDATE ON auth.session
@@ -875,12 +1004,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .where(eq(session.userId, betterAuthUserId));
       assert.equal(sessionsAfterPersistenceFailure[0]?.activeTenantId, firstTenantId);
     } finally {
-      await authDatabase.execute(
+      await adminAuthDatabase.execute(
         sql.raw(`
           DROP TRIGGER IF EXISTS tenant_switch_test_persistence_failure ON auth.session
         `),
       );
-      await authDatabase.execute(
+      await adminAuthDatabase.execute(
         sql.raw(`
           DROP FUNCTION IF EXISTS auth.tenant_switch_test_fail_persistence()
         `),
@@ -937,15 +1066,16 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       issuer: 'https://shell.example.test',
     });
     assert.deepEqual(verified.payload.principal, {
+      authBindingId: secondAuthBindingId,
       authMethod: 'session',
-      legalEntityId: fixtureLegalEntityId,
+      legalEntityId: secondLegalEntityId,
       principalId: secondPrincipalId,
       tenantId: secondTenantId,
     });
 
     // A non-unavailability persistence rejection is an unexpected defect. The real Better Auth
     // adapter must roll it back, while each owning HTTP boundary logs and returns a redacted 500.
-    await authDatabase.execute(
+    await adminAuthDatabase.execute(
       sql.raw(`
         CREATE OR REPLACE FUNCTION auth.tenant_switch_test_fail_internal_persistence()
         RETURNS trigger
@@ -960,7 +1090,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         $function$
       `),
     );
-    await authDatabase.execute(
+    await adminAuthDatabase.execute(
       sql.raw(`
         CREATE TRIGGER tenant_switch_test_internal_persistence_failure
         BEFORE UPDATE ON auth.session
@@ -1016,12 +1146,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         .where(eq(session.userId, betterAuthUserId));
       assert.equal(sessionsAfterUnexpectedLegacyUpgrade[0]?.activeTenantId, null);
     } finally {
-      await authDatabase.execute(
+      await adminAuthDatabase.execute(
         sql.raw(`
           DROP TRIGGER IF EXISTS tenant_switch_test_internal_persistence_failure ON auth.session
         `),
       );
-      await authDatabase.execute(
+      await adminAuthDatabase.execute(
         sql.raw(`
           DROP FUNCTION IF EXISTS auth.tenant_switch_test_fail_internal_persistence()
         `),
@@ -1050,6 +1180,6 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
   } finally {
     await Promise.all(handlers.map(({ dispose }) => dispose()));
     await cleanup();
-    await Promise.all([authPool.end(), corePool.end()]);
+    await Promise.all([adminPool.end(), authPool.end(), corePool.end()]);
   }
 });

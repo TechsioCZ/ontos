@@ -20,6 +20,11 @@ import {
   persistTenantModuleStateChange,
   validateTenantModuleStateTransition,
 } from '../tenant-module-state-service.ts';
+import type {
+  PersistTenantModuleStateChangeInput,
+  PersistTenantModuleStateChangeResult,
+} from '../tenant-module-state-service.ts';
+import type { TenantModuleStateTransitionError } from '../tenant-module-state-errors.ts';
 import { InstalledModuleCatalogService } from '../catalog.ts';
 import { OntosModuleIdSchema } from '../manifest.ts';
 
@@ -60,23 +65,32 @@ type ChangeTenantModuleStateDomainEvents = Readonly<
   Record<never, Schema.ConstraintDecoder<unknown, never>>
 >;
 
+interface ChangeTenantModuleStateServices {
+  readonly persist: (
+    input: PersistTenantModuleStateChangeInput,
+  ) => Effect.Effect<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError>;
+}
+
 const handleChangeTenantModuleState = (
   payload: ChangeTenantModuleStatePayload,
-  context: ActionHandlerContext<ChangeTenantModuleStateDomainEvents>,
+  context: ActionHandlerContext<
+    ChangeTenantModuleStateDomainEvents,
+    ChangeTenantModuleStateServices
+  >,
 ) =>
   Effect.gen(function* changeTenantModuleStateHandler() {
     const installedCatalog = yield* InstalledModuleCatalogService;
     const catalog = yield* installedCatalog.load;
     yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
-    const result = yield* persistTenantModuleStateChange(context.transaction, {
+    const result = yield* context.services.persist({
       actionInvocationId: context.actionInvocationId,
-      authMethod: context.principal.authMethod,
+      authMethod: context.scope.authMethod,
       ...(payload.expectedState === undefined ? {} : { expectedState: payload.expectedState }),
       moduleKey: payload.moduleKey,
       newState: payload.newState,
-      principalId: context.principal.principalId,
+      principalId: context.scope.principalId,
       ...(payload.reason === undefined ? {} : { reason: payload.reason }),
-      tenantId: context.principal.tenantId,
+      tenantId: context.scope.tenantId,
     });
 
     yield* context.recordDataAccess({
@@ -109,6 +123,7 @@ export const changeTenantModuleStateAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
+    legalEntityScope: 'forbidden',
     owningModuleKey: 'core.modules',
     payloadSchema: ChangeTenantModuleStatePayload,
     policies: [],
@@ -116,4 +131,8 @@ export const changeTenantModuleStateAction = defineAction(
     schemaVersion: '1',
   },
   handleChangeTenantModuleState,
+  (transaction) =>
+    Effect.succeed({
+      persist: (input) => persistTenantModuleStateChange(transaction, input),
+    }),
 );

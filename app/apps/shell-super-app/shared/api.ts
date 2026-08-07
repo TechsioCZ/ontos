@@ -248,6 +248,14 @@ export interface ShellSelectionRequiredProblem extends ProblemDetails {
   readonly _tag: 'ShellSelectionRequiredProblem';
 }
 
+export interface ShellPolicyConflictProblem extends ProblemDetails {
+  readonly _tag: 'ShellPolicyConflictProblem';
+}
+
+export interface ShellPolicyUnprocessableProblem extends ProblemDetails {
+  readonly _tag: 'ShellPolicyUnprocessableProblem';
+}
+
 export interface ShellCapabilityUnavailableProblem extends ProblemDetails {
   readonly _tag: 'ShellCapabilityUnavailableProblem';
   readonly retryable: true;
@@ -266,6 +274,8 @@ export type ShellTargetProblem =
   | ShellAuthenticationRequiredProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem
+  | ShellPolicyConflictProblem
+  | ShellPolicyUnprocessableProblem
   | ShellSelectionRequiredProblem
   | ShellTargetForbiddenProblem
   | ShellTargetNotFoundProblem;
@@ -408,7 +418,7 @@ export const ResolvedModuleTargetSchema: Schema.Codec<ResolvedModuleTarget> = Sc
   writable: Schema.Boolean,
 });
 
-const ResourceRefSchema: Schema.Codec<ResourceRef> = Schema.Struct({
+export const ResourceRefSchema: Schema.Codec<ResourceRef> = Schema.Struct({
   moduleId: Schema.String.check(Schema.isMinLength(3)),
   resourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   resourceType: Schema.String.check(Schema.isMinLength(3)),
@@ -539,6 +549,16 @@ export const ShellSelectionRequiredProblemSchema = Schema.TaggedStruct(
   authenticationProblemFields,
 ).pipe(asProblemDetails, HttpApiSchema.status(409));
 
+export const ShellPolicyConflictProblemSchema = Schema.TaggedStruct(
+  'ShellPolicyConflictProblem',
+  authenticationProblemFields,
+).pipe(asProblemDetails, HttpApiSchema.status(409));
+
+export const ShellPolicyUnprocessableProblemSchema = Schema.TaggedStruct(
+  'ShellPolicyUnprocessableProblem',
+  authenticationProblemFields,
+).pipe(asProblemDetails, HttpApiSchema.status(422));
+
 export const ShellCapabilityUnavailableProblemSchema = Schema.TaggedStruct(
   'ShellCapabilityUnavailableProblem',
   { ...authenticationProblemFields, retryable: Schema.Literal(true) },
@@ -593,6 +613,9 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         HttpApiEndpoint.get('shellComposition', '/shell/composition', {
           error: [
             ShellAuthenticationRequiredProblemSchema,
+            ShellTargetForbiddenProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
           ],
@@ -605,6 +628,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellTargetNotFoundProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
             ShellSelectionRequiredProblemSchema,
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
@@ -670,6 +695,9 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         HttpApiEndpoint.post('search', '/shell/search', {
           error: [
             ShellAuthenticationRequiredProblemSchema,
+            ShellTargetForbiddenProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
             ShellSelectionRequiredProblemSchema,
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
@@ -684,6 +712,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellTargetNotFoundProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
             ShellSelectionRequiredProblemSchema,
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
@@ -698,6 +728,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellTargetNotFoundProblemSchema,
+            ShellPolicyConflictProblemSchema,
+            ShellPolicyUnprocessableProblemSchema,
             ShellSelectionRequiredProblemSchema,
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,

@@ -36,6 +36,11 @@ The vertical seam between MicroVerticals is non-negotiable:
 
 The published client is the calling MicroVertical's interface to the provider. The provider's backend implementation remains private.
 
+Each provider also follows [Governed Data Access and Operation Scope](./DATA_ACCESS.md): its public
+operation descriptor chooses legal-entity scope explicitly, while its private handler receives only
+owner-local services constructed after Core validates context and installs transaction scope. A
+deployment seam never grants database or executor access.
+
 ## Horizontal Seam: A Virtual Effect BFF Interface
 
 Frontend and backend code inside one MicroVertical belong to the same business module. Their horizontal seam is virtual and exists only at the generated BFF client interface:

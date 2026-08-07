@@ -116,17 +116,18 @@ const defaultRouteRefresh: RouteRefreshExecutor = ({ appId, workspaceRoot }) => 
 
 const commandDefinitions: Readonly<Record<ScaffoldCommand, CommandDefinition>> = {
   action: {
-    flags: ['action', 'module', 'scope', 'vertical'],
+    flags: ['action', 'legal-entity-scope', 'module', 'scope', 'vertical'],
     generator: actionGenerator,
     help: `Usage:
-  pnpm scaffold:action -- --vertical <vertical> --action <action>
-  pnpm scaffold:action -- --scope core --module <core.module> --action <action>
+  pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden>
+  pnpm scaffold:action -- --scope core --module <core.module> --action <action> --legal-entity-scope <required|optional|forbidden>
 
 Generate one typed, fail-closed Action registration with a governed write entrypoint.
 MicroVertical Actions are tenant-scoped; Core Actions are explicitly system-scoped.
 
 Required flags:
   --action <action>      Action name (lower-kebab-case)
+  --legal-entity-scope   Required legal-entity behavior: required, optional, or forbidden
   --vertical <vertical>  Existing generated vertical folder; exclusive with Core ownership
   --scope core           Required only for Core ownership; forbidden with --vertical
   --module <core.module> Stable core.* module key; required only with --scope core
@@ -134,15 +135,23 @@ Required flags:
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action'],
+    requiredFlags: ['action', 'legal-entity-scope'],
     toConfig: (flags) => {
       const action = flags['action'] ?? '';
+      const legalEntityScope = flags['legal-entity-scope'];
+      if (!['required', 'optional', 'forbidden'].includes(legalEntityScope ?? '')) {
+        throw new Error('--legal-entity-scope must be required, optional, or forbidden');
+      }
       const { module, scope, vertical } = flags;
       if (vertical !== undefined) {
         if (scope !== undefined || module !== undefined) {
           throw new Error('--vertical is mutually exclusive with --scope and --module');
         }
-        return { action, vertical };
+        return {
+          action,
+          legalEntityScope: legalEntityScope as 'forbidden' | 'optional' | 'required',
+          vertical,
+        };
       }
       if (scope !== 'core') {
         throw new Error('--scope core is required when --vertical is not supplied');
@@ -150,7 +159,12 @@ Options:
       if (module === undefined) {
         throw new Error('--module is required for Core Action ownership');
       }
-      return { action, module, scope };
+      return {
+        action,
+        legalEntityScope: legalEntityScope as 'forbidden' | 'optional' | 'required',
+        module,
+        scope,
+      };
     },
   },
   'microvertical-action-boundary': {

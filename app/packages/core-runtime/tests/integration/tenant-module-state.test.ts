@@ -8,6 +8,7 @@ import { Cause, Effect, Exit } from 'effect';
 import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
@@ -268,7 +269,12 @@ test('atomically creates and transitions state with truthful Action history and 
 
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       return Effect.gen(function* transitionSequence() {
         const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
         assert.deepEqual(created, { moduleKey, newState: 'active', previousState: null });
@@ -372,7 +378,12 @@ test('supports every declared state independently of other installed module stat
 
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       const withCatalog = <Value, Error, Requirements>(
         effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
       ) =>
@@ -430,13 +441,23 @@ test('idempotent replay and same-state rejection create no duplicate history or 
 
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       return runtime.runAction(input);
     }),
   );
   const replay = await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       return Effect.exit(runtime.runAction(input));
     }),
   );
@@ -444,7 +465,12 @@ test('idempotent replay and same-state rejection create no duplicate history or 
 
   const unchanged = await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'same-state')));
     }),
   );
@@ -523,6 +549,7 @@ test('rolls back history and Action evidence when current-state persistence fail
         withTenantStateWriteFailure(database),
         makeActionRepository(),
         unconfiguredPermission,
+        testOperationalScopeResolver,
       );
       return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
     }),
@@ -557,7 +584,12 @@ test('serializes concurrent transitions into one truthful history chain', async 
   const moduleKey = testModuleKey('concurrency', tenantOne);
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       return runtime.runAction(actionInput(moduleKey, 'inactive', 'concurrent-initial'));
     }),
   );
@@ -573,6 +605,7 @@ test('serializes concurrent transitions into one truthful history chain', async 
             database,
             makeActionRepository(),
             unconfiguredPermission,
+            testOperationalScopeResolver,
           );
           return Effect.exit(
             runtime.runAction(
@@ -619,7 +652,12 @@ test('derives tenant scope only from the trusted principal', async () => {
 
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       return runtime.runAction(actionInput(moduleKey, 'suspended', 'tenant-isolation'));
     }),
   );

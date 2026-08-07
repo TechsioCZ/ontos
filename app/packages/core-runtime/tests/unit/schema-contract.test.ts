@@ -80,8 +80,8 @@ test('supports pre-authentication Action Invocation rows and indeterminate outco
 });
 
 test('preserves critical Action foreign keys and unique idempotency index', () => {
-  const principalForeignKey = actionConfig.foreignKeys.find(
-    (foreignKey) => foreignKey.reference().columns[0]?.name === 'principal_id',
+  const principalForeignKey = actionConfig.foreignKeys.find((foreignKey) =>
+    foreignKey.reference().columns.some((column) => column.name === 'principal_id'),
   );
   assert.ok(principalForeignKey);
   assert.equal(
@@ -89,6 +89,10 @@ test('preserves critical Action foreign keys and unique idempotency index', () =
     getTableName(principals),
   );
   assert.equal(principalForeignKey.onDelete, 'restrict');
+  assert.deepEqual(
+    principalForeignKey.reference().columns.map((column) => column.name),
+    ['tenant_id', 'principal_id'],
+  );
 
   const idempotencyIndex = actionConfig.indexes.find(
     (candidate) => candidate.config.name === 'core_action_invocations_idempotency_uk',

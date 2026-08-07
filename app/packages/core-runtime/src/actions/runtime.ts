@@ -6,13 +6,14 @@ import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import { makeActionCollector } from './collector.ts';
-import {
-  ActionTransportMetadataSchema,
-  TrustedPrincipalContextSchema,
-  restrictTransactionExecutor,
-} from './context.ts';
+import { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './context.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
-import { decodeActionPayload, decodeActionResult, getActionHandler } from './definition.ts';
+import {
+  decodeActionPayload,
+  decodeActionResult,
+  getActionHandler,
+  getActionServiceFactory,
+} from './definition.ts';
 import type { ActionRegistration } from './definition.ts';
 import {
   ActionAlreadyCommitted,
@@ -63,6 +64,13 @@ import {
 } from '../modules/module-state-gate.ts';
 import type { ModuleStateGateShape } from '../modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
+import { installOperationalScope } from '../db/scoped-transaction.ts';
+import type { OperationalScopeResolverShape } from '../operations/context.ts';
+import {
+  makeOperationalScopeRepository,
+  makeOperationalScopeResolver,
+} from '../operations/context.ts';
+import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
 
 export const ACTION_RUNTIME_STAGES = [
   'payload_decoded',
@@ -87,6 +95,7 @@ export interface RunActionInput<
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string = string,
+  Services = Readonly<Record<string, never>>,
   HandlerRequirements = never,
 > {
   readonly payload: unknown;
@@ -97,6 +106,7 @@ export interface RunActionInput<
     DomainErrorSchema,
     DomainEvents,
     Owner,
+    Services,
     HandlerRequirements
   >;
   readonly transport: unknown;
@@ -119,6 +129,7 @@ export interface ActionRuntimeService {
     DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
+    Services,
     HandlerRequirements,
   >(
     input: RunActionInput<
@@ -127,6 +138,7 @@ export interface ActionRuntimeService {
       DomainErrorSchema,
       DomainEvents,
       Owner,
+      Services,
       HandlerRequirements
     >,
   ) => Effect.Effect<
@@ -152,6 +164,8 @@ export interface ActionRuntimeOptions {
   readonly moduleStateGate?: ModuleStateGateShape;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
   readonly resolveHandler?: typeof getActionHandler;
+  readonly resolveServiceFactory?: typeof getActionServiceFactory;
+  readonly installScope?: typeof installOperationalScope;
 }
 
 class ActionRollbackSignal<Error> {
@@ -351,6 +365,7 @@ export const makeActionRuntime = (
   database: Context.Service.Shape<typeof CoreDatabaseService>,
   repository: ActionRepositoryService,
   permission: ActionPermissionService,
+  operationalScopeResolver: OperationalScopeResolverShape,
   options: ActionRuntimeOptions = {},
 ): ActionRuntimeService => {
   const moduleStateGate =
@@ -358,6 +373,8 @@ export const makeActionRuntime = (
   const moduleEntrypointGateway =
     options.moduleEntrypointGateway ?? makeModuleEntrypointGateway(moduleStateGate);
   const resolveHandler = options.resolveHandler ?? getActionHandler;
+  const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
+  const installScope = options.installScope ?? installOperationalScope;
   const notifyStage = (stage: ActionRuntimeStage): void => {
     options.onStage?.(stage);
   };
@@ -368,6 +385,7 @@ export const makeActionRuntime = (
     DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
+    Services,
     HandlerRequirements,
   >(
     input: RunActionInput<
@@ -376,6 +394,7 @@ export const makeActionRuntime = (
       DomainErrorSchema,
       DomainEvents,
       Owner,
+      Services,
       HandlerRequirements
     >,
   ): Effect.Effect<
@@ -393,9 +412,15 @@ export const makeActionRuntime = (
 
       const principal = yield* validatePrincipal(input.principal);
       const transport = yield* validateTransport(input.transport);
+      const scope = yield* operationalScopeResolver.resolve({
+        correlationId: transport.correlationId,
+        legalEntityScope: input.registration.descriptor.legalEntityScope,
+        principal,
+        ...(transport.traceId === undefined ? {} : { traceId: transport.traceId }),
+      });
       notifyStage('trusted_context_validated');
 
-      const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(principal, [
+      const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(scope, [
         input.registration.descriptor.entrypoint,
       ]);
       yield* moduleEntrypointGateway.check(
@@ -641,7 +666,7 @@ export const makeActionRuntime = (
                 await Effect.runPromiseExit(
                   moduleStateGate.recheckWrite(
                     drizzleTransaction as CoreTransaction,
-                    principal.tenantId,
+                    scope.tenantId,
                     input.registration.descriptor.entrypoint as TenantModuleEntrypoint<
                       'action',
                       'write',
@@ -653,6 +678,17 @@ export const makeActionRuntime = (
             }
             notifyStage('module_state_rechecked');
 
+            const scopedTransaction = exitValueOrRollback(
+              await Effect.runPromiseExit(
+                installScope(drizzleTransaction as CoreTransaction, scope),
+              ),
+            );
+            const serviceFactory = resolveServiceFactory(input.registration);
+            const services = exitValueOrRollback(
+              await Effect.runPromiseExit(
+                serviceFactory(scopedTransaction, scope).pipe(Effect.provide(handlerRequirements)),
+              ),
+            );
             const handler = resolveHandler(input.registration);
 
             const collector = makeActionCollector(
@@ -664,9 +700,9 @@ export const makeActionRuntime = (
               actionInvocationId: lockedInvocation.actionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
-              principal,
               recordDataAccess: collector.recordDataAccess,
-              transaction: restrictTransactionExecutor(drizzleTransaction as CoreTransaction),
+              scope,
+              services,
             });
 
             const handlerExit = await Effect.runPromiseExit(
@@ -843,16 +879,24 @@ export const ActionRuntimeLive = Layer.effect(
     const permission = yield* ActionPermission;
     const moduleEntrypointGateway = yield* ModuleEntrypointGateway;
     const moduleStateGate = yield* ModuleStateGate;
-    return makeActionRuntime(database, repository, permission, {
-      moduleEntrypointGateway,
-      moduleStateGate,
-    });
+    const contextAccess = yield* ContextAccess;
+    return makeActionRuntime(
+      database,
+      repository,
+      permission,
+      makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
+      {
+        moduleEntrypointGateway,
+        moduleStateGate,
+      },
+    );
   }),
 ).pipe(
   Layer.provide(ActionRepositoryLive),
   Layer.provide(ActionPermissionLive),
   Layer.provide(ModuleEntrypointGatewayLive),
   Layer.provide(ModuleStateGateLive),
+  Layer.provide(ContextAccessLive),
 );
 
 export const runAction = <
@@ -861,6 +905,7 @@ export const runAction = <
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
+  Services,
   HandlerRequirements,
 >(
   input: RunActionInput<
@@ -869,6 +914,7 @@ export const runAction = <
     DomainErrorSchema,
     DomainEvents,
     Owner,
+    Services,
     HandlerRequirements
   >,
 ): Effect.Effect<

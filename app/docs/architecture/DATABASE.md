@@ -1,5 +1,10 @@
 # Database Architecture
 
+For operation-scope validation, scoped owner services, RLS, runtime/admin roles, and same-tenant
+constraints, also follow [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Business
+handlers and BFF adapters never receive or import a database executor; owner repositories are built
+inside a Core-owned scoped transaction.
+
 This document defines authoritative database access and schema-ownership rules
 for the OntOS application. MicroVertical deployment boundaries remain governed
 by [MicroVertical Architecture](./MICROVERTICALS.md), and state changes remain

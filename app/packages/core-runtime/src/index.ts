@@ -39,19 +39,15 @@ export type {
   LegalEntityContextShape,
   SafeLegalEntity,
 } from './auth/legal-entity-context.ts';
-export {
-  CoreDatabase,
-  CoreDatabaseLive,
-  DatabaseConnectionError,
-  acquirePoolResource,
-  makeCoreDatabase,
-} from './db/client.ts';
+export { DatabaseConnectionError } from './db/client.ts';
+export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
   DatabaseConfig,
   DatabaseConfigError,
-  DatabaseConfigLive,
   ROOT_ENV_PATH,
+  loadDatabaseConnectionPair,
   loadDatabaseConfig,
+  parseDatabaseConnectionPair,
   parseDatabaseConfig,
 } from './db/config.ts';
 export {
@@ -59,11 +55,12 @@ export {
   ACTION_INVOCATION_STATUSES,
   CORE_SCHEMA_NAME,
   CORE_TABLE_INVENTORY,
-  CORE_TABLES,
-  actionInvocations,
-  coreDatabaseSchema,
 } from './db/schema.ts';
-export type { CoreDatabaseExecutor, CoreDbExecutor, CoreTransaction } from './db/types.ts';
+export {
+  enableGovernedRls,
+  tenantLegalEntityRlsPolicies,
+  tenantRlsPolicies,
+} from './db/scoped-transaction.ts';
 export {
   ContextAccess,
   ContextAccessLive,
@@ -123,10 +120,74 @@ export { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './
 export type {
   ActionCollectorMethods,
   ActionHandlerContext,
-  ActionTransactionExecutor,
   ActionTransportMetadata,
   TrustedPrincipalContext,
 } from './actions/context.ts';
+export {
+  LEGAL_ENTITY_SCOPES,
+  OperationalScopeResolver,
+  makeOperationalScopeRepository,
+  makeOperationalScopeResolver,
+} from './operations/context.ts';
+export type {
+  LegalEntityScope,
+  OperationalScope,
+  OperationalScopeRepository,
+  OperationalScopeResolverShape,
+  ResolveOperationalScopeInput,
+} from './operations/context.ts';
+export {
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+} from './operations/errors.ts';
+export type { OperationContextError } from './operations/errors.ts';
+export {
+  READ_ACCESS_KINDS,
+  READ_EVIDENCE_CAPTURE_MODES,
+  READ_PERMISSION_TARGETS,
+  defineRead,
+} from './reads/definition.ts';
+export type {
+  ReadAccessKind,
+  ReadDescriptor,
+  ReadEvidenceCaptureMode,
+  ReadHandler,
+  ReadPermissionDenialStatus,
+  ReadPermissionTarget,
+  ReadPermissionTargetResolver,
+  ReadPolicyDescriptor,
+  ReadResultPermissionTargetResolver,
+  ReadRegistration,
+  ReadServiceFactory,
+} from './reads/definition.ts';
+export type {
+  ReadEvidenceMetadata,
+  ReadHandlerContext,
+  ReadHandlerResult,
+} from './reads/context.ts';
+export {
+  READ_RUNTIME_STAGES,
+  ReadRuntime,
+  ReadRuntimeLive,
+  makeReadRuntimeLive,
+} from './reads/runtime.ts';
+export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
+export {
+  ReadEvidencePersistenceError,
+  ReadEvidenceValidationError,
+  ReadHandlerExecutionError,
+  ReadHandlerNotFound,
+  ReadHandlerUnavailable,
+  ReadInputValidationError,
+  ReadPermissionDenied,
+  ReadPermissionUnavailable,
+  ReadPolicyDenied,
+  ReadPolicyEvaluationError,
+  ReadResultValidationError,
+} from './reads/errors.ts';
+export type { ReadCoreError } from './reads/errors.ts';
 export { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './actions/events.ts';
 export type {
   ActionAccessEvidencePolicy,

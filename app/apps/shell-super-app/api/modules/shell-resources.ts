@@ -4,6 +4,7 @@ import type {
   InstalledModuleCatalog,
   TenantModuleState,
   TenantModuleStateServiceShape,
+  TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
 import { Effect, Exit, Schema } from 'effect';
@@ -46,39 +47,41 @@ export class ShellProviderUnavailableError extends Schema.TaggedErrorClass<Shell
   {},
 ) {}
 
-export interface ShellResourceContext {
+export interface ShellResourceContext extends TrustedPrincipalContext {
   readonly correlationId: string;
   readonly legalEntityId: string;
-  readonly principalId: string;
-  readonly tenantId: string;
+}
+
+export interface ShellProviderAssertionIssuer {
+  readonly issueAssertion: (input: {
+    readonly appId: string;
+    readonly context: ShellResourceContext;
+  }) => Effect.Effect<string, ShellProviderUnavailableError>;
 }
 
 export interface ShellSearchProviderGateway {
   readonly search: (input: {
     readonly appId: string;
-    readonly context: ShellResourceContext;
+    readonly authorization: string;
+    readonly correlationId: string;
     readonly query: string;
     readonly searchKey: string;
   }) => Effect.Effect<readonly unknown[], ShellProviderUnavailableError>;
 }
 
 export interface ShellResourceProviderGateway {
-  readonly attachMedia?: (input: {
-    readonly apiKey: string;
-    readonly appId: string;
-    readonly context: ShellResourceContext;
-    readonly ref: ResourceRef;
-  }) => Effect.Effect<{ readonly attached: true }, ShellProviderUnavailableError>;
   readonly detail: (input: {
     readonly apiKey: string;
     readonly appId: string;
-    readonly context: ShellResourceContext;
+    readonly authorization: string;
+    readonly correlationId: string;
     readonly ref: ResourceRef;
   }) => Effect.Effect<unknown, ShellProviderUnavailableError>;
   readonly timeline: (input: {
     readonly apiKey: string;
     readonly appId: string;
-    readonly context: ShellResourceContext;
+    readonly authorization: string;
+    readonly correlationId: string;
     readonly ref: ResourceRef;
   }) => Effect.Effect<
     { readonly entries: readonly unknown[]; readonly projectionLagging: boolean },
@@ -86,7 +89,12 @@ export interface ShellResourceProviderGateway {
   >;
 }
 
-interface ShellResourceDependencies {
+export interface ShellResourceGateways {
+  readonly resource: ShellResourceProviderGateway;
+  readonly search: ShellSearchProviderGateway;
+}
+
+interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
   readonly catalog: Effect.Effect<InstalledModuleCatalog, unknown>;
   readonly contextAccess: ContextAccessShape;
   readonly moduleStates: Pick<TenantModuleStateServiceShape, 'getTenantModuleStates'>;
@@ -224,13 +232,19 @@ export const makeShellSearch = (
         return { partial: false, results: [] } as const;
       }
       const attempts = yield* Effect.forEach(eligible, (provider) =>
-        gateway
-          .search({
-            appId: provider.appId,
-            context,
-            query: normalizedQuery,
-            searchKey: provider.contribution.searchKey,
-          })
+        dependencies
+          .issueAssertion({ appId: provider.appId, context })
+          .pipe(
+            Effect.flatMap((authorization) =>
+              gateway.search({
+                appId: provider.appId,
+                authorization,
+                correlationId: context.correlationId,
+                query: normalizedQuery,
+                searchKey: provider.contribution.searchKey,
+              }),
+            ),
+          )
           .pipe(
             Effect.flatMap((values) =>
               Effect.try({
@@ -389,37 +403,23 @@ export const makeShellResourceDetail = (
         ({ resourceType: key }) => key === ref.resourceType,
       );
       if (resourceType.capabilities.mediaAttachable && mediaBinding !== undefined) {
-        if (stateResult.value !== 'active') {
-          media = { enabled: false, reason: 'read_only' };
-        } else if (gateway.attachMedia === undefined) {
-          media = { enabled: false, reason: 'unavailable' };
-        } else {
-          const [writeAccess, ...unexpectedWrites] = yield* dependencies.contextAccess.resources({
-            legalEntityId: context.legalEntityId,
-            permission: 'write',
-            principalId: context.principalId,
-            resources: [ref],
-            tenantId: context.tenantId,
-          });
-          if (
-            unexpectedWrites.length > 0 ||
-            writeAccess === undefined ||
-            writeAccess.key !== resourceKey(ref) ||
-            writeAccess.decision === 'unavailable'
-          ) {
-            media = { enabled: false, reason: 'unavailable' };
-          } else if (writeAccess.decision === 'allowed') {
-            media = { enabled: true, reason: 'available' };
-          } else {
-            media = { enabled: false, reason: 'forbidden' };
-          }
-        }
+        media =
+          stateResult.value !== 'active'
+            ? { enabled: false, reason: 'read_only' }
+            : { enabled: false, reason: 'unavailable' };
+      }
+      const detailAuthorization = yield* capture(
+        dependencies.issueAssertion({ appId: contract.deployment.appId, context }),
+      );
+      if (!detailAuthorization.ok) {
+        return { outcome: 'unavailable' } as const;
       }
       const detailResult = yield* capture(
         gateway.detail({
           apiKey: detailBinding.apiKey,
           appId: contract.deployment.appId,
-          context,
+          authorization: detailAuthorization.value,
+          correlationId: context.correlationId,
           ref,
         }),
       );
@@ -450,11 +450,18 @@ export const makeShellResourceDetail = (
           timeline: [],
         } as const;
       }
+      const timelineAuthorization = yield* capture(
+        dependencies.issueAssertion({ appId: contract.deployment.appId, context }),
+      );
+      if (!timelineAuthorization.ok) {
+        return { outcome: 'unavailable' } as const;
+      }
       const timelineResult = yield* capture(
         gateway.timeline({
           apiKey: timelineBinding.apiKey,
           appId: contract.deployment.appId,
-          context,
+          authorization: timelineAuthorization.value,
+          correlationId: context.correlationId,
           ref,
         }),
       );
@@ -501,83 +508,10 @@ export type ShellMediaAttachmentResolution =
   | { readonly outcome: 'forbidden' | 'not_found' | 'unavailable' }
   | { readonly outcome: 'resolved'; readonly result: { readonly attached: true } };
 
-export const makeShellMediaAttachment = (
-  dependencies: ShellResourceDependencies,
-  gateway: ShellResourceProviderGateway,
-) => ({
+export const makeShellMediaAttachment = () => ({
   attach: (
-    context: ShellResourceContext,
-    ref: ResourceRef,
+    _context: ShellResourceContext,
+    _ref: ResourceRef,
   ): Effect.Effect<ShellMediaAttachmentResolution> =>
-    Effect.gen(function* shellMediaAttachmentEffect() {
-      const catalogResult = yield* capture(dependencies.catalog);
-      if (!catalogResult.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const contract = catalogResult.value.getByModuleId(ref.moduleId);
-      const resourceType = contract?.manifest.publicSurface.resourceTypes.find(
-        ({ key }) => key === ref.resourceType,
-      );
-      const binding = contract?.manifest.publicSurface.shellContributions.mediaAttachments.find(
-        ({ resourceType: key }) => key === ref.resourceType,
-      );
-      if (
-        contract === undefined ||
-        resourceType?.capabilities.mediaAttachable !== true ||
-        binding === undefined
-      ) {
-        return { outcome: 'not_found' } as const;
-      }
-      if (gateway.attachMedia === undefined) {
-        return { outcome: 'unavailable' } as const;
-      }
-      const stateResult = yield* capture(loadState(dependencies, context, ref.moduleId));
-      if (!stateResult.ok) {
-        return { outcome: 'unavailable' } as const;
-      }
-      if (stateResult.value === undefined) {
-        return { outcome: 'not_found' } as const;
-      }
-      if (decideModuleStateAccess(stateResult.value, binding.entrypoint.access) === 'deny') {
-        return { outcome: 'forbidden' } as const;
-      }
-      const [moduleAccess, ...unexpectedModules] = yield* moduleDecision(
-        dependencies,
-        context,
-        ref.moduleId,
-      );
-      const [writeAccess, ...unexpectedWrites] = yield* dependencies.contextAccess.resources({
-        legalEntityId: context.legalEntityId,
-        permission: 'write',
-        principalId: context.principalId,
-        resources: [ref],
-        tenantId: context.tenantId,
-      });
-      if (
-        unexpectedModules.length > 0 ||
-        unexpectedWrites.length > 0 ||
-        moduleAccess === undefined ||
-        writeAccess === undefined ||
-        moduleAccess.key !== ref.moduleId ||
-        writeAccess.key !== resourceKey(ref) ||
-        moduleAccess.decision === 'unavailable' ||
-        writeAccess.decision === 'unavailable'
-      ) {
-        return { outcome: 'unavailable' } as const;
-      }
-      if (moduleAccess.decision === 'denied' || writeAccess.decision === 'denied') {
-        return { outcome: 'forbidden' } as const;
-      }
-      const result = yield* capture(
-        gateway.attachMedia({
-          apiKey: binding.apiKey,
-          appId: contract.deployment.appId,
-          context,
-          ref,
-        }),
-      );
-      return result.ok
-        ? ({ outcome: 'resolved', result: result.value } as const)
-        : ({ outcome: 'unavailable' } as const);
-    }).pipe(Effect.catch(() => Effect.succeed({ outcome: 'unavailable' as const }))),
+    Effect.succeed({ outcome: 'unavailable' as const }),
 });

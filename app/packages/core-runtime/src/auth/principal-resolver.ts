@@ -18,12 +18,14 @@ export interface AvailableTenant {
 }
 
 export interface ResolvedPrincipalIdentity {
+  readonly authBindingId: string;
   readonly displayName: string;
   readonly principalId: string;
   readonly tenantId: string;
 }
 
 export interface PrincipalResolutionRecord {
+  readonly authBindingId: string;
   readonly bindingCreatedAt: Date;
   readonly bindingRevokedAt: Date | null;
   readonly bindingStatus: string;
@@ -78,6 +80,7 @@ const eligibleRecords = (
 };
 
 const toResolvedIdentity = (record: PrincipalResolutionRecord): ResolvedPrincipalIdentity => ({
+  authBindingId: record.authBindingId,
   displayName: record.displayName,
   principalId: record.principalId,
   tenantId: record.tenantId,
@@ -160,6 +163,7 @@ export const makePrincipalResolver = (
       try: () =>
         database.executor
           .select({
+            authBindingId: principalAuthBindings.principalAuthBindingId,
             bindingCreatedAt: principalAuthBindings.createdAt,
             bindingRevokedAt: principalAuthBindings.revokedAt,
             bindingStatus: principalAuthBindings.status,

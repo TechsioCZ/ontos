@@ -1,5 +1,9 @@
 // @effect-diagnostics asyncFunction:off cryptoRandomUUIDInEffect:off
-import { GATEWAY_ASSERTION_TTL_SECONDS, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import {
+  GATEWAY_ASSERTION_TTL_SECONDS,
+  GATEWAY_ASSERTION_VERSION,
+  GatewayTrustedPrincipalContextSchema,
+} from '@app/shared-contracts';
 import type { GatewayContextResponse, GatewayTrustedPrincipalContext } from '@app/shared-contracts';
 import { Clock, Effect, Schema } from 'effect';
 import { SignJWT, importJWK } from 'jose';
@@ -60,6 +64,9 @@ export const issueGatewayContextAssertion = (
   dependencies: GatewayIssuerDependencies = gatewayIssuerLiveDependencies,
 ): Effect.Effect<GatewayContextResponse, GatewayIssuerError> =>
   Effect.gen(function* issueGatewayContextAssertionEffect() {
+    const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
+      onExcessProperty: 'error',
+    })(input.principal).pipe(Effect.mapError(unavailable));
     const audiences = yield* dependencies.loadAudiences.pipe(Effect.mapError(unavailable));
     if (!audiences.has(input.audience)) {
       return yield* new GatewayIssuerError({
@@ -81,7 +88,7 @@ export const issueGatewayContextAssertion = (
       try: async () => {
         const key = await importJWK(configuration.privateJwk, 'EdDSA');
         return new SignJWT({
-          principal: input.principal,
+          principal,
           ver: GATEWAY_ASSERTION_VERSION,
         })
           .setProtectedHeader({
@@ -91,7 +98,7 @@ export const issueGatewayContextAssertion = (
           })
           .setIssuer(configuration.issuer)
           .setAudience(input.audience)
-          .setSubject(input.principal.principalId)
+          .setSubject(principal.principalId)
           .setIssuedAt(issuedAt)
           .setExpirationTime(expiresAt)
           .setJti(jti)

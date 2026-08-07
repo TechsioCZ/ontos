@@ -107,6 +107,7 @@ const PropertyAction = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
+    legalEntityScope: 'optional',
     owningModuleKey: 'property.registry',
     payloadSchema: Schema.Struct({ unitId: Schema.String }),
     policies: [],

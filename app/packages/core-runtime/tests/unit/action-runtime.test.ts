@@ -13,6 +13,7 @@ import type {
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
+import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { defineAction, getActionHandler } from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
@@ -279,17 +280,24 @@ const makeHarness = (options: HarnessOptions = {}) => {
       return Effect.void;
     },
   } as const;
-  const runtime = makeActionRuntime(database as never, repository, permission, {
-    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
-    moduleStateGate,
-    onStage: (stage) => {
-      stages.push(stage);
+  const runtime = makeActionRuntime(
+    database as never,
+    repository,
+    permission,
+    testOperationalScopeResolver,
+    {
+      installScope: () => Effect.succeed(fakeTransaction as never),
+      moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+      moduleStateGate,
+      onStage: (stage) => {
+        stages.push(stage);
+      },
+      resolveHandler: (action) => {
+        handlerResolutionCount += 1;
+        return getActionHandler(action);
+      },
     },
-    resolveHandler: (action) => {
-      handlerResolutionCount += 1;
-      return getActionHandler(action);
-    },
-  });
+  );
 
   return {
     counts: () => ({ createCount, lockCount, transactionCount, transitionCount }),
@@ -321,6 +329,7 @@ const registration = () =>
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [],
@@ -331,8 +340,8 @@ const registration = () =>
       Effect.gen(function* changeCounter() {
         assert.equal(context.actionInvocationId, 'invocation-1');
         assert.equal(Object.isFrozen(context), true);
-        assert.equal('rollback' in context.transaction, false);
-        assert.equal('transaction' in context.transaction, false);
+        assert.equal('transaction' in context, false);
+        assert.deepEqual(context.services, {});
         yield* context.recordDataAccess({
           accessKind: 'read',
           queryHash: `counter-${payload.amount}`,
@@ -423,6 +432,7 @@ test('fails business Actions closed before invocation, permission, Policy, or ha
           role: 'action',
         }),
         idempotency: 'required',
+        legalEntityScope: 'optional',
         owningModuleKey: 'inventory.stock',
         payloadSchema: Schema.Void,
         policies: [
@@ -485,6 +495,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Void,
       policies: [],
@@ -572,6 +583,7 @@ test('persists a definite permission denial before returning it and never evalua
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [
@@ -726,6 +738,7 @@ test('evaluates Policies in order before running and hands allowed checkpoints t
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [globalPolicy, modulePolicy],
@@ -800,6 +813,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies,
@@ -883,6 +897,7 @@ test('sanitizes Policy defects, interrupts, and undeclared failures without fina
           role: 'action',
         }),
         idempotency: 'required',
+        legalEntityScope: 'optional',
         owningModuleKey: 'core.shell',
         payloadSchema: Schema.Void,
         policies: [policy],
@@ -939,6 +954,7 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [policy],
@@ -1016,6 +1032,7 @@ test('evaluates Policies afresh for separate invocations', async () => {
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [policy],
@@ -1114,6 +1131,7 @@ test('preserves declared domain rejections and rolls back collected evidence', a
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [allowedPolicy],
@@ -1167,6 +1185,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
@@ -1201,6 +1220,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
@@ -1251,6 +1271,7 @@ test('sanitizes undeclared handler failures instead of widening the domain error
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
@@ -1476,6 +1497,7 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Struct({ quantity: Schema.Finite }),
       policies: [],

@@ -74,6 +74,7 @@ export const MODULE_REGISTRATION_WORKER_SLOT_END = '// </generated-module-regist
 
 export interface VerticalActionScaffoldConfig {
   readonly action: string;
+  readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
   readonly vertical: string;
   readonly module?: never;
   readonly scope?: never;
@@ -81,6 +82,7 @@ export interface VerticalActionScaffoldConfig {
 
 export interface CoreActionScaffoldConfig {
   readonly action: string;
+  readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
   readonly module: string;
   readonly scope: 'core';
   readonly vertical?: never;
@@ -165,6 +167,7 @@ export interface PageScaffoldResult {
 export interface GovernedContributionScaffoldResult {
   readonly artifactPath: string;
   readonly clientPath?: string;
+  readonly serverPath?: string;
 }
 
 export interface ActionBoundaryScaffoldResult {

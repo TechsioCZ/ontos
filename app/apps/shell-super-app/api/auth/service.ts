@@ -6,6 +6,7 @@ import type {
   PrincipalResolutionError,
   PrincipalResolverShape,
   ResolvedPrincipalIdentity,
+  TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { ContextAccess, LegalEntityContext, PrincipalResolver } from '@app/core-runtime';
 import { APIError, betterAuth } from 'better-auth';
@@ -77,6 +78,7 @@ interface AnonymousResolvedSession {
 
 interface AuthenticatedResolvedSession {
   readonly identity: SafeTenantIdentity;
+  readonly principal: TrustedPrincipalContext;
   readonly savedLegalEntityId?: string;
   readonly selectedTenantId: string;
   readonly setCookieHeaders: readonly string[];
@@ -97,6 +99,7 @@ export type ShellContextResult =
         readonly legalName: string;
       }[];
       readonly identity: SafeAuthenticatedIdentity;
+      readonly principal: TrustedPrincipalContext;
       readonly setCookieHeaders: readonly string[];
       readonly state: 'authenticated';
     }
@@ -106,12 +109,14 @@ export type ShellContextResult =
         readonly legalName: string;
       }[];
       readonly identity: SafeTenantIdentity;
+      readonly principal: TrustedPrincipalContext;
       readonly setCookieHeaders: readonly string[];
       readonly state: 'selection_required';
     }
   | {
       readonly availableLegalEntities: readonly [];
       readonly identity: SafeTenantIdentity;
+      readonly principal: TrustedPrincipalContext;
       readonly setCookieHeaders: readonly string[];
       readonly state: 'access_blocked';
     };
@@ -359,11 +364,19 @@ export const makeAuthenticationService = (
     },
     tenantId: string,
   ): Effect.Effect<
-    SafeTenantIdentity,
+    { readonly identity: SafeTenantIdentity; readonly principal: TrustedPrincipalContext },
     AuthenticationUnavailableError | OntosIdentityForbiddenError
   > =>
     resolver.resolveBetterAuthUserForTenant(user.id, tenantId).pipe(
-      Effect.map((principal) => toSafeIdentity(user.email, principal)),
+      Effect.map((principal) => ({
+        identity: toSafeIdentity(user.email, principal),
+        principal: {
+          authBindingId: principal.authBindingId,
+          authMethod: 'session' as const,
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+        },
+      })),
       Effect.mapError(mapResolverError),
     );
 
@@ -371,11 +384,19 @@ export const makeAuthenticationService = (
     readonly email: string;
     readonly id: string;
   }): Effect.Effect<
-    SafeTenantIdentity,
+    { readonly identity: SafeTenantIdentity; readonly principal: TrustedPrincipalContext },
     AuthenticationUnavailableError | OntosIdentityForbiddenError
   > =>
     resolver.resolveDefaultBetterAuthUser(user.id).pipe(
-      Effect.map((principal) => toSafeIdentity(user.email, principal)),
+      Effect.map((principal) => ({
+        identity: toSafeIdentity(user.email, principal),
+        principal: {
+          authBindingId: principal.authBindingId,
+          authMethod: 'session' as const,
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+        },
+      })),
       Effect.mapError(mapResolverError),
     );
 
@@ -405,8 +426,9 @@ export const makeAuthenticationService = (
         const selectedTenantId = response.session.activeTenantId;
         if (typeof selectedTenantId === 'string') {
           return resolveIdentity(response.user, selectedTenantId).pipe(
-            Effect.map((identity) => ({
+            Effect.map(({ identity, principal }) => ({
               identity,
+              principal,
               ...(typeof response.session.activeLegalEntityId === 'string'
                 ? { savedLegalEntityId: response.session.activeLegalEntityId }
                 : {}),
@@ -419,7 +441,7 @@ export const makeAuthenticationService = (
         }
 
         return resolveDefaultIdentity(response.user).pipe(
-          Effect.flatMap((identity) =>
+          Effect.flatMap(({ identity, principal }) =>
             Effect.tryPromise({
               catch: mapSessionUpdateError,
               try: () =>
@@ -431,6 +453,7 @@ export const makeAuthenticationService = (
             }).pipe(
               Effect.map((updated) => ({
                 identity,
+                principal,
                 selectedTenantId: identity.tenantId,
                 setCookieHeaders: [
                   ...setCookieHeaders(result.headers),
@@ -495,6 +518,7 @@ export const makeAuthenticationService = (
         return {
           availableLegalEntities: [],
           identity: resolved.identity,
+          principal: resolved.principal,
           setCookieHeaders: yield* clearInvalidSavedSelection,
           state: 'access_blocked',
         };
@@ -503,6 +527,7 @@ export const makeAuthenticationService = (
         return {
           availableLegalEntities: selection.available,
           identity: resolved.identity,
+          principal: resolved.principal,
           setCookieHeaders: yield* clearInvalidSavedSelection,
           state: 'selection_required',
         };
@@ -512,10 +537,15 @@ export const makeAuthenticationService = (
         legalEntityId: selection.selected.legalEntityId,
         legalName: selection.selected.legalName,
       };
+      const principal: TrustedPrincipalContext = Object.freeze({
+        ...resolved.principal,
+        legalEntityId: selection.selected.legalEntityId,
+      });
       if (resolved.savedLegalEntityId === selection.selected.legalEntityId) {
         return {
           availableLegalEntities: selection.available,
           identity,
+          principal,
           setCookieHeaders: resolved.setCookieHeaders,
           state: 'authenticated',
         };
@@ -532,6 +562,7 @@ export const makeAuthenticationService = (
       return {
         availableLegalEntities: selection.available,
         identity,
+        principal,
         setCookieHeaders: [...resolved.setCookieHeaders, ...setCookieHeaders(updated.headers)],
         state: 'authenticated',
       };
@@ -602,7 +633,7 @@ export const makeAuthenticationService = (
       }).pipe(
         Effect.flatMap((result) =>
           resolveDefaultIdentity(result.response.user).pipe(
-            Effect.map((identity) => ({
+            Effect.map(({ identity }) => ({
               identity,
               setCookieHeaders: setCookieHeaders(result.headers),
             })),

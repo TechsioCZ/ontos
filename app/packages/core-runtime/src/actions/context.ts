@@ -1,6 +1,5 @@
 import { Schema } from 'effect';
 import type { Effect } from 'effect';
-import type { CoreTransaction } from '../db/types.ts';
 import type {
   DataAccessEventInput,
   DeclaredDomainEvent,
@@ -9,7 +8,7 @@ import type {
   OutboxMessage,
 } from './events.ts';
 import type { ActionCollectorError } from './errors.ts';
-import type { TrustedPrincipalContext } from './principal-context.ts';
+import type { OperationalScope } from '../operations/context.ts';
 
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
@@ -27,18 +26,6 @@ export const ActionTransportMetadataSchema = Schema.Struct({
 
 export type ActionTransportMetadata = Schema.Schema.Type<typeof ActionTransportMetadataSchema>;
 
-/**
- * Handler-facing Drizzle surface. It intentionally omits transaction creation,
- * commit, rollback, and raw driver access.
- */
-export interface ActionTransactionExecutor {
-  readonly delete: CoreTransaction['delete'];
-  readonly insert: CoreTransaction['insert'];
-  readonly query: CoreTransaction['query'];
-  readonly select: CoreTransaction['select'];
-  readonly update: CoreTransaction['update'];
-}
-
 export interface ActionCollectorMethods<DomainEvents extends DomainEventContractMap> {
   readonly addDomainEvent: (
     event: DeclaredDomainEvent<DomainEvents>,
@@ -54,19 +41,9 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
 
 export interface ActionHandlerContext<
   DomainEvents extends DomainEventContractMap,
+  Services = Readonly<Record<string, never>>,
 > extends ActionCollectorMethods<DomainEvents> {
   readonly actionInvocationId: string;
-  readonly principal: TrustedPrincipalContext;
-  readonly transaction: ActionTransactionExecutor;
+  readonly scope: OperationalScope;
+  readonly services: Services;
 }
-
-export const restrictTransactionExecutor = (
-  transaction: CoreTransaction,
-): ActionTransactionExecutor =>
-  Object.freeze({
-    delete: transaction.delete.bind(transaction),
-    insert: transaction.insert.bind(transaction),
-    query: transaction.query,
-    select: transaction.select.bind(transaction),
-    update: transaction.update.bind(transaction),
-  });

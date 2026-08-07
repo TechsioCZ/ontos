@@ -2,6 +2,12 @@
 
 Generated UltraModern SuperApp workspace.
 
+All public writes and reads run through Core-owned governed operation lifecycles. Tenant/system
+entrypoint scope and required/optional/forbidden legal-entity scope are independent declarations;
+invalid or indeterminate trusted context fails closed before private code resolves. Business
+handlers receive owner-local transaction-scoped services, never a database executor. See
+`docs/architecture/DATA_ACCESS.md`.
+
 This workspace keeps `presetUltramodern(...)` as the single public
 UltraModern.js 3.0 SuperApp surface and starts with an explicit shell:
 
@@ -88,6 +94,12 @@ pnpm install
 pnpm check
 pnpm build
 ```
+
+Local PostgreSQL uses the Compose-created `ontos_admin` identity for migrations and the
+non-superuser `ontos_runtime` identity for application pools. Fresh volumes provision the runtime
+login automatically, and `pnpm db:migrate` refreshes its schema/table/sequence grants after both
+migration owners finish. For an existing persistent volume, set both database URLs and run
+`mise exec -- pnpm db:bootstrap-runtime-role` before migrations.
 
 The generated toolchain baseline is Node `>=26` with pnpm `11.10.0`.
 `packageManager`, `.mise.toml`, generated validation, and CI should all agree

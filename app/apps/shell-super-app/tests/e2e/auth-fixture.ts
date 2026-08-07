@@ -12,7 +12,7 @@ import {
   principals,
   tenantModuleStates,
   tenants,
-} from '@app/core-runtime/db/schema';
+} from '../../../../packages/core-runtime/src/db/schema.ts';
 import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
 
 export const e2eCredentials = {

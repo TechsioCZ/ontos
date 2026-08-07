@@ -1,5 +1,10 @@
 # Module Entrypoints and Tenant State
 
+Entrypoint `tenant`/`system` scope is independent from the descriptor's required/optional/forbidden
+legal-entity scope. Both must be explicit. Missing, malformed, denied, or indeterminate operation
+context fails closed before private implementation resolution as defined by
+[Governed Data Access and Operation Scope](./DATA_ACCESS.md).
+
 This document defines the Core-owned invariant for loading or dispatching OntOS Business Module
 entrypoints. It applies to Actions, pages, public components, module APIs, search providers,
 reports, and Outbox Workers. The gate is separate from authentication, SpiceDB authorization, and
@@ -99,10 +104,13 @@ rechecks installation/reference, selected context, lifecycle, and permission bef
 lazy registry is consulted. Only a `resolved` outcome may execute a remote thunk.
 
 Search filters safe providers through the same context/state/module checks, then bulk-filters
-ResourceRefs by resource permission. Zero providers/results is successful, mixed provider success
-is partial `200`, and total provider failure is retryable. Resource detail and timeline providers
-run only after catalog/type/state/module/resource gates. Media discoverability additionally requires
-an active writable module, `mediaAttachable`, a declared binding, and resource permission.
+ResourceRefs by resource permission. Core repeats result-level resource authorization before a
+generated provider response can leave the receiving BFF. Zero providers/results is successful,
+mixed provider success is partial `200`, and total provider failure is retryable. Resource detail
+and timeline providers run only after catalog/type/state/module/resource gates and a fresh
+audience-scoped assertion for each attempt. Media attachment remains unavailable even when declared
+in a manifest until Codesmith generates and registers its Action; no provider mutation callback is
+part of the read gateway.
 
 ## Generator and registration enforcement
 

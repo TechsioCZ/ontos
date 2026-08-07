@@ -4,6 +4,7 @@ import type {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
 } from '../modules/module-state-gate-errors.ts';
+import type { OperationContextError } from '../operations/errors.ts';
 
 const safeReason = {
   reason: Schema.String,
@@ -166,7 +167,8 @@ export type ActionCoreError =
   | ActionTransactionError
   | ActionTrustedContextValidationError
   | ModuleStateCheckUnavailableError
-  | ModuleStateDeniedError;
+  | ModuleStateDeniedError
+  | OperationContextError;
 
 /**
  * Core errors are transport-neutral. A BFF must map this union and the

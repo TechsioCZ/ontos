@@ -12,6 +12,7 @@ import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolve
 import type { PrincipalResolutionError } from '../../src/auth/principal-resolver-errors.ts';
 
 const activeRecord: PrincipalResolutionRecord = {
+  authBindingId: 'binding-1',
   bindingCreatedAt: new Date('2026-01-01T00:00:00.000Z'),
   bindingRevokedAt: null,
   bindingStatus: 'active',
@@ -82,11 +83,13 @@ test('lists and resolves one active tenant binding', async () => {
     { name: 'Zeta tenant', tenantId: 'tenant-1' },
   ]);
   assert.deepEqual(await Effect.runPromise(classifyDefaultPrincipal([activeRecord])), {
+    authBindingId: 'binding-1',
     displayName: 'Ada Lovelace',
     principalId: 'principal-1',
     tenantId: 'tenant-1',
   });
   assert.deepEqual(await Effect.runPromise(classifySelectedPrincipal([activeRecord], 'tenant-1')), {
+    authBindingId: 'binding-1',
     displayName: 'Ada Lovelace',
     principalId: 'principal-1',
     tenantId: 'tenant-1',
@@ -113,6 +116,7 @@ test('chooses the oldest eligible binding and breaks creation ties by tenant ID'
   );
 
   assert.deepEqual(result, {
+    authBindingId: 'binding-1',
     displayName: 'Tie winner',
     principalId: 'principal-0',
     tenantId: 'tenant-0',
@@ -129,6 +133,7 @@ test('resolves only the exact eligible selected tenant', async () => {
   assert.deepEqual(
     await Effect.runPromise(classifySelectedPrincipal([activeRecord, selected], 'tenant-2')),
     {
+      authBindingId: 'binding-1',
       displayName: 'Grace Hopper',
       principalId: 'principal-2',
       tenantId: 'tenant-2',

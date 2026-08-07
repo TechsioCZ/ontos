@@ -54,6 +54,85 @@ const verifyTypedQuery = (
 
 const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   const database = yield* CoreDatabase;
+  const runtimeRole = yield* Effect.tryPromise({
+    catch: () =>
+      new DatabaseVerificationError({ reason: 'Unable to verify the PostgreSQL runtime role' }),
+    try: () =>
+      database.executor.execute<{
+        rolbypassrls: boolean;
+        rolsuper: boolean;
+      }>(sql`
+        select role.rolsuper, role.rolbypassrls
+        from pg_catalog.pg_roles as role
+        where role.rolname = current_user
+      `),
+  });
+  const [role] = runtimeRole.rows;
+  if (role === undefined || role.rolsuper || role.rolbypassrls) {
+    return yield* new DatabaseVerificationError({
+      reason: 'The application runtime role must be non-superuser and must not bypass RLS',
+    });
+  }
+
+  const requiredCompositeConstraints = [
+    'core_action_invocations_tenant_auth_binding_fk',
+    'core_action_invocations_tenant_impersonator_fk',
+    'core_action_invocations_tenant_legal_entity_fk',
+    'core_action_invocations_tenant_principal_fk',
+    'core_audit_events_tenant_auth_binding_fk',
+    'core_audit_events_tenant_impersonator_fk',
+    'core_audit_events_tenant_invocation_fk',
+    'core_audit_events_tenant_legal_entity_fk',
+    'core_audit_events_tenant_principal_fk',
+    'core_auth_bindings_tenant_principal_fk',
+    'core_data_access_events_tenant_auth_binding_fk',
+    'core_data_access_events_tenant_impersonator_fk',
+    'core_data_access_events_tenant_invocation_fk',
+    'core_data_access_events_tenant_legal_entity_fk',
+    'core_data_access_events_tenant_principal_fk',
+    'core_domain_events_tenant_invocation_fk',
+    'core_domain_events_tenant_legal_entity_fk',
+    'core_evidence_tenant_asset_fk',
+    'core_evidence_tenant_audit_fk',
+    'core_evidence_tenant_data_access_fk',
+    'core_evidence_tenant_domain_event_fk',
+    'core_evidence_tenant_invocation_fk',
+    'core_evidence_tenant_legal_entity_fk',
+    'core_media_assets_tenant_legal_entity_fk',
+    'core_media_assets_tenant_principal_fk',
+    'core_media_links_tenant_asset_fk',
+    'core_media_links_tenant_invocation_fk',
+    'core_media_links_tenant_principal_fk',
+    'core_module_state_changes_tenant_invocation_fk',
+    'core_module_state_changes_tenant_principal_fk',
+    'core_outbox_messages_tenant_domain_event_fk',
+    'core_search_index_entries_tenant_legal_entity_fk',
+  ].toSorted();
+  const constraintRows = yield* Effect.tryPromise({
+    catch: () =>
+      new DatabaseVerificationError({ reason: 'Unable to verify same-tenant constraints' }),
+    try: () =>
+      database.executor.execute<{ conname: string }>(sql`
+        select constraint_record.conname
+        from pg_catalog.pg_constraint as constraint_record
+        inner join pg_catalog.pg_namespace as namespace
+          on namespace.oid = constraint_record.connamespace
+        where namespace.nspname = ${CORE_SCHEMA_NAME}
+        order by constraint_record.conname
+      `),
+  });
+  const presentCompositeConstraints = constraintRows.rows
+    .map((row) => row.conname)
+    .filter((name) => requiredCompositeConstraints.includes(name))
+    .toSorted();
+  if (
+    presentCompositeConstraints.length !== requiredCompositeConstraints.length ||
+    presentCompositeConstraints.some((name, index) => name !== requiredCompositeConstraints[index])
+  ) {
+    return yield* new DatabaseVerificationError({
+      reason: 'Required composite same-tenant constraints are missing',
+    });
+  }
   const typedQueries = [
     verifyTypedQuery('tenants', () => database.executor.select().from(tenants).limit(0)),
     verifyTypedQuery('legal_entities', () =>

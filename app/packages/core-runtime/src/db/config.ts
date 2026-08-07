@@ -26,6 +26,11 @@ export interface DatabaseConfigValue {
   readonly user: string;
 }
 
+export interface DatabaseConnectionPair {
+  readonly admin: DatabaseConfigValue;
+  readonly runtime: DatabaseConfigValue;
+}
+
 export class DatabaseConfig extends Context.Service<DatabaseConfig, DatabaseConfigValue>()(
   '@app/core-runtime/db/config/DatabaseConfig',
 ) {}
@@ -120,6 +125,28 @@ export const parseDatabaseConfig = (
   });
 };
 
+export const parseDatabaseConnectionPair = (
+  environment: Environment,
+): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> =>
+  Effect.gen(function* parseConnectionPair() {
+    const runtime = yield* parseDatabaseConfig(environment);
+    const adminUrl = environment['DATABASE_ADMIN_URL']?.trim();
+    if (adminUrl === undefined || adminUrl.length === 0) {
+      return yield* new DatabaseConfigError({ reason: 'DATABASE_ADMIN_URL is required' });
+    }
+    const admin = yield* parseDatabaseConfig({ DATABASE_URL: adminUrl });
+    if (
+      admin.connectionString === runtime.connectionString ||
+      admin.user === runtime.user ||
+      runtime.user === 'postgres'
+    ) {
+      return yield* new DatabaseConfigError({
+        reason: 'Administrative and runtime PostgreSQL identities must be distinct',
+      });
+    }
+    return Object.freeze({ admin, runtime });
+  });
+
 export const loadDatabaseConfig = (
   options: LoadDatabaseConfigOptions = {},
 ): Effect.Effect<DatabaseConfigValue, DatabaseConfigError> => {
@@ -127,6 +154,15 @@ export const loadDatabaseConfig = (
   const envPath = options.envPath ?? ROOT_ENV_PATH;
 
   return loadEnvironment(environment, envPath).pipe(Effect.flatMap(parseDatabaseConfig));
+};
+
+export const loadDatabaseConnectionPair = (
+  options: LoadDatabaseConfigOptions = {},
+): Effect.Effect<DatabaseConnectionPair, DatabaseConfigError> => {
+  const environment = options.environment ?? process.env;
+  const envPath = options.envPath ?? ROOT_ENV_PATH;
+
+  return loadEnvironment(environment, envPath).pipe(Effect.flatMap(parseDatabaseConnectionPair));
 };
 
 export const DatabaseConfigLive = Layer.effect(DatabaseConfig, loadDatabaseConfig());

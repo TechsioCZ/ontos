@@ -4,7 +4,8 @@ import { Clock, Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { ActionAuthMethod } from '../db/schema.ts';
-import type { ActionTransactionExecutor } from '../actions/context.ts';
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { CoreDatabaseExecutor } from '../db/types.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -141,9 +142,9 @@ const tenantModuleStateReadUnavailable = () =>
     reason: 'Tenant module state is temporarily unavailable',
   });
 
-export const makeTenantModuleStateService = (
-  database: Context.Service.Shape<typeof CoreDatabase>,
-): TenantModuleStateServiceShape => {
+export const makeTenantModuleStateService = (database: {
+  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+}): TenantModuleStateServiceShape => {
   const decodeRows = (rows: readonly { readonly moduleKey: string; readonly state: unknown }[]) =>
     Effect.forEach((row: (typeof rows)[number]) =>
       Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
@@ -235,7 +236,7 @@ const persistenceUnavailable = () =>
   });
 
 export const persistTenantModuleStateChange = (
-  transaction: ActionTransactionExecutor,
+  transaction: ScopedTransactionExecutor,
   input: PersistTenantModuleStateChangeInput,
 ): Effect.Effect<PersistTenantModuleStateChangeResult, TenantModuleStateTransitionError> =>
   Effect.gen(function* persistTenantModuleStateChangeEffect() {

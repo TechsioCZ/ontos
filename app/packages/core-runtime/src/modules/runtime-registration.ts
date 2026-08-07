@@ -168,6 +168,7 @@ export const extractVerticalRuntimeSafeDescriptors = (
             actionKey: descriptor.actionKey,
             auditProfile: descriptor.auditProfile,
             idempotency: descriptor.idempotency,
+            legalEntityScope: descriptor.legalEntityScope,
             owningModuleId: descriptor.owningModuleKey,
             schemaVersion: descriptor.schemaVersion,
           }),

@@ -59,6 +59,7 @@ export const OntosActionContractSchema = Schema.Struct({
   actionKey: OntosModuleIdSchema,
   auditProfile: Schema.Literals(['minimal', 'sensitive', 'standard']),
   idempotency: Schema.Literals(['optional', 'required']),
+  legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
   owningModuleId: OntosModuleIdSchema,
   schemaVersion: Schema.String.check(Schema.isPattern(schemaVersionPattern)),
 });

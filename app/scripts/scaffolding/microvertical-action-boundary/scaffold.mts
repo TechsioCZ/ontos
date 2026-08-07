@@ -255,6 +255,9 @@ export const verifyActionPrincipal = (
       onExcessProperty: 'error',
     })(claims.principal).pipe(Effect.mapError(invalidError));
   });
+
+/** Shared trusted-identity acquisition for generated Actions and governed reads. */
+export const verifyOperationPrincipal = verifyActionPrincipal;
 `;
 
 const renderClient = (vertical: VerticalMetadata): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
@@ -290,6 +293,8 @@ export const makeActionGateway = (acquire: ActionGatewayIssuer = issueGatewayCon
 });
 
 export const actionGateway = makeActionGateway();
+export const makeOperationGateway = makeActionGateway;
+export const operationGateway = actionGateway;
 `;
 
 export const planActionBoundaryScaffold = async (

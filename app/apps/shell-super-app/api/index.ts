@@ -14,17 +14,21 @@ import type {
   EffectRuntimeLayer,
 } from '@modern-js/plugin-bff/effect-edge';
 import {
-  CoreDatabaseLive,
-  ContextAccess,
+  CorePersistenceLive,
   ContextAccessLive,
-  DatabaseConfigLive,
   LegalEntityContextLive,
   OutboxRuntimeLive,
   PrincipalResolverLive,
-  TenantModuleStateService,
   TenantModuleStateServiceLive,
+  makeTenantModuleStateService,
+  makeReadRuntimeLive,
 } from '@app/core-runtime';
-import type { InstalledModuleCatalog } from '@app/core-runtime';
+import type {
+  ContextAccess,
+  InstalledModuleCatalog,
+  ReadCoreError,
+  TenantModuleStateService,
+} from '@app/core-runtime';
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { Cause, pipe } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
@@ -37,6 +41,8 @@ import type {
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
+  ShellPolicyConflictProblem,
+  ShellPolicyUnprocessableProblem,
   ShellSelectionRequiredProblem,
   ShellTargetForbiddenProblem,
   ShellTargetNotFoundProblem,
@@ -46,8 +52,7 @@ import type {
   TenantCapabilityUnavailableProblem,
   TenantInternalProblem,
 } from '../shared/api.ts';
-import { AuthConfigLive } from './auth/config.ts';
-import { AuthDatabaseLive } from './auth/db/client.ts';
+import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import {
   gatewayIssuerLiveDependencies,
   issueGatewayContextAssertion,
@@ -62,17 +67,13 @@ import {
 } from './modules/installed-module-catalog.ts';
 import type { InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { makeInstalledOutboxMatcherLayer } from './modules/installed-outbox-matcher.ts';
-import { makeShellComposition } from './modules/shell-composition.ts';
+import { ShellGovernedReads, makeShellGovernedReadsLive } from './modules/shell-governed-reads.ts';
+import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import {
-  makeShellResourceDetail,
   makeShellMediaAttachment,
-  makeShellSearch,
   ShellProviderUnavailableError,
 } from './modules/shell-resources.ts';
-import type {
-  ShellResourceProviderGateway,
-  ShellSearchProviderGateway,
-} from './modules/shell-resources.ts';
+import type { ShellResourceContext, ShellResourceGateways } from './modules/shell-resources.ts';
 
 const requestHeaders = (headers: Readonly<Record<string, string | undefined>>): Headers => {
   const result = new Headers();
@@ -339,10 +340,75 @@ const shellTargetNotFoundProblem = (): ShellTargetNotFoundProblem => ({
   type: 'https://ontos.dev/problems/module-target-not-found',
 });
 
+const shellPolicyConflictProblem = (): ShellPolicyConflictProblem => ({
+  _tag: 'ShellPolicyConflictProblem',
+  detail: 'The requested operation conflicts with a business policy.',
+  status: 409,
+  title: 'Policy conflict',
+  type: 'https://ontos.dev/problems/policy-conflict',
+});
+
+const shellPolicyUnprocessableProblem = (): ShellPolicyUnprocessableProblem => ({
+  _tag: 'ShellPolicyUnprocessableProblem',
+  detail: 'The requested operation violates a business policy.',
+  status: 422,
+  title: 'Policy violation',
+  type: 'https://ontos.dev/problems/policy-violation',
+});
+
+const shellReadProblem = (
+  error: ReadCoreError,
+):
+  | ShellAuthenticationRequiredProblem
+  | ShellCapabilityUnavailableProblem
+  | ShellInternalProblem
+  | ShellPolicyConflictProblem
+  | ShellPolicyUnprocessableProblem
+  | ShellTargetForbiddenProblem
+  | ShellTargetNotFoundProblem => {
+  switch (error._tag) {
+    case 'OperationAuthenticationRequired': {
+      return shellAuthenticationRequiredProblem();
+    }
+    case 'OperationContextDenied':
+    case 'ReadPermissionDenied': {
+      return shellTargetForbiddenProblem();
+    }
+    case 'ReadPolicyDenied': {
+      return error.httpStatus === 409
+        ? shellPolicyConflictProblem()
+        : shellPolicyUnprocessableProblem();
+    }
+    case 'ReadHandlerNotFound': {
+      return shellTargetNotFoundProblem();
+    }
+    case 'ModuleStateCheckUnavailableError':
+    case 'OperationContextUnavailable':
+    case 'ReadEvidencePersistenceError':
+    case 'ReadHandlerUnavailable':
+    case 'ReadPermissionUnavailable':
+    case 'ReadPolicyEvaluationError': {
+      return shellCapabilityUnavailableProblem();
+    }
+    default: {
+      return shellInternalProblem();
+    }
+  }
+};
+
+const shellListReadProblem = (error: ReadCoreError) => {
+  const mappedProblem = shellReadProblem(error);
+  return mappedProblem._tag === 'ShellTargetNotFoundProblem'
+    ? shellInternalProblem()
+    : mappedProblem;
+};
+
 type ShellProblem =
   | ShellAuthenticationRequiredProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem
+  | ShellPolicyConflictProblem
+  | ShellPolicyUnprocessableProblem
   | ShellSelectionRequiredProblem
   | ShellTargetForbiddenProblem
   | ShellTargetNotFoundProblem;
@@ -555,22 +621,16 @@ const compositionGroupLive = HttpApiBuilder.group(
           if (session.state === 'access_blocked') {
             return { navigation: [], state: 'access_blocked' } as const;
           }
-          const catalog = yield* ShellInstalledModuleCatalog;
-          const moduleStates = yield* TenantModuleStateService;
-          const contextAccess = yield* ContextAccess;
-          return yield* makeShellComposition({
-            catalog: catalog.load,
-            contextAccess,
-            moduleStates,
-          })
-            .compose({
-              ...(session.state === 'authenticated'
-                ? { legalEntityId: session.identity.legalEntityId }
-                : {}),
-              principalId: session.identity.principalId,
-              tenantId: session.identity.tenantId,
+          if (session.state !== 'authenticated') {
+            return { navigation: [], state: 'selection_required' } as const;
+          }
+          const governedReads = yield* ShellGovernedReads;
+          return yield* governedReads
+            .composition({
+              correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              principal: session.principal,
             })
-            .pipe(Effect.mapError(shellCapabilityUnavailableProblem));
+            .pipe(Effect.catch((error) => failShellProblem(shellListReadProblem(error))));
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
@@ -604,49 +664,14 @@ const compositionGroupLive = HttpApiBuilder.group(
           if (session.state !== 'authenticated') {
             return yield* failShellProblem(shellSelectionRequiredProblem());
           }
-          const catalog = yield* ShellInstalledModuleCatalog;
-          const moduleStates = yield* TenantModuleStateService;
-          const contextAccess = yield* ContextAccess;
-          const resolution = yield* makeShellComposition({
-            catalog: catalog.load,
-            contextAccess,
-            moduleStates,
-          })
-            .resolveModuleTarget(
-              {
-                legalEntityId: session.identity.legalEntityId,
-                principalId: session.identity.principalId,
-                tenantId: session.identity.tenantId,
-              },
-              { moduleId: payload.moduleId },
-            )
-            .pipe(Effect.mapError(shellCapabilityUnavailableProblem));
-          switch (resolution.outcome) {
-            case 'resolved': {
-              return {
-                appId: resolution.appId,
-                componentKey: resolution.page.componentKey,
-                entrypointKey: resolution.page.entrypoint.entrypointKey,
-                moduleId: resolution.moduleId,
-                writable: resolution.writable,
-              };
-            }
-            case 'forbidden': {
-              return yield* failShellProblem(shellTargetForbiddenProblem());
-            }
-            case 'not_found': {
-              return yield* failShellProblem(shellTargetNotFoundProblem());
-            }
-            case 'selection_required': {
-              return yield* failShellProblem(shellSelectionRequiredProblem());
-            }
-            case 'unavailable': {
-              return yield* failShellProblem(shellCapabilityUnavailableProblem());
-            }
-            default: {
-              return resolution;
-            }
-          }
+          const governedReads = yield* ShellGovernedReads;
+          return yield* governedReads
+            .moduleTarget({
+              correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              moduleId: payload.moduleId,
+              principal: session.principal,
+            })
+            .pipe(Effect.catch((error) => failShellProblem(shellReadProblem(error))));
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
@@ -659,10 +684,7 @@ const compositionGroupLive = HttpApiBuilder.group(
       ),
 );
 
-export interface ShellResourceGateways {
-  readonly resource: ShellResourceProviderGateway;
-  readonly search: ShellSearchProviderGateway;
-}
+export type { ShellResourceGateways } from './modules/shell-resources.ts';
 
 const unavailableResourceGateways: ShellResourceGateways = {
   resource: {
@@ -674,7 +696,7 @@ const unavailableResourceGateways: ShellResourceGateways = {
   },
 };
 
-const makeResourcesGroupLive = (gateways: ShellResourceGateways) =>
+const makeResourcesGroupLive = (_gateways: ShellResourceGateways) =>
   HttpApiBuilder.group(ShellAuthenticationApi, 'resources', (handlers) =>
     handlers
       .handle('search', ({ payload, request }) =>
@@ -700,23 +722,14 @@ const makeResourcesGroupLive = (gateways: ShellResourceGateways) =>
           if (session.state !== 'authenticated') {
             return yield* failShellProblem(shellSelectionRequiredProblem());
           }
-          const catalog = yield* ShellInstalledModuleCatalog;
-          const moduleStates = yield* TenantModuleStateService;
-          const contextAccess = yield* ContextAccess;
-          return yield* makeShellSearch(
-            { catalog: catalog.load, contextAccess, moduleStates },
-            gateways.search,
-          )
-            .search(
-              {
-                correlationId: request.headers['x-correlation-id'] ?? 'missing',
-                legalEntityId: session.identity.legalEntityId,
-                principalId: session.identity.principalId,
-                tenantId: session.identity.tenantId,
-              },
-              payload.query,
-            )
-            .pipe(Effect.mapError(shellCapabilityUnavailableProblem));
+          const governedReads = yield* ShellGovernedReads;
+          return yield* governedReads
+            .search({
+              correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              principal: session.principal,
+              query: payload.query,
+            })
+            .pipe(Effect.catch((error) => failShellProblem(shellListReadProblem(error))));
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
@@ -750,43 +763,14 @@ const makeResourcesGroupLive = (gateways: ShellResourceGateways) =>
           if (session.state !== 'authenticated') {
             return yield* failShellProblem(shellSelectionRequiredProblem());
           }
-          const catalog = yield* ShellInstalledModuleCatalog;
-          const moduleStates = yield* TenantModuleStateService;
-          const contextAccess = yield* ContextAccess;
-          const dependencies = { catalog: catalog.load, contextAccess, moduleStates };
-          const context = {
-            correlationId: request.headers['x-correlation-id'] ?? 'missing',
-            legalEntityId: session.identity.legalEntityId,
-            principalId: session.identity.principalId,
-            tenantId: session.identity.tenantId,
-          };
-          const resolution = yield* makeShellResourceDetail(
-            dependencies,
-            gateways.resource,
-          ).resolve(context, payload);
-          switch (resolution.outcome) {
-            case 'forbidden': {
-              return yield* failShellProblem(shellTargetForbiddenProblem());
-            }
-            case 'not_found': {
-              return yield* failShellProblem(shellTargetNotFoundProblem());
-            }
-            case 'unavailable': {
-              return yield* failShellProblem(shellCapabilityUnavailableProblem());
-            }
-            case 'resolved': {
-              return {
-                detail: resolution.detail,
-                media: resolution.media,
-                projectionLagging: resolution.projectionLagging,
-                ref: payload,
-                timeline: resolution.timeline,
-              };
-            }
-            default: {
-              return resolution;
-            }
-          }
+          const governedReads = yield* ShellGovernedReads;
+          return yield* governedReads
+            .resourceDetail({
+              correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              principal: session.principal,
+              ref: payload,
+            })
+            .pipe(Effect.catch((error) => failShellProblem(shellReadProblem(error))));
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
@@ -821,18 +805,11 @@ const makeResourcesGroupLive = (gateways: ShellResourceGateways) =>
           if (session.state !== 'authenticated') {
             return yield* failShellProblem(shellSelectionRequiredProblem());
           }
-          const catalog = yield* ShellInstalledModuleCatalog;
-          const moduleStates = yield* TenantModuleStateService;
-          const contextAccess = yield* ContextAccess;
-          const resolution = yield* makeShellMediaAttachment(
-            { catalog: catalog.load, contextAccess, moduleStates },
-            gateways.resource,
-          ).attach(
+          const resolution = yield* makeShellMediaAttachment().attach(
             {
+              ...session.principal,
               correlationId: request.headers['x-correlation-id'] ?? 'missing',
               legalEntityId: session.identity.legalEntityId,
-              principalId: session.identity.principalId,
-              tenantId: session.identity.tenantId,
             },
             payload,
           );
@@ -884,12 +861,7 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
         return yield* issueGatewayContextAssertion(
           {
             audience: payload.audience,
-            principal: {
-              authMethod: 'session',
-              legalEntityId: sessionResult.identity.legalEntityId,
-              principalId: sessionResult.identity.principalId,
-              tenantId: sessionResult.identity.tenantId,
-            },
+            principal: sessionResult.principal,
           },
           issuerDependencies,
         ).pipe(Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)));
@@ -908,17 +880,14 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
     ),
   );
 
-const coreDatabaseLive = CoreDatabaseLive.pipe(Layer.provide(DatabaseConfigLive));
-const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(coreDatabaseLive));
-const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(coreDatabaseLive));
+const principalResolverLive = PrincipalResolverLive.pipe(Layer.provide(CorePersistenceLive));
+const legalEntityContextLive = LegalEntityContextLive.pipe(Layer.provide(CorePersistenceLive));
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(
-  Layer.provide(coreDatabaseLive),
+  Layer.provide(CorePersistenceLive),
   Layer.orDie,
 );
-const authDatabaseLive = AuthDatabaseLive.pipe(Layer.provide(AuthConfigLive));
 const authenticationDependenciesLive = Layer.mergeAll(
-  AuthConfigLive,
-  authDatabaseLive,
+  AuthPersistenceLive,
   ContextAccessLive,
   legalEntityContextLive,
   principalResolverLive,
@@ -938,15 +907,63 @@ export const makeShellAuthenticationApiRuntime = (
   enableInstalledOutboxMatcher = false,
   contextAccessLayer: Layer.Layer<ContextAccess> = ContextAccessLive,
   resourceGateways: ShellResourceGateways = unavailableResourceGateways,
+  scopedModuleStateFactory: ShellScopedModuleStateFactory = (transaction) =>
+    makeTenantModuleStateService({ executor: transaction }),
 ): EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> => {
   const moduleCatalogLayer =
     loadInstalledModuleCatalog === undefined
       ? ShellInstalledModuleCatalogLive
       : Layer.succeed(ShellInstalledModuleCatalog, { load: loadInstalledModuleCatalog });
+  const readRuntimeLayer = makeReadRuntimeLive(contextAccessLayer).pipe(
+    Layer.provide(CorePersistenceLive),
+    Layer.orDie,
+  );
+  const providerAssertionIssuer = {
+    issueAssertion: ({
+      appId,
+      context,
+    }: {
+      readonly appId: string;
+      readonly context: ShellResourceContext;
+    }) =>
+      issueGatewayContextAssertion(
+        {
+          audience: appId,
+          principal: {
+            authMethod: context.authMethod,
+            legalEntityId: context.legalEntityId,
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+            ...(context.authBindingId === undefined
+              ? {}
+              : { authBindingId: context.authBindingId }),
+            ...(context.authContextRef === undefined
+              ? {}
+              : { authContextRef: context.authContextRef }),
+            ...(context.impersonatedByPrincipalId === undefined
+              ? {}
+              : { impersonatedByPrincipalId: context.impersonatedByPrincipalId }),
+          },
+        },
+        issuerDependencies,
+      ).pipe(
+        Effect.map(({ token }) => `Bearer ${token}`),
+        Effect.mapError(() => new ShellProviderUnavailableError()),
+      ),
+  };
+  const shellGovernedReadsLayer = makeShellGovernedReadsLive(
+    resourceGateways,
+    providerAssertionIssuer,
+    scopedModuleStateFactory,
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(readRuntimeLayer, moduleStateLayer, moduleCatalogLayer, contextAccessLayer),
+    ),
+  );
   const outboxMatcherLayer = enableInstalledOutboxMatcher
     ? makeInstalledOutboxMatcherLayer().pipe(
-        Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(coreDatabaseLive), Layer.orDie)),
+        Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie)),
       )
     : Layer.empty;
   const layer = HttpApiBuilder.layer(ShellAuthenticationApi).pipe(
@@ -962,7 +979,13 @@ export const makeShellAuthenticationApiRuntime = (
       ),
     ),
     Layer.provide(
-      Layer.mergeAll(authenticationLayer, moduleStateLayer, moduleCatalogLayer, contextAccessLayer),
+      Layer.mergeAll(
+        authenticationLayer,
+        moduleStateLayer,
+        moduleCatalogLayer,
+        contextAccessLayer,
+        shellGovernedReadsLayer,
+      ),
     ),
   ) satisfies EffectRuntimeLayer;
 

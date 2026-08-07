@@ -5,8 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./actions/principal-context": "./src/actions/principal-context.ts",
-    "./db/schema": "./src/db/schema.ts"
+    "./actions/principal-context": "./src/actions/principal-context.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",

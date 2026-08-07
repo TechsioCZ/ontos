@@ -25,10 +25,12 @@ if (
   throw dotenvResult.error;
 }
 
-const databaseUrl = process.env['DATABASE_URL']?.trim();
+const databaseUrl = process.env['DATABASE_ADMIN_URL']?.trim();
 
 if (databaseUrl === undefined || databaseUrl.length === 0) {
-  throw new Error(`DATABASE_URL is required in ${rootEnvironmentPath} or the process environment`);
+  throw new Error(
+    `DATABASE_ADMIN_URL is required in ${rootEnvironmentPath} or the process environment`,
+  );
 }
 
 export default defineConfig({

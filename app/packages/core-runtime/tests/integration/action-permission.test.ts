@@ -9,9 +9,11 @@ import { Effect, Schema } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -220,6 +222,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
@@ -229,16 +232,18 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
     (_payload, context) =>
       Effect.gen(function* permissionIntegrationHandler() {
         onExecute();
+        const services = context.services as { readonly transaction: ScopedTransactionExecutor };
         yield* Effect.tryPromise({
           catch: () => new TestWriteError({ reason: 'test business write failed' }),
           try: () =>
-            context.transaction.insert(tenantModuleStates).values({
+            services.transaction.insert(tenantModuleStates).values({
               moduleKey: moduleStateKey,
               state: 'active',
-              tenantId: context.principal.tenantId,
+              tenantId: context.scope.tenantId,
             }),
         });
       }),
+    (transaction) => Effect.succeed({ transaction }),
   );
 
 const runWithLivePermission = async <Value>(
@@ -249,7 +254,12 @@ const runWithLivePermission = async <Value>(
   const client = createPermissionCheckClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
   try {
     return await operation(
-      makeActionRuntime(database, makeActionRepository(), makeActionPermissionService(client)),
+      makeActionRuntime(
+        database,
+        makeActionRepository(),
+        makeActionPermissionService(client),
+        testOperationalScopeResolver,
+      ),
     );
   } finally {
     client.close();

@@ -120,6 +120,22 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
   expect(timeError.code).toBe('gateway_issuer_unavailable');
 });
 
+test('rejects transport correlation or any other excess principal claim', async () => {
+  const { configuration } = await makeConfiguration();
+  const error = await Effect.runPromise(
+    Effect.flip(
+      issueGatewayContextAssertion(
+        {
+          audience: 'property-registry',
+          principal: { ...principal, correlationId: 'must-remain-a-header' } as never,
+        },
+        dependencies(configuration),
+      ),
+    ),
+  );
+  expect(error.code).toBe('gateway_issuer_unavailable');
+});
+
 test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing key IDs', async () => {
   const invalidJwks = [
     undefined,

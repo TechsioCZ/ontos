@@ -16,6 +16,7 @@ import {
 } from '../../src/actions/policy.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import {
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
@@ -30,6 +31,7 @@ import {
 } from '../../src/modules/tenant-module-state-service.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import {
   actionInvocations,
   auditEvents,
@@ -306,6 +308,7 @@ const makeRegistration = ({
         role: 'action',
       }),
       idempotency: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ value: Schema.String }),
       policies,
@@ -315,15 +318,16 @@ const makeRegistration = ({
     (payload, context) =>
       Effect.gen(function* integrationHandler() {
         onExecute?.();
+        const services = context.services as { readonly transaction: ScopedTransactionExecutor };
         const inserted = yield* Effect.tryPromise({
           catch: () => new TestPersistenceError({ reason: 'test business write failed' }),
           try: () =>
-            context.transaction
+            services.transaction
               .insert(tenantModuleStates)
               .values({
                 moduleKey: moduleStateKey,
                 state: 'active',
-                tenantId: context.principal.tenantId,
+                tenantId: context.scope.tenantId,
               })
               .returning({
                 tenantModuleStateId: tenantModuleStates.tenantModuleStateId,
@@ -378,6 +382,7 @@ const makeRegistration = ({
           value: payload.value,
         };
       }),
+    (transaction) => Effect.succeed({ transaction }),
   );
 
 const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined => {
@@ -420,6 +425,7 @@ test('rechecks business module state under the tenant lock and retries after Cor
           role: 'action',
         }),
         idempotency: 'required',
+        legalEntityScope: 'optional',
         owningModuleKey: 'inventory.stock',
         payloadSchema: Schema.Void,
         policies: [
@@ -440,7 +446,12 @@ test('rechecks business module state under the tenant lock and retries after Cor
           handlerExecutions += 1;
         }),
     );
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     const firstAttempt = Effect.runPromise(
       Effect.exit(
         runtime.runAction({
@@ -526,7 +537,12 @@ test('atomically commits business state, all success evidence, and the succeeded
   const moduleStateKey = `test.${key}.${tenantId}`;
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     const result = await Effect.runPromise(
       runtime.runAction({
         payload: { value: 'committed' },
@@ -595,7 +611,12 @@ test('commits allowed Policy checkpoints atomically before handler success evide
   });
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     await Effect.runPromise(
       runtime.runAction({
         payload: { value: 'committed' },
@@ -686,6 +707,7 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
               role: 'action',
             }),
             idempotency: 'required',
+            legalEntityScope: 'optional',
             owningModuleKey: 'inventory.stock',
             payloadSchema: Schema.Struct({ value: Schema.String }),
             policies: [policy],
@@ -704,7 +726,12 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
   ] as const;
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     for (const scenario of scenarios) {
       let handlerExecutions = 0;
       const beforeMessages = await database.executor
@@ -794,6 +821,7 @@ test('rolls back every denied-Policy finalization persistence failure', async ()
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
         unconfiguredPermission,
+        testOperationalScopeResolver,
       );
       const exit = await Effect.runPromise(
         Effect.exit(
@@ -857,7 +885,12 @@ test('rolls back domain rejection, evidence persistence failure, and orphan outb
   ] as const;
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     for (const scenario of scenarios) {
       const moduleStateKey = `test.${scenario.key}.${tenantId}`;
       const exit = await Effect.runPromise(
@@ -943,6 +976,7 @@ test('rolls back every individual success-evidence persistence failure', async (
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
         unconfiguredPermission,
+        testOperationalScopeResolver,
       );
       const exit = await Effect.runPromise(
         Effect.exit(
@@ -1002,7 +1036,12 @@ test('rolls back every individual success-evidence persistence failure', async (
 
 test('keeps Policy rejection terminal and deduplicates repeated and concurrent evidence', async () => {
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     let evaluations = 0;
     let handlerExecutions = 0;
     const policy = defineGlobalPolicy<{ readonly value: string }>({
@@ -1095,8 +1134,18 @@ test('keeps Policy rejection terminal and deduplicates repeated and concurrent e
 test('never lets a losing Policy denial replace a running or successful invocation', async () => {
   await databasePromise(async (database) => {
     const repository = makeActionRepository();
-    const allowedRuntime = makeActionRuntime(database, repository, unconfiguredPermission);
-    const deniedRuntime = makeActionRuntime(database, repository, unconfiguredPermission);
+    const allowedRuntime = makeActionRuntime(
+      database,
+      repository,
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
+    const deniedRuntime = makeActionRuntime(
+      database,
+      repository,
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     const handlerStarted = await Effect.runPromise(Deferred.make<null>());
     const key = 'policy-loses-to-success';
     const moduleStateKey = `test.${key}.${tenantId}`;
@@ -1152,7 +1201,12 @@ test('never lets a losing Policy denial replace a running or successful invocati
 test('serializes concurrent requests and enforces committed, open-retry, and hash-conflict behavior', async () => {
   await Effect.runPromise(
     withDatabase((database) => {
-      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const runtime = makeActionRuntime(
+        database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+      );
       let executions = 0;
       const concurrentKey = 'concurrent-once';
       const concurrentModule = `test.concurrent.${tenantId}`;
@@ -1261,8 +1315,14 @@ test('serializes Domain Event allocation by tenant commit order', async () => {
       { executor: delayedExecutor } as ContextServiceShape,
       repository,
       unconfiguredPermission,
+      testOperationalScopeResolver,
     );
-    const secondRuntime = makeActionRuntime(database, repository, unconfiguredPermission);
+    const secondRuntime = makeActionRuntime(
+      database,
+      repository,
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     const firstModule = `test.sequence.first.${tenantId}`;
     const secondModule = `test.sequence.second.${tenantId}`;
 
@@ -1339,6 +1399,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
       { executor: uncertainExecutor } as ContextServiceShape,
       repository,
       unconfiguredPermission,
+      testOperationalScopeResolver,
     );
     const first = await Effect.runPromise(
       Effect.exit(
@@ -1352,7 +1413,12 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     );
     assert.equal(failureTag(first), 'ActionCommitIndeterminate');
 
-    const resolvingRuntime = makeActionRuntime(database, repository, unconfiguredPermission);
+    const resolvingRuntime = makeActionRuntime(
+      database,
+      repository,
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     const invocations = await database.executor
       .select()
       .from(actionInvocations)
@@ -1383,6 +1449,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
           ),
       },
       unconfiguredPermission,
+      testOperationalScopeResolver,
     );
     const unavailableResolution = await Effect.runPromise(
       Effect.exit(
@@ -1452,6 +1519,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
       { executor: uncertainRollbackExecutor } as ContextServiceShape,
       repository,
       unconfiguredPermission,
+      testOperationalScopeResolver,
     );
     const openFirst = await Effect.runPromise(
       Effect.exit(
@@ -1521,6 +1589,7 @@ test('persists no invocation or evidence for every non-writable business module 
           role: 'action',
         }),
         idempotency: 'required',
+        legalEntityScope: 'optional',
         owningModuleKey: moduleKey,
         payloadSchema: Schema.Void,
         policies: [],
@@ -1532,7 +1601,12 @@ test('persists no invocation or evidence for every non-writable business module 
           handlerExecutions += 1;
         }),
     );
-    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const runtime = makeActionRuntime(
+      database,
+      makeActionRepository(),
+      unconfiguredPermission,
+      testOperationalScopeResolver,
+    );
     await Effect.runPromise(
       runtime.runAction({
         payload: undefined,

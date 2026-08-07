@@ -2,6 +2,11 @@
 
 This document defines state-changing Action execution. MicroVertical deployment and communication are defined in [MicroVertical Architecture](./MICROVERTICALS.md); public failure contracts are defined in [Effect Error and HTTP Contracts](./ERRORS.md).
 
+Operation scope, owner-local scoped services, database settings, and governed read evidence are
+defined in [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Every Action explicitly
+declares legal-entity scope independently of entrypoint tenant/system scope. Business handlers never
+receive or import a database executor.
+
 ## Core Rules
 
 - Every state change in the system must be driven by an Action.

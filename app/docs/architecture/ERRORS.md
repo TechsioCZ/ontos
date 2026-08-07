@@ -2,6 +2,11 @@
 
 This document defines the error contract from backend Effect programs, through HTTP, into generated Backend for Frontend (BFF) clients and frontend feature code.
 
+Governed context, read denial/evidence, and isolation failures follow
+[Governed Data Access and Operation Scope](./DATA_ACCESS.md). Context or authorization uncertainty
+is a declared retryable `503`; business handlers and adapters must not receive database executors or
+leak database/SpiceDB diagnostics.
+
 ## Non-Negotiable Rules
 
 - Model every expected failure as a tagged, typed Effect error.

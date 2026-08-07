@@ -270,10 +270,45 @@ const run = (
   arguments_: readonly string[],
   routeRefresh?: (appId: string) => void,
 ) =>
-  runScaffold(command, arguments_, {
-    routeRefresh: ({ appId }) => routeRefresh?.(appId),
-    workspaceRoot: fixture.root,
-  });
+  runScaffold(
+    command,
+    command === 'action' &&
+      arguments_.includes('--action') &&
+      !arguments_.includes('--legal-entity-scope')
+      ? [...arguments_, '--legal-entity-scope', 'optional']
+      : arguments_,
+    {
+      routeRefresh: ({ appId }) => routeRefresh?.(appId),
+      workspaceRoot: fixture.root,
+    },
+  );
+
+const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => {
+  const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
+  const manifest = await readFile(manifestPath, 'utf8');
+  await writeFile(
+    manifestPath,
+    manifest.replace(
+      '    resourceTypes: [],',
+      `    resourceTypes: [
+      {
+        capabilities: {
+          graphVisible: false,
+          linkable: true,
+          mediaAttachable: false,
+          searchable: true,
+          timelineVisible: false,
+        },
+        description: 'Inventory item.',
+        key: 'inventory.stock.item',
+        label: 'Inventory item',
+        owningModuleId: 'inventory.stock',
+      },
+    ],`,
+    ),
+    'utf8',
+  );
+};
 
 test('documents every command and treats --help as a write-free operation', async () => {
   await Promise.all(
@@ -306,29 +341,7 @@ test('documents every command and treats --help as a write-free operation', asyn
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
   await withFixture(async (fixture) => {
     const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
-    const manifest = await readFile(manifestPath, 'utf8');
-    await writeFile(
-      manifestPath,
-      manifest.replace(
-        '    resourceTypes: [],',
-        `    resourceTypes: [
-      {
-        capabilities: {
-          graphVisible: false,
-          linkable: true,
-          mediaAttachable: false,
-          searchable: true,
-          timelineVisible: false,
-        },
-        description: 'Inventory item.',
-        key: 'inventory.stock.item',
-        label: 'Inventory item',
-        owningModuleId: 'inventory.stock',
-      },
-    ],`,
-      ),
-      'utf8',
-    );
+    await addInventoryItemResourceType(fixture);
 
     await run(fixture, 'module-api', [
       '--vertical',
@@ -387,17 +400,83 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       fixture.root,
       'verticals/inventory-stock/src/api/stock-levels-report-client.ts',
     );
-    assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi\)/u);
-    assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi\)/u);
+    const moduleApiClient = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/api/resource-detail-client.ts',
+    );
+    const searchProvider = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/search/inventory-items.provider.ts',
+    );
+    const reportProvider = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
+    );
+    const moduleApiRead = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/api/resource-detail.read.ts',
+    );
+    const searchServer = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/api/inventory-items-search-server.ts',
+    );
+    const reportServer = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/api/stock-levels-report-server.ts',
+    );
+    const moduleApiServer = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/api/resource-detail-read-server.ts',
+    );
+    const operationBoundary = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/api/auth/action-principal.ts',
+    );
+    assert.match(searchClient, /makeEffectHttpApiClient\(InventoryItemsSearchApi,/u);
+    assert.match(reportClient, /makeEffectHttpApiClient\(StockLevelsReportApi,/u);
+    for (const client of [moduleApiClient, searchClient, reportClient]) {
+      assert.match(client, /operationGateway\.invoke\(\(authorization\) =>/u);
+      assert.match(client, /WithAuthorization/u);
+      assert.match(client, /setHeaders\(\{ authorization, 'x-correlation-id': correlationId \}\)/u);
+    }
     assert.doesNotMatch(searchClient, /\.provider\.ts|import\(/u);
     assert.doesNotMatch(reportClient, /\.provider\.ts|import\(/u);
+    for (const provider of [searchProvider, reportProvider]) {
+      assert.match(provider, /defineRead\(/u);
+      assert.match(provider, /legalEntityScope: 'required'/u);
+      assert.match(provider, /permissionTarget: 'module'/u);
+      assert.doesNotMatch(provider, /CoreDatabase|ScopedTransactionExecutor|from 'pg'/u);
+    }
+    assert.match(searchProvider, /result\.map\(\(\{ ref \}\) => ref\)/u);
+    assert.match(moduleApiRead, /defineRead\(/u);
+    assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
+    for (const server of [moduleApiServer, searchServer, reportServer]) {
+      assert.match(server, /verifyOperationPrincipal\(request\.headers\.authorization,/u);
+      assert.match(server, /yield\* ReadRuntime/u);
+      assert.match(server, /\.runRead\(\{/u);
+      assert.match(server, /HttpEffect\.appendPreResponseHandler/u);
+      assert.match(server, /'www-authenticate', 'Bearer'/u);
+      assert.match(server, /case 'ReadHandlerNotFound'/u);
+      assert.match(server, /case 'ReadPolicyDenied'/u);
+      assert.match(server, /policyProblem\(error\.httpStatus\)/u);
+      assert.match(server, /problem\.status === 401 \? bearerChallenge/u);
+      assert.doesNotMatch(server, /tenantId|legalEntityId|principalId|CoreDatabase|from 'pg'/u);
+    }
     assert.match(
-      await readFixtureFile(
-        fixture.root,
-        'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
-      ),
+      operationBoundary,
+      /export const verifyOperationPrincipal = verifyActionPrincipal/u,
+    );
+    const searchContract = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
+    );
+    assert.match(
+      searchContract,
       /HttpApiEndpoint\.post\('execute', '\/inventory\.stock\/search\/inventory-items'/u,
     );
+    assert.doesNotMatch(searchContract, /tenantId|legalEntityId|principalId/u);
+    assert.match(searchContract, /PolicyConflictProblem/u);
+    assert.match(searchContract, /Schema\.Literal\(409\)/u);
 
     const beforeRepeat = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -469,8 +548,27 @@ test('recognizes only exact schema-only Outbox package subpaths as cross-vertica
 test('rejects malformed command contracts and leaves the fixture unchanged', async () => {
   await withFixture(async (fixture) => {
     const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      runScaffold('action', ['--vertical', 'inventory-stock', '--action', 'create-order'], {
+        workspaceRoot: fixture.root,
+      }),
+      /missing required flag --legal-entity-scope/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
     const invalidCalls: readonly [ScaffoldCommand, readonly string[], RegExp][] = [
       ['action', ['--vertical', 'inventory-stock'], /missing required flag --action/u],
+      [
+        'action',
+        [
+          '--vertical',
+          'inventory-stock',
+          '--action',
+          'create-order',
+          '--legal-entity-scope',
+          'invalid',
+        ],
+        /must be required, optional, or forbidden/u,
+      ],
       [
         'action',
         ['--vertical', 'inventory-stock', '--action', 'create-order', '--unknown', 'x'],
@@ -1067,6 +1165,7 @@ export const createOrder2Action = defineAction(
       role: 'action',
     }),
     idempotency: 'required',
+    legalEntityScope: 'optional',
     owningModuleKey: 'inventory.stock',
     payloadSchema: CreateOrder2Payload,
     policies: [],
@@ -2065,6 +2164,7 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
 });
 
 const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<string, string>>> => {
+  await addInventoryItemResourceType(fixture);
   await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
   await run(fixture, 'action', [
     '--scope',
@@ -2091,6 +2191,23 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
     'stock-available',
     '--vertical',
     'inventory-stock',
+  ]);
+  await run(fixture, 'module-api', ['--vertical', 'inventory-stock', '--name', 'resource-detail']);
+  await run(fixture, 'search-provider', [
+    '--vertical',
+    'inventory-stock',
+    '--name',
+    'inventory-items',
+    '--resource',
+    'item',
+  ]);
+  await run(fixture, 'report', [
+    '--vertical',
+    'inventory-stock',
+    '--name',
+    'stock-levels',
+    '--resource',
+    'item',
   ]);
   await run(
     fixture,
@@ -2163,6 +2280,18 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/inventory-stock/src/routes/[lang]/orders/route.meta.ts',
       'verticals/inventory-stock/api/auth/action-principal.ts',
       'verticals/inventory-stock/src/api/action-gateway.ts',
+      'verticals/inventory-stock/shared/apis/resource-detail.ts',
+      'verticals/inventory-stock/src/api/resource-detail.read.ts',
+      'verticals/inventory-stock/src/api/resource-detail-client.ts',
+      'verticals/inventory-stock/api/resource-detail-read-server.ts',
+      'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
+      'verticals/inventory-stock/src/search/inventory-items.provider.ts',
+      'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
+      'verticals/inventory-stock/api/inventory-items-search-server.ts',
+      'verticals/inventory-stock/shared/apis/stock-levels-report.ts',
+      'verticals/inventory-stock/src/reports/stock-levels.provider.ts',
+      'verticals/inventory-stock/src/api/stock-levels-report-client.ts',
+      'verticals/inventory-stock/api/stock-levels-report-server.ts',
     ];
 
     await Promise.all(
@@ -2216,8 +2345,18 @@ test('all generated files typecheck against the real workspace contracts', async
       'dir',
     );
     await symlink(
+      path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
+      path.join(fixture.root, 'node_modules/@modern-js/plugin-bff'),
+      'dir',
+    );
+    await symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/@types/react'),
       path.join(fixture.root, 'node_modules/@types/react'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'node_modules/@types/node'),
+      path.join(fixture.root, 'node_modules/@types/node'),
       'dir',
     );
     await symlink(
@@ -2228,6 +2367,11 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'packages/core-runtime/src/db'),
       path.join(fixture.root, 'packages/core-runtime/src/db'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/operations'),
+      path.join(fixture.root, 'packages/core-runtime/src/operations'),
       'dir',
     );
     await symlink(
@@ -2271,7 +2415,7 @@ test('all generated files typecheck against the real workspace contracts', async
           skipLibCheck: true,
           strict: true,
           target: 'ESNext',
-          types: ['react'],
+          types: ['node', 'react'],
         },
         include: [
           'packages/core-runtime/src/modules/actions/**/*.ts',
@@ -2285,6 +2429,9 @@ test('all generated files typecheck against the real workspace contracts', async
           'verticals/inventory-stock/src/routes/**/*.tsx',
           'verticals/inventory-stock/api/**/*.ts',
           'verticals/inventory-stock/src/api/**/*.ts',
+          'verticals/inventory-stock/shared/apis/**/*.ts',
+          'verticals/inventory-stock/src/search/**/*.ts',
+          'verticals/inventory-stock/src/reports/**/*.ts',
         ],
       }),
       'utf-8',

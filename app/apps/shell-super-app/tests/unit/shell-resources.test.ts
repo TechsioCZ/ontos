@@ -21,6 +21,7 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const principalId = '30000000-0000-4000-8000-000000000001';
 const context = {
+  authMethod: 'system' as const,
   correlationId: 'unit-correlation',
   legalEntityId,
   principalId,
@@ -68,6 +69,7 @@ const catalog = (): InstalledModuleCatalog =>
                 actionKey: 'property.registry.attach-media',
                 auditProfile: 'standard',
                 idempotency: 'required',
+                legalEntityScope: 'required',
                 owningModuleId: moduleId,
                 schemaVersion: '1',
               },
@@ -168,14 +170,22 @@ const dependencies = (
   moduleDecision: ContextAccessDecision = 'allowed',
   resourceDecision: ContextAccessDecision = 'allowed',
   resourceWriteDecision: ContextAccessDecision = resourceDecision,
-) => ({
-  catalog: Effect.succeed(catalog()),
-  contextAccess: access(moduleDecision, resourceDecision, resourceWriteDecision),
-  moduleStates: {
-    getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
-      Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
-  },
-});
+) => {
+  let assertion = 0;
+  return {
+    catalog: Effect.succeed(catalog()),
+    contextAccess: access(moduleDecision, resourceDecision, resourceWriteDecision),
+    issueAssertion: () => {
+      const authorization = `Bearer test-${assertion}`;
+      assertion += 1;
+      return Effect.succeed(authorization);
+    },
+    moduleStates: {
+      getTenantModuleStates: (_tenantId: string, moduleIds: readonly string[]) =>
+        Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
+    },
+  };
+};
 
 test('search treats empty input as empty without touching providers', async () => {
   let calls = 0;
@@ -299,10 +309,6 @@ test('treats a missing tenant module-state record as hidden rather than authoriz
     ),
   ).resolves.toEqual({ partial: false, results: [] });
   const gateway = {
-    attachMedia: () => {
-      calls += 1;
-      return Effect.succeed({ attached: true as const });
-    },
     detail: () => {
       calls += 1;
       return Effect.succeed({ fields: [], title: 'Unit 1' });
@@ -312,9 +318,9 @@ test('treats a missing tenant module-state record as hidden rather than authoriz
   await expect(
     Effect.runPromise(makeShellResourceDetail(hiddenDependencies, gateway).resolve(context, ref)),
   ).resolves.toEqual({ outcome: 'not_found' });
-  await expect(
-    Effect.runPromise(makeShellMediaAttachment(hiddenDependencies, gateway).attach(context, ref)),
-  ).resolves.toEqual({ outcome: 'not_found' });
+  await expect(Effect.runPromise(makeShellMediaAttachment().attach(context, ref))).resolves.toEqual(
+    { outcome: 'unavailable' },
+  );
   expect(calls).toBe(0);
 });
 
@@ -368,7 +374,6 @@ test('resource detail applies catalog, state, module and resource gates before p
 test('resource detail sorts an authorized timeline and exposes projection lag', async () => {
   const result = await Effect.runPromise(
     makeShellResourceDetail(dependencies(), {
-      attachMedia: () => Effect.succeed({ attached: true as const }),
       detail: () => Effect.succeed({ fields: [], title: 'Unit 1' }),
       timeline: () =>
         Effect.succeed({
@@ -382,7 +387,7 @@ test('resource detail sorts an authorized timeline and exposes projection lag', 
   );
   expect(result).toEqual({
     detail: { fields: [], title: 'Unit 1' },
-    media: { enabled: true, reason: 'available' },
+    media: { enabled: false, reason: 'unavailable' },
     outcome: 'resolved',
     projectionLagging: true,
     timeline: [
@@ -392,9 +397,8 @@ test('resource detail sorts an authorized timeline and exposes projection lag', 
   });
 });
 
-test('media affordance never enables mutation through absent, read-only, or denied gates', async () => {
+test('media affordance remains unavailable until a generated Action exists', async () => {
   const provider = {
-    attachMedia: () => Effect.succeed({ attached: true as const }),
     detail: () => Effect.succeed({ fields: [], title: 'Unit 1' }),
     timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
   };
@@ -410,42 +414,32 @@ test('media affordance never enables mutation through absent, read-only, or deni
         provider,
       ).resolve(context, ref),
     ),
-  ).resolves.toMatchObject({ media: { enabled: false, reason: 'forbidden' } });
-  await expect(
-    Effect.runPromise(
-      makeShellResourceDetail(dependencies(), { ...provider, attachMedia: undefined }).resolve(
-        context,
-        ref,
-      ),
-    ),
   ).resolves.toMatchObject({ media: { enabled: false, reason: 'unavailable' } });
   await expect(
     Effect.runPromise(makeShellResourceDetail(dependencies(), provider).resolve(context, ref)),
-  ).resolves.toMatchObject({ media: { enabled: true, reason: 'available' } });
+  ).resolves.toMatchObject({ media: { enabled: false, reason: 'unavailable' } });
 });
 
-test('media execution rechecks write permission and invokes the typed gateway only after all gates', async () => {
-  let calls = 0;
-  const gateway = {
-    attachMedia: ({ context: receivedContext }: { context: typeof context }) => {
-      calls += 1;
-      expect(receivedContext.correlationId).toBe('unit-correlation');
-      return Effect.succeed({ attached: true as const });
-    },
-    detail: () => Effect.succeed({ fields: [], title: 'Unit 1' }),
-    timeline: () => Effect.succeed({ entries: [], projectionLagging: false }),
-  };
-  await expect(
-    Effect.runPromise(
-      makeShellMediaAttachment(
-        dependencies('active', 'allowed', 'allowed', 'denied'),
-        gateway,
-      ).attach(context, ref),
-    ),
-  ).resolves.toEqual({ outcome: 'forbidden' });
-  expect(calls).toBe(0);
-  await expect(
-    Effect.runPromise(makeShellMediaAttachment(dependencies(), gateway).attach(context, ref)),
-  ).resolves.toEqual({ outcome: 'resolved', result: { attached: true } });
-  expect(calls).toBe(1);
+test('media endpoint cannot invoke a provider mutation', async () => {
+  await expect(Effect.runPromise(makeShellMediaAttachment().attach(context, ref))).resolves.toEqual(
+    { outcome: 'unavailable' },
+  );
+});
+
+test('acquires a fresh audience-scoped assertion for each provider attempt', async () => {
+  const authorizations: string[] = [];
+  const result = await Effect.runPromise(
+    makeShellResourceDetail(dependencies(), {
+      detail: ({ authorization }) => {
+        authorizations.push(authorization);
+        return Effect.succeed({ fields: [], title: 'Unit 1' });
+      },
+      timeline: ({ authorization }) => {
+        authorizations.push(authorization);
+        return Effect.succeed({ entries: [], projectionLagging: false });
+      },
+    }).resolve(context, ref),
+  );
+  expect(result.outcome).toBe('resolved');
+  expect(authorizations).toEqual(['Bearer test-0', 'Bearer test-1']);
 });

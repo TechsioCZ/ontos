@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -102,6 +103,7 @@ export const legalEntities = coreSchema.table(
     updatedAt: updatedAt(),
   },
   (table) => [
+    uniqueIndex('core_legal_entities_tenant_id_uk').on(table.tenantId, table.legalEntityId),
     uniqueIndex('core_legal_entities_registration_uk').on(
       table.tenantId,
       table.registrationCountry,
@@ -127,6 +129,7 @@ export const principals = coreSchema.table(
     disabledAt: timestamp('disabled_at', { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex('core_principals_tenant_id_uk').on(table.tenantId, table.principalId),
     index('core_principals_tenant_kind_idx').on(table.tenantId, table.kind),
     check(
       'core_principals_kind_ck',
@@ -136,13 +139,9 @@ export const principals = coreSchema.table(
   ],
 );
 
-const principalId = (columnName = 'principal_id') =>
-  uuid(columnName)
-    .notNull()
-    .references(() => principals.principalId, { onDelete: 'restrict' });
+const principalId = (columnName = 'principal_id') => uuid(columnName).notNull();
 
-const optionalPrincipalId = (columnName = 'principal_id') =>
-  uuid(columnName).references(() => principals.principalId, { onDelete: 'restrict' });
+const optionalPrincipalId = (columnName = 'principal_id') => uuid(columnName);
 
 export const principalAuthBindings = coreSchema.table(
   'principal_auth_bindings',
@@ -159,6 +158,7 @@ export const principalAuthBindings = coreSchema.table(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex('core_auth_bindings_tenant_id_uk').on(table.tenantId, table.principalAuthBindingId),
     uniqueIndex('core_auth_bindings_subject_uk').on(
       table.tenantId,
       table.provider,
@@ -166,6 +166,11 @@ export const principalAuthBindings = coreSchema.table(
       table.providerSubjectId,
     ),
     index('core_auth_bindings_principal_idx').on(table.principalId),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_auth_bindings_tenant_principal_fk',
+    }).onDelete('restrict'),
     check('core_auth_bindings_provider_ck', sql`${table.provider} in ('better_auth')`),
     check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
     check(
@@ -175,15 +180,9 @@ export const principalAuthBindings = coreSchema.table(
   ],
 );
 
-const legalEntityId = () =>
-  uuid('legal_entity_id').references(() => legalEntities.legalEntityId, {
-    onDelete: 'restrict',
-  });
+const legalEntityId = () => uuid('legal_entity_id');
 
-const authBindingId = () =>
-  uuid('auth_binding_id').references(() => principalAuthBindings.principalAuthBindingId, {
-    onDelete: 'restrict',
-  });
+const authBindingId = () => uuid('auth_binding_id');
 
 const authContextRefColumns = () => ({
   authBindingId: authBindingId(),
@@ -234,6 +233,10 @@ export const actionInvocations = coreSchema.table(
     completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (table) => [
+    uniqueIndex('core_action_invocations_tenant_id_uk').on(
+      table.tenantId,
+      table.actionInvocationId,
+    ),
     uniqueIndex('core_action_invocations_idempotency_uk')
       .on(table.tenantId, table.actionKey, table.principalId, table.idempotencyKey)
       .where(sql`${table.idempotencyKey} is not null`),
@@ -244,6 +247,29 @@ export const actionInvocations = coreSchema.table(
       table.targetResourceType,
       table.targetResourceId,
     ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_action_invocations_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_action_invocations_tenant_principal_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.authBindingId],
+      foreignColumns: [
+        principalAuthBindings.tenantId,
+        principalAuthBindings.principalAuthBindingId,
+      ],
+      name: 'core_action_invocations_tenant_auth_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.impersonatedByPrincipalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_action_invocations_tenant_impersonator_fk',
+    }).onDelete('restrict'),
     check(
       'core_action_invocations_auth_method_ck',
       sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation')`,
@@ -255,10 +281,7 @@ export const actionInvocations = coreSchema.table(
   ],
 );
 
-const actionInvocationId = () =>
-  uuid('action_invocation_id').references(() => actionInvocations.actionInvocationId, {
-    onDelete: 'restrict',
-  });
+const actionInvocationId = () => uuid('action_invocation_id');
 
 export const tenantModuleStateChanges = coreSchema.table(
   'tenant_module_state_changes',
@@ -280,6 +303,16 @@ export const tenantModuleStateChanges = coreSchema.table(
       table.moduleKey,
       table.occurredAt,
     ),
+    foreignKey({
+      columns: [table.tenantId, table.changedByPrincipalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_module_state_changes_tenant_principal_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.actionInvocationId],
+      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      name: 'core_module_state_changes_tenant_invocation_fk',
+    }).onDelete('restrict'),
     check(
       'core_module_state_changes_source_ck',
       sql`${table.changeSource} in ('user', 'support', 'system')`,
@@ -315,8 +348,37 @@ export const auditEvents = coreSchema.table(
     occurredAt: occurredAt(),
   },
   (table) => [
+    uniqueIndex('core_audit_events_tenant_id_uk').on(table.tenantId, table.auditEventId),
     index('core_audit_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
     index('core_audit_events_action_idx').on(table.actionInvocationId),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_audit_events_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.actionInvocationId],
+      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      name: 'core_audit_events_tenant_invocation_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_audit_events_tenant_principal_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.authBindingId],
+      foreignColumns: [
+        principalAuthBindings.tenantId,
+        principalAuthBindings.principalAuthBindingId,
+      ],
+      name: 'core_audit_events_tenant_auth_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.impersonatedByPrincipalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_audit_events_tenant_impersonator_fk',
+    }).onDelete('restrict'),
     check(
       'core_audit_events_outcome_ck',
       sql`${table.outcome} in ('allowed', 'denied', 'succeeded', 'failed')`,
@@ -332,10 +394,7 @@ export const auditEvents = coreSchema.table(
   ],
 );
 
-const auditEventId = () =>
-  uuid('audit_event_id').references(() => auditEvents.auditEventId, {
-    onDelete: 'restrict',
-  });
+const auditEventId = () => uuid('audit_event_id');
 
 export const dataAccessEvents = coreSchema.table(
   'data_access_events',
@@ -347,12 +406,15 @@ export const dataAccessEvents = coreSchema.table(
     principalId: principalId(),
     ...authContextRefColumns(),
     authMethod: text('auth_method').notNull(),
+    outcome: text('outcome').notNull(),
+    outcomeStage: text('outcome_stage').notNull(),
+    outcomeCode: text('outcome_code').notNull(),
     accessKind: text('access_kind').notNull(),
     servingModuleKey: text('serving_module_key').notNull(),
     targetModuleKey: text('target_module_key'),
     targetResourceType: text('target_resource_type'),
     targetResourceId: text('target_resource_id'),
-    queryHash: text('query_hash').notNull(),
+    queryHash: text('query_hash'),
     resultCount: integer('result_count').notNull(),
     resultFingerprintSchema: text('result_fingerprint_schema'),
     resultFingerprintHash: text('result_fingerprint_hash'),
@@ -363,7 +425,44 @@ export const dataAccessEvents = coreSchema.table(
     occurredAt: occurredAt(),
   },
   (table) => [
+    uniqueIndex('core_data_access_events_tenant_id_uk').on(table.tenantId, table.dataAccessEventId),
     index('core_data_access_events_tenant_occurred_idx').on(table.tenantId, table.occurredAt),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_data_access_events_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.actionInvocationId],
+      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      name: 'core_data_access_events_tenant_invocation_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.principalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_data_access_events_tenant_principal_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.authBindingId],
+      foreignColumns: [
+        principalAuthBindings.tenantId,
+        principalAuthBindings.principalAuthBindingId,
+      ],
+      name: 'core_data_access_events_tenant_auth_binding_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.impersonatedByPrincipalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_data_access_events_tenant_impersonator_fk',
+    }).onDelete('restrict'),
+    check(
+      'core_data_access_events_outcome_ck',
+      sql`${table.outcome} in ('allowed', 'denied', 'failed')`,
+    ),
+    check(
+      'core_data_access_events_stage_ck',
+      sql`${table.outcomeStage} in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence')`,
+    ),
     check(
       'core_data_access_events_access_kind_ck',
       sql`${table.accessKind} in ('read', 'list', 'search', 'export', 'download')`,
@@ -379,10 +478,7 @@ export const dataAccessEvents = coreSchema.table(
   ],
 );
 
-const dataAccessEventId = () =>
-  uuid('data_access_event_id').references(() => dataAccessEvents.dataAccessEventId, {
-    onDelete: 'restrict',
-  });
+const dataAccessEventId = () => uuid('data_access_event_id');
 
 export const domainEvents = coreSchema.table(
   'domain_events',
@@ -408,6 +504,7 @@ export const domainEvents = coreSchema.table(
     occurredAt: occurredAt(),
   },
   (table) => [
+    uniqueIndex('core_domain_events_tenant_id_uk').on(table.tenantId, table.domainEventId),
     uniqueIndex('core_domain_events_tenant_sequence_uk').on(table.tenantId, table.tenantSequenceNo),
     index('core_domain_events_subject_idx').on(
       table.tenantId,
@@ -415,13 +512,20 @@ export const domainEvents = coreSchema.table(
       table.subjectResourceType,
       table.subjectResourceId,
     ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_domain_events_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.actionInvocationId],
+      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      name: 'core_domain_events_tenant_invocation_fk',
+    }).onDelete('restrict'),
   ],
 );
 
-const domainEventId = () =>
-  uuid('domain_event_id').references(() => domainEvents.domainEventId, {
-    onDelete: 'restrict',
-  });
+const domainEventId = () => uuid('domain_event_id');
 
 export const outboxMessages = coreSchema.table(
   'outbox_messages',
@@ -441,6 +545,11 @@ export const outboxMessages = coreSchema.table(
     index('core_outbox_messages_unmatched_idx')
       .on(table.createdAt)
       .where(sql`${table.matchedAt} is null`),
+    foreignKey({
+      columns: [table.tenantId, table.domainEventId],
+      foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],
+      name: 'core_outbox_messages_tenant_domain_event_fk',
+    }).onDelete('restrict'),
   ],
 );
 
@@ -519,12 +628,23 @@ export const mediaAssets = coreSchema.table(
     updatedAt: updatedAt(),
   },
   (table) => [
+    uniqueIndex('core_media_assets_tenant_id_uk').on(table.tenantId, table.mediaAssetId),
     uniqueIndex('core_media_assets_storage_uk').on(
       table.storageProvider,
       table.storageKey,
       table.storageObjectVersionRef,
     ),
     index('core_media_assets_tenant_idx').on(table.tenantId),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_media_assets_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.ingestedByPrincipalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_media_assets_tenant_principal_fk',
+    }).onDelete('restrict'),
     check(
       'core_media_assets_ingestion_source_ck',
       sql`${table.ingestionSource} in ('user', 'integration', 'import', 'system')`,
@@ -536,10 +656,7 @@ export const mediaAssets = coreSchema.table(
   ],
 );
 
-const mediaAssetId = () =>
-  uuid('media_asset_id')
-    .notNull()
-    .references(() => mediaAssets.mediaAssetId, { onDelete: 'restrict' });
+const mediaAssetId = () => uuid('media_asset_id').notNull();
 
 export const mediaLinks = coreSchema.table(
   'media_links',
@@ -564,6 +681,21 @@ export const mediaLinks = coreSchema.table(
       table.targetResourceType,
       table.targetResourceId,
     ),
+    foreignKey({
+      columns: [table.tenantId, table.mediaAssetId],
+      foreignColumns: [mediaAssets.tenantId, mediaAssets.mediaAssetId],
+      name: 'core_media_links_tenant_asset_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.linkedByPrincipalId],
+      foreignColumns: [principals.tenantId, principals.principalId],
+      name: 'core_media_links_tenant_principal_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.actionInvocationId],
+      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      name: 'core_media_links_tenant_invocation_fk',
+    }).onDelete('restrict'),
     check(
       'core_media_links_source_ck',
       sql`${table.linkSource} in ('user', 'integration', 'import', 'system')`,
@@ -615,6 +747,36 @@ export const evidenceReferences = coreSchema.table(
       table.subjectResourceType,
       table.subjectResourceId,
     ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_evidence_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.mediaAssetId],
+      foreignColumns: [mediaAssets.tenantId, mediaAssets.mediaAssetId],
+      name: 'core_evidence_tenant_asset_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.actionInvocationId],
+      foreignColumns: [actionInvocations.tenantId, actionInvocations.actionInvocationId],
+      name: 'core_evidence_tenant_invocation_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.auditEventId],
+      foreignColumns: [auditEvents.tenantId, auditEvents.auditEventId],
+      name: 'core_evidence_tenant_audit_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.dataAccessEventId],
+      foreignColumns: [dataAccessEvents.tenantId, dataAccessEvents.dataAccessEventId],
+      name: 'core_evidence_tenant_data_access_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.domainEventId],
+      foreignColumns: [domainEvents.tenantId, domainEvents.domainEventId],
+      name: 'core_evidence_tenant_domain_event_fk',
+    }).onDelete('restrict'),
     check(
       'core_evidence_references_source_kind_ck',
       sql`${table.sourceKind} in ('action', 'audit', 'data_access', 'domain_event')`,
@@ -662,6 +824,11 @@ export const searchIndexEntries = coreSchema.table(
       table.sourceResourceType,
       table.sourceResourceId,
     ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_search_index_entries_tenant_legal_entity_fk',
+    }).onDelete('restrict'),
   ],
 );
 
