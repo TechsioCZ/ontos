@@ -14,6 +14,7 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 - **Effect errors:** Use Effect end to end for application behavior, BFF contracts and clients, and expected failures. Every backend error response must come from a declared typed Effect error with the correct HTTP status. Follow [Effect Error and HTTP Contracts](./docs/architecture/ERRORS.md).
 - **Database access:** Keep PostgreSQL access typed through Drizzle schema references and query builders inside Effect services. Follow [Database Architecture](./docs/architecture/DATABASE.md).
 - **Outbox Workers:** Consume cross-MicroVertical facts only through published schema contracts and the Core-owned delivery runtime. Follow [Outbox Worker Architecture](./docs/architecture/OUTBOX_WORKERS.md).
+- **Module manifests:** Keep deployment `appId` and business `moduleId` distinct, discover modules only through the deployment allowlist and serialized contract, and keep runtime registrations owner-local. Follow [OntOS Module Manifests](./docs/architecture/MODULE_MANIFESTS.md).
 
 ### Task-Specific Rules
 
@@ -33,6 +34,16 @@ mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --actio
 
 The Core form accepts only stable `core.*` module keys and writes only to the generated Core
 Action owner slot. Do not combine Core and MicroVertical ownership flags.
+
+Before any business generator targets a newly created MicroVertical, generate its paired manifest
+and private registration exactly once:
+
+```bash
+mise exec -- pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
+```
+
+Shell/Core and ordinary MicroVertical source must never import another deployment's
+`vertical.manifest.ts` or `vertical.registration.ts`.
 
 ## Toolchain
 

@@ -11,13 +11,13 @@ owner's Effect repositories and services. The owner composes those requirements 
 layer, using the same server-side capabilities available to its Actions; Core never imports or
 publishes the private implementations.
 
-Matching uses the complete schema-free installed subscription catalog generated at
-`packages/core-runtime/src/outbox/subscriptions.generated.ts`. Every process reads the same
-catalog, while it claims and executes only registrations from its owning MicroVertical. The
-Codesmith worker generator updates this catalog atomically with the private worker, and the
-workspace contract gate verifies that the catalog exactly matches all generated worker markers.
-This split prevents the first polling process from marking a message with only its local handlers
-and starving other independently hosted consumers.
+Matching uses the complete schema-free subscription snapshot from the validated installed-module
+deployment catalog. Core's matcher receives that complete snapshot explicitly and creates
+deliveries before independently deployed owner processes claim them. A worker process holds only
+its own private registrations and must prove they match its deployment descriptors. No generator
+scans unrelated vertical source or rewrites a shared source-time subscription registry. This split
+prevents the first polling process from marking a message with only its local handlers and starving
+other independently hosted consumers.
 
 `scaffold:outbox-worker` creates the owner-local process host and adds `dev:worker` and
 `worker:start` scripts to the consumer package when needed. Run one consumer with
@@ -40,6 +40,8 @@ remain at-least-once and must still be idempotent.
 ## Published Contract Boundary
 
 - A producer publishes one schema-only package subpath per exact topic. It contains the Effect payload schema, producer module key, and topic constant—never an Action, factory, repository, handler, transport, database client, or BFF implementation.
+- Producer, consumer, and worker ownership use dotted OntOS module IDs. Deployment app IDs are not
+  Outbox business identities.
 - A consumer imports that published subpath and its own Core descriptor API. It never deep-imports another MicroVertical's source or executes another MicroVertical's implementation.
 - Generate producer messages with `pnpm scaffold:outbox-message` and consumers with `pnpm scaffold:outbox-worker`. Generated worker registries stay server-side and are not Module Federation or BFF surfaces.
 

@@ -19,7 +19,7 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
   expect(authentication['owners']).toEqual(['shell-super-app', 'core-runtime']);
   expect(
     (topology['verticals'] as readonly Record<string, unknown>[]).map((vertical) => vertical['id']),
-  ).toEqual(['testing1']);
+  ).toEqual([]);
   expect(
     (
       (shell['moduleFederation'] as Record<string, unknown>)['remotes'] as readonly Record<
@@ -27,7 +27,7 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
         unknown
       >[]
     ).map((remote) => remote['id']),
-  ).toEqual(['testing1']);
+  ).toEqual([]);
   expect(fs.existsSync(new URL('verticals/auth', workspaceRoot))).toBe(false);
   expect(JSON.stringify(shellPackage)).not.toContain('@app/auth');
   expect(JSON.stringify(ownership)).not.toContain('"id":"auth"');

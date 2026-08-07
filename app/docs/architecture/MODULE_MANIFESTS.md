@@ -1,0 +1,80 @@
+# OntOS Module Manifests
+
+An OntOS Module Manifest is a validated business-capability contract. It is data, not an executable
+plugin and not an UltraModern deployment inventory. V0 supports exactly one `business_module` per
+MicroVertical deployment.
+
+## Identity
+
+- `appId` is the hyphenated UltraModern topology identity of a deployment. It remains the Module
+  Federation remote identity, deployment lookup key, and exact Shell gateway JWT audience.
+- `moduleId` is the stable dotted OntOS capability identity. It owns Actions, Policies, resources,
+  events, Outbox producers and consumers, and `core.tenant_module_states.module_key`.
+- These identities may happen to contain equal text, but their roles never become interchangeable.
+
+For example, deployment `property-registry` may publish module `property.registry`.
+
+## Four layers
+
+1. Generated topology and an environment overlay enumerate known deployments and authorize one
+   module-contract URL per topology vertical. A reachable service cannot add or install itself.
+2. The owner-authored `vertical.manifest.ts` contains an Effect Schema-validated value referencing
+   real typed Actions, Effect API values, Module Federation component values, payload Schemas, and
+   plain public descriptors.
+3. The owning build emits a deterministic versioned JSON deployment contract. Shell fetches only
+   allowlisted contracts and builds an immutable catalog indexed independently by `appId` and
+   `moduleId`.
+4. `vertical.registration.ts` binds private executable Actions and workers for the owning process.
+   Only safe descriptors may be projected into the deployment contract.
+
+Tenant activation is separate from installation. Deployment and allowlist configuration install a
+known capability; tenant module state decides whether that installed module is active for a tenant.
+
+## Network and artifact contract
+
+Every MicroVertical deployment serves the immutable document at
+`/.well-known/ontos-module-manifest.json`. The document uses schema version `0`, media type
+`application/json`, `Cache-Control: no-cache`, a strong build-marker ETag, and is limited to 1 MiB.
+Shell loads it with a five-second deadline, redirect following disabled, and exact topology `appId`
+matching. Contract URLs must use HTTPS except loopback HTTP during development. Credentials,
+fragments, unsafe schemes, and duplicate normalized URLs are forbidden.
+
+The document may describe identity, activation, dependencies, public Actions/API/components,
+resources, public events, search, reports, and schema-free Outbox subscriptions. It must never
+contain a function, Effect program, React component, handler, Policy, migration, route, repository,
+database metadata, source path, import/export specifier, fixture, test, secret, or arbitrary private
+runtime value.
+
+## Import and execution boundaries
+
+Shell/Core and ordinary MicroVertical consumers must not statically import another deployment's
+`vertical.manifest.ts`, `vertical.registration.ts`, or private source. Synchronous calls use the
+provider's generated Effect BFF client, public components use generated Module Federation wrappers,
+and asynchronous communication uses published schema-only Outbox contracts. Executable Actions,
+Policies, workers, migrations, routes, repositories, search implementations, and report
+implementations stay owner-local.
+
+The installed catalog rejects unsupported schema versions, deployment/manifest identity mismatch,
+duplicate app or module IDs, missing mandatory dependencies, self-dependencies, and
+`must_be_active_first` cycles. A failed load never creates or caches a partial catalog.
+
+## Generator order
+
+After UltraModern creates a topology-backed vertical, run the module-contract Codesmith generator
+before any business generator:
+
+```bash
+mise exec -- pnpm scaffold:module-contract -- --vertical property-registry --module property.registry
+```
+
+All later business generators read the generated module-ID marker and patch only explicit
+generator-owned slots. They fail without a consistent package, topology entry, manifest, and private
+registration.
+
+## Repository documentation follow-up
+
+The repository-level `../docs/03_ARCHITECTURE_OVERVIEW.md`, `../docs/04_C4_MODEL.md`,
+`../docs/05_MICROVERTICALS.md`, `../docs/14_ONTOS_MODULE_MANIFEST.md`, `../docs/CONTEXT.md`, and
+proposed ADRs still describe a jointly deployed process or static registration catalog. Their
+documentation owners must reconcile that older model separately; this app-local contract is the
+authoritative implementation rule for independently deployed MicroVerticals.

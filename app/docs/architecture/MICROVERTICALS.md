@@ -2,6 +2,11 @@
 
 Each MicroVertical is a complete, independently deployable business module. It owns its domain model, database schema and migrations, repositories, Effect services, Backend for Frontend (BFF) contract and implementation, generated BFF client, and feature UI.
 
+The UltraModern topology `appId` identifies that deployment. Its OntOS `moduleId` identifies the
+business capability and owns Actions, resources, events, Outbox contracts, Policies, and tenant
+module state. Follow [OntOS Module Manifests](./MODULE_MANIFESTS.md); never infer one identity from
+the other.
+
 ## Seam Model
 
 OntOS has two different kinds of seams. Do not treat them as equivalent.
@@ -18,6 +23,9 @@ The vertical seam between MicroVerticals is non-negotiable:
 - Every MicroVertical must be deployable to its own server or process independently of every other MicroVertical.
 - Moving a MicroVertical from a shared host to a separate host must require deployment configuration or adapter selection only. It must not require changes to consuming business logic.
 - A MicroVertical must not import another MicroVertical's implementation, access its database or repositories, call its internal Effect services, or participate in its database transaction.
+- Shell/Core and other MicroVerticals must not import another deployment's `vertical.manifest.ts`
+  or `vertical.registration.ts`. The serialized allowlisted module contract is the metadata seam;
+  executable registration remains inside its owning deployment.
 - Shared packages may contain stable contracts and genuinely cross-cutting infrastructure. They must not become a back door for sharing MicroVertical business logic or persistence models.
 - Executable Policies owned by a MicroVertical are private, owner-local business behavior. Another MicroVertical must not import, register, or execute them. The only cross-module Policy reference exception is the narrow global Policy contract implemented and owned by Shell/Core; an Action may reference a global Policy without gaining access to Core repositories or another module's services.
 - Synchronous communication may cross the seam only through the provider's published, contract-derived Effect client.

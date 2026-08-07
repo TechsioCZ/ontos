@@ -8,6 +8,9 @@ Object.assign(globalThis, { require: createRequire(import.meta.url) });
 const referenceTopology = JSON.parse(
   readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
 ) as unknown;
+const developmentOverlay = JSON.parse(
+  readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8'),
+) as unknown;
 
 export default defineConfig({
   clearMocks: true,
@@ -22,6 +25,11 @@ export default defineConfig({
   source: {
     define: {
       ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: JSON.stringify(referenceTopology),
+      ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: JSON.stringify({
+        environment: 'development',
+        overlay: developmentOverlay,
+        topology: referenceTopology,
+      }),
       ULTRAMODERN_SITE_URL: JSON.stringify('http://localhost:3020'),
     },
   },

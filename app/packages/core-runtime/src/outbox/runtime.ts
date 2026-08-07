@@ -1,5 +1,5 @@
 /* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual flatMap API is intentional. */
-// @effect-diagnostics globalDateInEffect:off instanceOfSchema:off
+// @effect-diagnostics effectFnOpportunity:off globalDateInEffect:off instanceOfSchema:off
 import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
 import type {
   AnyOutboxWorkerRegistration,
@@ -21,7 +21,6 @@ import {
 import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository, OutboxRepositoryLive } from './repository.ts';
 import type { OutboxClaim, OutboxRepositoryService } from './repository.ts';
-import { installedOutboxWorkerSubscriptions } from './subscriptions.generated.ts';
 
 export interface RunOutboxCycleInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
@@ -30,6 +29,17 @@ export interface RunOutboxCycleInput<
   readonly maxDeliveries?: number;
   readonly now?: Date;
   readonly registrations: readonly Registration[];
+  readonly subscriptions: readonly OutboxWorkerSubscription[];
+}
+
+export interface MatchOutboxMessagesInput {
+  readonly now?: Date;
+  readonly subscriptions: readonly OutboxWorkerSubscription[];
+}
+
+export interface OutboxMatchResult {
+  readonly deliveriesCreated: number;
+  readonly messagesMatched: number;
 }
 
 export interface OutboxCycleResult {
@@ -48,6 +58,9 @@ export type OutboxCycleError =
   | OutboxWorkerDescriptorError;
 
 export interface OutboxRuntimeService {
+  readonly matchMessages: (
+    input: MatchOutboxMessagesInput,
+  ) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError>;
   readonly runCycle: <Registration extends AnyOutboxWorkerRegistration>(
     input: RunOutboxCycleInput<Registration>,
   ) => Effect.Effect<OutboxCycleResult, OutboxCycleError, OutboxWorkerRequirements<Registration>>;
@@ -143,14 +156,21 @@ const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext => ({
   workerKey: claim.workerKey,
 });
 
-export const makeOutboxRuntime = (
-  repository: OutboxRepositoryService,
-  subscriptions: readonly OutboxWorkerSubscription[] = installedOutboxWorkerSubscriptions,
-): OutboxRuntimeService => {
-  const matchingSubscriptions = validateOutboxWorkerSubscriptions(subscriptions);
-  const matchingSubscriptionsByKey = new Map(
-    matchingSubscriptions.map((subscription) => [subscription.workerKey, subscription]),
-  );
+export const makeOutboxRuntime = (repository: OutboxRepositoryService): OutboxRuntimeService => {
+  const matchMessages: OutboxRuntimeService['matchMessages'] = (input) =>
+    Effect.gen(function* matchOutboxMessagesEffect() {
+      const subscriptions = yield* Effect.try({
+        catch: () => descriptorFailure('The installed subscription snapshot is invalid'),
+        try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
+      });
+      const now = input.now ?? new Date();
+      if (Number.isNaN(now.getTime())) {
+        return yield* descriptorFailure('now must be a valid timestamp');
+      }
+      return yield* repository
+        .matchUnmatched(subscriptions, now)
+        .pipe(Effect.tapError(() => logUnexpectedPersistence()));
+    }).pipe(Effect.withSpan('OutboxMatcher.matchMessages'));
   const runCycle: OutboxRuntimeService['runCycle'] = <
     Registration extends AnyOutboxWorkerRegistration,
   >(
@@ -158,8 +178,15 @@ export const makeOutboxRuntime = (
   ) =>
     Effect.gen(function* runOutboxCycleEffect() {
       const validated = yield* validateCycleInput(input);
+      const deployedSubscriptions = yield* Effect.try({
+        catch: () => descriptorFailure('The deployed subscription snapshot is invalid'),
+        try: () => validateOutboxWorkerSubscriptions(input.subscriptions),
+      });
+      const subscriptionsByKey = new Map(
+        deployedSubscriptions.map((subscription) => [subscription.workerKey, subscription]),
+      );
       for (const registration of validated.registrations) {
-        const subscription = matchingSubscriptionsByKey.get(registration.descriptor.workerKey);
+        const subscription = subscriptionsByKey.get(registration.descriptor.workerKey);
         if (
           subscription === undefined ||
           subscription.consumerModuleKey !== registration.descriptor.consumerModuleKey ||
@@ -171,14 +198,16 @@ export const makeOutboxRuntime = (
           );
         }
       }
+      if (deployedSubscriptions.length !== validated.registrations.length) {
+        return yield* descriptorFailure(
+          'the owner-local worker registration set contradicts its deployed descriptor snapshot',
+        );
+      }
       const registrationsByKey = new Map<string, Registration>(
         validated.registrations.map(
           (registration) => [registration.descriptor.workerKey, registration] as const,
         ),
       );
-      const matched = yield* repository
-        .matchUnmatched(matchingSubscriptions, validated.now)
-        .pipe(Effect.tapError(() => logUnexpectedPersistence()));
       let claimed = 0;
       let dead = 0;
       let failed = 0;
@@ -274,9 +303,9 @@ export const makeOutboxRuntime = (
       return Object.freeze({
         claimed,
         dead,
-        deliveriesCreated: matched.deliveriesCreated,
+        deliveriesCreated: 0,
         failed,
-        messagesMatched: matched.messagesMatched,
+        messagesMatched: 0,
         retried,
         succeeded,
       });
@@ -286,7 +315,7 @@ export const makeOutboxRuntime = (
       }),
     );
 
-  return Object.freeze({ runCycle });
+  return Object.freeze({ matchMessages, runCycle });
 };
 
 export class OutboxRuntime extends Context.Service<OutboxRuntime, OutboxRuntimeService>()(
@@ -308,3 +337,11 @@ export const runOutboxCycle = <Registration extends AnyOutboxWorkerRegistration>
   OutboxCycleError,
   OutboxRuntime | OutboxWorkerRequirements<Registration>
 > => Effect.flatMap(OutboxRuntime, (runtime) => runtime.runCycle(input));
+
+export const matchOutboxMessages = (
+  input: MatchOutboxMessagesInput,
+): Effect.Effect<
+  OutboxMatchResult,
+  OutboxPersistenceError | OutboxWorkerDescriptorError,
+  OutboxRuntime
+> => Effect.flatMap(OutboxRuntime, (runtime) => runtime.matchMessages(input));

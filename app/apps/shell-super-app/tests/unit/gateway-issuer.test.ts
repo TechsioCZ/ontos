@@ -49,7 +49,7 @@ const dependencies = (
 ): GatewayIssuerDependencies => ({
   currentTimeSeconds: Effect.succeed(1_700_000_000),
   generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-  loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+  loadAudiences: Effect.succeed(new Set(['property-registry'])),
   loadConfig: Effect.succeed(configuration),
   ...overrides,
 });
@@ -58,7 +58,7 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
   const { configuration, publicKey } = await makeConfiguration();
   const result = await Effect.runPromise(
     issueGatewayContextAssertion(
-      { audience: 'inventory-stock', principal },
+      { audience: 'property-registry', principal },
       dependencies(configuration),
     ),
   );
@@ -66,7 +66,7 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
   const claims = decodeJwt(result.token);
   const verified = await jwtVerify(result.token, publicKey, {
     algorithms: ['EdDSA'],
-    audience: 'inventory-stock',
+    audience: 'property-registry',
     currentDate: new Date(1_700_000_001_000),
     issuer,
   });
@@ -74,7 +74,7 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
   expect(result.expiresAt).toBe(1_700_000_300);
   expect(header).toEqual({ alg: 'EdDSA', kid: 'current-2026-08', typ: 'JWT' });
   expect(claims).toEqual({
-    aud: 'inventory-stock',
+    aud: 'property-registry',
     exp: 1_700_000_300,
     iat: 1_700_000_000,
     iss: issuer,
@@ -91,21 +91,32 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
 
 test('fails closed for unknown audiences and invalid Effect-managed time', async () => {
   const { configuration } = await makeConfiguration();
-  const audienceError = await Effect.runPromise(
-    Effect.flip(
-      issueGatewayContextAssertion({ audience: 'billing', principal }, dependencies(configuration)),
-    ),
+  const audienceErrors = await Promise.all(
+    [
+      Effect.flip(
+        issueGatewayContextAssertion(
+          { audience: 'billing', principal },
+          dependencies(configuration),
+        ),
+      ),
+      Effect.flip(
+        issueGatewayContextAssertion(
+          { audience: 'property.registry', principal },
+          dependencies(configuration),
+        ),
+      ),
+    ].map((effect) => Effect.runPromise(effect)),
   );
   const timeError = await Effect.runPromise(
     Effect.flip(
       issueGatewayContextAssertion(
-        { audience: 'inventory-stock', principal },
+        { audience: 'property-registry', principal },
         dependencies(configuration, { currentTimeSeconds: Effect.succeed(-1) }),
       ),
     ),
   );
 
-  expect(audienceError.code).toBe('gateway_audience_invalid');
+  expect(audienceErrors.every((error) => error.code === 'gateway_audience_invalid')).toBe(true);
   expect(timeError.code).toBe('gateway_issuer_unavailable');
 });
 

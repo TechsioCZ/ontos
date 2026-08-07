@@ -61,7 +61,7 @@ export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel>
               ),
             ),
       ),
-      Effect.catch(() => Effect.succeed<HomePageModel>(anonymousModel)),
+      Effect.orElseSucceed((): HomePageModel => anonymousModel),
     ),
   );
 };

@@ -1,6 +1,6 @@
 import {
   createMutation,
-  discoverVertical,
+  discoverOntosModule,
   ensureUniqueMutationPaths,
   resolveContainedPath,
   withExactDependencies,
@@ -296,7 +296,7 @@ export const planActionBoundaryScaffold = async (
   workspaceRoot: string,
   config: ActionBoundaryScaffoldConfig,
 ): Promise<ScaffoldPlan<ActionBoundaryScaffoldResult>> => {
-  const vertical = await discoverVertical(workspaceRoot, config.vertical);
+  const vertical = await discoverOntosModule(workspaceRoot, config.vertical);
   const serverPath = resolveContainedPath(
     workspaceRoot,
     'verticals',

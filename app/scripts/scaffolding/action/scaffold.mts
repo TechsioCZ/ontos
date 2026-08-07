@@ -3,10 +3,18 @@ import {
   ACTION_GENERATOR_HEADER,
   CORE_ACTION_SLOT_END,
   CORE_ACTION_SLOT_START,
+  MODULE_MANIFEST_ACTION_SLOT_END,
+  MODULE_MANIFEST_ACTION_SLOT_START,
+  MODULE_MANIFEST_IMPORT_SLOT_END,
+  MODULE_MANIFEST_IMPORT_SLOT_START,
+  MODULE_REGISTRATION_ACTION_SLOT_END,
+  MODULE_REGISTRATION_ACTION_SLOT_START,
+  MODULE_REGISTRATION_IMPORT_SLOT_END,
+  MODULE_REGISTRATION_IMPORT_SLOT_START,
   OUTBOX_SLOT_END,
   OUTBOX_SLOT_START,
   createMutation,
-  discoverVertical,
+  discoverOntosModule,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   requireCanonicalSlug,
@@ -23,15 +31,15 @@ import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
   ScaffoldPlan,
-  VerticalMetadata,
+  OntosVerticalMetadata,
 } from '../shared.mts';
 
-const renderAction = (vertical: VerticalMetadata, action: string): string => {
+const renderAction = (vertical: OntosVerticalMetadata, action: string): string => {
   const actionType = toPascalCase(action);
   const actionValue = `${toCamelCase(action)}Action`;
   const handler = `handle${actionType}`;
   return `${ACTION_GENERATOR_HEADER}
-// @ontos-action-owner ${vertical.appId}
+// @ontos-action-owner ${vertical.moduleId}
 // @ontos-action-slug ${action}
 import { Effect, Schema } from 'effect';
 import { defineAction } from '@app/core-runtime';
@@ -62,14 +70,14 @@ export const ${actionValue} = defineAction(
   {
     accessEvidencePolicy: {
       captureMode: 'metadata_only',
-      policyKey: '${vertical.appId}.${action}.access.v1',
+      policyKey: '${vertical.moduleId}.${action}.access.v1',
     },
-    actionKey: '${vertical.appId}.${action}',
+    actionKey: '${vertical.moduleId}.${action}',
     auditProfile: 'standard',
     domainErrorSchema: ${actionType}NotImplemented,
     domainEvents: {},
     idempotency: 'required',
-    owningModuleKey: '${vertical.appId}',
+    owningModuleKey: '${vertical.moduleId}',
     payloadSchema: ${actionType}Payload,
     policies: [],
     resultSchema: ${actionType}Result,
@@ -191,7 +199,7 @@ export const planActionScaffold = async (
   if (config.scope === 'core') {
     return planCoreActionScaffold(workspaceRoot, config.module, action);
   }
-  const vertical = await discoverVertical(workspaceRoot, config.vertical);
+  const vertical = await discoverOntosModule(workspaceRoot, config.vertical);
   const actionPath = resolveContainedPath(
     workspaceRoot,
     'verticals',
@@ -201,9 +209,57 @@ export const planActionScaffold = async (
     `${action}.action.ts`,
   );
   const actionMutation = await createMutation(actionPath, renderAction(vertical, action));
+  const actionValue = `${toCamelCase(action)}Action`;
+  const ownerImport = `import { ${actionValue} } from './src/actions/${action}.action.ts';`;
+  const nextManifest = insertSortedSlot(
+    insertSortedSlot(
+      vertical.manifestContent,
+      MODULE_MANIFEST_IMPORT_SLOT_START,
+      MODULE_MANIFEST_IMPORT_SLOT_END,
+      [ownerImport],
+      (candidate) =>
+        /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
+          candidate,
+        ),
+    ),
+    MODULE_MANIFEST_ACTION_SLOT_START,
+    MODULE_MANIFEST_ACTION_SLOT_END,
+    [`${actionValue},`],
+    (candidate) => /^[a-z][A-Za-z0-9]*Action,$/u.test(candidate),
+  );
+  const nextRegistration = insertSortedSlot(
+    insertSortedSlot(
+      vertical.registrationContent,
+      MODULE_REGISTRATION_IMPORT_SLOT_START,
+      MODULE_REGISTRATION_IMPORT_SLOT_END,
+      [ownerImport],
+      (candidate) =>
+        /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
+          candidate,
+        ),
+    ),
+    MODULE_REGISTRATION_ACTION_SLOT_START,
+    MODULE_REGISTRATION_ACTION_SLOT_END,
+    [`${actionValue},`],
+    (candidate) => /^[a-z][A-Za-z0-9]*Action,$/u.test(candidate),
+  );
+  const manifestMutation = updateMutation(
+    vertical.manifestPath,
+    vertical.manifestContent,
+    nextManifest,
+  );
+  const registrationMutation = updateMutation(
+    vertical.registrationPath,
+    vertical.registrationContent,
+    nextRegistration,
+  );
   const dependencyMutation = withCoreDependency(vertical);
-  const mutations =
-    dependencyMutation === undefined ? [actionMutation] : [actionMutation, dependencyMutation];
+  const mutations = [
+    actionMutation,
+    manifestMutation,
+    registrationMutation,
+    dependencyMutation,
+  ].filter((mutation) => mutation !== undefined);
   ensureUniqueMutationPaths(mutations);
   return { mutations, result: { actionPath } };
 };

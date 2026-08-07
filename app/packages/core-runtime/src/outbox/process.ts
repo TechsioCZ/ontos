@@ -2,7 +2,11 @@
 import { Effect, Layer, ManagedRuntime, Random } from 'effect';
 import { DatabaseConfigLive } from '../db/config.ts';
 import { CoreDatabaseLive } from '../db/client.ts';
-import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements } from './definition.ts';
+import type {
+  AnyOutboxWorkerRegistration,
+  OutboxWorkerRequirements,
+  OutboxWorkerSubscription,
+} from './definition.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import { OutboxRuntimeLive } from './runtime.ts';
 import type { OutboxRuntime } from './runtime.ts';
@@ -14,6 +18,7 @@ export interface RunOutboxWorkerProcessInput<
 > {
   readonly claimOwnerPrefix: string;
   readonly registrations: readonly Registration[];
+  readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
 
 export interface StartOutboxWorkerProcessInput<
@@ -62,9 +67,11 @@ export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegis
 
     const signal = yield* waitForShutdownSignal.pipe(
       Effect.raceFirst(
-        runOutboxPollingLoop({ config, registrations: input.registrations }).pipe(
-          Effect.as<ShutdownSignal>('SIGTERM'),
-        ),
+        runOutboxPollingLoop({
+          config,
+          registrations: input.registrations,
+          subscriptions: input.subscriptions,
+        }).pipe(Effect.as<ShutdownSignal>('SIGTERM')),
       ),
     );
     yield* Effect.logInfo(`Outbox Worker process received ${signal}; shutting down`);
@@ -82,6 +89,7 @@ export const startOutboxWorkerProcess = <
       runOutboxWorkerProcess({
         claimOwnerPrefix: input.claimOwnerPrefix,
         registrations: input.registrations,
+        subscriptions: input.subscriptions,
       }),
     )
     .then(

@@ -6,18 +6,19 @@ import {
 } from '../../api/verticals/installed-verticals.ts';
 
 test('derives installed vertical IDs from the injected topology without hardcoded registrations', async () => {
-  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual(['testing1']);
+  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual([]);
   const valid = await Effect.runPromise(
     deriveInstalledVerticalIds({
       sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],
       shell: { id: 'shell-super-app', kind: 'shell' },
       verticals: [
-        { id: 'inventory-stock', kind: 'vertical' },
+        { id: 'property-registry', kind: 'vertical' },
         { id: 'future-generated', kind: 'vertical' },
       ],
     }),
   );
-  expect([...valid]).toEqual(['inventory-stock', 'future-generated']);
+  expect([...valid]).toEqual(['property-registry', 'future-generated']);
+  expect(valid.has('property.registry')).toBe(false);
 });
 
 test('rejects malformed, non-vertical, invalid, and duplicate installed entries', async () => {

@@ -10,6 +10,7 @@ import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
+import { createModuleDeploymentAllowlistBuildInput } from './module-deployment-allowlist.config.ts';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
@@ -45,8 +46,19 @@ const referenceTopologyPath = fileURLToPath(
   new URL('../../topology/reference-topology.json', import.meta.url),
 );
 const referenceTopology: unknown = JSON.parse(readFileSync(referenceTopologyPath, 'utf-8'));
+const developmentOverlayPath = fileURLToPath(
+  new URL('../../topology/local-overlays/development.json', import.meta.url),
+);
+const developmentOverlay: unknown = JSON.parse(readFileSync(developmentOverlayPath, 'utf-8'));
+const moduleDeploymentAllowlist = createModuleDeploymentAllowlistBuildInput({
+  cloudflareDeployEnabled,
+  developmentOverlay,
+  readEnvironment: getBuildConfigEnvironment,
+  topology: referenceTopology,
+});
 Object.assign(globalThis, {
   ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
+  ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
 });
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = Number(getBuildConfigEnvironment('SHELL_SUPER_APP_PORT') ?? 3020);
@@ -241,6 +253,7 @@ export default defineConfig(
         },
         globalVars: {
           ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
+          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
           ULTRAMODERN_SITE_URL: siteUrl,
         },
         mainEntryName: 'index',
