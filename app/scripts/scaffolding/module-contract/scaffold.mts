@@ -12,6 +12,7 @@ import {
   MODULE_REGISTRATION_IMPORT_SLOT_START,
   MODULE_REGISTRATION_WORKER_SLOT_END,
   MODULE_REGISTRATION_WORKER_SLOT_START,
+  ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
   VERTICAL_PUBLIC_COMPONENT_SLOT_END,
   VERTICAL_PUBLIC_COMPONENT_SLOT_START,
   VERTICAL_REPORT_SLOT_END,
@@ -96,20 +97,6 @@ export const ${valueName} = defineOntosModuleManifest({
       'deprecated',
       'archived',
     ],
-  },
-  dependencies: {
-    core: [
-      'core.identity',
-      'core.authz',
-      'core.modules',
-      'core.actions',
-      'core.audit',
-      'core.events',
-      'core.outbox',
-      'core.search',
-    ],
-    externalSystems: [],
-    modules: [],
   },
   module: {
     description: '${toTitle(vertical.slug)} business capability.',
@@ -217,7 +204,7 @@ const patchPackage = (vertical: VerticalMetadata, moduleId: string): string => {
     manifest: './vertical.manifest.ts',
     moduleId,
     registration: './vertical.registration.ts',
-    schemaVersion: 0,
+    schemaVersion: ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
   });
   return content;
 };

@@ -25,6 +25,7 @@ import {
   MODULE_REGISTRATION_IMPORT_SLOT_START,
   MODULE_REGISTRATION_WORKER_SLOT_END,
   MODULE_REGISTRATION_WORKER_SLOT_START,
+  ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
 } from './scaffolding/shared.mts';
 
 type JsonObject = Readonly<Record<string, unknown>>;
@@ -211,7 +212,7 @@ export const checkOntosModuleContracts = async (workspaceRoot = process.cwd()): 
       modernjs['appId'] !== appId ||
       ontosModule['moduleId'] !== manifestModuleId ||
       registrationModuleId !== manifestModuleId ||
-      ontosModule['schemaVersion'] !== 0
+      ontosModule['schemaVersion'] !== ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION
     ) {
       throw new Error(`${appId} package, manifest, registration, and topology identities disagree`);
     }

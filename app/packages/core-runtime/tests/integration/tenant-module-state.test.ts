@@ -34,10 +34,7 @@ const tenantIds = [tenantOne, tenantTwo] as const;
 
 type DatabaseShape = Parameters<typeof makeActionRuntime>[0];
 
-const installedContract = (
-  moduleId: string,
-  dependencies: OntosModuleDeploymentContract['manifest']['dependencies']['modules'] = [],
-): OntosModuleDeploymentContract => ({
+const installedContract = (moduleId: string): OntosModuleDeploymentContract => ({
   deployment: { appId: 'test-module', buildMarker: 'test-build' },
   manifest: {
     activation: {
@@ -54,7 +51,6 @@ const installedContract = (
         'archived',
       ],
     },
-    dependencies: { core: [], externalSystems: [], modules: dependencies },
     module: {
       description: 'Integration test module',
       displayName: 'Integration test module',
@@ -73,7 +69,7 @@ const installedContract = (
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '0',
+  schemaVersion: '1',
 });
 
 const installedCatalog: InstalledModuleCatalog = Object.freeze({
@@ -339,30 +335,29 @@ test('atomically creates and transitions state with truthful Action history and 
         .from(dataAccessEvents)
         .where(eq(dataAccessEvents.actionInvocationId, row.actionInvocationId ?? ''));
       assert.ok(audit.some((event) => event.eventType === 'action.executed'));
-      assert.equal(access.length, 2);
+      assert.equal(access.length, 1);
       assert.deepEqual(
-        new Set(access.map((event) => event.targetResourceType)),
-        new Set(['tenant-module-state', 'tenant-module-state-dependency-snapshot']),
+        access.map((event) => event.targetResourceType),
+        ['tenant-module-state'],
       );
       assert.ok(access.every((event) => event.accessKind === 'read'));
     }
   });
 });
 
-test('rejects unknown modules and inactive mandatory dependencies before module-state writes', async () => {
-  const unknownModuleKey = testModuleKey('unknown', tenantOne);
-  const dependencyModuleKey = testModuleKey('dependency', tenantOne);
-  const targetModuleKey = testModuleKey('dependent', tenantOne);
+test('supports every declared state independently of other installed module states', async () => {
+  const otherModuleKey = testModuleKey('other', tenantOne);
+  const targetModuleKey = testModuleKey('independent', tenantOne);
   const transitionCatalog = catalogFrom(
-    installedContract(dependencyModuleKey),
-    installedContract(targetModuleKey, [
-      {
-        activation: 'must_be_active_first',
-        id: dependencyModuleKey,
-        reason: 'Dependency must be active first',
-        required: true,
-      },
-    ]),
+    installedContract(otherModuleKey),
+    installedContract(targetModuleKey),
+  );
+  await databasePromise((database) =>
+    database.executor.insert(tenantModuleStates).values({
+      moduleKey: otherModuleKey,
+      state: 'inactive',
+      tenantId: tenantOne,
+    }),
   );
 
   await Effect.runPromise(
@@ -376,32 +371,46 @@ test('rejects unknown modules and inactive mandatory dependencies before module-
             load: Effect.succeed(transitionCatalog),
           }),
         );
-      return Effect.gen(function* rejectInvalidTransitions() {
-        const unknown = yield* Effect.exit(
-          withCatalog(runtime.runAction(actionInput(unknownModuleKey, 'active', 'unknown-module'))),
-        );
-        assert.equal(failureTag(unknown), 'TenantModuleStateUnknownModuleError');
-        const inactiveDependency = yield* Effect.exit(
-          withCatalog(
-            runtime.runAction(actionInput(targetModuleKey, 'active', 'inactive-dependency')),
-          ),
-        );
-        assert.equal(failureTag(inactiveDependency), 'TenantModuleStateDependencyInactiveError');
+      return Effect.gen(function* transitionAcrossAllStates() {
+        for (const state of [
+          'active',
+          'read_only',
+          'suspended',
+          'quarantined',
+          'deprecated',
+          'archived',
+          'inactive',
+        ] as const) {
+          yield* withCatalog(
+            runtime.runAction(actionInput(targetModuleKey, state, `independent-${state}`)),
+          );
+        }
       });
     }),
   );
 
   await databasePromise(async (database) => {
     const stateRows = await database.executor
-      .select()
+      .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
       .from(tenantModuleStates)
-      .where(inArray(tenantModuleStates.moduleKey, [unknownModuleKey, targetModuleKey]));
+      .where(inArray(tenantModuleStates.moduleKey, [otherModuleKey, targetModuleKey]));
     const historyRows = await database.executor
       .select()
       .from(tenantModuleStateChanges)
-      .where(inArray(tenantModuleStateChanges.moduleKey, [unknownModuleKey, targetModuleKey]));
-    assert.deepEqual(stateRows, []);
-    assert.deepEqual(historyRows, []);
+      .where(eq(tenantModuleStateChanges.moduleKey, targetModuleKey));
+    assert.deepEqual(Object.fromEntries(stateRows.map((row) => [row.moduleKey, row.state])), {
+      [otherModuleKey]: 'inactive',
+      [targetModuleKey]: 'inactive',
+    });
+    assert.deepEqual(historyRows.map(({ newState }) => newState).toSorted(), [
+      'active',
+      'archived',
+      'deprecated',
+      'inactive',
+      'quarantined',
+      'read_only',
+      'suspended',
+    ]);
   });
 });
 

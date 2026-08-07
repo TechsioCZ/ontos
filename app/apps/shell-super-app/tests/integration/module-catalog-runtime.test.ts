@@ -47,7 +47,6 @@ const contract = (
         'archived',
       ],
     },
-    dependencies: { core: ['core.identity'], externalSystems: [], modules: [] },
     module: {
       description: `${moduleId} independently deployed module`,
       displayName: moduleId,
@@ -73,7 +72,7 @@ const contract = (
     },
   },
   runtime: { outboxSubscriptions: overrides.outboxSubscriptions ?? [] },
-  schemaVersion: '0',
+  schemaVersion: '1',
 });
 
 const PropertyApi = HttpApi.make('PropertyApi').add(
@@ -111,7 +110,7 @@ const PropertyOutboxWorker = defineOutboxWorker(
     consumerModuleKey: 'property.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
-      entrypointKey: 'property.registry.document-projector',
+      entrypointKey: 'property.registry.index-document',
       moduleKey: 'property.registry',
       role: 'worker',
     }),
@@ -138,18 +137,6 @@ const propertyManifest = defineOntosModuleManifest({
     preservesHistoryWhenInactive: true,
     scope: 'tenant',
     supportedStates: ['inactive', 'active'],
-  },
-  dependencies: {
-    core: ['core.identity'],
-    externalSystems: [],
-    modules: [
-      {
-        activation: 'optional_enhancement',
-        id: 'documents.center',
-        reason: 'Documents enrich the property dashboard',
-        required: false,
-      },
-    ],
   },
   module: {
     description: 'Property registry independently deployed module',

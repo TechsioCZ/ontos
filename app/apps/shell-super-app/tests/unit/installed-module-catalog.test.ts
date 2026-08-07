@@ -26,7 +26,6 @@ const contract = (appId: string, moduleId: string) => ({
         'archived',
       ],
     },
-    dependencies: { core: ['core.identity'], externalSystems: [], modules: [] },
     module: {
       description: `${moduleId} module`,
       displayName: moduleId,
@@ -45,7 +44,7 @@ const contract = (appId: string, moduleId: string) => ({
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '0',
+  schemaVersion: '1',
 });
 
 const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>

@@ -7,7 +7,6 @@ import type { ActionAuthMethod } from '../db/schema.ts';
 import type { ActionTransactionExecutor } from '../actions/context.ts';
 import {
   TenantModuleStateConcurrentChangeError,
-  TenantModuleStateDependencyInactiveError,
   TenantModuleStatePersistenceUnavailableError,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateTenantMissingError,
@@ -49,14 +48,11 @@ export type TenantModuleStateChangeSource = 'support' | 'system' | 'user';
 
 export const validateTenantModuleStateTransition = (
   catalog: InstalledModuleCatalog,
-  tenantStates: readonly TenantModuleStateRecord[],
   moduleKey: OntosModuleId,
   newState: TenantModuleState,
 ): Effect.Effect<
   void,
-  | TenantModuleStateDependencyInactiveError
-  | TenantModuleStateUnknownModuleError
-  | TenantModuleStateUnsupportedStateError
+  TenantModuleStateUnknownModuleError | TenantModuleStateUnsupportedStateError
 > => {
   if (newState === 'inactive') {
     return Effect.void;
@@ -78,20 +74,7 @@ export const validateTenantModuleStateTransition = (
       }),
     );
   }
-  const active = new Set(
-    tenantStates.filter(({ state }) => state === 'active').map(({ moduleKey: key }) => key),
-  );
-  const unsatisfied = contract.manifest.dependencies.modules.some(
-    (dependency) => dependency.activation === 'must_be_active_first' && !active.has(dependency.id),
-  );
-  return unsatisfied
-    ? Effect.fail(
-        new TenantModuleStateDependencyInactiveError({
-          code: 'tenant_module_state_dependency_inactive',
-          reason: 'A mandatory OntOS module dependency must be active first',
-        }),
-      )
-    : Effect.void;
+  return Effect.void;
 };
 
 export const resolveTenantModuleStateChangeSource = (
@@ -145,10 +128,6 @@ export interface TenantModuleStateServiceShape {
   readonly listTenantModuleStates: (
     tenantId: string,
   ) => Effect.Effect<readonly TenantModuleStateRecord[], TenantModuleStateReadUnavailableError>;
-  readonly listTenantModuleStatesForTransition: (
-    transaction: ActionTransactionExecutor,
-    tenantId: string,
-  ) => Effect.Effect<readonly TenantModuleStateRecord[], TenantModuleStateReadUnavailableError>;
 }
 
 export class TenantModuleStateService extends Context.Service<
@@ -190,32 +169,6 @@ export const makeTenantModuleStateService = (
           .orderBy(asc(tenantModuleStates.moduleKey)),
     }).pipe(Effect.flatMap(decodeRows));
 
-  const listTenantModuleStatesForTransition = (
-    transaction: ActionTransactionExecutor,
-    tenantId: string,
-  ) =>
-    Effect.gen(function* listTenantModuleStatesForTransitionEffect() {
-      yield* Effect.tryPromise({
-        catch: tenantModuleStateReadUnavailable,
-        try: () =>
-          transaction
-            .select({ tenantId: tenants.tenantId })
-            .from(tenants)
-            .where(eq(tenants.tenantId, tenantId))
-            .for('update'),
-      });
-      const rows = yield* Effect.tryPromise({
-        catch: tenantModuleStateReadUnavailable,
-        try: () =>
-          transaction
-            .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
-            .from(tenantModuleStates)
-            .where(eq(tenantModuleStates.tenantId, tenantId))
-            .orderBy(asc(tenantModuleStates.moduleKey)),
-      });
-      return yield* decodeRows(rows);
-    });
-
   return {
     getTenantModuleStates: (tenantId, moduleKeys) => {
       const distinctKeys = [...new Set(moduleKeys)].toSorted();
@@ -250,7 +203,6 @@ export const makeTenantModuleStateService = (
         ),
       ),
     listTenantModuleStates,
-    listTenantModuleStatesForTransition,
   };
 };
 

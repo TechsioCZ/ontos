@@ -11,13 +11,11 @@ import {
   TenantModuleStateTenantMissingError,
   TenantModuleStateUnchangedError,
   TenantModuleStateUnsupportedChangeSourceError,
-  TenantModuleStateDependencyInactiveError,
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedStateError,
   TenantModuleStateValidationUnavailableError,
 } from '../tenant-module-state-errors.ts';
 import {
-  TenantModuleStateService,
   TenantModuleStateSchema,
   persistTenantModuleStateChange,
   validateTenantModuleStateTransition,
@@ -53,7 +51,6 @@ export const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateTenantMissingError,
   TenantModuleStateUnchangedError,
   TenantModuleStateUnsupportedChangeSourceError,
-  TenantModuleStateDependencyInactiveError,
   TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedStateError,
   TenantModuleStateValidationUnavailableError,
@@ -69,34 +66,8 @@ const handleChangeTenantModuleState = (
 ) =>
   Effect.gen(function* changeTenantModuleStateHandler() {
     const installedCatalog = yield* InstalledModuleCatalogService;
-    const moduleState = yield* TenantModuleStateService;
     const catalog = yield* installedCatalog.load;
-    const tenantStates = yield* moduleState
-      .listTenantModuleStatesForTransition(context.transaction, context.principal.tenantId)
-      .pipe(
-        Effect.mapError(
-          () =>
-            new TenantModuleStateValidationUnavailableError({
-              code: 'tenant_module_state_validation_unavailable',
-              reason: 'Tenant module transition validation is temporarily unavailable',
-            }),
-        ),
-      );
-    yield* validateTenantModuleStateTransition(
-      catalog,
-      tenantStates,
-      payload.moduleKey,
-      payload.newState,
-    );
-    yield* context.recordDataAccess({
-      accessKind: 'read',
-      queryHash: `tenant-module-state-dependencies:${payload.moduleKey}`,
-      resultCount: tenantStates.length,
-      servingModuleKey: 'core.modules',
-      targetModuleKey: payload.moduleKey,
-      targetResourceId: payload.moduleKey,
-      targetResourceType: 'tenant-module-state-dependency-snapshot',
-    });
+    yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
     const result = yield* persistTenantModuleStateChange(context.transaction, {
       actionInvocationId: context.actionInvocationId,
       authMethod: context.principal.authMethod,

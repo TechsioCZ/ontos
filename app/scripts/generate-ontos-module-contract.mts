@@ -31,6 +31,7 @@ import {
   MODULE_REGISTRATION_IMPORT_SLOT_START,
   MODULE_REGISTRATION_WORKER_SLOT_END,
   MODULE_REGISTRATION_WORKER_SLOT_START,
+  ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
 } from './scaffolding/shared.mts';
 
 interface GenerateInput {
@@ -247,7 +248,7 @@ const deriveContract = async (
   }
   if (
     packageJson.modernjs?.ontosModule?.moduleId !== owner.manifest.module.id ||
-    packageJson.modernjs.ontosModule.schemaVersion !== 0
+    packageJson.modernjs.ontosModule.schemaVersion !== ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION
   ) {
     throw new Error('generated package module marker does not match the owner manifest');
   }
@@ -281,7 +282,6 @@ const deriveContract = async (
     },
     manifest: {
       activation: owner.manifest.activation,
-      dependencies: owner.manifest.dependencies,
       module: owner.manifest.module,
       publicSurface: {
         actions: safeRuntime.actions,

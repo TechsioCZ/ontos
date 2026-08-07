@@ -56,11 +56,6 @@ const emptyManifestInput = () => ({
       'archived',
     ] as const,
   },
-  dependencies: {
-    core: ['core.identity', 'core.authz', 'core.modules', 'core.actions'] as const,
-    externalSystems: [] as const,
-    modules: [] as const,
-  },
   module: {
     description: 'Property capability',
     displayName: 'Property Registry',
@@ -84,6 +79,7 @@ test('defines a valid empty manifest, preserves literals, and freezes its public
   const literal: 'property.registry' = manifest.module.id;
 
   assert.equal(literal, 'property.registry');
+  assert.deepEqual(Object.keys(manifest), ['activation', 'module', 'publicSurface']);
   assert.equal(Object.isFrozen(manifest), true);
   assert.equal(Object.isFrozen(manifest.activation.supportedStates), true);
   assert.equal(Object.isFrozen(manifest.publicSurface.actions), true);
@@ -188,6 +184,12 @@ test('rejects invalid identities, private fields, duplicates, cross-owner values
     defineOntosModuleManifest({
       ...emptyManifestInput(),
       privateRoutes: [],
+    } as never),
+  );
+  assert.throws(() =>
+    defineOntosModuleManifest({
+      ...emptyManifestInput(),
+      dependencies: { core: [], externalSystems: [], modules: [] },
     } as never),
   );
   assert.throws(() =>
@@ -306,8 +308,19 @@ test('deployment contract decoding is exact and versioned', () => {
   };
 
   assert.deepEqual(decodeOntosModuleDeploymentContract(contract), contract);
+  assert.equal(contract.schemaVersion, '1');
   assert.throws(() =>
     decodeOntosModuleDeploymentContract({ ...contract, sourcePath: './private.ts' }),
   );
+  assert.throws(() =>
+    decodeOntosModuleDeploymentContract({
+      ...contract,
+      manifest: {
+        ...contract.manifest,
+        dependencies: { core: [], externalSystems: [], modules: [] },
+      },
+    }),
+  );
+  assert.throws(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '0' }));
   assert.throws(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '999' }));
 });

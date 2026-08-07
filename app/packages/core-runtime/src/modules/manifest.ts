@@ -3,7 +3,7 @@ import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
 
-export const ONTOS_MODULE_CONTRACT_SCHEMA_VERSION = '0' as const;
+export const ONTOS_MODULE_CONTRACT_SCHEMA_VERSION = '1' as const;
 export const ONTOS_MODULE_CONTRACT_PATH = '/.well-known/ontos-module-manifest.json' as const;
 export const ONTOS_MODULE_CONTRACT_MAX_BYTES = 1024 * 1024;
 export const ONTOS_MODULE_CONTRACT_TIMEOUT_MS = 5000;
@@ -33,29 +33,10 @@ export const OntosModuleActivationStateSchema = Schema.Literals([
   'deprecated',
   'archived',
 ]);
-export const OntosModuleDependencyModeSchema = Schema.Literals([
-  'must_be_active_first',
-  'enable_together_when_available',
-  'optional_enhancement',
-  'integration_required_for_api',
-]);
-export const OntosCoreCapabilitySchema = Schema.Literals([
-  'core.identity',
-  'core.authz',
-  'core.modules',
-  'core.actions',
-  'core.audit',
-  'core.events',
-  'core.outbox',
-  'core.search',
-]);
-
 export type OntosModuleId = typeof OntosModuleIdSchema.Type;
 export type OntosDeploymentAppId = typeof OntosDeploymentAppIdSchema.Type;
 export type OntosModuleKind = typeof OntosModuleKindSchema.Type;
 export type OntosModuleActivationState = typeof OntosModuleActivationStateSchema.Type;
-export type OntosModuleDependencyMode = typeof OntosModuleDependencyModeSchema.Type;
-export type OntosCoreCapability = typeof OntosCoreCapabilitySchema.Type;
 
 export const OntosModuleIdentitySchema = Schema.Struct({
   description: nonEmptyString,
@@ -70,25 +51,6 @@ export const OntosModuleActivationSchema = Schema.Struct({
   preservesHistoryWhenInactive: Schema.Boolean,
   scope: Schema.Literal('tenant'),
   supportedStates: Schema.Array(OntosModuleActivationStateSchema),
-});
-
-export const OntosModuleDependencySchema = Schema.Struct({
-  activation: OntosModuleDependencyModeSchema,
-  id: OntosModuleIdSchema,
-  reason: nonEmptyString,
-  required: Schema.Boolean,
-});
-
-export const OntosExternalSystemDependencySchema = Schema.Struct({
-  id: OntosModuleIdSchema,
-  reason: nonEmptyString,
-  required: Schema.Boolean,
-});
-
-export const OntosModuleDependenciesSchema = Schema.Struct({
-  core: Schema.Array(OntosCoreCapabilitySchema),
-  externalSystems: Schema.Array(OntosExternalSystemDependencySchema),
-  modules: Schema.Array(OntosModuleDependencySchema),
 });
 
 export const OntosActionContractSchema = Schema.Struct({
@@ -175,7 +137,6 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
 
 export const OntosSerializedModuleManifestSchema = Schema.Struct({
   activation: OntosModuleActivationSchema,
-  dependencies: OntosModuleDependenciesSchema,
   module: OntosModuleIdentitySchema,
   publicSurface: OntosSerializedPublicSurfaceSchema,
 });
@@ -196,9 +157,6 @@ export const OntosModuleDeploymentContractSchema = Schema.Struct({
 
 export type OntosModuleIdentity = typeof OntosModuleIdentitySchema.Type;
 export type OntosModuleActivation = typeof OntosModuleActivationSchema.Type;
-export type OntosModuleDependency = typeof OntosModuleDependencySchema.Type;
-export type OntosExternalSystemDependency = typeof OntosExternalSystemDependencySchema.Type;
-export type OntosModuleDependencies = typeof OntosModuleDependenciesSchema.Type;
 export type OntosActionContract = typeof OntosActionContractSchema.Type;
 export type OntosApiContract = typeof OntosApiContractSchema.Type;
 export type OntosComponentContract = typeof OntosComponentContractSchema.Type;
@@ -236,7 +194,6 @@ export interface OntosAuthoredPublicSurface {
 
 export interface OntosModuleManifestInput {
   readonly activation: OntosModuleActivation;
-  readonly dependencies: OntosModuleDependencies;
   readonly module: OntosModuleIdentity;
   readonly publicSurface: OntosAuthoredPublicSurface;
 }
@@ -297,7 +254,7 @@ const assertOwner = (owner: string, expected: string, label: string): void => {
 export const defineOntosModuleManifest = <const Input extends OntosModuleManifestInput>(
   input: Input,
 ): OntosModuleManifest<Input> => {
-  assertExactKeys(input, ['activation', 'dependencies', 'module', 'publicSurface'], 'manifest');
+  assertExactKeys(input, ['activation', 'module', 'publicSurface'], 'manifest');
   assertExactKeys(
     input.publicSurface,
     ['actions', 'api', 'components', 'events', 'reports', 'resourceTypes', 'search'],
@@ -305,7 +262,6 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   );
   exactDecode(OntosModuleIdentitySchema, input.module);
   exactDecode(OntosModuleActivationSchema, input.activation);
-  exactDecode(OntosModuleDependenciesSchema, input.dependencies);
   if (input.module.kind !== 'business_module') {
     throw new TypeError('V0 MicroVertical deployments may define only one business_module');
   }
@@ -313,20 +269,6 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     throw new TypeError('activation defaultState must be included in supportedStates');
   }
   assertUnique(input.activation.supportedStates, 'activation state');
-  assertUnique(input.dependencies.core, 'Core dependency');
-  assertUnique(
-    input.dependencies.modules.map(({ id }) => id),
-    'module dependency',
-  );
-  assertUnique(
-    input.dependencies.externalSystems.map(({ id }) => id),
-    'external dependency',
-  );
-  for (const dependency of input.dependencies.modules) {
-    if (dependency.id === input.module.id) {
-      throw new TypeError('a module cannot depend on itself');
-    }
-  }
 
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
@@ -430,11 +372,6 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     activation: freezePlain({
       ...input.activation,
       supportedStates: [...input.activation.supportedStates],
-    }),
-    dependencies: freezePlain({
-      core: [...input.dependencies.core],
-      externalSystems: input.dependencies.externalSystems.map((value) => ({ ...value })),
-      modules: input.dependencies.modules.map((value) => ({ ...value })),
     }),
     module: freezePlain({ ...input.module }),
     publicSurface: Object.freeze({

@@ -33,13 +33,13 @@ known capability; tenant module state decides whether that installed module is a
 ## Network and artifact contract
 
 Every MicroVertical deployment serves the immutable document at
-`/.well-known/ontos-module-manifest.json`. The document uses schema version `0`, media type
+`/.well-known/ontos-module-manifest.json`. The document uses schema version `1`, media type
 `application/json`, `Cache-Control: no-cache`, a strong build-marker ETag, and is limited to 1 MiB.
 Shell loads it with a five-second deadline, redirect following disabled, and exact topology `appId`
 matching. Contract URLs must use HTTPS except loopback HTTP during development. Credentials,
 fragments, unsafe schemes, and duplicate normalized URLs are forbidden.
 
-The document may describe identity, activation, dependencies, public Actions/API/components,
+The document may describe identity, activation, public Actions/API/components,
 resources, public events, search, reports, and schema-free Outbox subscriptions. It must never
 contain a function, Effect program, React component, handler, Policy, migration, route, repository,
 database metadata, source path, import/export specifier, fixture, test, secret, or arbitrary private
@@ -55,8 +55,16 @@ Policies, workers, migrations, routes, repositories, search implementations, and
 implementations stay owner-local.
 
 The installed catalog rejects unsupported schema versions, deployment/manifest identity mismatch,
-duplicate app or module IDs, missing mandatory dependencies, self-dependencies, and
-`must_be_active_first` cycles. A failed load never creates or caches a partial catalog.
+duplicate app or module IDs, mismatched Outbox consumer ownership or entrypoints, and duplicate
+worker keys. A failed load never creates or caches a partial catalog. A subscription may name a
+producer that is not installed; it remains dormant until matching messages can exist.
+
+Core capabilities are implicit universal infrastructure, not per-module requirements. External
+system readiness and module-owned setup remain private implementation concerns and are not V0
+activation gates. Every installed business module has an independent tenant lifecycle: any state
+declared in its own `supportedStates` may be requested regardless of other modules' installation or
+tenant state. Typed API, public event, and Outbox communication preserves deployment boundaries but
+never creates installation, activation, deactivation, setup, or transition coupling.
 
 ## Generator order
 

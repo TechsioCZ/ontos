@@ -65,14 +65,6 @@ export class TenantModuleStateUnsupportedStateError extends Schema.TaggedErrorCl
   },
 ) {}
 
-export class TenantModuleStateDependencyInactiveError extends Schema.TaggedErrorClass<TenantModuleStateDependencyInactiveError>()(
-  'TenantModuleStateDependencyInactiveError',
-  {
-    code: Schema.Literal('tenant_module_state_dependency_inactive'),
-    reason: Schema.String,
-  },
-) {}
-
 export class TenantModuleStateValidationUnavailableError extends Schema.TaggedErrorClass<TenantModuleStateValidationUnavailableError>()(
   'TenantModuleStateValidationUnavailableError',
   {
@@ -89,5 +81,4 @@ export type TenantModuleStateTransitionError =
   | TenantModuleStateUnsupportedChangeSourceError
   | TenantModuleStateUnknownModuleError
   | TenantModuleStateUnsupportedStateError
-  | TenantModuleStateDependencyInactiveError
   | TenantModuleStateValidationUnavailableError;

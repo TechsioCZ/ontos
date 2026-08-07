@@ -65,40 +65,6 @@ const decodeContract = (input: InstalledDeploymentContractInput): OntosModuleDep
   return contract;
 };
 
-const requiredDependencyIds = (contract: OntosModuleDeploymentContract): readonly string[] =>
-  contract.manifest.dependencies.modules
-    .filter((dependency) => dependency.required || dependency.activation === 'must_be_active_first')
-    .map(({ id }) => id);
-
-const assertAcyclicActivationGraph = (
-  contractsByModuleId: ReadonlyMap<string, OntosModuleDeploymentContract>,
-): void => {
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const visit = (moduleId: string): void => {
-    if (visiting.has(moduleId)) {
-      throw invalid('must_be_active_first module dependencies contain a cycle');
-    }
-    if (visited.has(moduleId)) {
-      return;
-    }
-    visiting.add(moduleId);
-    const contract = contractsByModuleId.get(moduleId);
-    if (contract !== undefined) {
-      for (const dependency of contract.manifest.dependencies.modules) {
-        if (dependency.activation === 'must_be_active_first') {
-          visit(dependency.id);
-        }
-      }
-    }
-    visiting.delete(moduleId);
-    visited.add(moduleId);
-  };
-  for (const moduleId of contractsByModuleId.keys()) {
-    visit(moduleId);
-  }
-};
-
 /** Pure, all-or-nothing aggregation of already fetched deployment documents. */
 export const buildInstalledModuleCatalog = (
   inputs: readonly InstalledDeploymentContractInput[],
@@ -122,18 +88,6 @@ export const buildInstalledModuleCatalog = (
     byAppId.set(appId, contract);
     byModuleId.set(moduleId, contract);
   }
-  for (const [moduleId, contract] of byModuleId) {
-    for (const dependencyId of requiredDependencyIds(contract)) {
-      if (dependencyId === moduleId) {
-        throw invalid('a module cannot depend on itself');
-      }
-      if (!byModuleId.has(dependencyId)) {
-        throw invalid('an installed module is missing a required module dependency');
-      }
-    }
-  }
-  assertAcyclicActivationGraph(byModuleId);
-
   const workerKeys = new Set<string>();
   const outboxSubscriptions = Object.freeze(
     [...byModuleId.entries()]
@@ -147,9 +101,6 @@ export const buildInstalledModuleCatalog = (
             subscription.entrypoint.entrypointKey !== subscription.workerKey
           ) {
             throw invalid('an Outbox subscription entrypoint must match its consumer and worker');
-          }
-          if (!byModuleId.has(subscription.producerModuleKey)) {
-            throw invalid('an Outbox subscription references a non-installed producer module');
           }
           if (workerKeys.has(subscription.workerKey)) {
             throw invalid('an Outbox worker key may appear only once in the installed catalog');

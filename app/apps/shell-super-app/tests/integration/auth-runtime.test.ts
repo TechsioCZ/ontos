@@ -664,7 +664,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         }),
       },
       moduleStateLayer,
-      Effect.succeed(new Set(['first-module', 'second-module'])),
+      Effect.succeed(installedCatalog(['first-module', 'second-module'])),
     ).createHandler();
     handlers.push(runtime);
 

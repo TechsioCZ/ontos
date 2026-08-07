@@ -93,7 +93,6 @@ const inventoryStockContract: OntosModuleDeploymentContract = {
         'archived',
       ],
     },
-    dependencies: { core: [], externalSystems: [], modules: [] },
     module: {
       description: 'Inventory integration fixture',
       displayName: 'Inventory',
@@ -112,7 +111,7 @@ const inventoryStockContract: OntosModuleDeploymentContract = {
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '0',
+  schemaVersion: '1',
 };
 
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({

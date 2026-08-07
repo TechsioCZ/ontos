@@ -16,7 +16,6 @@ const contract = (
       scope: 'tenant',
       supportedStates: ['inactive', 'active'],
     },
-    dependencies: { core: [], externalSystems: [], modules: [] },
     module: {
       description: `${moduleId} module`,
       displayName: moduleId,
@@ -35,10 +34,10 @@ const contract = (
     },
   },
   runtime: { outboxSubscriptions },
-  schemaVersion: '0',
+  schemaVersion: '1',
 });
 
-test('passes only the complete validated installed-catalog snapshot to Core matching', async () => {
+test('passes a dormant subscription with an absent producer to Core matching', async () => {
   const subscription = {
     consumerModuleKey: 'property.registry',
     entrypoint: {
@@ -56,10 +55,6 @@ test('passes only the complete validated installed-catalog snapshot to Core matc
     {
       contract: contract('property-registry', 'property.registry', [subscription]),
       expectedAppId: 'property-registry',
-    },
-    {
-      contract: contract('documents-center', 'documents.center'),
-      expectedAppId: 'documents-center',
     },
   ]);
   let received: unknown;

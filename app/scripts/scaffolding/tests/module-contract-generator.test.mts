@@ -245,7 +245,16 @@ test('generates conservative owner files and patches only package and tsconfig o
     assert.match(manifest, /@ontos-deployment-app-id property-registry/u);
     assert.match(manifest, /@ontos-module-id property\.registry/u);
     assert.match(manifest, /defaultState: 'inactive'/u);
-    assert.match(manifest, /core\.identity/u);
+    assert.doesNotMatch(manifest, /dependencies:|core\.identity|externalSystems/u);
+    const retiredLifecycleMarkers = [
+      ['must', 'be', 'active', 'first'].join('_'),
+      ['enable', 'together', 'when', 'available'].join('_'),
+      ['optional', 'enhancement'].join('_'),
+      ['integration', 'required', 'for', 'api'].join('_'),
+    ];
+    for (const marker of retiredLifecycleMarkers) {
+      assert.equal(manifest.includes(marker), false);
+    }
     assert.match(manifest, /actions: \[/u);
     assert.match(registration, /defineVerticalRuntimeRegistration/u);
     assert.match(registration, /generated-module-registration-workers/u);
@@ -274,7 +283,7 @@ test('generates conservative owner files and patches only package and tsconfig o
       manifest: './vertical.manifest.ts',
       moduleId: 'property.registry',
       registration: './vertical.registration.ts',
-      schemaVersion: 0,
+      schemaVersion: 1,
     });
     const tsconfig = JSON.parse(
       await readFile(path.join(root, 'verticals/property-registry/tsconfig.json'), 'utf-8'),
@@ -313,6 +322,23 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
       workspaceRoot: root,
     });
     const firstContent = await readFile(first.path, 'utf-8');
+    const packagePath = path.join(root, 'verticals/property-registry/package.json');
+    const packageContent = await readFile(packagePath, 'utf-8');
+    const incompatiblePackage = JSON.parse(packageContent) as {
+      modernjs: { ontosModule: { schemaVersion: number } };
+    };
+    incompatiblePackage.modernjs.ontosModule.schemaVersion = 0;
+    await writeFile(packagePath, json(incompatiblePackage), 'utf-8');
+    await assert.rejects(
+      generateOntosModuleContract({
+        target: 'dist',
+        vertical: 'property-registry',
+        workspaceRoot: root,
+      }),
+      /module marker does not match/u,
+    );
+    assert.equal(await readFile(first.path, 'utf-8'), firstContent);
+    await writeFile(packagePath, packageContent, 'utf-8');
     const second = await generateOntosModuleContract({
       target: 'dist',
       vertical: 'property-registry',
@@ -330,7 +356,8 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     };
     assert.equal(document.deployment.appId, 'property-registry');
     assert.equal(document.manifest.module.id, 'property.registry');
-    assert.equal(document.schemaVersion, '0');
+    assert.equal(document.schemaVersion, '1');
+    assert.equal(Object.hasOwn(document.manifest, 'dependencies'), false);
     assert.deepEqual(document.manifest.publicSurface.api[0]?.operationKeys, ['property.listUnits']);
     assert.doesNotMatch(firstContent, /vertical\.registration|function|handler|sourcePath/u);
     const headers = await readFile(

@@ -6,7 +6,6 @@ import { changeTenantModuleStateAction } from '../../src/modules/actions/change-
 import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import {
   TenantModuleStateConcurrentChangeError,
-  TenantModuleStateDependencyInactiveError,
   TenantModuleStatePersistenceUnavailableError,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateTenantMissingError,
@@ -27,7 +26,6 @@ import {
 const contract = (
   moduleId: string,
   supportedStates: OntosModuleDeploymentContract['manifest']['activation']['supportedStates'],
-  dependencies: OntosModuleDeploymentContract['manifest']['dependencies']['modules'] = [],
 ): OntosModuleDeploymentContract => ({
   deployment: { appId: 'unit-module', buildMarker: 'unit-build' },
   manifest: {
@@ -37,7 +35,6 @@ const contract = (
       scope: 'tenant',
       supportedStates,
     },
-    dependencies: { core: [], externalSystems: [], modules: dependencies },
     module: {
       description: 'Unit module',
       displayName: 'Unit module',
@@ -56,7 +53,7 @@ const contract = (
     },
   },
   runtime: { outboxSubscriptions: [] },
-  schemaVersion: '0',
+  schemaVersion: '1',
 });
 
 const catalog = (
@@ -148,10 +145,6 @@ test('keeps Core module-state errors stable and sanitized', () => {
       code: 'tenant_module_state_unsupported',
       reason: 'The requested state is not supported by the installed module',
     }),
-    new TenantModuleStateDependencyInactiveError({
-      code: 'tenant_module_state_dependency_inactive',
-      reason: 'A mandatory OntOS module dependency must be active first',
-    }),
     new TenantModuleStateValidationUnavailableError({
       code: 'tenant_module_state_validation_unavailable',
       reason: 'Tenant module transition validation is temporarily unavailable',
@@ -164,46 +157,24 @@ test('keeps Core module-state errors stable and sanitized', () => {
   }
 });
 
-test('validates installed membership, supported states, and active-first dependencies', async () => {
-  const dependency = contract('documents.center', ['inactive', 'active']);
-  const target = contract(
-    'property.registry',
-    ['inactive', 'active', 'read_only'],
-    [
-      {
-        activation: 'must_be_active_first',
-        id: 'documents.center',
-        reason: 'Documents are required first',
-        required: true,
-      },
-    ],
-  );
-  const installed = catalog(dependency, target);
+test('validates only installed membership and the target module supported states', async () => {
+  const other = contract('documents.center', ['inactive', 'active']);
+  const target = contract('property.registry', ['inactive', 'active', 'read_only']);
+  const installed = catalog(other, target);
 
   const unknown = await Effect.runPromise(
-    Effect.flip(validateTenantModuleStateTransition(installed, [], 'unknown.module', 'active')),
+    Effect.flip(validateTenantModuleStateTransition(installed, 'unknown.module', 'active')),
   );
   assert.equal(unknown._tag, 'TenantModuleStateUnknownModuleError');
   const unsupported = await Effect.runPromise(
-    Effect.flip(
-      validateTenantModuleStateTransition(installed, [], 'property.registry', 'archived'),
-    ),
+    Effect.flip(validateTenantModuleStateTransition(installed, 'property.registry', 'archived')),
   );
   assert.equal(unsupported._tag, 'TenantModuleStateUnsupportedStateError');
-  const inactiveDependency = await Effect.runPromise(
-    Effect.flip(validateTenantModuleStateTransition(installed, [], 'property.registry', 'active')),
-  );
-  assert.equal(inactiveDependency._tag, 'TenantModuleStateDependencyInactiveError');
   await Effect.runPromise(
-    validateTenantModuleStateTransition(
-      installed,
-      [{ moduleKey: 'documents.center', state: 'active' }],
-      'property.registry',
-      'active',
-    ),
+    validateTenantModuleStateTransition(installed, 'property.registry', 'active'),
   );
   await Effect.runPromise(
-    validateTenantModuleStateTransition(installed, [], 'stale.module', 'inactive'),
+    validateTenantModuleStateTransition(installed, 'stale.module', 'inactive'),
   );
 });
 
@@ -215,6 +186,7 @@ test('declares the generated Core Action contract and bounded business payload',
   assert.equal(descriptor.idempotency, 'required');
   assert.deepEqual(descriptor.policies, []);
   assert.equal(Object.isFrozen(descriptor), true);
+  assert.doesNotMatch(JSON.stringify(descriptor.domainErrorSchema.ast), /dependency/iu);
 
   assert.deepEqual(
     await Effect.runPromise(

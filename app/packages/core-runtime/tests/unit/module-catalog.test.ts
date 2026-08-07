@@ -6,11 +6,6 @@ import type { OntosOutboxSubscriptionContract } from '../../src/modules/manifest
 const contract = (
   appId: string,
   moduleId: string,
-  modules: readonly {
-    readonly activation: 'must_be_active_first' | 'optional_enhancement';
-    readonly id: string;
-    readonly required: boolean;
-  }[] = [],
   outboxSubscriptions: readonly OntosOutboxSubscriptionContract[] = [],
 ) => ({
   deployment: { appId, buildMarker: `build-${appId}` },
@@ -20,11 +15,6 @@ const contract = (
       preservesHistoryWhenInactive: true,
       scope: 'tenant',
       supportedStates: ['inactive', 'active'],
-    },
-    dependencies: {
-      core: ['core.identity', 'core.authz', 'core.modules', 'core.actions'],
-      externalSystems: [],
-      modules: modules.map((value) => ({ ...value, reason: 'Required by test' })),
     },
     module: {
       description: `${moduleId} module`,
@@ -44,7 +34,7 @@ const contract = (
     },
   },
   runtime: { outboxSubscriptions },
-  schemaVersion: '0',
+  schemaVersion: '1',
 });
 
 test('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {
@@ -71,7 +61,7 @@ test('builds immutable deterministic dual indexes for distinct deployment and mo
   assert.equal(Object.isFrozen(catalog.outboxSubscriptions), true);
 });
 
-test('derives one complete deterministic Outbox subscription snapshot', () => {
+test('accepts a valid owner-local subscription whose producer is not installed', () => {
   const subscription = {
     consumerModuleKey: 'property.registry',
     entrypoint: {
@@ -87,12 +77,8 @@ test('derives one complete deterministic Outbox subscription snapshot', () => {
   } as const;
   const catalog = buildInstalledModuleCatalog([
     {
-      contract: contract('property-registry', 'property.registry', [], [subscription]),
+      contract: contract('property-registry', 'property.registry', [subscription]),
       expectedAppId: 'property-registry',
-    },
-    {
-      contract: contract('documents-center', 'documents.center'),
-      expectedAppId: 'documents-center',
     },
   ]);
   assert.deepEqual(catalog.outboxSubscriptions, [subscription]);
@@ -115,8 +101,63 @@ test('rejects contradictory or incomplete Outbox subscription snapshots', () => 
   assert.throws(() =>
     buildInstalledModuleCatalog([
       {
-        contract: contract('property-registry', 'property.registry', [], [invalidSubscription]),
+        contract: contract('property-registry', 'property.registry', [invalidSubscription]),
         expectedAppId: 'property-registry',
+      },
+    ]),
+  );
+  assert.throws(() =>
+    buildInstalledModuleCatalog([
+      {
+        contract: contract('property-registry', 'property.registry', [
+          {
+            ...invalidSubscription,
+            consumerModuleKey: 'property.registry',
+          },
+        ]),
+        expectedAppId: 'property-registry',
+      },
+    ]),
+  );
+
+  const duplicateWorkerKey = 'shared.projector';
+  assert.throws(() =>
+    buildInstalledModuleCatalog([
+      {
+        contract: contract('property-registry', 'property.registry', [
+          {
+            consumerModuleKey: 'property.registry',
+            entrypoint: {
+              access: 'background',
+              entrypointKey: duplicateWorkerKey,
+              moduleKey: 'property.registry',
+              role: 'worker',
+              scope: 'tenant',
+            },
+            producerModuleKey: 'external.events',
+            topic: 'external.events.created',
+            workerKey: duplicateWorkerKey,
+          },
+        ]),
+        expectedAppId: 'property-registry',
+      },
+      {
+        contract: contract('documents-center', 'documents.center', [
+          {
+            consumerModuleKey: 'documents.center',
+            entrypoint: {
+              access: 'background',
+              entrypointKey: duplicateWorkerKey,
+              moduleKey: 'documents.center',
+              role: 'worker',
+              scope: 'tenant',
+            },
+            producerModuleKey: 'external.events',
+            topic: 'external.events.created',
+            workerKey: duplicateWorkerKey,
+          },
+        ]),
+        expectedAppId: 'documents-center',
       },
     ]),
   );
@@ -157,47 +198,11 @@ test('rejects deployment mismatch, duplicate deployment IDs, and duplicate modul
   );
 });
 
-test('rejects missing, self, cyclic, and unknown-version dependencies', () => {
+test('rejects unsupported contract versions without weakening catalog safety', () => {
   assert.throws(() =>
     buildInstalledModuleCatalog([
       {
-        contract: contract('property-registry', 'property.registry', [
-          { activation: 'must_be_active_first', id: 'documents.center', required: true },
-        ]),
-        expectedAppId: 'property-registry',
-      },
-    ]),
-  );
-  assert.throws(() =>
-    buildInstalledModuleCatalog([
-      {
-        contract: contract('property-registry', 'property.registry', [
-          { activation: 'must_be_active_first', id: 'property.registry', required: true },
-        ]),
-        expectedAppId: 'property-registry',
-      },
-    ]),
-  );
-  assert.throws(() =>
-    buildInstalledModuleCatalog([
-      {
-        contract: contract('property-registry', 'property.registry', [
-          { activation: 'must_be_active_first', id: 'documents.center', required: true },
-        ]),
-        expectedAppId: 'property-registry',
-      },
-      {
-        contract: contract('documents-center', 'documents.center', [
-          { activation: 'must_be_active_first', id: 'property.registry', required: true },
-        ]),
-        expectedAppId: 'documents-center',
-      },
-    ]),
-  );
-  assert.throws(() =>
-    buildInstalledModuleCatalog([
-      {
-        contract: { ...contract('property-registry', 'property.registry'), schemaVersion: '1' },
+        contract: { ...contract('property-registry', 'property.registry'), schemaVersion: '0' },
         expectedAppId: 'property-registry',
       },
     ]),
