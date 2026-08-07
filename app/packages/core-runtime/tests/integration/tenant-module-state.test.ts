@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Cause, Effect, Exit } from 'effect';
+import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
@@ -19,7 +20,11 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
-import { makeTenantModuleStateService } from '../../src/modules/tenant-module-state-service.ts';
+import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
+import {
+  TenantModuleStateService,
+  makeTenantModuleStateService,
+} from '../../src/modules/tenant-module-state-service.ts';
 
 const tenantOne = randomUUID();
 const tenantTwo = randomUUID();
@@ -29,14 +34,87 @@ const tenantIds = [tenantOne, tenantTwo] as const;
 
 type DatabaseShape = Parameters<typeof makeActionRuntime>[0];
 
+const installedContract = (
+  moduleId: string,
+  dependencies: OntosModuleDeploymentContract['manifest']['dependencies']['modules'] = [],
+): OntosModuleDeploymentContract => ({
+  deployment: { appId: 'test-module', buildMarker: 'test-build' },
+  manifest: {
+    activation: {
+      defaultState: 'inactive',
+      preservesHistoryWhenInactive: true,
+      scope: 'tenant',
+      supportedStates: [
+        'inactive',
+        'active',
+        'read_only',
+        'suspended',
+        'quarantined',
+        'deprecated',
+        'archived',
+      ],
+    },
+    dependencies: { core: [], externalSystems: [], modules: dependencies },
+    module: {
+      description: 'Integration test module',
+      displayName: 'Integration test module',
+      id: moduleId,
+      implementedAs: 'ultramodern_microvertical',
+      kind: 'business_module',
+    },
+    publicSurface: {
+      actions: [],
+      api: [],
+      components: [],
+      events: [],
+      reports: [],
+      resourceTypes: [],
+      search: [],
+    },
+  },
+  runtime: { outboxSubscriptions: [] },
+  schemaVersion: '0',
+});
+
+const installedCatalog: InstalledModuleCatalog = Object.freeze({
+  contracts: Object.freeze([]),
+  deploymentAppIds: Object.freeze([]),
+  getByDeploymentAppId: () => void 0,
+  getByModuleId: (moduleId: string) => installedContract(moduleId),
+  moduleIds: Object.freeze([]),
+  outboxSubscriptions: Object.freeze([]),
+});
+
+const catalogFrom = (
+  ...contracts: readonly OntosModuleDeploymentContract[]
+): InstalledModuleCatalog => {
+  const byModuleId = new Map(contracts.map((item) => [item.manifest.module.id, item]));
+  return Object.freeze({
+    contracts: Object.freeze([...contracts]),
+    deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
+    getByDeploymentAppId: (appId: string) =>
+      contracts.find(({ deployment }) => deployment.appId === appId),
+    getByModuleId: (moduleId: string) => byModuleId.get(moduleId),
+    moduleIds: Object.freeze(contracts.map(({ manifest }) => manifest.module.id)),
+    outboxSubscriptions: Object.freeze([]),
+  });
+};
+
 const withDatabase = <Value, Error>(
-  operation: (database: DatabaseShape) => Effect.Effect<Value, Error>,
+  operation: (
+    database: DatabaseShape,
+  ) => Effect.Effect<Value, Error, InstalledModuleCatalogService | TenantModuleStateService>,
 ) =>
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
       const configuration = yield* loadDatabaseConfig();
       const database = yield* makeCoreDatabase(configuration);
-      return yield* operation(database);
+      return yield* operation(database).pipe(
+        Effect.provideService(InstalledModuleCatalogService, {
+          load: Effect.succeed(installedCatalog),
+        }),
+        Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
+      );
     }),
   );
 
@@ -114,6 +192,8 @@ const principal = (tenantId = tenantOne, principalId = principalOne) => ({
   tenantId,
 });
 
+const testModuleKey = (prefix: string, tenantId: string): string => `${prefix}.id-${tenantId}`;
+
 const actionInput = (
   moduleKey: string,
   newState: (typeof changeTenantModuleStateAction.descriptor.payloadSchema)['Type']['newState'],
@@ -178,7 +258,7 @@ test('lists exact active rows and all states for one trusted tenant in module-ke
 });
 
 test('atomically creates and transitions state with truthful Action history and evidence', async () => {
-  const moduleKey = `testing.${tenantOne}`;
+  const moduleKey = testModuleKey('testing', tenantOne);
 
   await Effect.runPromise(
     withDatabase((database) => {
@@ -259,14 +339,74 @@ test('atomically creates and transitions state with truthful Action history and 
         .from(dataAccessEvents)
         .where(eq(dataAccessEvents.actionInvocationId, row.actionInvocationId ?? ''));
       assert.ok(audit.some((event) => event.eventType === 'action.executed'));
-      assert.equal(access.length, 1);
-      assert.equal(access[0]?.accessKind, 'read');
+      assert.equal(access.length, 2);
+      assert.deepEqual(
+        new Set(access.map((event) => event.targetResourceType)),
+        new Set(['tenant-module-state', 'tenant-module-state-dependency-snapshot']),
+      );
+      assert.ok(access.every((event) => event.accessKind === 'read'));
     }
   });
 });
 
+test('rejects unknown modules and inactive mandatory dependencies before module-state writes', async () => {
+  const unknownModuleKey = testModuleKey('unknown', tenantOne);
+  const dependencyModuleKey = testModuleKey('dependency', tenantOne);
+  const targetModuleKey = testModuleKey('dependent', tenantOne);
+  const transitionCatalog = catalogFrom(
+    installedContract(dependencyModuleKey),
+    installedContract(targetModuleKey, [
+      {
+        activation: 'must_be_active_first',
+        id: dependencyModuleKey,
+        reason: 'Dependency must be active first',
+        required: true,
+      },
+    ]),
+  );
+
+  await Effect.runPromise(
+    withDatabase((database) => {
+      const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+      const withCatalog = <Value, Error, Requirements>(
+        effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
+      ) =>
+        effect.pipe(
+          Effect.provideService(InstalledModuleCatalogService, {
+            load: Effect.succeed(transitionCatalog),
+          }),
+        );
+      return Effect.gen(function* rejectInvalidTransitions() {
+        const unknown = yield* Effect.exit(
+          withCatalog(runtime.runAction(actionInput(unknownModuleKey, 'active', 'unknown-module'))),
+        );
+        assert.equal(failureTag(unknown), 'TenantModuleStateUnknownModuleError');
+        const inactiveDependency = yield* Effect.exit(
+          withCatalog(
+            runtime.runAction(actionInput(targetModuleKey, 'active', 'inactive-dependency')),
+          ),
+        );
+        assert.equal(failureTag(inactiveDependency), 'TenantModuleStateDependencyInactiveError');
+      });
+    }),
+  );
+
+  await databasePromise(async (database) => {
+    const stateRows = await database.executor
+      .select()
+      .from(tenantModuleStates)
+      .where(inArray(tenantModuleStates.moduleKey, [unknownModuleKey, targetModuleKey]));
+    const historyRows = await database.executor
+      .select()
+      .from(tenantModuleStateChanges)
+      .where(inArray(tenantModuleStateChanges.moduleKey, [unknownModuleKey, targetModuleKey]));
+    assert.deepEqual(stateRows, []);
+    assert.deepEqual(historyRows, []);
+  });
+});
+
 test('idempotent replay and same-state rejection create no duplicate history or evidence', async () => {
-  const moduleKey = `idempotency.${tenantOne}`;
+  const moduleKey = testModuleKey('idempotency', tenantOne);
   const input = actionInput(moduleKey, 'active', 'same-intent');
 
   await Effect.runPromise(
@@ -357,7 +497,7 @@ const withTenantStateWriteFailure = (database: DatabaseShape): DatabaseShape => 
 });
 
 test('rolls back history and Action evidence when current-state persistence fails', async () => {
-  const moduleKey = `rollback.${tenantOne}`;
+  const moduleKey = testModuleKey('rollback', tenantOne);
   const failure = await Effect.runPromise(
     withDatabase((database) => {
       const runtime = makeActionRuntime(
@@ -395,7 +535,7 @@ test('rolls back history and Action evidence when current-state persistence fail
 });
 
 test('serializes concurrent transitions into one truthful history chain', async () => {
-  const moduleKey = `concurrency.${tenantOne}`;
+  const moduleKey = testModuleKey('concurrency', tenantOne);
   await Effect.runPromise(
     withDatabase((database) => {
       const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
@@ -449,7 +589,7 @@ test('serializes concurrent transitions into one truthful history chain', async 
 });
 
 test('derives tenant scope only from the trusted principal', async () => {
-  const moduleKey = `isolation.${tenantOne}`;
+  const moduleKey = testModuleKey('isolation', tenantOne);
   await databasePromise(async (database) => {
     await database.executor.insert(tenantModuleStates).values({
       moduleKey,

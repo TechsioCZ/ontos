@@ -15,10 +15,12 @@ import type {
 import {
   CoreDatabaseLive,
   DatabaseConfigLive,
+  OutboxRuntimeLive,
   PrincipalResolverLive,
   TenantModuleStateService,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
+import type { InstalledModuleCatalog } from '@app/core-runtime';
 import type { GatewayContextProblem } from '@app/shared-contracts';
 import { Cause, pipe } from 'effect';
 import { ShellAuthenticationApi } from '../shared/api.ts';
@@ -42,8 +44,12 @@ import {
 import type { GatewayIssuerDependencies, GatewayIssuerError } from './auth/gateway-issuer.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
-import { installedVerticalIds } from './verticals/installed-verticals.ts';
-import type { InstalledVerticalTopologyError } from './verticals/installed-verticals.ts';
+import {
+  ShellInstalledModuleCatalog,
+  ShellInstalledModuleCatalogLive,
+} from './modules/installed-module-catalog.ts';
+import type { InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
+import { makeInstalledOutboxMatcherLayer } from './modules/installed-outbox-matcher.ts';
 
 const requestHeaders = (headers: Readonly<Record<string, string | undefined>>): Headers => {
   const result = new Headers();
@@ -436,9 +442,7 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
     ),
   );
 
-const makeModulesGroupLive = (
-  loadInstalledVerticalIds: Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError>,
-) =>
+const makeModulesGroupLive = () =>
   HttpApiBuilder.group(ShellAuthenticationApi, 'modules', (handlers) =>
     handlers.handle('activeModules', ({ request }) =>
       Effect.gen(function* activeModulesHandler() {
@@ -447,7 +451,7 @@ const makeModulesGroupLive = (
           .currentSession(requestHeaders(request.headers))
           .pipe(
             Effect.catch((error) =>
-              failActiveModulesProblem(activeModulesAuthenticationProblem(error)),
+              pipe(error, activeModulesAuthenticationProblem, failActiveModulesProblem),
             ),
           );
         yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
@@ -459,12 +463,20 @@ const makeModulesGroupLive = (
         const activeModules = yield* moduleState
           .listActiveTenantModules(sessionResult.identity.tenantId)
           .pipe(Effect.catch(() => failActiveModulesProblem(activeModulesUnavailableProblem())));
-        const installed = yield* loadInstalledVerticalIds.pipe(
-          Effect.catch(() => failActiveModulesProblem(activeModulesInternalProblem())),
+        const catalogService = yield* ShellInstalledModuleCatalog;
+        const installed = yield* catalogService.load.pipe(
+          Effect.catch((error) =>
+            failActiveModulesProblem(
+              error._tag === 'InstalledModuleCatalogUnavailableError'
+                ? activeModulesUnavailableProblem()
+                : activeModulesInternalProblem(),
+            ),
+          ),
         );
+        const installedModuleIds = new Set(installed.moduleIds);
 
         return activeModules
-          .filter((module) => installed.has(module.moduleKey))
+          .filter((module) => installedModuleIds.has(module.moduleKey))
           .toSorted((left, right) => left.moduleKey.localeCompare(right.moduleKey));
       }).pipe(
         Effect.catchCause((cause) =>
@@ -502,22 +514,32 @@ export const makeShellAuthenticationApiRuntime = (
   authenticationLayer: Layer.Layer<AuthenticationService>,
   issuerDependencies: GatewayIssuerDependencies,
   moduleStateLayer: Layer.Layer<TenantModuleStateService> = tenantModuleStateServiceLive,
-  loadInstalledVerticalIds: Effect.Effect<
-    ReadonlySet<string>,
-    InstalledVerticalTopologyError
-  > = installedVerticalIds,
+  loadInstalledModuleCatalog:
+    | Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>
+    | undefined = undefined,
+  enableInstalledOutboxMatcher = false,
 ): EffectBffDefinition<typeof ShellAuthenticationApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof ShellAuthenticationApi, EffectRuntimeLayer> => {
+  const moduleCatalogLayer =
+    loadInstalledModuleCatalog === undefined
+      ? ShellInstalledModuleCatalogLive
+      : Layer.succeed(ShellInstalledModuleCatalog, { load: loadInstalledModuleCatalog });
+  const outboxMatcherLayer = enableInstalledOutboxMatcher
+    ? makeInstalledOutboxMatcherLayer().pipe(
+        Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(coreDatabaseLive), Layer.orDie)),
+      )
+    : Layer.empty;
   const layer = HttpApiBuilder.layer(ShellAuthenticationApi).pipe(
     Layer.provide(
       Layer.mergeAll(
         authenticationGroupLive,
         tenantGroupLive,
         makeGatewayContextGroupLive(issuerDependencies),
-        makeModulesGroupLive(loadInstalledVerticalIds),
+        makeModulesGroupLive(),
+        outboxMatcherLayer,
       ),
     ),
-    Layer.provide(Layer.merge(authenticationLayer, moduleStateLayer)),
+    Layer.provide(Layer.mergeAll(authenticationLayer, moduleStateLayer, moduleCatalogLayer)),
   ) satisfies EffectRuntimeLayer;
 
   return defineEffectBff({
@@ -529,6 +551,9 @@ export const makeShellAuthenticationApiRuntime = (
 const apiRuntime = makeShellAuthenticationApiRuntime(
   authenticationServiceLive,
   gatewayIssuerLiveDependencies,
+  tenantModuleStateServiceLive,
+  undefined,
+  true,
 );
 
 export default apiRuntime;

@@ -7,12 +7,15 @@ import type { GeneratorContext } from '@modern-js/codesmith';
 import actionGenerator from './action/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
+import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
 import outboxWorkerGenerator from './outbox-worker/scaffold.mts';
 import policyGenerator from './policy/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
+  ModuleContractScaffoldConfig,
+  ModuleContractScaffoldResult,
   ActionBoundaryScaffoldConfig,
   ActionBoundaryScaffoldResult,
   OutboxScaffoldConfig,
@@ -29,6 +32,7 @@ export type ScaffoldCommand =
   | 'action'
   | 'microvertical-action-boundary'
   | 'microvertical-page'
+  | 'module-contract'
   | 'outbox-message'
   | 'outbox-worker'
   | 'policy';
@@ -36,6 +40,7 @@ export type ScaffoldCommand =
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
   | ActionScaffoldResult
+  | ModuleContractScaffoldResult
   | OutboxScaffoldResult
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
@@ -44,6 +49,7 @@ type GeneratorResult =
 type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
   | ActionScaffoldConfig
+  | ModuleContractScaffoldConfig
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
@@ -173,6 +179,26 @@ Options:
 `,
     requiredFlags: ['page', 'vertical'],
     toConfig: (flags) => ({ page: flags['page'] ?? '', vertical: flags['vertical'] ?? '' }),
+  },
+  'module-contract': {
+    flags: ['module', 'vertical'],
+    generator: moduleContractGenerator,
+    help: `Usage: pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
+
+Generate the mandatory typed OntOS Module Manifest and private owner-local runtime registration.
+
+Required flags:
+  --vertical <vertical>       Existing generated vertical folder (lower-kebab-case)
+  --module <dotted.module-id> Stable dotted non-core OntOS business module ID
+
+Options:
+  --help                      Show this help without writing
+`,
+    requiredFlags: ['module', 'vertical'],
+    toConfig: (flags) => ({
+      module: flags['module'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
   },
   'outbox-message': {
     flags: ['action', 'topic', 'vertical'],

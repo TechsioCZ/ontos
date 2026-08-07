@@ -7,7 +7,7 @@ import {
   OUTBOX_SLOT_START,
   asJsonObject,
   createMutation,
-  discoverVertical,
+  discoverOntosModule,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   isMissingFileError,
@@ -23,10 +23,14 @@ import type {
   OutboxScaffoldConfig,
   OutboxScaffoldResult,
   ScaffoldPlan,
-  VerticalMetadata,
+  OntosVerticalMetadata,
 } from '../shared.mts';
 
-const renderOutboxMessage = (vertical: VerticalMetadata, action: string, topic: string): string => {
+const renderOutboxMessage = (
+  vertical: OntosVerticalMetadata,
+  action: string,
+  topic: string,
+): string => {
   const actionType = toPascalCase(action);
   const topicType = toPascalCase(topicToSlug(topic));
   const base = `${actionType}${topicType}Outbox`;
@@ -50,9 +54,9 @@ export const create${base}Message = (
 `;
 };
 
-const renderOutboxContract = (vertical: VerticalMetadata, topic: string): string =>
+const renderOutboxContract = (vertical: OntosVerticalMetadata, topic: string): string =>
   `${OUTBOX_CONTRACT_GENERATOR_HEADER}
-// @ontos-outbox-producer ${vertical.appId}
+// @ontos-outbox-producer ${vertical.moduleId}
 // @ontos-outbox-topic ${topic}
 import { Schema } from 'effect';
 
@@ -62,7 +66,7 @@ export const OutboxPayloadSchema = Schema.Struct({
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
 export const outboxTopic = '${topic}' as const;
-export const outboxProducerModuleKey = '${vertical.appId}' as const;
+export const outboxProducerModuleKey = '${vertical.moduleId}' as const;
 `;
 
 export const planOutboxScaffold = async (
@@ -71,7 +75,7 @@ export const planOutboxScaffold = async (
 ): Promise<ScaffoldPlan<OutboxScaffoldResult>> => {
   const action = requireCanonicalSlug(config.action, 'action');
   const topic = requireTopic(config.topic);
-  const vertical = await discoverVertical(workspaceRoot, config.vertical);
+  const vertical = await discoverOntosModule(workspaceRoot, config.vertical);
   const actionPath = resolveContainedPath(
     workspaceRoot,
     'verticals',
@@ -93,7 +97,7 @@ export const planOutboxScaffold = async (
   }
   if (
     !actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
-    !actionContent.includes(`// @ontos-action-owner ${vertical.appId}\n`) ||
+    !actionContent.includes(`// @ontos-action-owner ${vertical.moduleId}\n`) ||
     !actionContent.includes(`// @ontos-action-slug ${action}\n`)
   ) {
     throw new Error('Outbox Message can extend only the matching generated Action');

@@ -106,6 +106,7 @@ test('runs immediately, survives a typed cycle failure, and continues polling', 
       {
         config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
         registrations: [registration],
+        subscriptions: [registration.descriptor],
       },
       runCycle,
     ),

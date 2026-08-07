@@ -9,6 +9,10 @@ This document defines state-changing Action execution. MicroVertical deployment 
 - Every Action descriptor declares an explicit readonly array of immutable Policy object references. A global Shell/Core Policy may be referenced by any Action; an executable MicroVertical Policy may be referenced only by an Action with the same owning module key. Raw Policy keys, registries, and cross-owner Policy imports are forbidden.
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
+- A MicroVertical Action's `owningModuleKey`, key prefix, event producer, and access-policy identity
+  use the manifest's dotted OntOS `moduleId`, never the topology deployment `appId`. The real Action
+  value is published in the owner-authored manifest and bound to its private handler only in the
+  owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
 Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
 and active tenant selection—are Shell-owned authentication mechanics, not canonical business-state

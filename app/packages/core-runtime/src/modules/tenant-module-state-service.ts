@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual forEach API is intentional. */
 import { and, asc, eq } from 'drizzle-orm';
 import { Clock, Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
@@ -6,13 +7,18 @@ import type { ActionAuthMethod } from '../db/schema.ts';
 import type { ActionTransactionExecutor } from '../actions/context.ts';
 import {
   TenantModuleStateConcurrentChangeError,
+  TenantModuleStateDependencyInactiveError,
   TenantModuleStatePersistenceUnavailableError,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateTenantMissingError,
   TenantModuleStateUnchangedError,
+  TenantModuleStateUnknownModuleError,
   TenantModuleStateUnsupportedChangeSourceError,
+  TenantModuleStateUnsupportedStateError,
 } from './tenant-module-state-errors.ts';
 import type { TenantModuleStateTransitionError } from './tenant-module-state-errors.ts';
+import type { InstalledModuleCatalog } from './catalog.ts';
+import type { OntosModuleId } from './manifest.ts';
 
 export const TENANT_MODULE_STATES = [
   'inactive',
@@ -40,6 +46,53 @@ export const TenantModuleStateRecordSchema = Schema.Struct({
 export type TenantModuleStateRecord = Schema.Schema.Type<typeof TenantModuleStateRecordSchema>;
 
 export type TenantModuleStateChangeSource = 'support' | 'system' | 'user';
+
+export const validateTenantModuleStateTransition = (
+  catalog: InstalledModuleCatalog,
+  tenantStates: readonly TenantModuleStateRecord[],
+  moduleKey: OntosModuleId,
+  newState: TenantModuleState,
+): Effect.Effect<
+  void,
+  | TenantModuleStateDependencyInactiveError
+  | TenantModuleStateUnknownModuleError
+  | TenantModuleStateUnsupportedStateError
+> => {
+  if (newState === 'inactive') {
+    return Effect.void;
+  }
+  const contract = catalog.getByModuleId(moduleKey);
+  if (contract === undefined) {
+    return Effect.fail(
+      new TenantModuleStateUnknownModuleError({
+        code: 'tenant_module_state_module_unknown',
+        reason: 'The requested OntOS module is not installed',
+      }),
+    );
+  }
+  if (!contract.manifest.activation.supportedStates.includes(newState)) {
+    return Effect.fail(
+      new TenantModuleStateUnsupportedStateError({
+        code: 'tenant_module_state_unsupported',
+        reason: 'The requested state is not supported by the installed module',
+      }),
+    );
+  }
+  const active = new Set(
+    tenantStates.filter(({ state }) => state === 'active').map(({ moduleKey: key }) => key),
+  );
+  const unsatisfied = contract.manifest.dependencies.modules.some(
+    (dependency) => dependency.activation === 'must_be_active_first' && !active.has(dependency.id),
+  );
+  return unsatisfied
+    ? Effect.fail(
+        new TenantModuleStateDependencyInactiveError({
+          code: 'tenant_module_state_dependency_inactive',
+          reason: 'A mandatory OntOS module dependency must be active first',
+        }),
+      )
+    : Effect.void;
+};
 
 export const resolveTenantModuleStateChangeSource = (
   authMethod: ActionAuthMethod,
@@ -88,6 +141,10 @@ export interface TenantModuleStateServiceShape {
   readonly listTenantModuleStates: (
     tenantId: string,
   ) => Effect.Effect<readonly TenantModuleStateRecord[], TenantModuleStateReadUnavailableError>;
+  readonly listTenantModuleStatesForTransition: (
+    transaction: ActionTransactionExecutor,
+    tenantId: string,
+  ) => Effect.Effect<readonly TenantModuleStateRecord[], TenantModuleStateReadUnavailableError>;
 }
 
 export class TenantModuleStateService extends Context.Service<
@@ -95,38 +152,60 @@ export class TenantModuleStateService extends Context.Service<
   TenantModuleStateServiceShape
 >()('@app/core-runtime/modules/tenant-module-state-service/TenantModuleStateService') {}
 
+const tenantModuleStateReadUnavailable = () =>
+  new TenantModuleStateReadUnavailableError({
+    code: 'tenant_module_state_read_unavailable',
+    reason: 'Tenant module state is temporarily unavailable',
+  });
+
 export const makeTenantModuleStateService = (
   database: Context.Service.Shape<typeof CoreDatabase>,
 ): TenantModuleStateServiceShape => {
+  const decodeRows = (
+    rows: readonly { readonly moduleKey: string; readonly state: string }[],
+  ): Effect.Effect<readonly TenantModuleStateRecord[], TenantModuleStateReadUnavailableError> =>
+    Effect.forEach(rows, (row) =>
+      Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
+        Effect.map((state) => ({ moduleKey: row.moduleKey, state })),
+        Effect.mapError(tenantModuleStateReadUnavailable),
+      ),
+    );
   const listTenantModuleStates = (tenantId: string) =>
     Effect.tryPromise({
-      catch: () =>
-        new TenantModuleStateReadUnavailableError({
-          code: 'tenant_module_state_read_unavailable',
-          reason: 'Tenant module state is temporarily unavailable',
-        }),
+      catch: tenantModuleStateReadUnavailable,
       try: () =>
         database.executor
           .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
           .from(tenantModuleStates)
           .where(eq(tenantModuleStates.tenantId, tenantId))
           .orderBy(asc(tenantModuleStates.moduleKey)),
-    }).pipe(
-      Effect.flatMap((rows) =>
-        Effect.forEach((row: (typeof rows)[number]) =>
-          Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
-            Effect.map((state) => ({ moduleKey: row.moduleKey, state })),
-            Effect.mapError(
-              () =>
-                new TenantModuleStateReadUnavailableError({
-                  code: 'tenant_module_state_read_unavailable',
-                  reason: 'Tenant module state is temporarily unavailable',
-                }),
-            ),
-          ),
-        )(rows),
-      ),
-    );
+    }).pipe(Effect.flatMap(decodeRows));
+
+  const listTenantModuleStatesForTransition = (
+    transaction: ActionTransactionExecutor,
+    tenantId: string,
+  ) =>
+    Effect.gen(function* listTenantModuleStatesForTransitionEffect() {
+      yield* Effect.tryPromise({
+        catch: tenantModuleStateReadUnavailable,
+        try: () =>
+          transaction
+            .select({ tenantId: tenants.tenantId })
+            .from(tenants)
+            .where(eq(tenants.tenantId, tenantId))
+            .for('update'),
+      });
+      const rows = yield* Effect.tryPromise({
+        catch: tenantModuleStateReadUnavailable,
+        try: () =>
+          transaction
+            .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+            .from(tenantModuleStates)
+            .where(eq(tenantModuleStates.tenantId, tenantId))
+            .orderBy(asc(tenantModuleStates.moduleKey)),
+      });
+      return yield* decodeRows(rows);
+    });
 
   return {
     listActiveTenantModules: (tenantId) =>
@@ -138,6 +217,7 @@ export const makeTenantModuleStateService = (
         ),
       ),
     listTenantModuleStates,
+    listTenantModuleStatesForTransition,
   };
 };
 
