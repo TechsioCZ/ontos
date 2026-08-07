@@ -4,6 +4,7 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
+import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 import {
   TenantModuleStateConcurrentChangeError,
   TenantModuleStatePersistenceUnavailableError,
@@ -93,6 +94,12 @@ export const changeTenantModuleStateAction = defineAction(
     auditProfile: 'sensitive',
     domainErrorSchema: ChangeTenantModuleStateError,
     domainEvents: {},
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      entrypointKey: 'core.modules.change-tenant-module-state',
+      moduleKey: 'core.modules',
+      role: 'action',
+    }),
     idempotency: 'required',
     owningModuleKey: 'core.modules',
     payloadSchema: ChangeTenantModuleStatePayload,

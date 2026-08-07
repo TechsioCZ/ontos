@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Context, Effect, Schema } from 'effect';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { OutboxWorkerHandler, OutboxWorkerRegistration } from '../../src/outbox/definition.ts';
 import { OutboxClaimLostError } from '../../src/outbox/errors.ts';
 import type {
@@ -54,6 +55,12 @@ const worker = <HandlerError, HandlerRequirements = never>(
   defineOutboxWorker(
     {
       consumerModuleKey: 'consumer',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        entrypointKey: 'consumer.logger',
+        moduleKey: 'consumer',
+        role: 'worker',
+      }),
       leaseDurationMs: 30_000,
       payloadSchema: Schema.Struct({ messageKey: Schema.String }),
       producerModuleKey: 'producer',
@@ -192,6 +199,12 @@ test('runs a worker with Effect services provided by its owning MicroVertical ho
   const registration = defineOutboxWorker(
     {
       consumerModuleKey: 'consumer',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        entrypointKey: 'consumer.layered-logger',
+        moduleKey: 'consumer',
+        role: 'worker',
+      }),
       leaseDurationMs: 30_000,
       payloadSchema: Schema.Struct({ messageKey: Schema.String }),
       producerModuleKey: 'producer',

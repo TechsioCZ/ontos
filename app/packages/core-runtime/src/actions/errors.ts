@@ -1,5 +1,9 @@
 /* eslint-disable max-classes-per-file -- The public Core error union is intentionally co-located and exhaustive. */
 import { Schema } from 'effect';
+import type {
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+} from '../modules/module-state-gate-errors.ts';
 
 const safeReason = {
   reason: Schema.String,
@@ -160,7 +164,9 @@ export type ActionCoreError =
   | ActionRequestHashConflict
   | ActionResultValidationError
   | ActionTransactionError
-  | ActionTrustedContextValidationError;
+  | ActionTrustedContextValidationError
+  | ModuleStateCheckUnavailableError
+  | ModuleStateDeniedError;
 
 /**
  * Core errors are transport-neutral. A BFF must map this union and the
@@ -194,4 +200,6 @@ export const ACTION_CORE_ERROR_TAGS = [
   'ActionPolicyEvaluationError',
   'ActionTransactionError',
   'ActionCommitIndeterminate',
+  'ModuleStateDeniedError',
+  'ModuleStateCheckUnavailableError',
 ] as const;

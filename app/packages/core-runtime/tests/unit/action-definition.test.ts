@@ -8,6 +8,10 @@ import {
   defineAction,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
+import {
+  defineSystemModuleEntrypoint,
+  defineTenantModuleEntrypoint,
+} from '../../src/modules/module-entrypoint.ts';
 
 test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
   const registration = defineAction(
@@ -17,8 +21,14 @@ test('defines an immutable typed descriptor and decodes typed payloads and resul
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.change',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [],
       resultSchema: Schema.Struct({ total: Schema.Finite }),
@@ -49,8 +59,14 @@ test('uses Schema.Void for a no-payload Action', async () => {
       auditProfile: 'minimal',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.cache.refresh',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'optional',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
       resultSchema: Schema.Void,
@@ -79,8 +95,14 @@ test('keeps the private handler outside the public Action registration', () => {
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.change',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [],
       resultSchema: Schema.Finite,
@@ -120,6 +142,12 @@ test('accepts global and same-owner Policy references and copies the collection'
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'inventory.stock.reserve',
+        moduleKey: 'inventory.stock',
+        role: 'action',
+      }),
       idempotency: 'required',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
@@ -149,6 +177,12 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
     auditProfile: 'standard',
     domainErrorSchema: Schema.Never,
     domainEvents: {},
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'write',
+      entrypointKey: 'inventory.stock.reserve',
+      moduleKey: 'inventory.stock',
+      role: 'action',
+    }),
     idempotency: 'required',
     owningModuleKey: 'inventory.stock',
     payloadSchema: Schema.Struct({ amount: Schema.Finite }),
@@ -199,4 +233,82 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
     defineAction({ ...descriptor, policies: [{ ...foreignPolicy }] } as never, () => Effect.void),
   );
   assert.throws(() => defineAction(descriptor as never, () => Effect.void));
+});
+
+test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
+  const registration = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+      actionKey: 'inventory.stock.reserve',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'inventory.stock.reserve',
+        moduleKey: 'inventory.stock',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      owningModuleKey: 'inventory.stock',
+      payloadSchema: Schema.Void,
+      policies: [],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => Effect.void,
+  );
+  assert.throws(() =>
+    defineAction(
+      {
+        ...registration.descriptor,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          entrypointKey: 'billing.invoice.reserve',
+          moduleKey: 'billing.invoice',
+          role: 'action',
+        }),
+      } as never,
+      () => Effect.void,
+    ),
+  );
+  assert.throws(() =>
+    defineAction(
+      {
+        ...registration.descriptor,
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'write',
+          entrypointKey: 'inventory.stock.reserve',
+          moduleKey: 'inventory.stock',
+          role: 'action',
+        }),
+      } as never,
+      () => Effect.void,
+    ),
+  );
+  assert.throws(() =>
+    defineAction(
+      {
+        ...registration.descriptor,
+        actionKey: 'core.modules.change-state',
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          entrypointKey: 'core.modules.change-state',
+          moduleKey: 'core.modules',
+          role: 'action',
+        }),
+        owningModuleKey: 'core.modules',
+      } as never,
+      () => Effect.void,
+    ),
+  );
+  assert.throws(() =>
+    defineAction(
+      {
+        ...registration.descriptor,
+        entrypoint: { ...registration.descriptor.entrypoint },
+      } as never,
+      () => Effect.void,
+    ),
+  );
 });

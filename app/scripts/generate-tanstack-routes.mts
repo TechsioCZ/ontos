@@ -51,6 +51,13 @@ const findRouteMetadataFiles = async (directory: string): Promise<string[]> => {
 interface RouteMetadata {
   readonly canonicalPath: string;
   readonly descriptionKey: string;
+  readonly entrypoint: {
+    readonly access: 'historical_read' | 'read';
+    readonly entrypointKey: string;
+    readonly moduleKey: string;
+    readonly role: 'page';
+    readonly scope: 'system' | 'tenant';
+  };
   readonly id: string;
   readonly indexable: boolean;
   readonly localisedPaths: Readonly<Record<string, string>>;
@@ -61,7 +68,7 @@ interface RouteMetadata {
   readonly titleKey: string;
 }
 
-const loadRouteMetadata = async (appDirectory: string) => {
+const loadRouteMetadata = async (appDirectory: string, appId: string) => {
   const routeDirectory = path.join(appDirectory, 'src/routes');
   const metadataFiles = await findRouteMetadataFiles(routeDirectory);
   const routes = await Promise.all(
@@ -74,6 +81,19 @@ const loadRouteMetadata = async (appDirectory: string) => {
       const route = module.routeMeta ?? module.default;
       if (route === undefined) {
         throw new Error(`${metadataFile} must export routeMeta or a default route metadata object`);
+      }
+      const expectedScope = appId.startsWith('shell-') ? 'system' : 'tenant';
+      if (
+        route.ownerAppId !== appId ||
+        route.entrypoint?.moduleKey !== appId ||
+        route.entrypoint?.role !== 'page' ||
+        (route.entrypoint?.access !== 'read' && route.entrypoint?.access !== 'historical_read') ||
+        route.entrypoint?.scope !== expectedScope ||
+        !route.entrypoint.entrypointKey.startsWith(`${appId}.`)
+      ) {
+        throw new Error(
+          `${metadataFile} must declare one governed ${expectedScope} page entrypoint owned by ${appId}`,
+        );
       }
       return route;
     }),
@@ -107,8 +127,8 @@ const createPublicRoutes = (routes: readonly RouteMetadata[]) =>
       titleKey: route.titleKey,
     }));
 
-const generateRouteMetadataManifest = async (appDirectory: string) => {
-  const routes = await loadRouteMetadata(appDirectory);
+const generateRouteMetadataManifest = async (appDirectory: string, appId: string) => {
+  const routes = await loadRouteMetadata(appDirectory, appId);
   const namespace = routes[0]?.namespace;
   if (namespace === undefined) {
     return;
@@ -183,7 +203,7 @@ if ((result.status ?? 1) === 0) {
     ) {
       continue;
     }
-    await generateRouteMetadataManifest(path.join(workspaceRoot, app.path));
+    await generateRouteMetadataManifest(path.join(workspaceRoot, app.path), app.id);
     console.log(`[ultramodern] Route metadata manifest generated: ${app.id}`);
   }
 }

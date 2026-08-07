@@ -215,6 +215,7 @@
     "commands": [
       "pnpm i18n:boundaries",
       "pnpm api:check",
+      "pnpm module-entrypoints:check",
       "pnpm contract:check"
     ]
   }

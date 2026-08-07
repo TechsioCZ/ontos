@@ -8,6 +8,13 @@ export const ultramodernRouteMetadata = [
   {
     canonicalPath: '/',
     descriptionKey: 'shell.seo.description',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.home',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
     id: 'shell-home',
     indexable: false,
     localisedPaths: {
@@ -24,6 +31,13 @@ export const ultramodernRouteMetadata = [
   {
     canonicalPath: '/login',
     descriptionKey: 'shell.login.seo.description',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.login',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
     id: 'shell-login',
     indexable: false,
     localisedPaths: {

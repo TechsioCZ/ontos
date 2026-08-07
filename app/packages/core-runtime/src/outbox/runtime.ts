@@ -163,6 +163,12 @@ export const makeOutboxRuntime = (
         if (
           subscription === undefined ||
           subscription.consumerModuleKey !== registration.descriptor.consumerModuleKey ||
+          subscription.entrypoint.entrypointKey !==
+            registration.descriptor.entrypoint.entrypointKey ||
+          subscription.entrypoint.moduleKey !== registration.descriptor.entrypoint.moduleKey ||
+          subscription.entrypoint.role !== registration.descriptor.entrypoint.role ||
+          subscription.entrypoint.access !== registration.descriptor.entrypoint.access ||
+          subscription.entrypoint.scope !== registration.descriptor.entrypoint.scope ||
           subscription.producerModuleKey !== registration.descriptor.producerModuleKey ||
           subscription.topic !== registration.descriptor.topic
         ) {

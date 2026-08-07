@@ -1,5 +1,6 @@
 import type { Effect, Schema } from 'effect';
 import { OutboxWorkerDescriptorError } from './errors.ts';
+import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 
 const outboxWorkerRegistration: unique symbol = Symbol(
   '@app/core-runtime/outbox/worker-registration',
@@ -33,6 +34,7 @@ export interface OutboxWorkerDescriptor<
   Producer extends string,
 > {
   readonly consumerModuleKey: Consumer;
+  readonly entrypoint: TenantModuleEntrypoint<'worker', 'background', Consumer>;
   readonly leaseDurationMs: number;
   readonly payloadSchema: PayloadSchema;
   readonly producerModuleKey: Producer;
@@ -44,7 +46,7 @@ export interface OutboxWorkerDescriptor<
 export type OutboxWorkerSubscription = Readonly<
   Pick<
     OutboxWorkerDescriptor<Schema.ConstraintDecoder<unknown, never>, string, string>,
-    'consumerModuleKey' | 'producerModuleKey' | 'topic' | 'workerKey'
+    'consumerModuleKey' | 'entrypoint' | 'producerModuleKey' | 'topic' | 'workerKey'
   >
 >;
 
@@ -133,6 +135,18 @@ export const defineOutboxWorker = <
   if (!moduleKeyPattern.test(descriptor.consumerModuleKey)) {
     throw descriptorError('consumerModuleKey must be a stable module key');
   }
+  if (
+    descriptor.entrypoint.scope !== 'tenant' ||
+    descriptor.entrypoint.role !== 'worker' ||
+    descriptor.entrypoint.access !== 'background' ||
+    descriptor.entrypoint.moduleKey !== descriptor.consumerModuleKey ||
+    descriptor.entrypoint.entrypointKey !== descriptor.workerKey ||
+    !Object.isFrozen(descriptor.entrypoint)
+  ) {
+    throw descriptorError(
+      'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
+    );
+  }
   if (!moduleKeyPattern.test(descriptor.producerModuleKey)) {
     throw descriptorError('producerModuleKey must be a stable module key');
   }
@@ -178,6 +192,7 @@ export const defineOutboxWorker = <
     [outboxWorkerRegistration]: true as const,
     descriptor: Object.freeze({
       ...descriptor,
+      entrypoint: descriptor.entrypoint,
       retryPolicy: Object.freeze({ ...descriptor.retryPolicy }),
     }),
   });
@@ -209,6 +224,18 @@ export const validateOutboxWorkerSubscriptions = (
   for (const subscription of subscriptions) {
     if (!moduleKeyPattern.test(subscription.consumerModuleKey)) {
       throw descriptorError('consumerModuleKey must be a stable module key');
+    }
+    if (
+      subscription.entrypoint.scope !== 'tenant' ||
+      subscription.entrypoint.role !== 'worker' ||
+      subscription.entrypoint.access !== 'background' ||
+      subscription.entrypoint.moduleKey !== subscription.consumerModuleKey ||
+      subscription.entrypoint.entrypointKey !== subscription.workerKey ||
+      !Object.isFrozen(subscription.entrypoint)
+    ) {
+      throw descriptorError(
+        'installed Worker entrypoint is inconsistent with its subscription owner',
+      );
     }
     if (!moduleKeyPattern.test(subscription.producerModuleKey)) {
       throw descriptorError('producerModuleKey must be a stable module key');

@@ -53,7 +53,7 @@ Deploying a new worker does not backfill already matched messages in V0. Each pr
 that every owner-local registration has an identical catalog entry before it can match or claim
 work.
 
-Each delivery belongs to the consuming module. Worker dispatch is allowed only while that tenant's consuming module state is `active`. Missing, inactive, read-only, suspended, quarantined, deprecated, and archived states leave work unattempted and retryable. The producer's current module state never authorizes the consumer entrypoint.
+Each Worker declares a structured tenant `worker`/`background` entrypoint governed by [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md). Claim eligibility uses the central matrix inside the existing atomic claim query. Only `active` consumers are eligible; every other or missing state leaves work unattempted and retryable. The producer's current module state never authorizes the consumer entrypoint, and handler resolution occurs only after an eligible claim.
 
 ## Claims and Attempts
 

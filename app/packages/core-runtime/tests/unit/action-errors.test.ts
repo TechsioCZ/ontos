@@ -20,6 +20,10 @@ import {
   ActionTransactionError,
   ActionTrustedContextValidationError,
 } from '../../src/actions/errors.ts';
+import {
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+} from '../../src/modules/module-state-gate-errors.ts';
 
 test('publishes the exhaustive stable Core Action error tags', () => {
   const errors = [
@@ -92,6 +96,14 @@ test('publishes the exhaustive stable Core Action error tags', () => {
       code: 'action_commit_indeterminate',
       invocationId: 'invocation-id',
       reason: 'Commit outcome is indeterminate',
+    }),
+    new ModuleStateDeniedError({
+      code: 'module_state_denied',
+      reason: 'Module state denied execution',
+    }),
+    new ModuleStateCheckUnavailableError({
+      code: 'module_state_check_unavailable',
+      reason: 'Module state could not be checked',
     }),
   ];
 

@@ -6,6 +6,7 @@ Also follow:
 
 - [MicroVertical Architecture](../architecture/MICROVERTICALS.md) for vertical deployment seams and the virtual horizontal BFF seam;
 - [Effect Error and HTTP Contracts](../architecture/ERRORS.md) for BFF client and error behavior.
+- [Module Entrypoints and Tenant State](../architecture/MODULE_ENTRYPOINTS.md) for lazy route/component loads, request batching, and explicit unavailable/forbidden UI states.
 
 Do not introduce React Server Components unless the developer explicitly requests them.
 
@@ -28,6 +29,7 @@ All frontend-originated backend operations must use the MicroVertical's generate
 - Preserve declared backend errors, transport failures, and decoding failures in typed Effect error channels.
 - Handle the operation-specific error union exhaustively in route or feature code.
 - Map typed errors to explicit loading, empty, unavailable, forbidden, validation, conflict, retry, or other UI states before rendering reusable presentation.
+- Let the Shell/Core gateway decide a structured page or public-component entrypoint before invoking its lazy Module Federation loader. Do not call raw `loadRemote(...)`, eagerly import another vertical's implementation, or issue one module-state request per composed component.
 - Do not use ad hoc `fetch`, import backend implementations, throw expected failures, or hide client failures behind `Promise<unknown>`.
 
 Run an Effect only at the framework integration edge. When a router or query library requires a Promise, use a thin adapter that deliberately retains or maps every typed failure. Reusable presentation components do not receive or execute Effects.

@@ -5,6 +5,7 @@ import type { ActionCollectorError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
 import { isActionPolicy } from './policy.ts';
 import type { ActionPolicy } from './policy.ts';
+import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionHandlers = new WeakMap<object, unknown>();
@@ -30,6 +31,7 @@ export interface ActionDescriptor<
   readonly auditProfile: ActionAuditProfile;
   readonly domainErrorSchema: DomainErrorSchema;
   readonly domainEvents: DomainEvents;
+  readonly entrypoint: ModuleEntrypointDescriptor<'action', 'write', Owner>;
   readonly idempotency: ActionIdempotencyRule;
   readonly owningModuleKey: Owner;
   readonly payloadSchema: PayloadSchema;
@@ -71,6 +73,18 @@ export const defineAction = <
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
 ): ActionRegistration<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner> => {
+  if (
+    descriptor.entrypoint.role !== 'action' ||
+    descriptor.entrypoint.access !== 'write' ||
+    descriptor.entrypoint.moduleKey !== descriptor.owningModuleKey ||
+    descriptor.entrypoint.scope !==
+      (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
+    !Object.isFrozen(descriptor.entrypoint)
+  ) {
+    throw new TypeError(
+      'Action entrypoint must be an immutable action/write descriptor with the required owner scope',
+    );
+  }
   if (!Array.isArray(descriptor.policies)) {
     throw new TypeError('Action policies must be an explicit readonly array of Policy references');
   }
@@ -95,6 +109,7 @@ export const defineAction = <
       ...descriptor,
       accessEvidencePolicy: Object.freeze({ ...descriptor.accessEvidencePolicy }),
       domainEvents: Object.freeze({ ...descriptor.domainEvents }),
+      entrypoint: descriptor.entrypoint,
       policies: Object.freeze([...descriptor.policies]),
     }),
   });

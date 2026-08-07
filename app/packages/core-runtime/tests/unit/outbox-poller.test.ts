@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OutboxPersistenceError } from '../../src/outbox/errors.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
@@ -11,6 +12,12 @@ import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
 const registration = defineOutboxWorker(
   {
     consumerModuleKey: 'consumer',
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'background',
+      entrypointKey: 'consumer.logger',
+      moduleKey: 'consumer',
+      role: 'worker',
+    }),
     leaseDurationMs: 30_000,
     payloadSchema: Schema.Struct({ messageKey: Schema.String }),
     producerModuleKey: 'producer',

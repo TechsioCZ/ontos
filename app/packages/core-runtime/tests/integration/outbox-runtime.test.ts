@@ -18,6 +18,7 @@ import {
 } from '../../src/db/schema.ts';
 import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { AnyOutboxWorkerRegistration } from '../../src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
 
@@ -34,6 +35,12 @@ const makeWorker = (
   defineOutboxWorker(
     {
       consumerModuleKey: options.consumerModuleKey ?? 'consumer',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        entrypointKey: workerKey,
+        moduleKey: options.consumerModuleKey ?? 'consumer',
+        role: 'worker',
+      }),
       leaseDurationMs: 1000,
       payloadSchema,
       producerModuleKey: 'producer',

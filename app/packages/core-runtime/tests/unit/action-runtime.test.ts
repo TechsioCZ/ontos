@@ -13,12 +13,17 @@ import type {
 } from '../../src/actions/repository.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
-import { defineAction } from '../../src/actions/definition.ts';
+import { defineAction, getActionHandler } from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
   ActionTransactionError,
 } from '../../src/actions/errors.ts';
+import {
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+} from '../../src/modules/module-state-gate-errors.ts';
+import type { TenantModuleState } from '../../src/modules/tenant-module-state-service.ts';
 import {
   defineGlobalPolicy,
   defineMicroverticalPolicy,
@@ -28,6 +33,16 @@ import type {
   ActionPermissionDecision,
   CheckActionPermissionInput,
 } from '../../src/permissions/service.ts';
+import {
+  defineSystemModuleEntrypoint,
+  defineTenantModuleEntrypoint,
+} from '../../src/modules/module-entrypoint.ts';
+import type { ModuleEntrypointDescriptor } from '../../src/modules/module-entrypoint.ts';
+import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import {
+  checkModuleEntrypoint,
+  makeModuleStateSnapshot,
+} from '../../src/modules/module-state-gate.ts';
 
 const principal = {
   authMethod: 'session',
@@ -39,7 +54,7 @@ const principal = {
 const transport = (idempotencyKey = 'intent-1') => ({
   correlationId: `correlation-${idempotencyKey}`,
   idempotencyKey,
-  targetModuleKey: 'shell.core',
+  targetModuleKey: 'core.shell',
   targetResourceId: 'primary',
   targetResourceType: 'counter',
 });
@@ -57,6 +72,8 @@ interface HarnessOptions {
   readonly createRecord?: ActionInvocationRecord;
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
+  readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
+  readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly policyFinalizationFailure?: boolean;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
@@ -72,6 +89,9 @@ const makeHarness = (options: HarnessOptions = {}) => {
   let createCount = 0;
   let lockCount = 0;
   let permissionCheckCount = 0;
+  let moduleStateReadCount = 0;
+  let moduleStateRecheckCount = 0;
+  let handlerResolutionCount = 0;
   let rejectionCount = 0;
   let transitionCount = 0;
   let transactionCount = 0;
@@ -204,9 +224,70 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
   };
 
+  const moduleStateGate = {
+    check: checkModuleEntrypoint,
+    prepareSnapshot: (tenantId: string, entrypoints: readonly ModuleEntrypointDescriptor[]) => {
+      const moduleKeys = entrypoints
+        .filter((entrypoint) => entrypoint.scope === 'tenant')
+        .map((entrypoint) => entrypoint.moduleKey);
+      if (moduleKeys.length > 0) {
+        moduleStateReadCount += 1;
+      }
+      if (options.moduleState === 'unavailable') {
+        return Effect.fail(
+          new ModuleStateCheckUnavailableError({
+            code: 'module_state_check_unavailable',
+            reason: 'controlled unavailable state read',
+          }),
+        );
+      }
+      const availableState: TenantModuleState =
+        options.moduleState === undefined || options.moduleState === 'missing'
+          ? 'active'
+          : options.moduleState;
+      return Effect.succeed(
+        makeModuleStateSnapshot(
+          tenantId,
+          entrypoints,
+          options.moduleState === 'missing'
+            ? []
+            : moduleKeys.map((moduleKey) => ({
+                moduleKey,
+                state: availableState,
+              })),
+        ),
+      );
+    },
+    recheckWrite: () => {
+      moduleStateRecheckCount += 1;
+      if (options.lockedModuleState === 'denied') {
+        return Effect.fail(
+          new ModuleStateDeniedError({
+            code: 'module_state_denied',
+            reason: 'controlled locked denial',
+          }),
+        );
+      }
+      if (options.lockedModuleState === 'unavailable') {
+        return Effect.fail(
+          new ModuleStateCheckUnavailableError({
+            code: 'module_state_check_unavailable',
+            reason: 'controlled locked unavailable check',
+          }),
+        );
+      }
+      return Effect.void;
+    },
+  } as const;
   const runtime = makeActionRuntime(database as never, repository, permission, {
+    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+    moduleStateGate,
     onStage: (stage) => {
       stages.push(stage);
+    },
+    resolveHandler: (action) => {
+      handlerResolutionCount += 1;
+      return getActionHandler(action);
     },
   });
 
@@ -214,6 +295,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     counts: () => ({ createCount, lockCount, transactionCount, transitionCount }),
     finalized,
     flushed,
+    gateCounts: () => ({ handlerResolutionCount, moduleStateReadCount, moduleStateRecheckCount }),
     permissionChecks,
     permissionCounts: () => ({ permissionCheckCount, rejectionCount }),
     rejections,
@@ -232,8 +314,14 @@ const registration = () =>
       domainEvents: {
         'counter.changed': Schema.Struct({ amount: Schema.Finite }),
       },
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.change',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [],
       resultSchema: Schema.Struct({ total: Schema.Finite }),
@@ -249,19 +337,19 @@ const registration = () =>
           accessKind: 'read',
           queryHash: `counter-${payload.amount}`,
           resultCount: 1,
-          servingModuleKey: 'shell.core',
+          servingModuleKey: 'core.shell',
         });
         const domainEvent = yield* context.addDomainEvent({
           eventType: 'counter.changed',
           payloadJson: { amount: payload.amount },
-          producerModuleKey: 'shell.core',
-          subjectModuleKey: 'shell.core',
+          producerModuleKey: 'core.shell',
+          subjectModuleKey: 'core.shell',
           subjectResourceId: 'primary',
           subjectResourceType: 'counter',
         });
         yield* context.addOutboxMessage(domainEvent, {
           payloadJson: { amount: payload.amount },
-          producerModuleKey: 'shell.core',
+          producerModuleKey: 'core.shell',
           topic: 'counter.project',
         });
         return { total: payload.amount };
@@ -299,6 +387,150 @@ test('executes the complete stage order with transaction ownership and success e
       principalId: principal.principalId,
     },
   ]);
+  assert.deepEqual(harness.gateCounts(), {
+    handlerResolutionCount: 1,
+    moduleStateReadCount: 0,
+    moduleStateRecheckCount: 0,
+  });
+});
+
+test('fails business Actions closed before invocation, permission, Policy, or handler access', async () => {
+  for (const [index, state] of (
+    [
+      'inactive',
+      'read_only',
+      'suspended',
+      'quarantined',
+      'deprecated',
+      'archived',
+      'missing',
+    ] as const
+  ).entries()) {
+    let handlerCalls = 0;
+    let policyCalls = 0;
+    const harness = makeHarness({ moduleState: state });
+    const action = defineAction(
+      {
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+        actionKey: `inventory.stock.reserve-state-${index}`,
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          entrypointKey: `inventory.stock.reserve-state-${index}`,
+          moduleKey: 'inventory.stock',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        owningModuleKey: 'inventory.stock',
+        payloadSchema: Schema.Void,
+        policies: [
+          defineGlobalPolicy({
+            evaluate: () => Effect.sync(() => (policyCalls += 1)),
+            policyKey: `global.unreachable-${index}.v1`,
+          }),
+        ],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () =>
+        Effect.sync(() => {
+          handlerCalls += 1;
+        }),
+    );
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: action,
+          transport: transport(`state-${state}`),
+        }),
+      ),
+    );
+    assert.equal(failure._tag, 'ModuleStateDeniedError', state);
+    assert.equal(handlerCalls, 0);
+    assert.equal(policyCalls, 0);
+    assert.deepEqual(harness.counts(), {
+      createCount: 0,
+      lockCount: 0,
+      transactionCount: 0,
+      transitionCount: 0,
+    });
+    assert.deepEqual(harness.permissionCounts(), {
+      permissionCheckCount: 0,
+      rejectionCount: 0,
+    });
+    assert.deepEqual(harness.gateCounts(), {
+      handlerResolutionCount: 0,
+      moduleStateReadCount: 1,
+      moduleStateRecheckCount: 0,
+    });
+  }
+});
+
+test('distinguishes unavailable early checks and rolls back a denied locked recheck', async () => {
+  const action = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },
+      actionKey: 'inventory.stock.reserve-locked',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'inventory.stock.reserve-locked',
+        moduleKey: 'inventory.stock',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      owningModuleKey: 'inventory.stock',
+      payloadSchema: Schema.Void,
+      policies: [],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+    },
+    () => Effect.void,
+  );
+
+  const unavailable = makeHarness({ moduleState: 'unavailable' });
+  const unavailableFailure = await Effect.runPromise(
+    Effect.flip(
+      unavailable.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport('state-unavailable'),
+      }),
+    ),
+  );
+  assert.equal(unavailableFailure._tag, 'ModuleStateCheckUnavailableError');
+  assert.equal(unavailable.counts().createCount, 0);
+
+  const locked = makeHarness({ lockedModuleState: 'denied' });
+  const lockedFailure = await Effect.runPromise(
+    Effect.flip(
+      locked.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport('state-locked-denied'),
+      }),
+    ),
+  );
+  assert.equal(lockedFailure._tag, 'ModuleStateDeniedError');
+  assert.deepEqual(locked.gateCounts(), {
+    handlerResolutionCount: 0,
+    moduleStateReadCount: 1,
+    moduleStateRecheckCount: 1,
+  });
+  assert.deepEqual(locked.counts(), {
+    createCount: 1,
+    lockCount: 1,
+    transactionCount: 1,
+    transitionCount: 1,
+  });
 });
 
 test('allows configured and unconfigured Actions before Policy evaluation', async () => {
@@ -333,8 +565,14 @@ test('persists a definite permission denial before returning it and never evalua
       auditProfile: 'sensitive',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.denied',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [
         defineGlobalPolicy<unknown>({
@@ -372,6 +610,7 @@ test('persists a definite permission denial before returning it and never evalua
   assert.deepEqual(harness.stages, [
     'payload_decoded',
     'trusted_context_validated',
+    'module_state_gate',
     'invocation_prepared',
     'authentication_boundary',
     'permission_checked',
@@ -424,6 +663,7 @@ test('fails closed before Policy evaluation when permission cannot be determined
   assert.deepEqual(harness.stages, [
     'payload_decoded',
     'trusted_context_validated',
+    'module_state_gate',
     'invocation_prepared',
     'authentication_boundary',
   ]);
@@ -479,6 +719,12 @@ test('evaluates Policies in order before running and hands allowed checkpoints t
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'inventory.stock.policy-allowed',
+        moduleKey: 'inventory.stock',
+        role: 'action',
+      }),
       idempotency: 'required',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
@@ -547,8 +793,14 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
       auditProfile: 'sensitive',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.policy-denied',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies,
       resultSchema: Schema.Void,
@@ -586,6 +838,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
   assert.deepEqual(harness.stages, [
     'payload_decoded',
     'trusted_context_validated',
+    'module_state_gate',
     'invocation_prepared',
     'authentication_boundary',
     'permission_checked',
@@ -623,8 +876,14 @@ test('sanitizes Policy defects, interrupts, and undeclared failures without fina
         auditProfile: 'standard',
         domainErrorSchema: Schema.Never,
         domainEvents: {},
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'write',
+          entrypointKey: `shell.counter.policy-failure-${index}`,
+          moduleKey: 'core.shell',
+          role: 'action',
+        }),
         idempotency: 'required',
-        owningModuleKey: 'shell.core',
+        owningModuleKey: 'core.shell',
         payloadSchema: Schema.Void,
         policies: [policy],
         resultSchema: Schema.Void,
@@ -673,8 +932,14 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.policy-persistence-failure',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [policy],
       resultSchema: Schema.Void,
@@ -744,8 +1009,14 @@ test('evaluates Policies afresh for separate invocations', async () => {
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.fresh-policy',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ amount: Schema.Finite }),
       policies: [policy],
       resultSchema: Schema.Void,
@@ -836,8 +1107,14 @@ test('preserves declared domain rejections and rolls back collected evidence', a
       domainEvents: {
         'counter.considered': Schema.Struct({}),
       },
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.reject',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [allowedPolicy],
       resultSchema: Schema.Void,
@@ -848,8 +1125,8 @@ test('preserves declared domain rejections and rolls back collected evidence', a
         yield* context.addDomainEvent({
           eventType: 'counter.considered',
           payloadJson: {},
-          producerModuleKey: 'shell.core',
-          subjectModuleKey: 'shell.core',
+          producerModuleKey: 'core.shell',
+          subjectModuleKey: 'core.shell',
           subjectResourceId: 'primary',
           subjectResourceType: 'counter',
         });
@@ -883,8 +1160,14 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.defect',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
       resultSchema: Schema.Void,
@@ -911,8 +1194,14 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.invalid-result',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
       resultSchema: Schema.Struct({ total: Schema.Finite }),
@@ -955,8 +1244,14 @@ test('sanitizes undeclared handler failures instead of widening the domain error
       auditProfile: 'standard',
       domainErrorSchema: DeclaredDomainError,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'shell.counter.undeclared-error',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
       resultSchema: Schema.Void,
@@ -1174,6 +1469,12 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
       auditProfile: 'standard',
       domainErrorSchema: Schema.Never,
       domainEvents: {},
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'inventory.stock.reserve',
+        moduleKey: 'inventory.stock',
+        role: 'action',
+      }),
       idempotency: 'required',
       owningModuleKey: 'inventory.stock',
       payloadSchema: Schema.Struct({ quantity: Schema.Finite }),

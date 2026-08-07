@@ -104,7 +104,8 @@ const commandDefinitions: Readonly<Record<ScaffoldCommand, CommandDefinition>> =
   pnpm scaffold:action -- --vertical <vertical> --action <action>
   pnpm scaffold:action -- --scope core --module <core.module> --action <action>
 
-Generate one typed, fail-closed Action registration for an existing MicroVertical or Core.
+Generate one typed, fail-closed Action registration with a governed write entrypoint.
+MicroVertical Actions are tenant-scoped; Core Actions are explicitly system-scoped.
 
 Required flags:
   --action <action>      Action name (lower-kebab-case)
@@ -162,7 +163,7 @@ Options:
     generator: microverticalPageGenerator,
     help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
 
-Generate one localized, private-first page in an existing MicroVertical.
+Generate one localized, private-first page with a governed tenant page/read entrypoint.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
@@ -201,7 +202,7 @@ Options:
     generator: outboxWorkerGenerator,
     help: `Usage: pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic>
 
-Generate one typed, owner-local Outbox Worker from a producer's published topic contract.
+Generate one typed, owner-local Outbox Worker with a governed tenant worker/background entrypoint.
 
 Required flags:
   --vertical <vertical>  Existing consumer vertical folder (lower-kebab-case)

@@ -173,9 +173,17 @@ export default function ${componentName}() {
 const renderRouteMetadata = (vertical: PageVerticalMetadata, page: string): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '/${page}',`).join('\n');
-  return `const routeMeta = {
+  return `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+
+const routeMeta = {
   canonicalPath: '/${page}',
   descriptionKey: '${keyRoot}.description',
+  entrypoint: defineTenantModuleEntrypoint({
+    access: 'read',
+    entrypointKey: '${vertical.appId}.page.${page}',
+    moduleKey: '${vertical.appId}',
+    role: 'page',
+  }),
   id: '${vertical.appId}-${page}',
   indexable: false,
   localisedPaths: {

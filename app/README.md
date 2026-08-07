@@ -23,6 +23,11 @@ private-first route metadata, localized URLs, public-route opt-ins, CSS prefix,
 Effect BFF handlers, local API contract, and typed client surface. Server
 handlers and Effect client/contract modules stay out of browser exposes.
 
+Every module-owned Action, page, API, public component, search provider, report, and Worker is a
+structured entrypoint governed by Core before private code loads or runs. See
+`docs/architecture/MODULE_ENTRYPOINTS.md`. The `module-entrypoints:check` repository command rejects
+missing descriptors, owner/access mismatches, private cross-vertical imports, and raw remote loads.
+
 ## Private-First Public Surfaces
 
 Generated app routes are private and non-indexable by default. Author route

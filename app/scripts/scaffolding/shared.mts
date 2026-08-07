@@ -17,6 +17,12 @@ export const OUTBOX_WORKER_IMPORT_SLOT_START = '// <generated-outbox-worker-impo
 export const OUTBOX_WORKER_IMPORT_SLOT_END = '// </generated-outbox-worker-imports>';
 export const OUTBOX_WORKER_REGISTRY_SLOT_START = '// <generated-outbox-worker-registrations>';
 export const OUTBOX_WORKER_REGISTRY_SLOT_END = '// </generated-outbox-worker-registrations>';
+export const VERTICAL_PUBLIC_COMPONENT_SLOT_START = '// <generated-public-component-registrations>';
+export const VERTICAL_PUBLIC_COMPONENT_SLOT_END = '// </generated-public-component-registrations>';
+export const VERTICAL_SEARCH_SLOT_START = '// <generated-search-registrations>';
+export const VERTICAL_SEARCH_SLOT_END = '// </generated-search-registrations>';
+export const VERTICAL_REPORT_SLOT_START = '// <generated-report-registrations>';
+export const VERTICAL_REPORT_SLOT_END = '// </generated-report-registrations>';
 
 export interface VerticalActionScaffoldConfig {
   readonly action: string;

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
-const failures = [];
+const failures: string[] = [];
 
 const ignoredDirectories = new Set([
   '.git',
@@ -15,33 +15,27 @@ const ignoredDirectories = new Set([
   'repos',
 ]);
 
-function normalize(filePath) {
-  return filePath.split(path.sep).join('/');
-}
+const normalize = (filePath: string): string => filePath.split(path.sep).join('/');
 
-function relative(filePath) {
-  return normalize(path.relative(workspaceRoot, filePath));
-}
+const relative = (filePath: string): string => normalize(path.relative(workspaceRoot, filePath));
 
-function exists(relativePath) {
-  return fs.existsSync(path.join(workspaceRoot, relativePath));
-}
+const exists = (relativePath: string): boolean =>
+  fs.existsSync(path.join(workspaceRoot, relativePath));
 
-function readText(relativePath) {
-  return fs.readFileSync(path.join(workspaceRoot, relativePath), 'utf8');
-}
+const readText = (relativePath: string): string =>
+  fs.readFileSync(path.join(workspaceRoot, relativePath), 'utf-8');
 
-function fail(message) {
+const fail = (message: string): void => {
   failures.push(message);
-}
+};
 
-function assert(condition, message) {
+const assert = (condition: boolean, message: string): void => {
   if (!condition) {
     fail(message);
   }
-}
+};
 
-function listFiles(startDirectory) {
+const listFiles = (startDirectory: string): string[] => {
   const absoluteStart = path.join(workspaceRoot, startDirectory);
   if (!fs.existsSync(absoluteStart)) {
     return [];
@@ -68,9 +62,9 @@ function listFiles(startDirectory) {
 
   visit(absoluteStart);
   return files;
-}
+};
 
-function listDirectories(startDirectory) {
+const listDirectories = (startDirectory: string): string[] => {
   const absoluteStart = path.join(workspaceRoot, startDirectory);
   if (!fs.existsSync(absoluteStart)) {
     return [];
@@ -80,21 +74,31 @@ function listDirectories(startDirectory) {
     .readdirSync(absoluteStart, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !ignoredDirectories.has(entry.name))
     .map((entry) => path.posix.join(startDirectory, entry.name));
-}
+};
 
-function assertNoPath(relativePath, message) {
+const assertNoPath = (relativePath: string, message: string): void => {
   if (exists(relativePath)) {
     fail(message);
   }
-}
+};
 
-function assertContains(relativePath, content, pattern, message) {
+const assertContains = (
+  relativePath: string,
+  content: string,
+  pattern: RegExp,
+  message: string,
+): void => {
   assert(pattern.test(content), `${relativePath}: ${message}`);
-}
+};
 
-function assertNotContains(relativePath, content, pattern, message) {
+const assertNotContains = (
+  relativePath: string,
+  content: string,
+  pattern: RegExp,
+  message: string,
+): void => {
   assert(!pattern.test(content), `${relativePath}: ${message}`);
-}
+};
 
 for (const forbiddenPath of [
   ...listDirectories('apps').flatMap((appPath) => [
@@ -183,7 +187,7 @@ if (exists('apps/shell-super-app') && verticalDirectories.length > 0) {
   assert(exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
 }
 
-function assertApiSurface(appPath) {
+const assertApiSurface = (appPath: string): void => {
   const apiEntry = `${appPath}/api/index.ts`;
   const backendEffectExpose = `${appPath}/api/effect-api.ts`;
   const sharedApi = `${appPath}/shared/api.ts`;
@@ -196,7 +200,7 @@ function assertApiSurface(appPath) {
   assert(exists(srcApiDirectory), `${srcApiDirectory} is required.`);
 
   if (exists(srcApiDirectory)) {
-    const clientFiles = listFiles(srcApiDirectory).filter((file) => /-client\.ts$/u.test(file));
+    const clientFiles = listFiles(srcApiDirectory).filter((file) => file.endsWith('-client.ts'));
     assert(clientFiles.length > 0, `${srcApiDirectory} must contain a generated API client.`);
   }
 
@@ -255,7 +259,7 @@ function assertApiSurface(appPath) {
       'must re-export the generated Effect BFF runtime as both default and runtime.',
     );
     assert(
-      !/\b(request|handler)\s*:\s*async\s*\(/u.test(backendExpose),
+      !/\b(?<member>request|handler)\s*:\s*async\s*\(/u.test(backendExpose),
       `${backendEffectExpose}: must not expose raw request handlers.`,
     );
   }
@@ -312,7 +316,7 @@ function assertApiSurface(appPath) {
       `${packageJsonPath}: package must export ./api/client from src/api/*.`,
     );
   }
-}
+};
 
 for (const appPath of listDirectories('apps')) {
   if (exists(`${appPath}/api/index.ts`) || exists(`${appPath}/shared/api.ts`)) {
@@ -322,6 +326,12 @@ for (const appPath of listDirectories('apps')) {
 
 for (const verticalPath of verticalDirectories) {
   assertApiSurface(verticalPath);
+  const sharedApi = `${verticalPath}/shared/api.ts`;
+  if (exists(sharedApi) && /\bHttpApiEndpoint\./u.test(readText(sharedApi))) {
+    fail(
+      `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
+    );
+  }
 }
 
 if (exists('apps/shell-super-app/package.json')) {

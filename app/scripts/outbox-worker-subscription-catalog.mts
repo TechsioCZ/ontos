@@ -1,5 +1,6 @@
 export interface OutboxWorkerSubscriptionCatalogEntry {
   readonly consumerModuleKey: string;
+  readonly entrypointKey: string;
   readonly producerModuleKey: string;
   readonly topic: string;
   readonly workerKey: string;
@@ -16,6 +17,13 @@ export const renderOutboxWorkerSubscriptionCatalog = (
     .map(
       (subscription) => `    Object.freeze({
       consumerModuleKey: '${subscription.consumerModuleKey}',
+      entrypoint: Object.freeze({
+        access: 'background',
+        entrypointKey: '${subscription.entrypointKey}',
+        moduleKey: '${subscription.consumerModuleKey}',
+        role: 'worker',
+        scope: 'tenant',
+      }),
       producerModuleKey: '${subscription.producerModuleKey}',
       topic: '${subscription.topic}',
       workerKey: '${subscription.workerKey}',

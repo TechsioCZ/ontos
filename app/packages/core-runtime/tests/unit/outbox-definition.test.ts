@@ -10,6 +10,7 @@ import {
   validateOutboxWorkerRegistrations,
   validateOutboxWorkerSubscriptions,
 } from '../../src/outbox/definition.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 const payloadSchema = Schema.Struct({ messageKey: Schema.String });
 
@@ -17,6 +18,12 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
   defineOutboxWorker(
     {
       consumerModuleKey: 'consumer',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        entrypointKey: workerKey,
+        moduleKey: 'consumer',
+        role: 'worker',
+      }),
       leaseDurationMs: 30_000,
       payloadSchema,
       producerModuleKey: 'producer',
@@ -37,6 +44,13 @@ test('defines an exact immutable registration while keeping the handler opaque',
 
   assert.deepEqual(worker.descriptor, {
     consumerModuleKey: 'consumer',
+    entrypoint: {
+      access: 'background',
+      entrypointKey: 'consumer.message-logger',
+      moduleKey: 'consumer',
+      role: 'worker',
+      scope: 'tenant',
+    },
     leaseDurationMs: 30_000,
     payloadSchema,
     producerModuleKey: 'producer',
@@ -78,6 +92,12 @@ test('preserves schema inference for a typed handler payload', () => {
   defineOutboxWorker(
     {
       consumerModuleKey: 'consumer',
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        entrypointKey: 'consumer.inference-proof',
+        moduleKey: 'consumer',
+        role: 'worker',
+      }),
       leaseDurationMs: 1000,
       payloadSchema,
       producerModuleKey: 'producer',
@@ -101,6 +121,15 @@ test('rejects invalid identities, retry policies, and lease policies', () => {
   const valid = makeWorker().descriptor;
   const invalidDescriptors = [
     { ...valid, workerKey: 'producer.foreign-worker' },
+    {
+      ...valid,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'background',
+        entrypointKey: valid.workerKey,
+        moduleKey: 'foreign',
+        role: 'worker',
+      }),
+    },
     { ...valid, topic: 'Invalid' },
     { ...valid, leaseDurationMs: 999 },
     { ...valid, retryPolicy: { ...valid.retryPolicy, maxAttempts: 0 } },
@@ -136,6 +165,7 @@ test('validates and freezes the schema-free installed subscription catalog', () 
   const worker = makeWorker();
   const subscription = {
     consumerModuleKey: worker.descriptor.consumerModuleKey,
+    entrypoint: worker.descriptor.entrypoint,
     producerModuleKey: worker.descriptor.producerModuleKey,
     topic: worker.descriptor.topic,
     workerKey: worker.descriptor.workerKey,

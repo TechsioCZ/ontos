@@ -9,6 +9,7 @@ import { Effect, Schema } from 'effect';
 import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
@@ -63,7 +64,7 @@ const spiceDbConfig: SpiceDbConfigValue = {
 const transport = (idempotencyKey: string, targetResourceId: string) => ({
   correlationId: `permission-integration-${idempotencyKey}`,
   idempotencyKey,
-  targetModuleKey: 'shell.core',
+  targetModuleKey: 'core.shell',
   targetResourceId,
   targetResourceType: 'permission-test-state',
 });
@@ -212,8 +213,14 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       auditProfile: 'sensitive',
       domainErrorSchema: TestWriteError,
       domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: actionKey,
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Void,
       policies: [],
       resultSchema: Schema.Void,

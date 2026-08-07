@@ -1,6 +1,14 @@
+import { defineSystemModuleEntrypoint } from '@app/core-runtime';
+
 const routeMeta = {
   canonicalPath: '/',
   descriptionKey: 'shell.seo.description',
+  entrypoint: defineSystemModuleEntrypoint({
+    access: 'read',
+    entrypointKey: 'shell-super-app.page.home',
+    moduleKey: 'shell-super-app',
+    role: 'page',
+  }),
   id: 'shell-home',
   indexable: false,
   localisedPaths: {

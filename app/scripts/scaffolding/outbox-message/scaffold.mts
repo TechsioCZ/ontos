@@ -94,9 +94,16 @@ export const planOutboxScaffold = async (
   if (
     !actionContent.startsWith(`${ACTION_GENERATOR_HEADER}\n`) ||
     !actionContent.includes(`// @ontos-action-owner ${vertical.appId}\n`) ||
-    !actionContent.includes(`// @ontos-action-slug ${action}\n`)
+    !actionContent.includes(`// @ontos-action-slug ${action}\n`) ||
+    !actionContent.includes(`entrypoint: defineTenantModuleEntrypoint({\n`) ||
+    !actionContent.includes(`      access: 'write',\n`) ||
+    !actionContent.includes(`      entrypointKey: '${vertical.appId}.${action}',\n`) ||
+    !actionContent.includes(`      moduleKey: '${vertical.appId}',\n`) ||
+    !actionContent.includes(`      role: 'action',\n`)
   ) {
-    throw new Error('Outbox Message can extend only the matching generated Action');
+    throw new Error(
+      'Outbox Message can extend only the matching generated Action with its governed write entrypoint',
+    );
   }
   const topicSlug = topicToSlug(topic);
   const base = `${toPascalCase(action)}${toPascalCase(topicSlug)}Outbox`;

@@ -26,6 +26,9 @@ import {
   sanitizeOutboxErrorMessage,
 } from './errors.ts';
 import type { OutboxPersistenceError } from './errors.ts';
+import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
+
+const BACKGROUND_ELIGIBLE_STATES = tenantStatesAllowingAccess('background');
 
 export interface OutboxMatchResult {
   readonly deliveriesCreated: number;
@@ -184,7 +187,7 @@ export const makeOutboxRepository = (
             and(
               eq(tenantModuleStates.tenantId, outboxMessages.tenantId),
               eq(tenantModuleStates.moduleKey, outboxDeliveries.consumerModuleKey),
-              eq(tenantModuleStates.state, 'active'),
+              inArray(tenantModuleStates.state, BACKGROUND_ELIGIBLE_STATES),
             ),
           )
           .where(

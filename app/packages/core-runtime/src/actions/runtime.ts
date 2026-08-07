@@ -49,16 +49,32 @@ import type {
   ActionPolicyEvidence,
   ActionRepositoryService,
 } from './repository.ts';
+import {
+  ModuleEntrypointGateway,
+  ModuleEntrypointGatewayLive,
+  makeModuleEntrypointGateway,
+} from '../modules/module-entrypoint-gateway.ts';
+import type { ModuleEntrypointGatewayShape } from '../modules/module-entrypoint-gateway.ts';
+import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import {
+  ModuleStateGate,
+  ModuleStateGateLive,
+  makeModuleStateGate,
+} from '../modules/module-state-gate.ts';
+import type { ModuleStateGateShape } from '../modules/module-state-gate.ts';
+import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
 
 export const ACTION_RUNTIME_STAGES = [
   'payload_decoded',
   'trusted_context_validated',
+  'module_state_gate',
   'invocation_prepared',
   'authentication_boundary',
   'permission_checked',
   'policy_boundary',
   'invocation_running',
   'invocation_locked',
+  'module_state_rechecked',
   'handler_executed',
   'success_evidence_flushed',
 ] as const;
@@ -118,7 +134,10 @@ export interface ActionRuntimeService {
 }
 
 export interface ActionRuntimeOptions {
+  readonly moduleEntrypointGateway?: ModuleEntrypointGatewayShape;
+  readonly moduleStateGate?: ModuleStateGateShape;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
+  readonly resolveHandler?: typeof getActionHandler;
 }
 
 class ActionRollbackSignal<Error> {
@@ -320,6 +339,11 @@ export const makeActionRuntime = (
   permission: ActionPermissionService,
   options: ActionRuntimeOptions = {},
 ): ActionRuntimeService => {
+  const moduleStateGate =
+    options.moduleStateGate ?? makeModuleStateGate(makeTenantModuleStateService(database));
+  const moduleEntrypointGateway =
+    options.moduleEntrypointGateway ?? makeModuleEntrypointGateway(moduleStateGate);
+  const resolveHandler = options.resolveHandler ?? getActionHandler;
   const notifyStage = (stage: ActionRuntimeStage): void => {
     options.onStage?.(stage);
   };
@@ -338,12 +362,20 @@ export const makeActionRuntime = (
         input.registration.descriptor.payloadSchema,
         input.payload,
       );
-      const handler = getActionHandler(input.registration);
       notifyStage('payload_decoded');
 
       const principal = yield* validatePrincipal(input.principal);
       const transport = yield* validateTransport(input.transport);
       notifyStage('trusted_context_validated');
+
+      const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(principal, [
+        input.registration.descriptor.entrypoint,
+      ]);
+      yield* moduleEntrypointGateway.check(
+        moduleStateSnapshot,
+        input.registration.descriptor.entrypoint,
+      );
+      notifyStage('module_state_gate');
 
       if (
         input.registration.descriptor.idempotency === 'required' &&
@@ -577,6 +609,25 @@ export const makeActionRuntime = (
               await Effect.runPromiseExit(verifyInvocation(lockedInvocation, requestHash)),
             );
 
+            if (input.registration.descriptor.entrypoint.scope === 'tenant') {
+              exitValueOrRollback(
+                await Effect.runPromiseExit(
+                  moduleStateGate.recheckWrite(
+                    drizzleTransaction as CoreTransaction,
+                    principal.tenantId,
+                    input.registration.descriptor.entrypoint as TenantModuleEntrypoint<
+                      'action',
+                      'write',
+                      Owner
+                    >,
+                  ),
+                ),
+              );
+            }
+            notifyStage('module_state_rechecked');
+
+            const handler = resolveHandler(input.registration);
+
             const collector = makeActionCollector(
               input.registration.descriptor.domainEvents,
               input.registration.descriptor.owningModuleKey,
@@ -761,9 +812,19 @@ export const ActionRuntimeLive = Layer.effect(
     const database = yield* CoreDatabaseService;
     const repository = yield* ActionRepository;
     const permission = yield* ActionPermission;
-    return makeActionRuntime(database, repository, permission);
+    const moduleEntrypointGateway = yield* ModuleEntrypointGateway;
+    const moduleStateGate = yield* ModuleStateGate;
+    return makeActionRuntime(database, repository, permission, {
+      moduleEntrypointGateway,
+      moduleStateGate,
+    });
   }),
-).pipe(Layer.provide(ActionRepositoryLive), Layer.provide(ActionPermissionLive));
+).pipe(
+  Layer.provide(ActionRepositoryLive),
+  Layer.provide(ActionPermissionLive),
+  Layer.provide(ModuleEntrypointGatewayLive),
+  Layer.provide(ModuleStateGateLive),
+);
 
 export const runAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -70,7 +71,23 @@ const billingVertical: FixtureVertical = {
 
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
-const esbuildPath = path.join(appRoot, 'node_modules', '.bin', 'esbuild');
+const rootEsbuildPath = path.join(appRoot, 'node_modules', '.bin', 'esbuild');
+const esbuildPackage = readdirSync(path.join(appRoot, 'node_modules', '.pnpm'))
+  .filter((entry) => entry.startsWith('esbuild@'))
+  .toSorted()
+  .at(-1);
+const esbuildPath = existsSync(rootEsbuildPath)
+  ? rootEsbuildPath
+  : path.join(
+      appRoot,
+      'node_modules',
+      '.pnpm',
+      esbuildPackage ?? 'missing-esbuild',
+      'node_modules',
+      'esbuild',
+      'bin',
+      'esbuild',
+    );
 const oxfmtPath = path.join(appRoot, 'node_modules', '.bin', 'oxfmt');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
 
@@ -518,7 +535,11 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       ],
       { encoding: 'utf-8' },
     );
-    assert.equal(edgeBundle.status, 0, edgeBundle.stderr);
+    assert.equal(
+      edgeBundle.status,
+      0,
+      edgeBundle.stderr || edgeBundle.error?.message || 'edge bundle command did not start',
+    );
     const edgeInputs = Object.keys(
       (JSON.parse(await readFile(edgeMetafile, 'utf-8')) as { inputs: Record<string, unknown> })
         .inputs,
@@ -862,7 +883,7 @@ test('generates one self-contained typed fail-closed Action and preserves packag
 // @ontos-action-owner inventory-stock
 // @ontos-action-slug create-order2
 import { Effect, Schema } from 'effect';
-import { defineAction } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 export const CreateOrder2Payload = Schema.Struct({});
 export type CreateOrder2Payload = Schema.Schema.Type<typeof CreateOrder2Payload>;
@@ -896,6 +917,12 @@ export const createOrder2Action = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: CreateOrder2NotImplemented,
     domainEvents: {},
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'write',
+      entrypointKey: 'inventory-stock.create-order2',
+      moduleKey: 'inventory-stock',
+      role: 'action',
+    }),
     idempotency: 'required',
     owningModuleKey: 'inventory-stock',
     payloadSchema: CreateOrder2Payload,
@@ -955,6 +982,9 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     );
     assert.match(action, /@ontos-action-owner core\.modules/u);
     assert.match(action, /actionKey: 'core\.modules\.account-change'/u);
+    assert.match(action, /entrypoint: defineSystemModuleEntrypoint\(\{/u);
+    assert.match(action, /access: 'write'/u);
+    assert.match(action, /role: 'action'/u);
     assert.match(action, /from '\.\.\/\.\.\/actions\/definition\.ts'/u);
     assert.doesNotMatch(action, /verticals|fetch\(/u);
 
@@ -1258,6 +1288,27 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
     assert.deepEqual(await snapshotTree(fixture.root), beforeHandwritten);
 
     await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order']);
+    const governedActionPath = 'verticals/inventory-stock/src/actions/create-order.action.ts';
+    const governedAction = await readFixtureFile(fixture.root, governedActionPath);
+    await writeFixtureFile(
+      fixture.root,
+      governedActionPath,
+      governedAction.replace("      access: 'write',", "      access: 'read',"),
+    );
+    const beforeMismatchedEntrypoint = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'outbox-message', [
+        '--vertical',
+        'inventory-stock',
+        '--action',
+        'create-order',
+        '--topic',
+        'orders.created',
+      ]),
+      /matching generated Action with its governed write entrypoint/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeMismatchedEntrypoint);
+    await writeFixtureFile(fixture.root, governedActionPath, governedAction);
     await run(fixture, 'outbox-message', [
       '--vertical',
       'inventory-stock',
@@ -1325,7 +1376,7 @@ test('generates isolated Outbox Workers from published contracts and composes a 
 // @ontos-outbox-worker-producer inventory-stock
 // @ontos-outbox-worker-topic orders.created
 import { Effect, Schema } from 'effect';
-import { defineOutboxWorker } from '@app/core-runtime';
+import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -1351,6 +1402,12 @@ const handleOrdersCreatedLogger = () =>
 export const ordersCreatedLoggerWorker = defineOutboxWorker(
   {
     consumerModuleKey: 'billing',
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'background',
+      entrypointKey: 'billing.orders-created-logger',
+      moduleKey: 'billing',
+      role: 'worker',
+    }),
     leaseDurationMs: 30_000,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
@@ -1421,6 +1478,7 @@ startOutboxWorkerProcess({
       renderOutboxWorkerSubscriptionCatalog([
         {
           consumerModuleKey: 'billing',
+          entrypointKey: 'billing.orders-created-logger',
           producerModuleKey: 'inventory-stock',
           topic: 'orders.created',
           workerKey: 'billing.orders-created-logger',
@@ -1710,9 +1768,17 @@ export default function PurchaseOrdersPage() {
         fixture.root,
         'verticals/inventory-stock/src/routes/[lang]/purchase-orders/route.meta.ts',
       ),
-      `const routeMeta = {
+      `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+
+const routeMeta = {
   canonicalPath: '/purchase-orders',
   descriptionKey: 'inventory.pages.purchaseOrders.description',
+  entrypoint: defineTenantModuleEntrypoint({
+    access: 'read',
+    entrypointKey: 'inventory-stock.page.purchase-orders',
+    moduleKey: 'inventory-stock',
+    role: 'page',
+  }),
   id: 'inventory-stock-purchase-orders',
   indexable: false,
   localisedPaths: {
@@ -2009,6 +2075,26 @@ test('all generated files typecheck against the real workspace contracts', async
       path.join(appRoot, 'packages/core-runtime/src/db'),
       path.join(fixture.root, 'packages/core-runtime/src/db'),
       'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/modules/module-entrypoint.ts'),
+      path.join(fixture.root, 'packages/core-runtime/src/modules/module-entrypoint.ts'),
+      'file',
+    );
+    await Promise.all(
+      [
+        'module-entrypoint-gateway.ts',
+        'module-state-gate-errors.ts',
+        'module-state-gate.ts',
+        'tenant-module-state-errors.ts',
+        'tenant-module-state-service.ts',
+      ].map((moduleFile) =>
+        symlink(
+          path.join(appRoot, 'packages/core-runtime/src/modules', moduleFile),
+          path.join(fixture.root, 'packages/core-runtime/src/modules', moduleFile),
+          'file',
+        ),
+      ),
     );
     const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
     await writeFile(

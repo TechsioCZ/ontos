@@ -141,6 +141,41 @@ export {
   TenantModuleStateServiceLive,
   makeTenantModuleStateService,
 } from './modules/tenant-module-state-service.ts';
+export {
+  MODULE_ENTRYPOINT_ACCESSES,
+  MODULE_ENTRYPOINT_ROLES,
+  MODULE_ENTRYPOINT_SCOPES,
+  ModuleEntrypointAccessSchema,
+  ModuleEntrypointRoleSchema,
+  ModuleEntrypointSchema,
+  ModuleEntrypointScopeSchema,
+  defineSystemModuleEntrypoint,
+  defineTenantModuleEntrypoint,
+} from './modules/module-entrypoint.ts';
+export type {
+  EntrypointAccessForRole,
+  ModuleEntrypointAccess,
+  ModuleEntrypointDescriptor,
+  ModuleEntrypointRole,
+  ModuleEntrypointScope,
+  SystemModuleEntrypoint,
+  TenantModuleEntrypoint,
+} from './modules/module-entrypoint.ts';
+export {
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+} from './modules/module-state-gate-errors.ts';
+export type { ModuleStateGateError } from './modules/module-state-gate-errors.ts';
+export { ModuleStateGate, ModuleStateGateLive } from './modules/module-state-gate.ts';
+export type { ModuleStateGateShape, ModuleStateSnapshot } from './modules/module-state-gate.ts';
+export {
+  ModuleEntrypointGateway,
+  ModuleEntrypointGatewayLive,
+} from './modules/module-entrypoint-gateway.ts';
+export type {
+  ModuleEntrypointGatewayShape,
+  RunGatedModuleEntrypointInput,
+} from './modules/module-entrypoint-gateway.ts';
 export type {
   ActiveTenantModule,
   TenantModuleState,

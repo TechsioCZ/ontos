@@ -1,4 +1,4 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Clock, Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import { tenantModuleStateChanges, tenantModuleStates, tenants } from '../db/schema.ts';
@@ -82,6 +82,10 @@ export const rejectUnchangedTenantModuleState = (
     : Effect.void;
 
 export interface TenantModuleStateServiceShape {
+  readonly getTenantModuleStates: (
+    tenantId: string,
+    moduleKeys: readonly string[],
+  ) => Effect.Effect<readonly TenantModuleStateRecord[], TenantModuleStateReadUnavailableError>;
   readonly listActiveTenantModules: (
     tenantId: string,
   ) => Effect.Effect<readonly ActiveTenantModule[], TenantModuleStateReadUnavailableError>;
@@ -128,7 +132,45 @@ export const makeTenantModuleStateService = (
       ),
     );
 
+  const decodeRows = (rows: readonly { readonly moduleKey: string; readonly state: unknown }[]) =>
+    Effect.forEach((row: (typeof rows)[number]) =>
+      Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
+        Effect.map((state) => Object.freeze({ moduleKey: row.moduleKey, state })),
+        Effect.mapError(
+          () =>
+            new TenantModuleStateReadUnavailableError({
+              code: 'tenant_module_state_read_unavailable',
+              reason: 'Tenant module state is temporarily unavailable',
+            }),
+        ),
+      ),
+    )(rows).pipe(Effect.map((records) => Object.freeze(records)));
+
   return {
+    getTenantModuleStates: (tenantId, moduleKeys) => {
+      const distinctKeys = [...new Set(moduleKeys)].toSorted();
+      if (distinctKeys.length === 0) {
+        return Effect.succeed(Object.freeze([]));
+      }
+      return Effect.tryPromise({
+        catch: () =>
+          new TenantModuleStateReadUnavailableError({
+            code: 'tenant_module_state_read_unavailable',
+            reason: 'Tenant module state is temporarily unavailable',
+          }),
+        try: () =>
+          database.executor
+            .select({ moduleKey: tenantModuleStates.moduleKey, state: tenantModuleStates.state })
+            .from(tenantModuleStates)
+            .where(
+              and(
+                eq(tenantModuleStates.tenantId, tenantId),
+                inArray(tenantModuleStates.moduleKey, distinctKeys),
+              ),
+            )
+            .orderBy(asc(tenantModuleStates.moduleKey)),
+      }).pipe(Effect.flatMap(decodeRows));
+    },
     listActiveTenantModules: (tenantId) =>
       listTenantModuleStates(tenantId).pipe(
         Effect.map((rows) =>

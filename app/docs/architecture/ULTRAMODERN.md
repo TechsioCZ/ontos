@@ -8,6 +8,7 @@ Follow these rules when writing code with MicroVerticals:
 - Model expected failures as tagged, typed Effect errors. Do not throw, reject a Promise, return an untyped error object, or collapse an error into a string where the Effect error channel can represent it.
 - Follow [Effect Error and HTTP Contracts](./ERRORS.md) for every BFF endpoint and client.
 - Follow [Outbox Worker Architecture](./OUTBOX_WORKERS.md) for generated asynchronous consumers, typed payload decoding, delivery leases, retries, and checkpoints.
+- Follow [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md) for every module-owned load or dispatch. Do not hand-author a business API, public component, search provider, or report until Codesmith and the approved gateway support that category.
 - Always prefer direct object, method, and variable references over string constants.
 - Do not create an abstraction without a concrete reuse case.
 - Reuse existing concepts and files first. Add a concept, class, variable, or file only when the current requirement, documented architecture, or code readability requires it.

@@ -64,7 +64,7 @@ const renderWorker = (
 // @ontos-outbox-worker-producer ${producer.appId}
 // @ontos-outbox-worker-topic ${topic}
 import { Effect, Schema } from 'effect';
-import { defineOutboxWorker } from '@app/core-runtime';
+import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
@@ -90,6 +90,12 @@ const handle${workerType} = () =>
 export const ${workerVariable} = defineOutboxWorker(
   {
     consumerModuleKey: '${consumer.appId}',
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'background',
+      entrypointKey: '${consumer.appId}.${worker}',
+      moduleKey: '${consumer.appId}',
+      role: 'worker',
+    }),
     leaseDurationMs: 30_000,
     payloadSchema: OutboxPayloadSchema,
     producerModuleKey: outboxProducerModuleKey,
@@ -281,7 +287,7 @@ const readGeneratedWorkerSubscription = async (
   ) {
     throw new Error(`generated Outbox Worker markers are incomplete at ${workerPath}`);
   }
-  return { consumerModuleKey, producerModuleKey, topic, workerKey };
+  return { consumerModuleKey, entrypointKey: workerKey, producerModuleKey, topic, workerKey };
 };
 
 const discoverGeneratedWorkerSubscriptions = async (
@@ -348,6 +354,7 @@ const planSubscriptionCatalog = async (
     ...existing,
     {
       consumerModuleKey: consumer.appId,
+      entrypointKey: workerKey,
       producerModuleKey: producer.appId,
       topic,
       workerKey,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
 import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { Cause, Deferred, Effect, Exit, Schema } from 'effect';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { defineAction } from '../../src/actions/definition.ts';
@@ -16,6 +16,11 @@ import {
 } from '../../src/actions/policy.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
+import {
+  defineSystemModuleEntrypoint,
+  defineTenantModuleEntrypoint,
+} from '../../src/modules/module-entrypoint.ts';
+import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import {
@@ -26,6 +31,7 @@ import {
   legalEntities,
   outboxMessages,
   principals,
+  tenantModuleStateChanges,
   tenantModuleStates,
   tenants,
 } from '../../src/db/schema.ts';
@@ -58,7 +64,7 @@ const principal = {
 const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   correlationId: `integration-${idempotencyKey}`,
   idempotencyKey,
-  targetModuleKey: 'shell.core',
+  targetModuleKey: 'core.shell',
   targetResourceId,
   targetResourceType: 'test-state',
 });
@@ -167,6 +173,11 @@ before(async () => {
       status: 'active',
       tenantId,
     });
+    await database.executor.insert(tenantModuleStates).values({
+      moduleKey: 'inventory.stock',
+      state: 'active',
+      tenantId,
+    });
   });
 });
 
@@ -176,6 +187,9 @@ after(async () => {
     await database.executor.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
     await database.executor.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
     await database.executor.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
+    await database.executor
+      .delete(tenantModuleStateChanges)
+      .where(eq(tenantModuleStateChanges.tenantId, tenantId));
     await database.executor
       .delete(tenantModuleStates)
       .where(eq(tenantModuleStates.tenantId, tenantId));
@@ -195,7 +209,7 @@ interface RegistrationOptions {
   readonly mode?: 'orphan-outbox' | 'reject' | 'success';
   readonly onExecute?: () => void;
   readonly pause?: boolean;
-  readonly policies?: readonly ActionPolicy<{ readonly value: string }, 'shell.core'>[];
+  readonly policies?: readonly ActionPolicy<{ readonly value: string }, 'core.shell'>[];
 }
 
 const makeRegistration = ({
@@ -219,8 +233,14 @@ const makeRegistration = ({
       domainEvents: {
         'test-state.changed': Schema.Struct({ value: Schema.String }),
       },
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: actionKey,
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
       idempotency: 'required',
-      owningModuleKey: 'shell.core',
+      owningModuleKey: 'core.shell',
       payloadSchema: Schema.Struct({ value: Schema.String }),
       policies,
       resultSchema: Schema.Struct({ stateId: Schema.String, value: Schema.String }),
@@ -248,8 +268,8 @@ const makeRegistration = ({
           accessKind: 'read',
           queryHash: `lookup-${moduleStateKey}`,
           resultCount: 0,
-          servingModuleKey: 'shell.core',
-          targetModuleKey: 'shell.core',
+          servingModuleKey: 'core.shell',
+          targetModuleKey: 'core.shell',
           targetResourceId: moduleStateKey,
           targetResourceType: 'test-state',
         });
@@ -257,7 +277,7 @@ const makeRegistration = ({
         if (mode === 'orphan-outbox') {
           yield* context.addOutboxMessage({} as DomainEventReference, {
             payloadJson: { value: payload.value },
-            producerModuleKey: 'shell.core',
+            producerModuleKey: 'core.shell',
             topic: 'test-state.project',
           });
         }
@@ -265,14 +285,14 @@ const makeRegistration = ({
         const domainEvent = yield* context.addDomainEvent({
           eventType: 'test-state.changed',
           payloadJson: { value: payload.value },
-          producerModuleKey: 'shell.core',
-          subjectModuleKey: 'shell.core',
+          producerModuleKey: 'core.shell',
+          subjectModuleKey: 'core.shell',
           subjectResourceId: moduleStateKey,
           subjectResourceType: 'test-state',
         });
         yield* context.addOutboxMessage(domainEvent, {
           payloadJson: { value: payload.value },
-          producerModuleKey: 'shell.core',
+          producerModuleKey: 'core.shell',
           topic: 'test-state.project',
         });
 
@@ -306,6 +326,120 @@ const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined 
     ? String(failure.value._tag)
     : undefined;
 };
+
+test('rechecks business module state under the tenant lock and retries after Core recovery', async () => {
+  await databasePromise(async (database) => {
+    await database.executor
+      .update(tenantModuleStates)
+      .set({ state: 'active' })
+      .where(eq(tenantModuleStates.moduleKey, 'inventory.stock'));
+
+    const policyReached = await Effect.runPromise(Deferred.make<null>());
+    const continuePolicy = await Effect.runPromise(Deferred.make<null>());
+    let handlerExecutions = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'inventory.stock.concurrent-gate.v1',
+        },
+        actionKey: 'inventory.stock.concurrent-gate',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          entrypointKey: 'inventory.stock.concurrent-gate',
+          moduleKey: 'inventory.stock',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        owningModuleKey: 'inventory.stock',
+        payloadSchema: Schema.Void,
+        policies: [
+          defineGlobalPolicy({
+            evaluate: () =>
+              Effect.gen(function* pauseBetweenGates() {
+                yield* Deferred.succeed(policyReached, null);
+                yield* Deferred.await(continuePolicy);
+              }),
+            policyKey: 'global.pause-between-module-gates.v1',
+          }),
+        ],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () =>
+        Effect.sync(() => {
+          handlerExecutions += 1;
+        }),
+    );
+    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    const firstAttempt = Effect.runPromise(
+      Effect.exit(
+        runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: action,
+          transport: transport('business-module-concurrent-gate'),
+        }),
+      ),
+    );
+    await Effect.runPromise(Deferred.await(policyReached));
+    await Effect.runPromise(
+      runtime.runAction({
+        payload: {
+          expectedState: 'active',
+          moduleKey: 'inventory.stock',
+          newState: 'suspended',
+          reason: 'integration locked recheck',
+        },
+        principal,
+        registration: changeTenantModuleStateAction,
+        transport: transport('business-module-suspend'),
+      }),
+    );
+    await Effect.runPromise(Deferred.succeed(continuePolicy, null));
+    const denied = await firstAttempt;
+    assert.equal(failureTag(denied), 'ModuleStateDeniedError');
+    assert.equal(handlerExecutions, 0);
+
+    const [openInvocation] = await database.executor
+      .select()
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, 'business-module-concurrent-gate'));
+    assert.ok(openInvocation);
+    assert.equal(openInvocation.completedAt, null);
+    const deniedEvidence = await database.executor
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, openInvocation.actionInvocationId));
+    assert.equal(deniedEvidence.length, 0);
+
+    await Effect.runPromise(
+      runtime.runAction({
+        payload: {
+          expectedState: 'suspended',
+          moduleKey: 'inventory.stock',
+          newState: 'active',
+          reason: 'integration recovery',
+        },
+        principal,
+        registration: changeTenantModuleStateAction,
+        transport: transport('business-module-reactivate'),
+      }),
+    );
+    await Effect.runPromise(
+      runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport('business-module-concurrent-gate'),
+      }),
+    );
+    assert.equal(handlerExecutions, 1);
+  });
+});
 
 test('atomically commits business state, all success evidence, and the succeeded marker', async () => {
   const key = 'atomic-success';
@@ -465,6 +599,12 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
             domainEvents: {
               'test-state.changed': Schema.Struct({ value: Schema.String }),
             },
+            entrypoint: defineTenantModuleEntrypoint({
+              access: 'write',
+              entrypointKey: this.actionKey,
+              moduleKey: 'inventory.stock',
+              role: 'action',
+            }),
             idempotency: 'required',
             owningModuleKey: 'inventory.stock',
             payloadSchema: Schema.Struct({ value: Schema.String }),
@@ -1273,5 +1413,103 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     assert.equal(openResolution._tag, 'ActionCommitOpen');
     assert.equal(openResolved.value, 'rolled-back-with-lost-ack');
     assert.equal(openStates.length, 1);
+  });
+});
+
+test('persists no invocation or evidence for every non-writable business module state', async () => {
+  await databasePromise(async (database) => {
+    const moduleKey = 'inventory.state-matrix';
+    await database.executor
+      .insert(tenantModuleStates)
+      .values({ moduleKey, state: 'active', tenantId })
+      .onConflictDoNothing();
+    let handlerExecutions = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'inventory.state-matrix.write.v1',
+        },
+        actionKey: 'inventory.state-matrix.write',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          entrypointKey: 'inventory.state-matrix.write',
+          moduleKey,
+          role: 'action',
+        }),
+        idempotency: 'required',
+        owningModuleKey: moduleKey,
+        payloadSchema: Schema.Void,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () =>
+        Effect.sync(() => {
+          handlerExecutions += 1;
+        }),
+    );
+    const runtime = makeActionRuntime(database, makeActionRepository(), unconfiguredPermission);
+    await Effect.runPromise(
+      runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport('module-state-active'),
+      }),
+    );
+    assert.equal(handlerExecutions, 1);
+
+    for (const [index, state] of (
+      ['inactive', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'] as const
+    ).entries()) {
+      await database.executor
+        .update(tenantModuleStates)
+        .set({ state })
+        .where(
+          and(
+            eq(tenantModuleStates.tenantId, tenantId),
+            eq(tenantModuleStates.moduleKey, moduleKey),
+          ),
+        );
+      const idempotencyKey = `module-state-denied-${index}`;
+      const exit = await Effect.runPromise(
+        Effect.exit(
+          runtime.runAction({
+            payload: undefined,
+            principal,
+            registration: action,
+            transport: transport(idempotencyKey),
+          }),
+        ),
+      );
+      assert.equal(failureTag(exit), 'ModuleStateDeniedError', state);
+      const invocations = await database.executor
+        .select()
+        .from(actionInvocations)
+        .where(eq(actionInvocations.idempotencyKey, idempotencyKey));
+      assert.equal(invocations.length, 0, state);
+    }
+
+    await database.executor
+      .delete(tenantModuleStates)
+      .where(
+        and(eq(tenantModuleStates.tenantId, tenantId), eq(tenantModuleStates.moduleKey, moduleKey)),
+      );
+    const missingExit = await Effect.runPromise(
+      Effect.exit(
+        runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: action,
+          transport: transport('module-state-missing'),
+        }),
+      ),
+    );
+    assert.equal(failureTag(missingExit), 'ModuleStateDeniedError');
+    assert.equal(handlerExecutions, 1);
   });
 });

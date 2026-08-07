@@ -1,11 +1,18 @@
 import { Effect, Layer, Schema } from 'effect';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { startOutboxWorkerProcess } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
 const registration = defineOutboxWorker(
   {
     consumerModuleKey: 'process-fixture',
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'background',
+      entrypointKey: 'process-fixture.lifecycle',
+      moduleKey: 'process-fixture',
+      role: 'worker',
+    }),
     leaseDurationMs: 1000,
     payloadSchema: Schema.Struct({ messageKey: Schema.String }),
     producerModuleKey: 'producer',

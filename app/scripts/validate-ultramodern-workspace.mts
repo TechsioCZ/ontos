@@ -505,7 +505,12 @@ const workspaceValidationContract = {
       ],
       validation: {
         script: 'scripts/validate-ultramodern-workspace.mts',
-        commands: ['pnpm i18n:boundaries', 'pnpm api:check', 'pnpm contract:check'],
+        commands: [
+          'pnpm i18n:boundaries',
+          'pnpm api:check',
+          'pnpm module-entrypoints:check',
+          'pnpm contract:check',
+        ],
       },
     },
     ownership: {
@@ -1005,9 +1010,10 @@ const workspaceValidationContract = {
     migrateStrictEffect: 'node ./scripts/migrate-strict-effect.mts',
     zeropsMaterialize: 'node ./scripts/materialize-zerops-runtime.mjs',
     contractCheck: 'node ./scripts/validate-ultramodern-workspace.mts',
+    moduleEntrypointsCheck: 'node ./scripts/check-module-entrypoint-boundaries.mts',
     typecheck: 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
     check:
-      'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
+      'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm module-entrypoints:check && pnpm contract:check && pnpm performance:readiness',
   },
   packageScripts: {
     build:
@@ -1022,9 +1028,10 @@ const workspaceValidationContract = {
     'performance:readiness': 'node ./scripts/ultramodern-performance-readiness.mts',
     'migrate:strict-effect': 'node ./scripts/migrate-strict-effect.mts',
     'contract:check': 'node ./scripts/validate-ultramodern-workspace.mts',
+    'module-entrypoints:check': 'node ./scripts/check-module-entrypoint-boundaries.mts',
     typecheck: 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
     check:
-      'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
+      'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm module-entrypoints:check && pnpm contract:check && pnpm performance:readiness',
   },
   cloudflareSecurity: {
     enabled: true,
@@ -4832,6 +4839,11 @@ assert(
   'Root must expose contract:check',
 );
 assert(
+  rootPackage.scripts?.['module-entrypoints:check'] ===
+    'node ./scripts/check-module-entrypoint-boundaries.mts',
+  'Root must expose module-entrypoints:check',
+);
+assert(
   rootPackage.scripts?.['scaffold:microvertical-action-boundary'] ===
     'node ./scripts/scaffolding/cli.mts microvertical-action-boundary',
   'Root must expose the Codesmith MicroVertical Action-boundary command',
@@ -4949,6 +4961,7 @@ assertNotExists('scripts/verify-cloudflare-output.mjs');
 assertNotExists('scripts/generate-tanstack-routes.mjs');
 assert(
   rootPackage.scripts?.check?.includes('pnpm api:check') &&
+    rootPackage.scripts.check.includes('pnpm module-entrypoints:check') &&
     !rootPackage.scripts.check.includes('pnpm node:proof') &&
     rootPackage.scripts.check.endsWith(
       bridgeConfig

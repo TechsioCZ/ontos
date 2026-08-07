@@ -34,7 +34,7 @@ const renderAction = (vertical: VerticalMetadata, action: string): string => {
 // @ontos-action-owner ${vertical.appId}
 // @ontos-action-slug ${action}
 import { Effect, Schema } from 'effect';
-import { defineAction } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 export const ${actionType}Payload = Schema.Struct({});
 export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}Payload>;
@@ -68,6 +68,12 @@ export const ${actionValue} = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: ${actionType}NotImplemented,
     domainEvents: {},
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'write',
+      entrypointKey: '${vertical.appId}.${action}',
+      moduleKey: '${vertical.appId}',
+      role: 'action',
+    }),
     idempotency: 'required',
     owningModuleKey: '${vertical.appId}',
     payloadSchema: ${actionType}Payload,
@@ -92,6 +98,7 @@ const renderCoreAction = (moduleKey: string, action: string): string => {
 // @ontos-action-slug ${action}
 import { Effect, Schema } from 'effect';
 import { defineAction } from '../../actions/definition.ts';
+import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 export const ${actionType}Payload = Schema.Struct({});
 export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}Payload>;
@@ -125,6 +132,12 @@ export const ${actionValue} = defineAction(
     auditProfile: 'standard',
     domainErrorSchema: ${actionType}NotImplemented,
     domainEvents: {},
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      entrypointKey: '${moduleKey}.${action}',
+      moduleKey: '${moduleKey}',
+      role: 'action',
+    }),
     idempotency: 'required',
     owningModuleKey: '${moduleKey}',
     payloadSchema: ${actionType}Payload,

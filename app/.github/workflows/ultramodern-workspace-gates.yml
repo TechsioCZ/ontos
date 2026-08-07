@@ -36,6 +36,8 @@ jobs:
             command: pnpm i18n:boundaries
           - name: API Boundaries
             command: pnpm api:check
+          - name: Module Entrypoints
+            command: pnpm module-entrypoints:check
           - name: Contract
             command: pnpm contract:check
           - name: Build
