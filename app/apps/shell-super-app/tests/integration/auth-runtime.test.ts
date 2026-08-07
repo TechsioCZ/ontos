@@ -17,6 +17,7 @@ import {
   makePrincipalResolver,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
+import type { InstalledModuleCatalog } from '@app/core-runtime';
 import {
   coreDatabaseSchema,
   principalAuthBindings,
@@ -41,6 +42,16 @@ const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 
 const cookieHeader = (setCookieHeaders: readonly string[]) =>
   setCookieHeaders.map((header) => header.split(';')[0]).join('; ');
+
+const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog =>
+  Object.freeze({
+    contracts: Object.freeze([]),
+    deploymentAppIds: Object.freeze([]),
+    getByDeploymentAppId: () => void 0,
+    getByModuleId: () => void 0,
+    moduleIds: Object.freeze([...moduleIds]),
+    outboxSubscriptions: Object.freeze([]),
+  });
 
 test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
   const configuration = await Effect.runPromise(loadAuthConfig());
@@ -147,7 +158,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         loadConfig: parseGatewayIssuerConfig({}),
       },
       moduleStateLayer,
-      Effect.succeed(new Set(['testing1'])),
+      Effect.succeed(installedCatalog(['testing1'])),
     );
     const unavailableHandler = anonymousRuntime.createHandler();
     handlers.push(unavailableHandler);
@@ -231,7 +242,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         loadConfig: parseGatewayIssuerConfig({}),
       },
       moduleStateLayer,
-      Effect.succeed(new Set(['testing1'])),
+      Effect.succeed(installedCatalog(['testing1'])),
     ).createHandler();
     handlers.push(refreshingRuntime);
     const refreshedModulesResponse = await refreshingRuntime.handler(
@@ -261,7 +272,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
             }),
           ),
       }),
-      Effect.succeed(new Set(['testing1'])),
+      Effect.succeed(installedCatalog(['testing1'])),
     ).createHandler();
     handlers.push(unavailableModulesHandler);
     const unavailableModulesResponse = await unavailableModulesHandler.handler(
@@ -318,7 +329,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       authenticationLayer,
       issuerDependencies,
       moduleStateLayer,
-      Effect.succeed(new Set(['testing1'])),
+      Effect.succeed(installedCatalog(['testing1'])),
     ).createHandler();
     handlers.push(issuingHandler);
     const assertionResponse = await issuingHandler.handler(
@@ -424,7 +435,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         generateJti: Effect.die(new Error('deliberate gateway test defect')),
       },
       moduleStateLayer,
-      Effect.succeed(new Set(['testing1'])),
+      Effect.succeed(installedCatalog(['testing1'])),
     ).createHandler();
     handlers.push(defectHandler);
     const defectResponse = await defectHandler.handler(

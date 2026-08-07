@@ -15,3 +15,8 @@ Follow these rules when writing code with MicroVerticals:
 - Before creating a file type supported by Codesmith, inspect `app/scripts` and run the corresponding generator. The [repository agent instructions](../../../AGENTS.md#mandatory-codesmith-generators) contain the canonical list of mandatory generators.
 - Treat files emitted by Codesmith as required scaffolding, not as files created directly by AI. Use the generated output as the starting point, fill in its logic, and adapt its structure when the task requires it. Do not recreate the initial files or wiring by hand.
 - Do not create business-functionality files directly. If a required file type has no Codesmith generator, stop and ask the developer how to proceed. You may create files directly only for infrastructure or architecture work.
+- Run `scaffold:module-contract` before another business generator targets a new MicroVertical. The
+  generated `vertical.manifest.ts` and `vertical.registration.ts` are owner files with explicit
+  generator slots; later generators patch those slots atomically and must not recreate them.
+- Preserve the `appId`/`moduleId` split from [OntOS Module Manifests](./MODULE_MANIFESTS.md). Never
+  statically import another deployment's manifest or private registration.

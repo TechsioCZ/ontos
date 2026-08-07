@@ -49,9 +49,45 @@ export class TenantModuleStateUnsupportedChangeSourceError extends Schema.Tagged
   },
 ) {}
 
+export class TenantModuleStateUnknownModuleError extends Schema.TaggedErrorClass<TenantModuleStateUnknownModuleError>()(
+  'TenantModuleStateUnknownModuleError',
+  {
+    code: Schema.Literal('tenant_module_state_module_unknown'),
+    reason: Schema.String,
+  },
+) {}
+
+export class TenantModuleStateUnsupportedStateError extends Schema.TaggedErrorClass<TenantModuleStateUnsupportedStateError>()(
+  'TenantModuleStateUnsupportedStateError',
+  {
+    code: Schema.Literal('tenant_module_state_unsupported'),
+    reason: Schema.String,
+  },
+) {}
+
+export class TenantModuleStateDependencyInactiveError extends Schema.TaggedErrorClass<TenantModuleStateDependencyInactiveError>()(
+  'TenantModuleStateDependencyInactiveError',
+  {
+    code: Schema.Literal('tenant_module_state_dependency_inactive'),
+    reason: Schema.String,
+  },
+) {}
+
+export class TenantModuleStateValidationUnavailableError extends Schema.TaggedErrorClass<TenantModuleStateValidationUnavailableError>()(
+  'TenantModuleStateValidationUnavailableError',
+  {
+    code: Schema.Literal('tenant_module_state_validation_unavailable'),
+    reason: Schema.String,
+  },
+) {}
+
 export type TenantModuleStateTransitionError =
   | TenantModuleStateConcurrentChangeError
   | TenantModuleStatePersistenceUnavailableError
   | TenantModuleStateTenantMissingError
   | TenantModuleStateUnchangedError
-  | TenantModuleStateUnsupportedChangeSourceError;
+  | TenantModuleStateUnsupportedChangeSourceError
+  | TenantModuleStateUnknownModuleError
+  | TenantModuleStateUnsupportedStateError
+  | TenantModuleStateDependencyInactiveError
+  | TenantModuleStateValidationUnavailableError;

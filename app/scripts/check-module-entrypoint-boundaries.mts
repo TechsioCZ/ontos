@@ -281,7 +281,7 @@ const requireGeneratedWorkerEntrypoint = (file: string, source: string): void =>
 const requireRouteEntrypoint = (
   file: string,
   source: string,
-  owner: string,
+  moduleOwner: string,
   expectedScope: 'system' | 'tenant',
 ): string => {
   const entrypoints = readEntrypoints(source);
@@ -290,8 +290,8 @@ const requireRouteEntrypoint = (
     entrypoints.length !== 1 ||
     entrypoint?.constructor !== (expectedScope === 'system' ? 'System' : 'Tenant') ||
     entrypoint.role !== 'page' ||
-    entrypoint.moduleKey !== owner ||
-    !entrypoint.entrypointKey?.startsWith(`${owner}.page.`) ||
+    entrypoint.moduleKey !== moduleOwner ||
+    !entrypoint.entrypointKey?.startsWith(`${moduleOwner}.page.`) ||
     (entrypoint.access !== 'read' && entrypoint.access !== 'historical_read')
   ) {
     fail(
@@ -354,14 +354,20 @@ export const checkModuleEntrypointBoundaries = async (root: string): Promise<voi
         fail(file, 'route owner is absent from the generated topology');
       }
       const [, owner] = ownerEntry;
-      routeEntrypointKeys.push(
-        requireRouteEntrypoint(
-          file,
-          source,
-          owner,
-          owner.startsWith('shell-') ? 'system' : 'tenant',
-        ),
-      );
+      const ownerAppIds = readStringProperties(source, 'ownerAppId');
+      if (ownerAppIds.size !== 1 || !ownerAppIds.has(owner)) {
+        fail(file, 'route ownerAppId must match the generated topology deployment identity');
+      }
+      const expectedScope = owner.startsWith('shell-') ? 'system' : 'tenant';
+      const moduleIds = readStringProperties(source, 'moduleId');
+      let moduleOwner: string | undefined = owner;
+      if (expectedScope === 'tenant') {
+        moduleOwner = moduleIds.size === 1 ? [...moduleIds][0] : undefined;
+      }
+      if (moduleOwner === undefined) {
+        fail(file, 'MicroVertical route metadata must declare exactly one manifest moduleId');
+      }
+      routeEntrypointKeys.push(requireRouteEntrypoint(file, source, moduleOwner, expectedScope));
     }
 
     if (file.includes('/verticals/') || file.startsWith('verticals/')) {
@@ -472,27 +478,6 @@ export const checkModuleEntrypointBoundaries = async (root: string): Promise<voi
         'generated route manifests',
         `route entrypoint ${entrypointKey} is missing; rerun the route generator`,
       );
-    }
-  }
-
-  const catalogPath = path.join(
-    root,
-    'packages/core-runtime/src/outbox/subscriptions.generated.ts',
-  );
-  try {
-    const catalog = await readFile(catalogPath, 'utf-8');
-    if (
-      catalog.includes('consumerModuleKey:') &&
-      !catalog.includes('entrypoint: Object.freeze({')
-    ) {
-      fail(
-        relative(root, catalogPath),
-        'Worker subscription catalog is stale; rerun scaffold:outbox-worker',
-      );
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error;
     }
   }
 };

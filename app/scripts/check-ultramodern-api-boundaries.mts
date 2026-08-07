@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
 const failures: string[] = [];
@@ -100,6 +101,20 @@ const assertNotContains = (
   assert(!pattern.test(content), `${relativePath}: ${message}`);
 };
 
+const assertPrivateOwnerImports = (file, content) => {
+  const imports = content.matchAll(
+    /(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu,
+  );
+  for (const match of imports) {
+    const specifier = match.groups?.specifier;
+    if (specifier === undefined) continue;
+    const violation = privateOwnerImportViolation(workspaceRoot, file, specifier);
+    if (violation !== undefined) {
+      fail(`${file}: ${violation}. Discover other deployments as allowlisted data.`);
+    }
+  }
+};
+
 for (const forbiddenPath of [
   ...listDirectories('apps').flatMap((appPath) => [
     `${appPath}/api/effect`,
@@ -127,6 +142,14 @@ const textFiles = generatedFiles.filter((file) =>
 
 for (const file of textFiles) {
   const content = readText(file);
+
+  assertPrivateOwnerImports(file, content);
+  assertNotContains(
+    file,
+    content,
+    /(?:from\s+|import\s*\(|require\s*\()\s*['"]@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
+    'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
+  );
 
   if (/\/api\//u.test(file)) {
     assertNotContains(

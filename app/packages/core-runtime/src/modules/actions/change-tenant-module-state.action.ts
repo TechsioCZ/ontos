@@ -11,17 +11,21 @@ import {
   TenantModuleStateTenantMissingError,
   TenantModuleStateUnchangedError,
   TenantModuleStateUnsupportedChangeSourceError,
+  TenantModuleStateDependencyInactiveError,
+  TenantModuleStateUnknownModuleError,
+  TenantModuleStateUnsupportedStateError,
+  TenantModuleStateValidationUnavailableError,
 } from '../tenant-module-state-errors.ts';
 import {
+  TenantModuleStateService,
   TenantModuleStateSchema,
   persistTenantModuleStateChange,
+  validateTenantModuleStateTransition,
 } from '../tenant-module-state-service.ts';
+import { InstalledModuleCatalogService } from '../catalog.ts';
+import { OntosModuleIdSchema } from '../manifest.ts';
 
-const moduleKeySchema = Schema.String.check(
-  Schema.isMinLength(1),
-  Schema.isMaxLength(128),
-  Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
-);
+const moduleKeySchema = OntosModuleIdSchema.check(Schema.isMaxLength(128));
 const reasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
 export const ChangeTenantModuleStatePayload = Schema.Struct({
@@ -49,6 +53,10 @@ export const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateTenantMissingError,
   TenantModuleStateUnchangedError,
   TenantModuleStateUnsupportedChangeSourceError,
+  TenantModuleStateDependencyInactiveError,
+  TenantModuleStateUnknownModuleError,
+  TenantModuleStateUnsupportedStateError,
+  TenantModuleStateValidationUnavailableError,
 ]);
 
 type ChangeTenantModuleStateDomainEvents = Readonly<
@@ -60,6 +68,35 @@ const handleChangeTenantModuleState = (
   context: ActionHandlerContext<ChangeTenantModuleStateDomainEvents>,
 ) =>
   Effect.gen(function* changeTenantModuleStateHandler() {
+    const installedCatalog = yield* InstalledModuleCatalogService;
+    const moduleState = yield* TenantModuleStateService;
+    const catalog = yield* installedCatalog.load;
+    const tenantStates = yield* moduleState
+      .listTenantModuleStatesForTransition(context.transaction, context.principal.tenantId)
+      .pipe(
+        Effect.mapError(
+          () =>
+            new TenantModuleStateValidationUnavailableError({
+              code: 'tenant_module_state_validation_unavailable',
+              reason: 'Tenant module transition validation is temporarily unavailable',
+            }),
+        ),
+      );
+    yield* validateTenantModuleStateTransition(
+      catalog,
+      tenantStates,
+      payload.moduleKey,
+      payload.newState,
+    );
+    yield* context.recordDataAccess({
+      accessKind: 'read',
+      queryHash: `tenant-module-state-dependencies:${payload.moduleKey}`,
+      resultCount: tenantStates.length,
+      servingModuleKey: 'core.modules',
+      targetModuleKey: payload.moduleKey,
+      targetResourceId: payload.moduleKey,
+      targetResourceType: 'tenant-module-state-dependency-snapshot',
+    });
     const result = yield* persistTenantModuleStateChange(context.transaction, {
       actionInvocationId: context.actionInvocationId,
       authMethod: context.principal.authMethod,

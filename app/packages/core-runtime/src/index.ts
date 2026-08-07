@@ -46,13 +46,15 @@ export {
   coreDatabaseSchema,
 } from './db/schema.ts';
 export type { CoreDatabaseExecutor, CoreDbExecutor, CoreTransaction } from './db/types.ts';
-export { defineAction } from './actions/definition.ts';
+export { defineAction, isActionRegistration } from './actions/definition.ts';
 export type {
   ActionAuditProfile,
   ActionDescriptor,
   ActionHandler,
   ActionIdempotencyRule,
   ActionRegistration,
+  ActionRequirements,
+  AnyActionRegistration,
 } from './actions/definition.ts';
 export {
   PolicyDenied,
@@ -130,6 +132,10 @@ export {
   TenantModuleStateTenantMissingError,
   TenantModuleStateUnchangedError,
   TenantModuleStateUnsupportedChangeSourceError,
+  TenantModuleStateDependencyInactiveError,
+  TenantModuleStateUnknownModuleError,
+  TenantModuleStateUnsupportedStateError,
+  TenantModuleStateValidationUnavailableError,
 } from './modules/tenant-module-state-errors.ts';
 export type { TenantModuleStateTransitionError } from './modules/tenant-module-state-errors.ts';
 export {
@@ -140,6 +146,7 @@ export {
   TenantModuleStateService,
   TenantModuleStateServiceLive,
   makeTenantModuleStateService,
+  validateTenantModuleStateTransition,
 } from './modules/tenant-module-state-service.ts';
 export {
   MODULE_ENTRYPOINT_ACCESSES,
@@ -182,6 +189,87 @@ export type {
   TenantModuleStateRecord,
   TenantModuleStateServiceShape,
 } from './modules/tenant-module-state-service.ts';
+export {
+  ONTOS_MODULE_CONTRACT_MAX_BYTES,
+  ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
+  ONTOS_MODULE_CONTRACT_TIMEOUT_MS,
+  OntosActionContractSchema,
+  OntosApiContractSchema,
+  OntosComponentContractSchema,
+  OntosCoreCapabilitySchema,
+  OntosDeploymentAppIdSchema,
+  OntosDeploymentIdentitySchema,
+  OntosExternalSystemDependencySchema,
+  OntosModuleActivationSchema,
+  OntosModuleActivationStateSchema,
+  OntosModuleDependenciesSchema,
+  OntosModuleDependencyModeSchema,
+  OntosModuleDependencySchema,
+  OntosModuleDeploymentContractSchema,
+  OntosModuleIdSchema,
+  OntosModuleIdentitySchema,
+  OntosModuleKindSchema,
+  OntosOutboxSubscriptionContractSchema,
+  OntosPublicEventContractSchema,
+  OntosReportDescriptorSchema,
+  OntosResourceTypeSchema,
+  OntosSearchDescriptorSchema,
+  OntosSerializedModuleManifestSchema,
+  OntosSerializedPublicSurfaceSchema,
+  decodeOntosModuleDeploymentContract,
+  defineOntosModuleManifest,
+} from './modules/manifest.ts';
+export type {
+  OntosActionContract,
+  OntosApiContract,
+  OntosAuthoredPublicEvent,
+  OntosAuthoredPublicSurface,
+  OntosComponentContract,
+  OntosCoreCapability,
+  OntosDeploymentAppId,
+  OntosExternalSystemDependency,
+  OntosModuleActivation,
+  OntosModuleActivationState,
+  OntosModuleDependencies,
+  OntosModuleDependency,
+  OntosModuleDependencyMode,
+  OntosModuleDeploymentContract,
+  OntosModuleId,
+  OntosModuleIdentity,
+  OntosModuleKind,
+  OntosManifestActionValue,
+  OntosManifestComponentValue,
+  OntosModuleManifest,
+  OntosModuleManifestInput,
+  OntosOutboxSubscriptionContract,
+  OntosPublicEventContract,
+  OntosReportDescriptor,
+  OntosResourceType,
+  OntosSearchDescriptor,
+  OntosSerializedModuleManifest,
+} from './modules/manifest.ts';
+export {
+  OntosModuleCatalogValidationError,
+  InstalledModuleCatalogService,
+  buildInstalledModuleCatalog,
+} from './modules/catalog.ts';
+export type {
+  InstalledDeploymentContractInput,
+  InstalledModuleCatalog,
+  InstalledModuleCatalogServiceShape,
+} from './modules/catalog.ts';
+export {
+  defineVerticalRuntimeRegistration,
+  extractVerticalRuntimeSafeDescriptors,
+  getVerticalRuntimeActions,
+  getVerticalRuntimeOutboxWorkers,
+} from './modules/runtime-registration.ts';
+export type {
+  VerticalRuntimeRegistration,
+  VerticalRuntimeRegistrationInput,
+  VerticalRuntimeSafeDescriptors,
+} from './modules/runtime-registration.ts';
 
 // <generated-core-action-exports>
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
@@ -224,10 +312,17 @@ export type {
   RunOutboxWorkerProcessInput,
   StartOutboxWorkerProcessInput,
 } from './outbox/process.ts';
-export { OutboxRuntime, OutboxRuntimeLive, runOutboxCycle } from './outbox/runtime.ts';
+export {
+  OutboxRuntime,
+  OutboxRuntimeLive,
+  matchOutboxMessages,
+  runOutboxCycle,
+} from './outbox/runtime.ts';
 export type {
+  MatchOutboxMessagesInput,
   OutboxCycleError,
   OutboxCycleResult,
+  OutboxMatchResult,
   OutboxRuntimeService,
   RunOutboxCycleInput,
 } from './outbox/runtime.ts';

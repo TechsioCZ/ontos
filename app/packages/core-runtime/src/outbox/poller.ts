@@ -1,6 +1,10 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining. */
 import { Duration, Effect, Schedule, Schema } from 'effect';
-import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements } from './definition.ts';
+import type {
+  AnyOutboxWorkerRegistration,
+  OutboxWorkerRequirements,
+  OutboxWorkerSubscription,
+} from './definition.ts';
 import { OutboxPollerConfigError } from './errors.ts';
 import { runOutboxCycle } from './runtime.ts';
 import type {
@@ -31,6 +35,7 @@ export interface RunOutboxPollingLoopInput<
 > {
   readonly config: OutboxPollingConfig;
   readonly registrations: readonly Registration[];
+  readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
 
 export type OutboxCycleRunner<
@@ -119,6 +124,7 @@ export const runOutboxPollingLoop = <
     claimOwner: input.config.claimOwner,
     maxDeliveries: input.config.maxDeliveries,
     registrations: input.registrations,
+    subscriptions: input.subscriptions,
   }).pipe(
     Effect.tap((result) =>
       hasActivity(result)

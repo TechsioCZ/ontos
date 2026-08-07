@@ -32,6 +32,7 @@ const runtimeLayer = Layer.effect(
   OutboxRuntime,
   Effect.acquireRelease(
     Effect.succeed({
+      matchMessages: () => Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 }),
       runCycle: () =>
         Effect.sync(() => {
           process.stdout.write(`cycle:${process.listenerCount('SIGTERM')}\n`);
@@ -57,4 +58,5 @@ startOutboxWorkerProcess({
   claimOwnerPrefix: 'process-fixture',
   layer: runtimeLayer,
   registrations: [registration],
+  subscriptions: [registration.descriptor],
 });

@@ -121,13 +121,14 @@ const run = (
   registration: NoRequirementsWorker = worker(() => Effect.void),
 ) =>
   Effect.runPromise(
-    makeOutboxRuntime(service, [registration.descriptor]).runCycle({
+    makeOutboxRuntime(service).runCycle({
       claimOwner: 'unit-runtime',
       registrations: [registration],
+      subscriptions: [registration.descriptor],
     }),
   );
 
-test('reports no-match cycles without claiming or finalizing work', async () => {
+test('owner-local cycles do not perform global matching', async () => {
   const controlled = repository({ match: { deliveriesCreated: 0, messagesMatched: 2 } });
 
   assert.deepEqual(await run(controlled.service), {
@@ -135,7 +136,7 @@ test('reports no-match cycles without claiming or finalizing work', async () => 
     dead: 0,
     deliveriesCreated: 0,
     failed: 0,
-    messagesMatched: 2,
+    messagesMatched: 0,
     retried: 0,
     succeeded: 0,
   });
@@ -143,19 +144,61 @@ test('reports no-match cycles without claiming or finalizing work', async () => 
   assert.deepEqual(controlled.probe.failed, []);
 });
 
+test('matches messages only through the explicit Core matcher snapshot', async () => {
+  const controlled = repository({ match: { deliveriesCreated: 3, messagesMatched: 2 } });
+  const registration = worker(() => Effect.void);
+  const result = await Effect.runPromise(
+    makeOutboxRuntime(controlled.service).matchMessages({
+      subscriptions: [registration.descriptor],
+    }),
+  );
+
+  assert.deepEqual(result, { deliveriesCreated: 3, messagesMatched: 2 });
+});
+
 test('rejects an owner-local worker missing from the installed subscription catalog', async () => {
   const controlled = repository();
   const registration = worker(() => Effect.void);
   await assert.rejects(
     Effect.runPromise(
-      makeOutboxRuntime(controlled.service, []).runCycle({
+      makeOutboxRuntime(controlled.service).runCycle({
         claimOwner: 'unit-runtime',
         registrations: [registration],
+        subscriptions: [],
       }),
     ),
     (error: { readonly _tag?: string; readonly reason?: string }) =>
       error._tag === 'OutboxWorkerDescriptorError' &&
       /absent from the installed subscription catalog/u.test(error.reason ?? ''),
+  );
+});
+
+test('rejects deployed owner descriptors without a matching local worker registration', async () => {
+  const controlled = repository();
+  const registration = worker(() => Effect.void);
+  await assert.rejects(
+    Effect.runPromise(
+      makeOutboxRuntime(controlled.service).runCycle({
+        claimOwner: 'unit-runtime',
+        registrations: [registration],
+        subscriptions: [
+          registration.descriptor,
+          {
+            ...registration.descriptor,
+            entrypoint: defineTenantModuleEntrypoint({
+              access: 'background',
+              entrypointKey: 'consumer.second-worker',
+              moduleKey: registration.descriptor.consumerModuleKey,
+              role: 'worker',
+            }),
+            workerKey: 'consumer.second-worker',
+          },
+        ],
+      }),
+    ),
+    (error: { readonly _tag?: string; readonly reason?: string }) =>
+      error._tag === 'OutboxWorkerDescriptorError' &&
+      /contradicts its deployed descriptor snapshot/u.test(error.reason ?? ''),
   );
 });
 
@@ -219,8 +262,12 @@ test('runs a worker with Effect services provided by its owning MicroVertical ho
   );
 
   const result = await Effect.runPromise(
-    makeOutboxRuntime(controlled.service, [registration.descriptor])
-      .runCycle({ claimOwner: 'unit-runtime', registrations: [registration] })
+    makeOutboxRuntime(controlled.service)
+      .runCycle({
+        claimOwner: 'unit-runtime',
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      })
       .pipe(
         Effect.provideService(TestWorkerDependency, {
           record: (messageId) => observed.push(messageId),

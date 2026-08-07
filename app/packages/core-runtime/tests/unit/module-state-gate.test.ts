@@ -165,6 +165,7 @@ test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared
     },
     listActiveTenantModules: () => Effect.succeed([]),
     listTenantModuleStates: () => Effect.succeed([]),
+    listTenantModuleStatesForTransition: () => Effect.succeed([]),
   };
   const descriptors = [
     defineTenantModuleEntrypoint({
@@ -233,6 +234,7 @@ test('records safe acquisition and evaluation telemetry including snapshot reuse
       Effect.succeed([{ moduleKey: 'inventory.stock', state: 'active' }]),
     listActiveTenantModules: () => Effect.succeed([]),
     listTenantModuleStates: () => Effect.succeed([]),
+    listTenantModuleStatesForTransition: () => Effect.succeed([]),
   };
 
   await Effect.runPromise(
@@ -274,6 +276,7 @@ test('empty and system-only compositions perform zero reads', async () => {
     },
     listActiveTenantModules: () => Effect.succeed([]),
     listTenantModuleStates: () => Effect.succeed([]),
+    listTenantModuleStatesForTransition: () => Effect.succeed([]),
   };
   const system = defineSystemModuleEntrypoint({
     access: 'read',
@@ -305,6 +308,7 @@ test('the gateway rejects missing trusted principal context before state acquisi
     },
     listActiveTenantModules: () => Effect.succeed([]),
     listTenantModuleStates: () => Effect.succeed([]),
+    listTenantModuleStatesForTransition: () => Effect.succeed([]),
   });
   const failure = await Effect.runPromise(
     Effect.flip(makeModuleEntrypointGateway(gate).prepareSnapshot({} as never, [descriptor])),
@@ -333,6 +337,7 @@ test('gates every future entrypoint category before its fake implementation load
       },
       listActiveTenantModules: () => Effect.succeed([]),
       listTenantModuleStates: () => Effect.succeed([]),
+      listTenantModuleStatesForTransition: () => Effect.succeed([]),
     }),
   );
   const allowed = [
@@ -452,6 +457,7 @@ test('the gateway never evaluates authorization or lazy implementation on denial
       Effect.succeed([{ moduleKey: 'inventory.stock', state: 'read_only' }]),
     listActiveTenantModules: () => Effect.succeed([]),
     listTenantModuleStates: () => Effect.succeed([]),
+    listTenantModuleStatesForTransition: () => Effect.succeed([]),
   });
   const gateway = makeModuleEntrypointGateway(gate);
   const descriptor = defineTenantModuleEntrypoint({

@@ -6,6 +6,7 @@
     "shell-super-app": 3020
   },
   "manifests": {},
+  "ontosModuleManifests": {},
   "serverExecution": {},
   "apis": {}
 }

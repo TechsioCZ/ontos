@@ -45,10 +45,15 @@ export type ActionHandler<
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
+  Requirements = never,
 > = (
   payload: PayloadSchema['Type'],
   context: ActionHandlerContext<DomainEvents>,
-) => Effect.Effect<ResultSchema['Type'], ActionCollectorError | DomainErrorSchema['Type']>;
+) => Effect.Effect<
+  ResultSchema['Type'],
+  ActionCollectorError | DomainErrorSchema['Type'],
+  Requirements
+>;
 
 export interface ActionRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
@@ -56,12 +61,46 @@ export interface ActionRegistration<
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
+  HandlerRequirements = never,
 > {
   readonly [actionRegistration]: true;
   readonly descriptor: Readonly<
     ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>
   >;
+  readonly _handlerRequirements?: HandlerRequirements;
 }
+
+/**
+ * Existential public view of an Action registration. Keeping only the deployment-contract
+ * fields avoids pretending TypeScript can express "ActionRegistration for some payload".
+ */
+export interface AnyActionRegistration {
+  readonly [actionRegistration]: true;
+  readonly descriptor: Readonly<
+    Pick<
+      ActionDescriptor<
+        Schema.ConstraintDecoder<unknown, never>,
+        Schema.ConstraintDecoder<unknown, never>,
+        Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+        DomainEventContractMap,
+        string
+      >,
+      'actionKey' | 'auditProfile' | 'idempotency' | 'owningModuleKey' | 'schemaVersion'
+    >
+  >;
+}
+
+export type ActionRequirements<Registration> =
+  Registration extends ActionRegistration<
+    Schema.ConstraintDecoder<unknown, never>,
+    Schema.ConstraintDecoder<unknown, never>,
+    Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+    DomainEventContractMap,
+    string,
+    infer Requirements
+  >
+    ? Requirements
+    : never;
 
 export const defineAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
@@ -69,10 +108,24 @@ export const defineAction = <
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   const Owner extends string,
+  HandlerRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
-  handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
-): ActionRegistration<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner> => {
+  handler: ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    HandlerRequirements
+  >,
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  HandlerRequirements
+> => {
   if (
     descriptor.entrypoint.role !== 'action' ||
     descriptor.entrypoint.access !== 'write' ||
@@ -102,7 +155,8 @@ export const defineAction = <
     ResultSchema,
     DomainErrorSchema,
     DomainEvents,
-    Owner
+    Owner,
+    HandlerRequirements
   > = Object.freeze({
     [actionRegistration]: true as const,
     descriptor: Object.freeze({
@@ -117,6 +171,14 @@ export const defineAction = <
   return registration;
 };
 
+/** Runtime guard for the opaque value created by defineAction. */
+export const isActionRegistration = (value: unknown): value is AnyActionRegistration =>
+  typeof value === 'object' &&
+  value !== null &&
+  actionHandlers.has(value) &&
+  actionRegistration in value &&
+  value[actionRegistration] === true;
+
 /** Internal Core runtime seam. Action handlers are intentionally absent from the public registration. */
 export const getActionHandler = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
@@ -124,20 +186,34 @@ export const getActionHandler = <
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
+  HandlerRequirements,
 >(
   registration: ActionRegistration<
     PayloadSchema,
     ResultSchema,
     DomainErrorSchema,
     DomainEvents,
-    Owner
+    Owner,
+    HandlerRequirements
   >,
-): ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents> => {
+): ActionHandler<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  HandlerRequirements
+> => {
   const handler = actionHandlers.get(registration);
   if (typeof handler !== 'function') {
     throw new TypeError('Action registration was not created by defineAction');
   }
-  return handler as ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>;
+  return handler as ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    HandlerRequirements
+  >;
 };
 
 export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecoder<unknown, never>>(

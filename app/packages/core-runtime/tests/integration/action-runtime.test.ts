@@ -21,6 +21,13 @@ import {
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
+import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
+import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
+import type { OntosModuleDeploymentContract } from '../../src/modules/manifest.ts';
+import {
+  TenantModuleStateService,
+  makeTenantModuleStateService,
+} from '../../src/modules/tenant-module-state-service.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import {
@@ -67,6 +74,56 @@ const transport = (idempotencyKey: string, targetResourceId = 'primary') => ({
   targetModuleKey: 'core.shell',
   targetResourceId,
   targetResourceType: 'test-state',
+});
+
+const inventoryStockContract: OntosModuleDeploymentContract = {
+  deployment: { appId: 'inventory-stock', buildMarker: 'integration-test' },
+  manifest: {
+    activation: {
+      defaultState: 'inactive',
+      preservesHistoryWhenInactive: true,
+      scope: 'tenant',
+      supportedStates: [
+        'inactive',
+        'active',
+        'read_only',
+        'suspended',
+        'quarantined',
+        'deprecated',
+        'archived',
+      ],
+    },
+    dependencies: { core: [], externalSystems: [], modules: [] },
+    module: {
+      description: 'Inventory integration fixture',
+      displayName: 'Inventory',
+      id: 'inventory.stock',
+      implementedAs: 'ultramodern_microvertical',
+      kind: 'business_module',
+    },
+    publicSurface: {
+      actions: [],
+      api: [],
+      components: [],
+      events: [],
+      reports: [],
+      resourceTypes: [],
+      search: [],
+    },
+  },
+  runtime: { outboxSubscriptions: [] },
+  schemaVersion: '0',
+};
+
+const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
+  contracts: Object.freeze([inventoryStockContract]),
+  deploymentAppIds: Object.freeze(['inventory-stock']),
+  getByDeploymentAppId: (appId: string) =>
+    appId === 'inventory-stock' ? inventoryStockContract : undefined,
+  getByModuleId: (moduleId: string) =>
+    moduleId === 'inventory.stock' ? inventoryStockContract : undefined,
+  moduleIds: Object.freeze(['inventory.stock']),
+  outboxSubscriptions: Object.freeze([]),
 });
 
 const unconfiguredPermission = {
@@ -387,17 +444,24 @@ test('rechecks business module state under the tenant lock and retries after Cor
     );
     await Effect.runPromise(Deferred.await(policyReached));
     await Effect.runPromise(
-      runtime.runAction({
-        payload: {
-          expectedState: 'active',
-          moduleKey: 'inventory.stock',
-          newState: 'suspended',
-          reason: 'integration locked recheck',
-        },
-        principal,
-        registration: changeTenantModuleStateAction,
-        transport: transport('business-module-suspend'),
-      }),
+      runtime
+        .runAction({
+          payload: {
+            expectedState: 'active',
+            moduleKey: 'inventory.stock',
+            newState: 'suspended',
+            reason: 'integration locked recheck',
+          },
+          principal,
+          registration: changeTenantModuleStateAction,
+          transport: transport('business-module-suspend'),
+        })
+        .pipe(
+          Effect.provideService(InstalledModuleCatalogService, {
+            load: Effect.succeed(inventoryInstalledCatalog),
+          }),
+          Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
+        ),
     );
     await Effect.runPromise(Deferred.succeed(continuePolicy, null));
     const denied = await firstAttempt;
@@ -417,17 +481,24 @@ test('rechecks business module state under the tenant lock and retries after Cor
     assert.equal(deniedEvidence.length, 0);
 
     await Effect.runPromise(
-      runtime.runAction({
-        payload: {
-          expectedState: 'suspended',
-          moduleKey: 'inventory.stock',
-          newState: 'active',
-          reason: 'integration recovery',
-        },
-        principal,
-        registration: changeTenantModuleStateAction,
-        transport: transport('business-module-reactivate'),
-      }),
+      runtime
+        .runAction({
+          payload: {
+            expectedState: 'suspended',
+            moduleKey: 'inventory.stock',
+            newState: 'active',
+            reason: 'integration recovery',
+          },
+          principal,
+          registration: changeTenantModuleStateAction,
+          transport: transport('business-module-reactivate'),
+        })
+        .pipe(
+          Effect.provideService(InstalledModuleCatalogService, {
+            load: Effect.succeed(inventoryInstalledCatalog),
+          }),
+          Effect.provideService(TenantModuleStateService, makeTenantModuleStateService(database)),
+        ),
     );
     await Effect.runPromise(
       runtime.runAction({

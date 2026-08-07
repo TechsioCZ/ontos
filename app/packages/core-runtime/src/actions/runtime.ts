@@ -87,6 +87,7 @@ export interface RunActionInput<
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string = string,
+  HandlerRequirements = never,
 > {
   readonly payload: unknown;
   readonly principal: unknown;
@@ -95,7 +96,8 @@ export interface RunActionInput<
     ResultSchema,
     DomainErrorSchema,
     DomainEvents,
-    Owner
+    Owner,
+    HandlerRequirements
   >;
   readonly transport: unknown;
 }
@@ -117,9 +119,21 @@ export interface ActionRuntimeService {
     DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
+    HandlerRequirements,
   >(
-    input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
-  ) => Effect.Effect<ResultSchema['Type'], ActionCoreError | DomainErrorSchema['Type']>;
+    input: RunActionInput<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      HandlerRequirements
+    >,
+  ) => Effect.Effect<
+    ResultSchema['Type'],
+    ActionCoreError | DomainErrorSchema['Type'],
+    HandlerRequirements
+  >;
   readonly resolveActionCommit: (
     input: ResolveActionCommitInput,
   ) => Effect.Effect<
@@ -354,10 +368,23 @@ export const makeActionRuntime = (
     DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
     DomainEvents extends DomainEventContractMap,
     Owner extends string,
+    HandlerRequirements,
   >(
-    input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
-  ): Effect.Effect<ResultSchema['Type'], ActionCoreError | DomainErrorSchema['Type']> =>
+    input: RunActionInput<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      HandlerRequirements
+    >,
+  ): Effect.Effect<
+    ResultSchema['Type'],
+    ActionCoreError | DomainErrorSchema['Type'],
+    HandlerRequirements
+  > =>
     Effect.gen(function* runActionEffect() {
+      const handlerRequirements = yield* Effect.context<HandlerRequirements>();
       const payload = yield* decodeActionPayload(
         input.registration.descriptor.payloadSchema,
         input.payload,
@@ -643,7 +670,9 @@ export const makeActionRuntime = (
             });
 
             const handlerExit = await Effect.runPromiseExit(
-              Effect.suspend(() => handler(payload, handlerContext)),
+              Effect.suspend(() => handler(payload, handlerContext)).pipe(
+                Effect.provide(handlerRequirements),
+              ),
             );
 
             if (Exit.isFailure(handlerExit)) {
@@ -831,12 +860,21 @@ export const runAction = <
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  HandlerRequirements,
 >(
-  input: RunActionInput<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents>,
+  input: RunActionInput<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    HandlerRequirements
+  >,
 ): Effect.Effect<
   ResultSchema['Type'],
   ActionCoreError | DomainErrorSchema['Type'],
-  ActionRuntime
+  ActionRuntime | HandlerRequirements
 > => Effect.flatMap(ActionRuntime, (runtime) => runtime.runAction(input));
 
 export const resolveActionCommit = (

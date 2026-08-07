@@ -1,6 +1,6 @@
 import { expect, test } from '@rstest/core';
 import { TenantModuleStateReadUnavailableError, TenantModuleStateService } from '@app/core-runtime';
-import type { TenantModuleStateServiceShape } from '@app/core-runtime';
+import type { InstalledModuleCatalog, TenantModuleStateServiceShape } from '@app/core-runtime';
 import { Effect, Layer } from 'effect';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
 import {
@@ -11,7 +11,10 @@ import {
 import { AuthenticationService } from '../../api/auth/service.ts';
 import type { AuthenticationServiceShape } from '../../api/auth/service.ts';
 import { makeShellAuthenticationApiRuntime } from '../../api/index.ts';
-import { InstalledVerticalTopologyError } from '../../api/verticals/installed-verticals.ts';
+import {
+  InstalledModuleCatalogInvalidError,
+  InstalledModuleCatalogUnavailableError,
+} from '../../api/modules/installed-module-catalog.ts';
 
 const identity = {
   displayName: 'Ada Lovelace',
@@ -36,10 +39,20 @@ const makeAuthentication = (
   signOut: () => Effect.die(new Error('unused signOut')),
 });
 
+const catalog = (moduleIds: readonly string[]): InstalledModuleCatalog =>
+  Object.freeze({
+    contracts: Object.freeze([]),
+    deploymentAppIds: Object.freeze([]),
+    getByDeploymentAppId: () => void 0,
+    getByModuleId: () => void 0,
+    moduleIds: Object.freeze([...moduleIds]),
+    outboxSubscriptions: Object.freeze([]),
+  });
+
 const requestActiveModules = async (
   authentication: AuthenticationServiceShape,
   listActiveTenantModules: TenantModuleStateServiceShape['listActiveTenantModules'],
-  installed = Effect.succeed<ReadonlySet<string>>(new Set(['testing1', 'future-generated'])),
+  installed = Effect.succeed(catalog(['property.registry', 'future.generated'])),
 ) => {
   const runtime = makeShellAuthenticationApiRuntime(
     Layer.succeed(AuthenticationService, authentication),
@@ -59,7 +72,7 @@ const requestActiveModules = async (
   }
 };
 
-test.sequential('revalidates the session, forwards cookies, filters installed IDs, and sorts the result', async () => {
+test.sequential('revalidates the session, forwards cookies, filters installed module IDs, and sorts the result', async () => {
   let trustedTenant = '';
   const response = await requestActiveModules(
     makeAuthentication(() =>
@@ -71,9 +84,9 @@ test.sequential('revalidates the session, forwards cookies, filters installed ID
     (tenantId) => {
       trustedTenant = tenantId;
       return Effect.succeed([
-        { moduleKey: 'testing1', state: 'active' },
-        { moduleKey: 'stale-non-installed', state: 'active' },
-        { moduleKey: 'future-generated', state: 'active' },
+        { moduleKey: 'property.registry', state: 'active' },
+        { moduleKey: 'property-registry', state: 'active' },
+        { moduleKey: 'future.generated', state: 'active' },
       ]);
     },
   );
@@ -81,8 +94,8 @@ test.sequential('revalidates the session, forwards cookies, filters installed ID
   expect(response.status).toBe(200);
   expect(trustedTenant).toBe(identity.tenantId);
   expect(await response.json()).toEqual([
-    { moduleKey: 'future-generated', state: 'active' },
-    { moduleKey: 'testing1', state: 'active' },
+    { moduleKey: 'future.generated', state: 'active' },
+    { moduleKey: 'property.registry', state: 'active' },
   ]);
 });
 
@@ -143,7 +156,10 @@ test.sequential('sanitizes internal authentication, topology, and unexpected ser
       makeAuthentication(() => Effect.succeed({ identity, setCookieHeaders: [] })),
       () => Effect.succeed([]),
       Effect.fail(
-        new InstalledVerticalTopologyError({ reason: 'secret topology path /internal/file' }),
+        new InstalledModuleCatalogInvalidError({
+          code: 'installed_module_catalog_invalid',
+          reason: 'secret topology path /internal/file',
+        }),
       ),
     ),
     requestActiveModules(
@@ -159,4 +175,19 @@ test.sequential('sanitizes internal authentication, topology, and unexpected ser
     expect(body._tag).toBe('ActiveModulesInternalProblem');
     expect(JSON.stringify(body)).not.toMatch(/secret|internal\/file|tenant-safe|principal-safe/u);
   }
+});
+
+test.sequential('maps remote catalog unavailability to the sanitized retryable 503', async () => {
+  const response = await requestActiveModules(
+    makeAuthentication(() => Effect.succeed({ identity, setCookieHeaders: [] })),
+    () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' }]),
+    Effect.fail(
+      new InstalledModuleCatalogUnavailableError({
+        code: 'installed_module_catalog_unavailable',
+        reason: 'secret contract URL',
+      }),
+    ),
+  );
+  expect(response.status).toBe(503);
+  expect(JSON.stringify(await response.json())).not.toMatch(/secret|contract URL/u);
 });

@@ -28,6 +28,17 @@ structured entrypoint governed by Core before private code loads or runs. See
 `docs/architecture/MODULE_ENTRYPOINTS.md`. The `module-entrypoints:check` repository command rejects
 missing descriptors, owner/access mismatches, private cross-vertical imports, and raw remote loads.
 
+Each OntOS business vertical also owns one deployment-safe module contract. After creating the
+UltraModern vertical, run `pnpm scaffold:module-contract -- --vertical <vertical> --module
+<dotted.module-id>` before generating Actions, Policies, pages, or Outbox artifacts. The topology
+`appId` remains the deployment, Module Federation, and gateway-audience identity; the dotted
+`moduleId` owns business contracts and tenant state. See
+[`docs/architecture/MODULE_MANIFESTS.md`](./docs/architecture/MODULE_MANIFESTS.md).
+
+The owning build emits `/.well-known/ontos-module-manifest.json`. Shell discovers only explicit
+environment-overlay allowlist entries and never imports a remote vertical's manifest or private
+registration. Deployment installation and per-tenant activation remain separate operations.
+
 ## Private-First Public Surfaces
 
 Generated app routes are private and non-indexable by default. Author route

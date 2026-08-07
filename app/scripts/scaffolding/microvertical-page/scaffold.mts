@@ -5,7 +5,7 @@ import { tailwindPrefixForNamespace } from '../tailwind-prefix.mts';
 import {
   asJsonObject,
   createMutation,
-  discoverVertical,
+  discoverOntosModule,
   ensureUniqueMutationPaths,
   isMissingFileError,
   patchJsonObjectProperty,
@@ -25,10 +25,10 @@ import type {
   PageScaffoldConfig,
   PageScaffoldResult,
   ScaffoldPlan,
-  VerticalMetadata,
+  OntosVerticalMetadata,
 } from '../shared.mts';
 
-interface PageVerticalMetadata extends VerticalMetadata {
+interface PageVerticalMetadata extends OntosVerticalMetadata {
   readonly locales: readonly string[];
   readonly mfBoundaryId: string;
   readonly namespace: string;
@@ -44,7 +44,7 @@ const discoverPageVertical = async (
   workspaceRoot: string,
   requestedVertical: string,
 ): Promise<PageVerticalMetadata> => {
-  const vertical = await discoverVertical(workspaceRoot, requestedVertical);
+  const vertical = await discoverOntosModule(workspaceRoot, requestedVertical);
   const { topologyEntry } = vertical;
   const namespace = requiredString(topologyEntry['domain'], `vertical ${vertical.slug} namespace`);
   if (!namespacePattern.test(namespace)) {
@@ -180,8 +180,8 @@ const routeMeta = {
   descriptionKey: '${keyRoot}.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
-    entrypointKey: '${vertical.appId}.page.${page}',
-    moduleKey: '${vertical.appId}',
+    entrypointKey: '${vertical.moduleId}.page.${page}',
+    moduleKey: '${vertical.moduleId}',
     role: 'page',
   }),
   id: '${vertical.appId}-${page}',
@@ -190,6 +190,7 @@ const routeMeta = {
 ${localisedPaths}
   },
   mfBoundaryId: '${vertical.mfBoundaryId}',
+  moduleId: '${vertical.moduleId}',
   namespace: '${vertical.namespace}',
   ownerAppId: '${vertical.appId}',
   public: false,

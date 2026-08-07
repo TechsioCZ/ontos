@@ -10,6 +10,10 @@ This document defines state-changing Action execution. MicroVertical deployment 
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
 - Every Action descriptor owns a structured `action`/`write` entrypoint. Business Actions are tenant-scoped; Core recovery capabilities are explicitly system-scoped as defined by [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md).
+- A MicroVertical Action's `owningModuleKey`, key prefix, event producer, and access-policy identity
+  use the manifest's dotted OntOS `moduleId`, never the topology deployment `appId`. The real Action
+  value is published in the owner-authored manifest and bound to its private handler only in the
+  owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
 Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
 and active tenant selection—are Shell-owned authentication mechanics, not canonical business-state

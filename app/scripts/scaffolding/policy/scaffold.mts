@@ -4,7 +4,7 @@ import {
   CORE_POLICY_SLOT_END,
   CORE_POLICY_SLOT_START,
   createMutation,
-  discoverVertical,
+  discoverOntosModule,
   ensureUniqueMutationPaths,
   insertSortedSlot,
   isMissingFileError,
@@ -101,7 +101,7 @@ export const planPolicyScaffold = async (
   if (config.vertical === undefined) {
     throw new Error('--vertical is required when --scope is microvertical');
   }
-  const vertical = await discoverVertical(workspaceRoot, config.vertical);
+  const vertical = await discoverOntosModule(workspaceRoot, config.vertical);
   const policyPath = resolveContainedPath(
     workspaceRoot,
     'verticals',
@@ -112,7 +112,7 @@ export const planPolicyScaffold = async (
   );
   const policyMutation = await createMutation(
     policyPath,
-    renderPolicy(policy, 'microvertical', vertical.appId),
+    renderPolicy(policy, 'microvertical', vertical.moduleId),
   );
   const dependencyMutation = withCoreDependency(vertical);
   const mutations =
