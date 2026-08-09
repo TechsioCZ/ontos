@@ -36,6 +36,7 @@ test('installs and verifies transaction-local scope and exposes no transaction c
   );
   assert.equal(calls, 2);
   assert.equal('commit' in capability, false);
+  assert.equal('query' in capability, false);
   assert.equal('rollback' in capability, false);
   assert.equal('transaction' in capability, false);
 });

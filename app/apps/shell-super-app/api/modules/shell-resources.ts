@@ -508,10 +508,8 @@ export type ShellMediaAttachmentResolution =
   | { readonly outcome: 'forbidden' | 'not_found' | 'unavailable' }
   | { readonly outcome: 'resolved'; readonly result: { readonly attached: true } };
 
-export const makeShellMediaAttachment = () => ({
-  attach: (
-    _context: ShellResourceContext,
-    _ref: ResourceRef,
-  ): Effect.Effect<ShellMediaAttachmentResolution> =>
-    Effect.succeed({ outcome: 'unavailable' as const }),
-});
+export const attachShellMedia = (
+  _context: ShellResourceContext,
+  _ref: ResourceRef,
+): Effect.Effect<ShellMediaAttachmentResolution> =>
+  Effect.succeed({ outcome: 'unavailable' as const });

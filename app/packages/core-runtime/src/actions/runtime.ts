@@ -82,6 +82,7 @@ export const ACTION_RUNTIME_STAGES = [
   'policy_boundary',
   'invocation_running',
   'invocation_locked',
+  'database_scope_installed',
   'module_state_rechecked',
   'handler_executed',
   'success_evidence_flushed',
@@ -661,6 +662,13 @@ export const makeActionRuntime = (
               await Effect.runPromiseExit(verifyInvocation(lockedInvocation, requestHash)),
             );
 
+            const scopedTransaction = exitValueOrRollback(
+              await Effect.runPromiseExit(
+                installScope(drizzleTransaction as CoreTransaction, scope),
+              ),
+            );
+            notifyStage('database_scope_installed');
+
             if (input.registration.descriptor.entrypoint.scope === 'tenant') {
               exitValueOrRollback(
                 await Effect.runPromiseExit(
@@ -677,12 +685,6 @@ export const makeActionRuntime = (
               );
             }
             notifyStage('module_state_rechecked');
-
-            const scopedTransaction = exitValueOrRollback(
-              await Effect.runPromiseExit(
-                installScope(drizzleTransaction as CoreTransaction, scope),
-              ),
-            );
             const serviceFactory = resolveServiceFactory(input.registration);
             const services = exitValueOrRollback(
               await Effect.runPromiseExit(

@@ -269,13 +269,14 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         evidencePayloadJson: dataAccessEvents.evidencePayloadJson,
         outcome: dataAccessEvents.outcome,
         outcomeCode: dataAccessEvents.outcomeCode,
+        queryHash: dataAccessEvents.queryHash,
         resultCount: dataAccessEvents.resultCount,
       })
       .from(dataAccessEvents)
       .where(
         and(
           eq(dataAccessEvents.tenantId, tenantId),
-          eq(dataAccessEvents.queryHash, 'core.shell.composition'),
+          eq(dataAccessEvents.evidencePolicyKey, 'core.shell.composition.evidence.v1'),
         ),
       );
     assert.deepEqual(compositionEvidence, {
@@ -283,6 +284,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       evidencePayloadJson: null,
       outcome: 'allowed',
       outcomeCode: 'read_allowed',
+      queryHash: null,
       resultCount: 0,
     });
 

@@ -13,7 +13,6 @@ export interface ScopedTransactionExecutor {
   readonly [scopedTransaction]: true;
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
-  readonly query: CoreTransaction['query'];
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
 }
@@ -53,7 +52,6 @@ export const installOperationalScope = (
         [scopedTransaction]: true as const,
         delete: transaction.delete.bind(transaction),
         insert: transaction.insert.bind(transaction),
-        query: transaction.query,
         select: transaction.select.bind(transaction),
         update: transaction.update.bind(transaction),
       });

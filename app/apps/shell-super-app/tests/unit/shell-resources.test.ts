@@ -9,7 +9,7 @@ import type {
 } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
-  makeShellMediaAttachment,
+  attachShellMedia,
   makeShellResourceDetail,
   makeShellSearch,
   ShellProviderUnavailableError,
@@ -318,9 +318,9 @@ test('treats a missing tenant module-state record as hidden rather than authoriz
   await expect(
     Effect.runPromise(makeShellResourceDetail(hiddenDependencies, gateway).resolve(context, ref)),
   ).resolves.toEqual({ outcome: 'not_found' });
-  await expect(Effect.runPromise(makeShellMediaAttachment().attach(context, ref))).resolves.toEqual(
-    { outcome: 'unavailable' },
-  );
+  await expect(Effect.runPromise(attachShellMedia(context, ref))).resolves.toEqual({
+    outcome: 'unavailable',
+  });
   expect(calls).toBe(0);
 });
 
@@ -421,9 +421,9 @@ test('media affordance remains unavailable until a generated Action exists', asy
 });
 
 test('media endpoint cannot invoke a provider mutation', async () => {
-  await expect(Effect.runPromise(makeShellMediaAttachment().attach(context, ref))).resolves.toEqual(
-    { outcome: 'unavailable' },
-  );
+  await expect(Effect.runPromise(attachShellMedia(context, ref))).resolves.toEqual({
+    outcome: 'unavailable',
+  });
 });
 
 test('acquires a fresh audience-scoped assertion for each provider attempt', async () => {

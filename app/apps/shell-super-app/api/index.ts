@@ -69,10 +69,7 @@ import type { InstalledModuleCatalogError } from './modules/installed-module-cat
 import { makeInstalledOutboxMatcherLayer } from './modules/installed-outbox-matcher.ts';
 import { ShellGovernedReads, makeShellGovernedReadsLive } from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
-import {
-  makeShellMediaAttachment,
-  ShellProviderUnavailableError,
-} from './modules/shell-resources.ts';
+import { attachShellMedia, ShellProviderUnavailableError } from './modules/shell-resources.ts';
 import type { ShellResourceContext, ShellResourceGateways } from './modules/shell-resources.ts';
 
 const requestHeaders = (headers: Readonly<Record<string, string | undefined>>): Headers => {
@@ -696,152 +693,151 @@ const unavailableResourceGateways: ShellResourceGateways = {
   },
 };
 
-const makeResourcesGroupLive = (_gateways: ShellResourceGateways) =>
-  HttpApiBuilder.group(ShellAuthenticationApi, 'resources', (handlers) =>
-    handlers
-      .handle('search', ({ payload, request }) =>
-        Effect.gen(function* searchHandler() {
-          const authentication = yield* AuthenticationService;
-          const session = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) =>
-                failShellProblem(
-                  error._tag === 'AuthenticationUnavailableError'
-                    ? shellCapabilityUnavailableProblem()
-                    : error._tag === 'AuthenticationInternalError'
-                      ? shellInternalProblem()
-                      : shellAuthenticationRequiredProblem(),
-                ),
+const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resources', (handlers) =>
+  handlers
+    .handle('search', ({ payload, request }) =>
+      Effect.gen(function* searchHandler() {
+        const authentication = yield* AuthenticationService;
+        const session = yield* authentication
+          .resolveShellContext(requestHeaders(request.headers))
+          .pipe(
+            Effect.catch((error) =>
+              failShellProblem(
+                error._tag === 'AuthenticationUnavailableError'
+                  ? shellCapabilityUnavailableProblem()
+                  : error._tag === 'AuthenticationInternalError'
+                    ? shellInternalProblem()
+                    : shellAuthenticationRequiredProblem(),
               ),
-            );
-          yield* forwardSetCookieHeaders(session.setCookieHeaders);
-          if (session.state === 'anonymous') {
-            return yield* failShellProblem(shellAuthenticationRequiredProblem());
-          }
-          if (session.state !== 'authenticated') {
-            return yield* failShellProblem(shellSelectionRequiredProblem());
-          }
-          const governedReads = yield* ShellGovernedReads;
-          return yield* governedReads
-            .search({
-              correlationId: request.headers['x-correlation-id'] ?? 'missing',
-              principal: session.principal,
-              query: payload.query,
-            })
-            .pipe(Effect.catch((error) => failShellProblem(shellListReadProblem(error))));
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasDies(cause)
-              ? Effect.annotateLogs(Effect.logError('Unexpected Shell search defect', cause), {
-                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
-                }).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
-              : Effect.failCause(cause),
-          ),
-        ),
-      )
-      .handle('resourceDetail', ({ payload, request }) =>
-        Effect.gen(function* resourceDetailHandler() {
-          const authentication = yield* AuthenticationService;
-          const session = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) =>
-                failShellProblem(
-                  error._tag === 'AuthenticationUnavailableError'
-                    ? shellCapabilityUnavailableProblem()
-                    : error._tag === 'AuthenticationInternalError'
-                      ? shellInternalProblem()
-                      : shellAuthenticationRequiredProblem(),
-                ),
-              ),
-            );
-          yield* forwardSetCookieHeaders(session.setCookieHeaders);
-          if (session.state === 'anonymous') {
-            return yield* failShellProblem(shellAuthenticationRequiredProblem());
-          }
-          if (session.state !== 'authenticated') {
-            return yield* failShellProblem(shellSelectionRequiredProblem());
-          }
-          const governedReads = yield* ShellGovernedReads;
-          return yield* governedReads
-            .resourceDetail({
-              correlationId: request.headers['x-correlation-id'] ?? 'missing',
-              principal: session.principal,
-              ref: payload,
-            })
-            .pipe(Effect.catch((error) => failShellProblem(shellReadProblem(error))));
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasDies(cause)
-              ? Effect.annotateLogs(
-                  Effect.logError('Unexpected Shell resource-detail defect', cause),
-                  { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
-                ).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
-              : Effect.failCause(cause),
-          ),
-        ),
-      )
-      .handle('attachMedia', ({ payload, request }) =>
-        Effect.gen(function* attachMediaHandler() {
-          const authentication = yield* AuthenticationService;
-          const session = yield* authentication
-            .resolveShellContext(requestHeaders(request.headers))
-            .pipe(
-              Effect.catch((error) =>
-                failShellProblem(
-                  error._tag === 'AuthenticationUnavailableError'
-                    ? shellCapabilityUnavailableProblem()
-                    : error._tag === 'AuthenticationInternalError'
-                      ? shellInternalProblem()
-                      : shellAuthenticationRequiredProblem(),
-                ),
-              ),
-            );
-          yield* forwardSetCookieHeaders(session.setCookieHeaders);
-          if (session.state === 'anonymous') {
-            return yield* failShellProblem(shellAuthenticationRequiredProblem());
-          }
-          if (session.state !== 'authenticated') {
-            return yield* failShellProblem(shellSelectionRequiredProblem());
-          }
-          const resolution = yield* makeShellMediaAttachment().attach(
-            {
-              ...session.principal,
-              correlationId: request.headers['x-correlation-id'] ?? 'missing',
-              legalEntityId: session.identity.legalEntityId,
-            },
-            payload,
+            ),
           );
-          switch (resolution.outcome) {
-            case 'resolved': {
-              return resolution.result;
-            }
-            case 'forbidden': {
-              return yield* failShellProblem(shellTargetForbiddenProblem());
-            }
-            case 'not_found': {
-              return yield* failShellProblem(shellTargetNotFoundProblem());
-            }
-            case 'unavailable': {
-              return yield* failShellProblem(shellCapabilityUnavailableProblem());
-            }
-            default: {
-              return resolution;
-            }
-          }
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Cause.hasDies(cause)
-              ? Effect.annotateLogs(
-                  Effect.logError('Unexpected Shell media-attachment defect', cause),
-                  { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
-                ).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
-              : Effect.failCause(cause),
-          ),
+        yield* forwardSetCookieHeaders(session.setCookieHeaders);
+        if (session.state === 'anonymous') {
+          return yield* failShellProblem(shellAuthenticationRequiredProblem());
+        }
+        if (session.state !== 'authenticated') {
+          return yield* failShellProblem(shellSelectionRequiredProblem());
+        }
+        const governedReads = yield* ShellGovernedReads;
+        return yield* governedReads
+          .search({
+            correlationId: request.headers['x-correlation-id'] ?? 'missing',
+            principal: session.principal,
+            query: payload.query,
+          })
+          .pipe(Effect.catch((error) => failShellProblem(shellListReadProblem(error))));
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(Effect.logError('Unexpected Shell search defect', cause), {
+                correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              }).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+            : Effect.failCause(cause),
         ),
       ),
-  );
+    )
+    .handle('resourceDetail', ({ payload, request }) =>
+      Effect.gen(function* resourceDetailHandler() {
+        const authentication = yield* AuthenticationService;
+        const session = yield* authentication
+          .resolveShellContext(requestHeaders(request.headers))
+          .pipe(
+            Effect.catch((error) =>
+              failShellProblem(
+                error._tag === 'AuthenticationUnavailableError'
+                  ? shellCapabilityUnavailableProblem()
+                  : error._tag === 'AuthenticationInternalError'
+                    ? shellInternalProblem()
+                    : shellAuthenticationRequiredProblem(),
+              ),
+            ),
+          );
+        yield* forwardSetCookieHeaders(session.setCookieHeaders);
+        if (session.state === 'anonymous') {
+          return yield* failShellProblem(shellAuthenticationRequiredProblem());
+        }
+        if (session.state !== 'authenticated') {
+          return yield* failShellProblem(shellSelectionRequiredProblem());
+        }
+        const governedReads = yield* ShellGovernedReads;
+        return yield* governedReads
+          .resourceDetail({
+            correlationId: request.headers['x-correlation-id'] ?? 'missing',
+            principal: session.principal,
+            ref: payload,
+          })
+          .pipe(Effect.catch((error) => failShellProblem(shellReadProblem(error))));
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(
+                Effect.logError('Unexpected Shell resource-detail defect', cause),
+                { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
+              ).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+            : Effect.failCause(cause),
+        ),
+      ),
+    )
+    .handle('attachMedia', ({ payload, request }) =>
+      Effect.gen(function* attachMediaHandler() {
+        const authentication = yield* AuthenticationService;
+        const session = yield* authentication
+          .resolveShellContext(requestHeaders(request.headers))
+          .pipe(
+            Effect.catch((error) =>
+              failShellProblem(
+                error._tag === 'AuthenticationUnavailableError'
+                  ? shellCapabilityUnavailableProblem()
+                  : error._tag === 'AuthenticationInternalError'
+                    ? shellInternalProblem()
+                    : shellAuthenticationRequiredProblem(),
+              ),
+            ),
+          );
+        yield* forwardSetCookieHeaders(session.setCookieHeaders);
+        if (session.state === 'anonymous') {
+          return yield* failShellProblem(shellAuthenticationRequiredProblem());
+        }
+        if (session.state !== 'authenticated') {
+          return yield* failShellProblem(shellSelectionRequiredProblem());
+        }
+        const resolution = yield* attachShellMedia(
+          {
+            ...session.principal,
+            correlationId: request.headers['x-correlation-id'] ?? 'missing',
+            legalEntityId: session.identity.legalEntityId,
+          },
+          payload,
+        );
+        switch (resolution.outcome) {
+          case 'resolved': {
+            return resolution.result;
+          }
+          case 'forbidden': {
+            return yield* failShellProblem(shellTargetForbiddenProblem());
+          }
+          case 'not_found': {
+            return yield* failShellProblem(shellTargetNotFoundProblem());
+          }
+          case 'unavailable': {
+            return yield* failShellProblem(shellCapabilityUnavailableProblem());
+          }
+          default: {
+            return resolution;
+          }
+        }
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasDies(cause)
+            ? Effect.annotateLogs(
+                Effect.logError('Unexpected Shell media-attachment defect', cause),
+                { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
+              ).pipe(Effect.andThen(failShellProblem(shellInternalProblem())))
+            : Effect.failCause(cause),
+        ),
+      ),
+    ),
+);
 
 const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependencies) =>
   HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
@@ -973,7 +969,7 @@ export const makeShellAuthenticationApiRuntime = (
         tenantGroupLive,
         legalEntityGroupLive,
         compositionGroupLive,
-        makeResourcesGroupLive(resourceGateways),
+        resourcesGroupLive,
         makeGatewayContextGroupLive(issuerDependencies),
         outboxMatcherLayer,
       ),

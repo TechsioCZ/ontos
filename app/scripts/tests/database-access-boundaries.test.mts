@@ -12,8 +12,21 @@ test('allows owner database factories and rejects Action, read, nested BFF, and 
       'verticals/stock/src/db/service-factory.ts':
         "import { drizzle } from 'drizzle-orm/node-postgres';\n",
       'verticals/stock/src/actions/reserve.action.ts':
-        "import { CoreDatabase } from '@app/core-runtime';\n",
+        "import { CoreDatabase } from '@app/core-runtime';\nimport { InventoryPersistence } from '../infrastructure/inventory-persistence.ts';\nconst reserve = Effect.gen(function* () { yield* InventoryPersistence; });\n",
+      'verticals/stock/src/actions/side-effect.action.ts':
+        "import '../infrastructure/inventory-persistence.ts';\n",
+      'verticals/stock/src/actions/package-root.action.ts':
+        "import { InventoryPersistence } from '@app/stock';\nconst reserve = Effect.flatMap(InventoryPersistence, Effect.succeed);\n",
+      'verticals/stock/src/actions/scoped.action.ts':
+        "import { makeScopedServices } from '../services/scoped-services.ts';\n",
+      'verticals/stock/src/index.ts':
+        "export { InventoryPersistence } from './infrastructure/inventory-persistence.ts';\n",
+      'verticals/stock/src/infrastructure/inventory-persistence.ts':
+        "import { Pool } from 'pg';\nexport class InventoryPersistence {}\n",
+      'verticals/stock/src/services/scoped-services.ts':
+        "import { eq } from 'drizzle-orm';\nimport type { NodePgDatabase } from 'drizzle-orm/node-postgres';\nexport const makeScopedServices = (_transaction: Pick<NodePgDatabase, 'select'>) => eq;\n",
       'verticals/stock/src/reads/list.read.ts': "import { stock } from '../db/schema.ts';\n",
+      'verticals/stock/src/reads/side-effect.read.ts': "import 'pg';\n",
       'verticals/stock/api/index.ts': "import { Pool } from 'pg';\n",
       'verticals/stock/api/routes/export.ts':
         "import { coreDatabaseSchema } from '@app/core-runtime';\n",
@@ -40,11 +53,15 @@ test('allows owner database factories and rejects Action, read, nested BFF, and 
         'apps/shell/api/routes/private.ts:1',
         'verticals/stock/api/index.ts:1',
         'verticals/stock/api/routes/export.ts:1',
+        'verticals/stock/src/actions/package-root.action.ts:1',
         'verticals/stock/src/actions/reserve.action.ts:1',
+        'verticals/stock/src/actions/reserve.action.ts:2',
+        'verticals/stock/src/actions/side-effect.action.ts:1',
         'verticals/stock/src/db/billing-leak.ts:1',
         'verticals/stock/src/db/cross-owner.ts:1',
         'verticals/stock/src/db/dynamic-core.ts:1',
         'verticals/stock/src/reads/list.read.ts:1',
+        'verticals/stock/src/reads/side-effect.read.ts:1',
       ],
     );
   } finally {

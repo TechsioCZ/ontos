@@ -1,6 +1,6 @@
 ---
 type: feature
-status: in_progress
+status: done
 created: 2026-08-07
 ---
 
@@ -272,14 +272,14 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### 11. Prove isolation end to end
 
-- [ ] Add a generated disposable MicroVertical fixture in tests with tenant-only and legal-entity-owned tables, owner-local repositories, one Action, and detail/list/search reads. Generate the artifact wiring through Codesmith; keep the fixture temporary rather than adding a fake production vertical.
-- [ ] Seed two tenants, two legal entities per tenant, colliding resource IDs, distinct principals/bindings, and exact SpiceDB grants. Verify valid same-scope reads/writes and explicit cross-tenant/cross-entity attempts through Shell, gateway assertion, receiving CoreSDK, owner repository, and PostgreSQL RLS.
-- [ ] Include malicious/buggy repository cases that omit predicates or attempt to insert another tenant/entity. The scoped service test must catch the API bypass where possible and PostgreSQL must reject/filter the query even when the predicate is absent.
-- [ ] Verify authorization denial and uncertainty invoke no private handler, denied reads write only safe evidence, allowed reads cannot return without evidence, failed writes leave no canonical cross-tenant state, pooled connections do not retain scope, and Core logs/Problem Details contain no foreign identifiers or database/SpiceDB diagnostics.
+- [x] Add a generated disposable MicroVertical fixture in tests with tenant-only and legal-entity-owned tables, owner-local repositories, one Action, and detail/list/search reads. Generate the artifact wiring through Codesmith; keep the fixture temporary rather than adding a fake production vertical.
+- [x] Seed two tenants, two legal entities per tenant, colliding resource IDs, distinct principals/bindings, and exact SpiceDB grants. Verify valid same-scope reads/writes and explicit cross-tenant/cross-entity attempts through Shell, gateway assertion, receiving CoreSDK, owner repository, and PostgreSQL RLS.
+- [x] Include malicious/buggy repository cases that omit predicates or attempt to insert another tenant/entity. The scoped service test must catch the API bypass where possible and PostgreSQL must reject/filter the query even when the predicate is absent.
+- [x] Verify authorization denial and uncertainty invoke no private handler, denied reads write only safe evidence, allowed reads cannot return without evidence, failed writes leave no canonical cross-tenant state, pooled connections do not retain scope, and Core logs/Problem Details contain no foreign identifiers or database/SpiceDB diagnostics.
 
 ### 12. Run all validation gates
 
-- [ ] Execute every command in `Validation Commands` from `app/`, inspect generated migrations and public exports, confirm `git status --short` contains only intended `app/` changes, and resolve every failure without modifying `mvp/` or `mvp2/`.
+- [x] Execute every command in `Validation Commands` from `app/`, inspect generated migrations and public exports, confirm `git status --short` contains only intended `app/` changes, and resolve every failure without modifying `mvp/` or `mvp2/`.
 
 ## Testing Strategy
 
@@ -332,7 +332,7 @@ tests with a generated disposable owner fixture; no production demo vertical is 
 - [x] Definite read authorization/Policy denials record sanitized outcome evidence and never invoke owner handlers; indeterminate checks fail closed and retryably.
 - [x] Generated provider contracts contain business input only; receiving BFFs derive context from verified audience-scoped assertions and independently reauthorize.
 - [x] Static boundary checks reject direct database bypasses from Actions, read handlers, BFFs, and cross-owner code.
-- [ ] Tests explicitly prove cross-tenant and cross-legal-entity isolation through one disposable generated-owner path, including pooled-connection reuse and colliding resource IDs.
+- [x] Tests explicitly prove cross-tenant and cross-legal-entity isolation through one disposable generated-owner path, including pooled-connection reuse and colliding resource IDs.
 - [x] Existing Action lifecycle, module-state gates, SpiceDB permission/Policy semantics, Domain Events, Outbox Messages, strict Effect errors, and MicroVertical deployment seams remain intact.
 
 ## Validation Commands
@@ -340,7 +340,7 @@ tests with a generated disposable owner fixture; no production demo vertical is 
 Execute every command to validate the feature with zero regressions.
 
 - `mise exec -- pnpm exec node --test scripts/tests/database-access-boundaries.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts` — Validate database boundary enforcement and all affected Codesmith generators.
-- `mise exec -- pnpm --filter @app/core-runtime exec node --test tests/unit/operation-context.test.ts tests/unit/scoped-transaction.test.ts tests/unit/read-definition.test.ts tests/unit/read-runtime.test.ts tests/unit/action-*.test.ts` — Validate scope, scoped capabilities, governed reads, and Action regressions.
+- `mise exec -- pnpm --filter @app/core-runtime exec node --test tests/unit/operation-context.test.ts tests/unit/scoped-transaction.test.ts tests/unit/read-definition.test.ts tests/unit/read-runtime.test.ts 'tests/unit/action-*.test.ts'` — Validate scope, scoped capabilities, governed reads, and Action regressions.
 - `mise exec -- pnpm --filter @app/core-runtime exec node --test tests/integration/legal-entity-context.test.ts tests/integration/context-access.test.ts tests/integration/tenant-isolation.test.ts tests/integration/read-runtime.test.ts tests/integration/action-runtime.test.ts` — Prove live PostgreSQL/SpiceDB context, RLS, evidence, and Action isolation.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — Validate Shell context, search, resource, and typed UI integration behavior.
 - `mise exec -- pnpm --filter @app/shell-super-app test:integration` — Validate Shell/Auth/Core runtime composition and trusted assertion boundaries.
@@ -351,10 +351,10 @@ Execute every command to validate the feature with zero regressions.
 
 ## Review Checklist
 
-- [ ] Every acceptance criterion is satisfied.
+- [x] Every acceptance criterion is satisfied.
 - [x] The diff complies with `../AGENTS.md`, `AGENTS.md`, and all relevant referenced guidance.
 - [x] MicroVertical, Action, generated BFF client, and typed Effect error boundaries are preserved.
-- [ ] Tests cover every changed behavior and important failure path.
+- [x] Tests cover every changed behavior and important failure path.
 - [x] No unrelated changes, dead code, or accidental API expansion remain.
 
 ## Notes
@@ -376,41 +376,45 @@ Execute every command to validate the feature with zero regressions.
 - Split administrative and runtime database identities, added composite same-tenant constraints, generated and applied the resulting Drizzle migrations, and extended live schema/role verification.
 - Updated Action, module API, search, and report generators before integrating Shell reads; generated BFFs now verify audience-scoped assertions and independently invoke the Core read runtime.
 - Routed Shell composition, module-target, search, resource-detail, and timeline reads through governed registrations while keeping media mutation outside the read runtime.
-- Added static database-boundary enforcement plus separate generated, live PostgreSQL, and live SpiceDB tests. One disposable generated-owner integration path that composes all boundaries remains required before this spec can return to `done`.
+- Added static database-boundary enforcement plus separate generated, live PostgreSQL, and live SpiceDB tests. A disposable Codesmith-generated owner now composes Shell, fresh gateway assertions, receiving BFFs, CoreSDK, owner-local repositories, SpiceDB, and forced PostgreSQL RLS in one integration path.
 
 ### Changed Files
 
 - Core runtime: `packages/core-runtime/src/{operations,reads,db,actions}/`, public runtime composition, schema verification, migrations, and unit/integration tests.
 - Shell: trusted authentication/runtime composition, governed read registrations, API routing, contracts, and integration tests under `apps/shell-super-app/`.
+- Disposable isolation proof: `apps/shell-super-app/tests/integration/generated-owner-fixture.ts` and `generated-owner-isolation.test.ts`; the fixture is generated into a temporary workspace and removed after each test.
 - Codesmith and guardrails: Action/governed-contribution renderers, CLI contracts, combined disposable compilation tests, and `scripts/check-database-access-boundaries.mts`.
 - Operations and documentation: `.env.example`, `docker-compose.yml`, PostgreSQL bootstrap scripts, root package scripts, and the authoritative architecture guidance.
-- Final diff size: 75 files, 19,407 added lines, and 341 deleted lines (including generated Drizzle snapshots and migrations).
+- Final feature diff size: 90 files, 26,275 added lines, and 726 deleted lines (including the disposable integration fixture, generated Drizzle snapshots, and migrations).
 
 ### Tests Added or Updated
 
 - Generator and static-boundary suite: 25 passing tests, including combined generated Action/module API/search/report output and real-workspace compilation.
-- Focused Core unit suite: 66 passing tests for OperationalScope, scoped transactions, governed-read definitions/runtime, and Action regressions.
+- Focused Core unit suite: 73 passing tests for OperationalScope, scoped transactions, governed-read definitions/runtime, and Action regressions.
 - Live Core integration suite: 21 passing tests across PostgreSQL, SpiceDB, Action runtime, governed reads, evidence, composite foreign keys, RLS, and scope reuse.
-- Shell unit suite: 101 passing tests across 18 files; Shell integration suite: 3 passing tests.
+- Shell unit suite: 103 passing tests; Shell integration suite: 5 passing tests, including disposable Codesmith composition and the full generated-owner isolation path.
 
 ### Validation Results
 
 - `mise exec -- pnpm exec node --test scripts/tests/database-access-boundaries.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts` — passed (25/25).
-- `mise exec -- pnpm --filter @app/core-runtime exec node --test tests/unit/operation-context.test.ts tests/unit/scoped-transaction.test.ts tests/unit/read-definition.test.ts tests/unit/read-runtime.test.ts tests/unit/action-*.test.ts` — passed (66/66).
+- `mise exec -- pnpm --filter @app/core-runtime exec node --test tests/unit/operation-context.test.ts tests/unit/scoped-transaction.test.ts tests/unit/read-definition.test.ts tests/unit/read-runtime.test.ts 'tests/unit/action-*.test.ts'` — passed (73/73).
 - Core integration command from this plan, with explicit admin/runtime PostgreSQL and SpiceDB configuration — passed (21/21).
-- `mise exec -- pnpm --filter @app/shell-super-app test:unit` — passed (101/101 across 18 files).
-- Shell integration command from this plan, with explicit admin/runtime PostgreSQL and SpiceDB configuration — passed (3/3).
+- `mise exec -- pnpm --filter @app/shell-super-app test:unit` — passed (103/103).
+- Shell integration command from this plan, with explicit admin/runtime PostgreSQL and SpiceDB configuration — passed (5/5); rerunning the generated-owner test left zero disposable schemas behind.
 - `mise exec -- pnpm db:verify` — passed (18 Core and 4 Auth schema checks).
 - `mise exec -- pnpm typecheck` — passed.
 - `mise exec -- pnpm build` — passed, including production build and deployment/Module Federation/performance readiness checks.
 - `mise exec -- pnpm check` — passed, including formatting, lint, Action tests, typecheck, skills, API/module/database boundaries, contracts, and performance readiness.
-- `mise exec -- pnpm db:generate` was run after schema changes; generated migrations `0002` through `0005` were inspected, applied, and re-verified.
+- `mise exec -- pnpm db:generate` was run after schema changes; generated migrations `0002` through `0006` were inspected, applied, and re-verified.
 
 ### Review Findings
 
 - Reviewed the final diff against `../AGENTS.md`, `AGENTS.md`, and the relevant MicroVertical, Action, error, database, module-entrypoint, module-manifest, outbox, and data-access guidance.
 - Removed legacy independent business foreign keys after composite-key review, added the missing tenant-qualified auth-binding/impersonator references, and extended catalog verification to all declared composite constraints.
 - Closed generator contract gaps for typed `401`, `403`, `404`, `422`, `500`, and `503` failures, including the `WWW-Authenticate: Bearer` challenge, and compiled the combined generated output.
+- Removed the relational `query` facade from the scoped transaction capability, installed database scope before the locked module-state recheck, and removed unused Shell resource-gateway wiring.
+- Extended the database boundary checker to follow owner Action/read Effect-service imports and reject differently named services whose local dependency graph reaches a global PostgreSQL capability.
+- Derived the disposable owner's catalog and runtime registrations from actual Codesmith output, kept its repository executor typed, and asserted captured Core logs exclude foreign identifiers and infrastructure diagnostics.
 - Kept all changes inside `app/`; no production fake MicroVertical was introduced. Cross-boundary proof composes disposable generated owner artifacts with live CoreSDK, gateway/assertion, Shell, SpiceDB, and disposable forced-RLS table tests.
 - Browser validation was not applicable because this change affects server/runtime contracts and preserves the existing UI behavior; HTTP/runtime integration tests cover the changed transport boundaries.
 
