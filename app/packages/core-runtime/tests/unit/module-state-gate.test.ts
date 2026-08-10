@@ -22,6 +22,8 @@ import type { TenantModuleStateServiceShape } from '../../src/modules/tenant-mod
 
 const trustedContext = (tenantId = '20000000-0000-4000-8000-000000000001') =>
   ({
+    authBindingId: '30000000-0000-4000-8000-000000000001',
+    authContextRef: 'better-auth-session:module-state-gate-test',
     authMethod: 'session',
     principalId: '10000000-0000-4000-8000-000000000001',
     tenantId,

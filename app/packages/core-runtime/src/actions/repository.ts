@@ -633,6 +633,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
           authMethod: input.principal.authMethod,
           eventType: 'action.executed',
           evidenceJson: {
+            ...input.evidence.auditEvidence,
             actionKey: input.actionKey,
             resultHash: input.resultHash,
           },

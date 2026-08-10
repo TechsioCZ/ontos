@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
 /* eslint-disable complexity, max-classes-per-file, no-negated-condition, promise/prefer-await-to-then, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module. */
 import type {
   ContextAccessShape,
@@ -494,7 +495,7 @@ export const makeShellResourceDetail = (
             timeline: timeline.value,
           } as const)
         : ({ outcome: 'unavailable' } as const);
-    }).pipe(Effect.catch(() => Effect.succeed({ outcome: 'unavailable' as const }))),
+    }).pipe(Effect.orElseSucceed(() => ({ outcome: 'unavailable' as const }))),
 });
 
 export type MediaAffordance =

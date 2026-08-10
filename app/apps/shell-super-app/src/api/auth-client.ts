@@ -35,6 +35,23 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellComposition,
   ShellInternalProblem,
+  IdentityProblem,
+  ApiKeyIssueResponse,
+  ApiKeyLifecycleResponse,
+  ChangePrincipalStatusPayload,
+  CreateNonHumanPrincipalPayload,
+  IdentityListPayload,
+  IssueApiKeyPayload,
+  IssueManagedApiKeyPayload,
+  ManagedApiKeyListResponse,
+  PrincipalMutationResponse,
+  RotateApiKeyPayload,
+  RotateManagedApiKeyPayload,
+  SelfApiKeyListResponse,
+  SetApiKeyStatusPayload,
+  SetManagedApiKeyStatusPayload,
+  StartSupportImpersonationPayload,
+  SupportImpersonationResponse,
   ShellSelectionRequiredProblem,
   ShellTargetForbiddenProblem,
   ShellTargetNotFoundProblem,
@@ -115,6 +132,7 @@ export type SwitchLegalEntityClientEffect = Effect.Effect<
 export type ShellCompositionClientError =
   | HttpClientError.HttpClientError
   | Schema.SchemaError
+  | IdentityProblem
   | ShellAuthenticationRequiredProblem
   | ShellCapabilityUnavailableProblem
   | ShellInternalProblem;
@@ -127,6 +145,19 @@ export type ShellTargetClientError =
 
 export type ShellSearchClientError = ShellCompositionClientError | ShellSelectionRequiredProblem;
 export type ShellResourceClientError = ShellTargetClientError;
+
+export type IdentityClientError =
+  | IdentityProblem
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
+
+export interface IdentityClientOptions extends ShellAuthenticationClientOptions {
+  readonly idempotencyKey: string;
+}
+
+const identityHeaders = (options: IdentityClientOptions) => ({
+  'idempotency-key': options.idempotencyKey,
+});
 
 const createShellAuthenticationClient = (
   options: ShellAuthenticationClientOptions = {},
@@ -244,6 +275,127 @@ export const signOut = (
 ): ShellAuthenticationClientEffect<SignOutResponse> =>
   createShellAuthenticationClient(options).pipe(
     Effect.flatMap((client) => client.authentication.signOut({})),
+  );
+
+export const createNonHumanPrincipal = (
+  payload: CreateNonHumanPrincipalPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<PrincipalMutationResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.createNonHumanPrincipal({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const changePrincipalStatus = (
+  payload: ChangePrincipalStatusPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<PrincipalMutationResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      payload.newStatus === 'active'
+        ? client.identity.changePrincipalStatus({ headers: identityHeaders(options), payload })
+        : client.identity.changePrincipalStatus({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const issueSelfApiKey = (
+  payload: IssueApiKeyPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.issueSelfApiKey({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const listSelfApiKeys = (
+  payload: IdentityListPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<SelfApiKeyListResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.identity.listSelfApiKeys({ payload })),
+  );
+
+export const issueManagedApiKey = (
+  payload: IssueManagedApiKeyPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.issueManagedApiKey({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const listManagedApiKeys = (
+  payload: IdentityListPayload,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) => client.identity.listManagedApiKeys({ payload })),
+  );
+
+export const setSelfApiKeyStatus = (
+  payload: SetApiKeyStatusPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ApiKeyLifecycleResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      payload.newStatus === 'revoked'
+        ? client.identity.setSelfApiKeyStatus({ headers: identityHeaders(options), payload })
+        : client.identity.setSelfApiKeyStatus({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const setManagedApiKeyStatus = (
+  payload: SetManagedApiKeyStatusPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ApiKeyLifecycleResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      payload.newStatus === 'revoked'
+        ? client.identity.setManagedApiKeyStatus({ headers: identityHeaders(options), payload })
+        : client.identity.setManagedApiKeyStatus({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const rotateSelfApiKey = (
+  payload: RotateApiKeyPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.rotateSelfApiKey({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const rotateManagedApiKey = (
+  payload: RotateManagedApiKeyPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<ApiKeyIssueResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.rotateManagedApiKey({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const startSupportImpersonation = (
+  payload: StartSupportImpersonationPayload,
+  options: IdentityClientOptions,
+): Effect.Effect<SupportImpersonationResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.startSupportImpersonation({ headers: identityHeaders(options), payload }),
+    ),
+  );
+
+export const stopSupportImpersonation = (
+  options: IdentityClientOptions,
+): Effect.Effect<SupportImpersonationResponse, IdentityClientError> =>
+  createShellAuthenticationClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.identity.stopSupportImpersonation({ headers: identityHeaders(options) }),
+    ),
   );
 
 export { Effect, runEffectRequest } from '@modern-js/plugin-bff/effect-client';

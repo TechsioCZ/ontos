@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import { sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { pgPolicy } from 'drizzle-orm/pg-core';

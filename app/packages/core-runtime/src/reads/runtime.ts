@@ -1,7 +1,11 @@
+// @effect-diagnostics asyncFunction:off
 /* eslint-disable complexity, max-classes-per-file -- The governed lifecycle and its private rollback signal stay co-located and ordered. */
 import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
-import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
+import {
+  decodeTrustedPrincipalContext,
+  isTrustedSupportRecoveryPrincipalContext,
+} from '../auth/system-principal-context-provenance.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
@@ -105,11 +109,12 @@ const unwrapCore = <Value>(exit: Exit.Exit<Value, ReadCoreError>): Value => {
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
 const targetIsValid = (
-  declared: 'legal_entity' | 'module' | 'resource',
+  declared: 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
 ): boolean =>
   target.kind === declared &&
-  (target.kind === 'legal_entity' ||
+  (target.kind === 'tenant' ||
+    target.kind === 'legal_entity' ||
     (target.kind === 'module'
       ? stableTargetKey(target.moduleId)
       : stableTargetKey(target.resource.moduleId) &&
@@ -117,7 +122,7 @@ const targetIsValid = (
         stableTargetKey(target.resource.resourceType)));
 
 const targetMetadata = (target: ResolvedReadPermissionTarget) => {
-  if (target.kind === 'legal_entity') {
+  if (target.kind === 'legal_entity' || target.kind === 'tenant') {
     return {};
   }
   if (target.kind === 'module') {
@@ -183,9 +188,15 @@ export const makeReadRuntime = (
               try: () => computeCanonicalValueHash(decodedInput),
             })
           : undefined;
-      const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(
-        input.principal,
-      ).pipe(
+      const principal = yield* decodeTrustedPrincipalContext(input.principal).pipe(
+        Effect.filterOrFail(
+          (context) => !isTrustedSupportRecoveryPrincipalContext(context),
+          () =>
+            new ReadInputValidationError({
+              code: 'read_input_invalid',
+              reason: 'Support recovery context is not valid for Reads',
+            }),
+        ),
         Effect.mapError(
           () =>
             new ReadInputValidationError({
@@ -268,7 +279,14 @@ export const makeReadRuntime = (
       stage('module_state_checked');
 
       let permissionDecision: 'allowed' | 'denied' | 'unavailable' = 'unavailable';
-      if (scope.legalEntityId !== undefined) {
+      if (permissionTarget.kind === 'tenant') {
+        permissionDecision =
+          (yield* contextAccess.tenants({
+            permission: permissionTarget.permission,
+            principalId: scope.principalId,
+            tenantIds: [scope.tenantId],
+          }))[0]?.decision ?? 'unavailable';
+      } else if (scope.legalEntityId !== undefined) {
         if (permissionTarget.kind === 'legal_entity') {
           permissionDecision =
             (yield* contextAccess.legalEntities({

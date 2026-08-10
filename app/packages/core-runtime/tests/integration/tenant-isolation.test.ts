@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 /* eslint-disable unicorn/no-await-expression-member, unicorn/prefer-set-has -- Integration assertions intentionally keep each live query beside its expected row count. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -29,6 +30,7 @@ import {
   makeOperationalScopeResolver,
 } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
+import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 
 test('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
@@ -216,6 +218,8 @@ test('an unscoped owner repository remains isolated inside a governed read trans
   const entityC = randomUUID();
   const principalA = randomUUID();
   const principalB = randomUUID();
+  const bindingA = randomUUID();
+  const bindingB = randomUUID();
   const resourceId = randomUUID();
   const predicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   const entrypoint = defineSystemModuleEntrypoint({
@@ -226,7 +230,8 @@ test('an unscoped owner repository remains isolated inside a governed read trans
   });
 
   const runForScope = (scope: {
-    readonly authMethod: 'system';
+    readonly authBindingId: string;
+    readonly authMethod: 'session';
     readonly correlationId: string;
     readonly legalEntityId: string;
     readonly principalId: string;
@@ -249,7 +254,14 @@ test('an unscoped owner repository remains isolated inside a governed read trans
         resultSchema: Schema.Array(Schema.String),
         schemaVersion: '1',
       },
-      (_input, context) =>
+      (
+        _input,
+        context: ReadHandlerContext<{
+          readonly listWithoutPredicates: () => Effect.Effect<
+            readonly { readonly value: string }[]
+          >;
+        }>,
+      ) =>
         context.services.listWithoutPredicates().pipe(
           Effect.map((rows) => ({
             evidence: { resultCount: rows.length },
@@ -268,6 +280,7 @@ test('an unscoped owner repository remains isolated inside a governed read trans
         Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
       modules: () => Effect.succeed([]),
       resources: () => Effect.succeed([]),
+      tenants: () => Effect.succeed([]),
     };
     const runtime = makeReadRuntime(
       { executor: runtimeDatabase },
@@ -282,6 +295,8 @@ test('an unscoped owner repository remains isolated inside a governed read trans
       runtime.runRead({
         input: {},
         principal: {
+          authBindingId: scope.authBindingId,
+          authContextRef: `better-auth-session:${scope.correlationId}`,
           authMethod: scope.authMethod,
           legalEntityId: scope.legalEntityId,
           principalId: scope.principalId,
@@ -320,8 +335,21 @@ test('an unscoped owner repository remains isolated inside a governed read trans
       [entityA, entityB, entityC, tenantA, tenantB, `A-${entityA}`, `B-${entityB}`, `C-${entityC}`],
     );
     await admin.query(
-      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'system', 'Principal A', 'active'), ($2, $4, 'system', 'Principal B', 'active')`,
+      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Principal A', 'active'), ($2, $4, 'human', 'Principal B', 'active')`,
       [principalA, principalB, tenantA, tenantB],
+    );
+    await admin.query(
+      `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, 'better_auth', 'user', $7, 'active'), ($2, $4, $6, 'better_auth', 'user', $8, 'active')`,
+      [
+        bindingA,
+        bindingB,
+        tenantA,
+        tenantB,
+        principalA,
+        principalB,
+        `user-${principalA}`,
+        `user-${principalB}`,
+      ],
     );
     await admin.query(
       `insert into ${schemaName}.records (tenant_id, legal_entity_id, resource_id, value) values ($1, $2, $6, 'tenant-a-entity-a'), ($1, $3, $6, 'tenant-a-entity-b'), ($4, $5, $6, 'tenant-b-entity-c')`,
@@ -330,7 +358,8 @@ test('an unscoped owner repository remains isolated inside a governed read trans
 
     assert.deepEqual(
       await runForScope({
-        authMethod: 'system',
+        authBindingId: bindingA,
+        authMethod: 'session',
         correlationId: randomUUID(),
         legalEntityId: entityA,
         principalId: principalA,
@@ -340,7 +369,8 @@ test('an unscoped owner repository remains isolated inside a governed read trans
     );
     assert.deepEqual(
       await runForScope({
-        authMethod: 'system',
+        authBindingId: bindingA,
+        authMethod: 'session',
         correlationId: randomUUID(),
         legalEntityId: entityB,
         principalId: principalA,
@@ -350,7 +380,8 @@ test('an unscoped owner repository remains isolated inside a governed read trans
     );
     assert.deepEqual(
       await runForScope({
-        authMethod: 'system',
+        authBindingId: bindingB,
+        authMethod: 'session',
         correlationId: randomUUID(),
         legalEntityId: entityC,
         principalId: principalB,
@@ -360,6 +391,10 @@ test('an unscoped owner repository remains isolated inside a governed read trans
     );
   } finally {
     await admin.query('delete from core.data_access_events where tenant_id in ($1, $2)', [
+      tenantA,
+      tenantB,
+    ]);
+    await admin.query('delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [
       tenantA,
       tenantB,
     ]);

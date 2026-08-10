@@ -70,6 +70,8 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
     });
   const relationships = [
     relationship('tenant', tenantId, 'member', 'principal', principalId),
+    relationship('tenant', tenantId, 'identity_admin', 'principal', principalId),
+    relationship('tenant', tenantId, 'support', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'tenant', 'tenant', tenantId),
     relationship('legal_entity', legalObjectId, 'member', 'principal', principalId),
     relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalObjectId),
@@ -92,6 +94,21 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
     const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
     try {
       const access = makeContextAccess(permissionClient);
+      for (const permission of ['manage_identity', 'impersonate'] as const) {
+        assert.deepEqual(
+          await Effect.runPromise(
+            access.tenants({
+              permission,
+              principalId,
+              tenantIds: [tenantId, otherTenantId],
+            }),
+          ),
+          [
+            { decision: 'allowed', key: tenantId },
+            { decision: 'denied', key: otherTenantId },
+          ],
+        );
+      }
       assert.deepEqual(
         await Effect.runPromise(
           access.legalEntities({

@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 /* eslint-disable require-await, unicorn/no-useless-undefined -- The minimal fake executor mirrors Drizzle's Promise surface. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -27,6 +28,7 @@ test('installs and verifies transaction-local scope and exposes no transaction c
   };
   const capability = await Effect.runPromise(
     installOperationalScope(transaction as never, {
+      authContextRef: 'job:test:run:scoped-transaction',
       authMethod: 'system',
       correlationId: 'c-1',
       legalEntityId: 'entity',
@@ -48,6 +50,7 @@ test('fails closed when transaction settings do not match', async () => {
   const error = await Effect.runPromise(
     Effect.flip(
       installOperationalScope(transaction as never, {
+        authContextRef: 'job:test:run:scoped-transaction',
         authMethod: 'system',
         correlationId: 'c-1',
         principalId: 'principal',

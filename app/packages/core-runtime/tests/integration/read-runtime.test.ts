@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -14,6 +15,10 @@ import {
 } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import {
+  makeSystemPrincipalContextResolver,
+  registerSystemWorkload,
+} from '../../src/auth/system-principal-context.ts';
 
 test('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);
@@ -32,12 +37,7 @@ test('commits live allowed evidence before releasing a governed read result', as
   const tenantId = randomUUID();
   const principalId = randomUUID();
   const readKey = `core.shell.integration.${randomUUID()}`;
-  const scope = Object.freeze({
-    authMethod: 'system' as const,
-    correlationId: randomUUID(),
-    principalId,
-    tenantId,
-  });
+  const correlationId = randomUUID();
   const registration = defineRead(
     {
       accessKind: 'list',
@@ -75,7 +75,16 @@ test('commits live allowed evidence before releasing a governed read result', as
       legalEntities: () => Effect.succeed([]),
       modules: () => Effect.succeed([]),
       resources: () => Effect.succeed([]),
+      tenants: () => Effect.succeed([]),
     };
+    const principal = await Effect.runPromise(
+      makeSystemPrincipalContextResolver({ executor: runtimeDatabase }).resolve({
+        principalId,
+        registration: registerSystemWorkload({ jobKey: 'read-runtime-integration' }),
+        runReference: readKey,
+        tenantId,
+      }),
+    );
     const runtime = makeReadRuntime(
       { executor: runtimeDatabase },
       { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) } as never,
@@ -89,9 +98,9 @@ test('commits live allowed evidence before releasing a governed read result', as
       await Effect.runPromise(
         runtime.runRead({
           input: {},
-          principal: { authMethod: 'system', principalId, tenantId },
+          principal,
           registration,
-          transport: { correlationId: scope.correlationId },
+          transport: { correlationId },
         }),
       ),
       ['visible'],

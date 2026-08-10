@@ -37,6 +37,9 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
   readonly recordDataAccess: (
     event: DataAccessEventInput,
   ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordAuditEvidence: (
+    evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+  ) => Effect.Effect<void, ActionCollectorError>;
 }
 
 export interface ActionHandlerContext<

@@ -29,10 +29,15 @@ const domainEventContracts = {
 } as const;
 
 const makeCollector = () =>
-  makeActionCollector(domainEventContracts, 'shell.core', {
-    captureMode: 'metadata_only',
-    policyKey: 'counter.read.v1',
-  });
+  makeActionCollector(
+    domainEventContracts,
+    'shell.core',
+    {
+      captureMode: 'metadata_only',
+      policyKey: 'counter.read.v1',
+    },
+    Schema.Struct({ checkpoint: Schema.String, nested: Schema.optionalKey(Schema.Json) }),
+  );
 
 test('preserves event order, multiple messages, and events without messages', async () => {
   const collector = makeCollector();
@@ -106,6 +111,45 @@ test('does not expose externally mutable collector arrays or captured payloads',
   assert.throws(() => {
     (snapshot.domainEvents as unknown[]).push(event('mutated'));
   });
+});
+
+test('captures one immutable JSON audit-evidence object and rejects invalid repeats', async () => {
+  const collector = makeCollector();
+  const nested = { reason: 'support request' };
+  await Effect.runPromise(collector.recordAuditEvidence({ checkpoint: 'started', nested }));
+  nested.reason = 'mutated';
+
+  const snapshot = collector.snapshot();
+  assert.deepEqual(snapshot.auditEvidence, {
+    checkpoint: 'started',
+    nested: { reason: 'support request' },
+  });
+  assert.equal(Object.isFrozen(snapshot.auditEvidence), true);
+  assert.equal(Object.isFrozen(snapshot.auditEvidence['nested']), true);
+
+  const repeated = await Effect.runPromise(
+    Effect.flip(collector.recordAuditEvidence({ checkpoint: 'stopped' })),
+  );
+  const invalid = await Effect.runPromise(
+    Effect.flip(makeCollector().recordAuditEvidence({ value: undefined } as never)),
+  );
+  const undeclared = await Effect.runPromise(
+    Effect.flip(
+      makeCollector().recordAuditEvidence({ checkpoint: 'started', secret: 'must-not-persist' }),
+    ),
+  );
+  const missingSchema = await Effect.runPromise(
+    Effect.flip(
+      makeActionCollector(domainEventContracts, 'shell.core', {
+        captureMode: 'metadata_only',
+        policyKey: 'counter.read.v1',
+      }).recordAuditEvidence({ checkpoint: 'started' }),
+    ),
+  );
+  assert.equal(repeated._tag, 'ActionCollectorError');
+  assert.equal(invalid._tag, 'ActionCollectorError');
+  assert.equal(undeclared._tag, 'ActionCollectorError');
+  assert.equal(missingSchema._tag, 'ActionCollectorError');
 });
 
 test('applies descriptor evidence policy and rejects incompatible evidence', async () => {

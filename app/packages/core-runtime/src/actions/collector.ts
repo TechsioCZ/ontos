@@ -111,6 +111,9 @@ export interface ActionCollector<DomainEvents extends DomainEventContractMap> {
   readonly recordDataAccess: (
     event: DataAccessEventInput,
   ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordAuditEvidence: (
+    evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+  ) => Effect.Effect<void, ActionCollectorError>;
   readonly snapshot: () => ActionEvidenceSnapshot;
 }
 
@@ -118,11 +121,61 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
   domainEventContracts: DomainEvents,
   owningModuleKey: string,
   accessEvidencePolicy: ActionAccessEvidencePolicy,
+  auditEvidenceSchema?: Schema.ConstraintDecoder<unknown, never>,
 ): ActionCollector<DomainEvents> => {
   const dataAccessEvents: DataAccessEvent[] = [];
+  let auditEvidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>> = {};
+  let hasAuditEvidence = false;
   const domainEvents: DomainEvent[] = [];
   const outboxMessages: CollectedOutboxMessage[] = [];
   const references = new Map<DomainEventReference, number>();
+
+  const recordAuditEvidence: ActionCollector<DomainEvents>['recordAuditEvidence'] = (evidence) => {
+    if (hasAuditEvidence) {
+      return Effect.fail(invalidCollectorInput('Action audit evidence may be recorded only once'));
+    }
+    if (Object.hasOwn(evidence, 'actionKey') || Object.hasOwn(evidence, 'resultHash')) {
+      return Effect.fail(
+        invalidCollectorInput('Action audit evidence cannot replace runtime-owned fields'),
+      );
+    }
+    if (auditEvidenceSchema === undefined) {
+      return Effect.fail(
+        invalidCollectorInput('This Action does not declare custom audit evidence'),
+      );
+    }
+    return Schema.decodeUnknownEffect(auditEvidenceSchema)(evidence).pipe(
+      Effect.mapError(() =>
+        invalidCollectorInput('The Action audit evidence does not match its declared schema'),
+      ),
+      Effect.flatMap((declared) => Schema.decodeUnknownEffect(Schema.Json)(declared)),
+      Effect.mapError(() => invalidCollectorInput('The Action audit evidence is not valid JSON')),
+      Effect.flatMap((decoded) => {
+        if (decoded === null || Array.isArray(decoded) || typeof decoded !== 'object') {
+          return Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object'));
+        }
+        const inputKeys = Object.keys(evidence).toSorted();
+        const decodedKeys = Object.keys(decoded).toSorted();
+        if (
+          inputKeys.length !== decodedKeys.length ||
+          inputKeys.some((key, index) => key !== decodedKeys[index])
+        ) {
+          return Effect.fail(
+            invalidCollectorInput('Action audit evidence contains undeclared fields'),
+          );
+        }
+        if (Buffer.byteLength(JSON.stringify(decoded), 'utf-8') > 4096) {
+          return Effect.fail(invalidCollectorInput('Action audit evidence exceeds its size limit'));
+        }
+        return Effect.sync(() => {
+          auditEvidence = cloneAndFreeze(
+            decoded as Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+          );
+          hasAuditEvidence = true;
+        });
+      }),
+    );
+  };
 
   const recordDataAccess = (
     event: DataAccessEventInput,
@@ -266,6 +319,7 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
 
   const snapshot = (): ActionEvidenceSnapshot =>
     Object.freeze({
+      auditEvidence,
       dataAccessEvents: Object.freeze([...dataAccessEvents]),
       domainEvents: Object.freeze([...domainEvents]),
       outboxMessages: Object.freeze([...outboxMessages]),
@@ -274,6 +328,7 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
   return Object.freeze({
     addDomainEvent,
     addOutboxMessage,
+    recordAuditEvidence,
     recordDataAccess,
     snapshot,
   });

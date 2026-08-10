@@ -44,8 +44,12 @@ import {
   checkModuleEntrypoint,
   makeModuleStateSnapshot,
 } from '../../src/modules/module-state-gate.ts';
+import { makeSupportRecoveryPrincipalContextResolver } from '../../src/auth/support-recovery-principal-context.ts';
+import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 
 const principal = {
+  authBindingId: '00000000-0000-4000-8000-000000000004',
+  authContextRef: 'better-auth-session:test-session',
   authMethod: 'session',
   legalEntityId: '00000000-0000-4000-8000-000000000002',
   principalId: '00000000-0000-4000-8000-000000000003',
@@ -64,7 +68,15 @@ const fakeTransaction = {
   delete: () => {},
   insert: () => {},
   query: {},
-  select: () => {},
+  select: () => ({
+    from: () => ({
+      innerJoin: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([{ authBindingId: principal.authBindingId }]),
+        }),
+      }),
+    }),
+  }),
   update: () => {},
 };
 
@@ -79,6 +91,7 @@ interface HarnessOptions {
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
+  readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -286,6 +299,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
     permission,
     testOperationalScopeResolver,
     {
+      contextAccess: {
+        legalEntities: () => Effect.succeed([]),
+        modules: () => Effect.succeed([]),
+        resources: () => Effect.succeed([]),
+        tenants: ({ tenantIds }) =>
+          Effect.succeed(
+            tenantIds.map((key) => ({
+              decision: options.tenantPermissionDecision ?? ('allowed' as const),
+              key,
+            })),
+          ),
+      },
       installScope: () => Effect.succeed(fakeTransaction as never),
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
@@ -401,6 +426,111 @@ test('executes the complete stage order with transaction ownership and success e
     moduleStateReadCount: 0,
     moduleStateRecheckCount: 0,
   });
+});
+
+test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
+  const recoveryPrincipal = await Effect.runPromise(
+    makeSupportRecoveryPrincipalContextResolver({
+      executor: {
+        select: () => ({
+          from: () => {
+            const query = {
+              innerJoin: () => query,
+              where: () => ({
+                limit: () =>
+                  Promise.resolve([
+                    {
+                      bindingPrincipalId: principal.principalId,
+                      bindingTenantId: principal.tenantId,
+                      principalKind: 'human',
+                      principalTenantId: principal.tenantId,
+                      tenantId: principal.tenantId,
+                    },
+                  ]),
+              }),
+            };
+            return query;
+          },
+        }),
+      } as never,
+    }).resolveStoppedImpersonation({
+      originalAuthBindingId: principal.authBindingId,
+      originalPrincipalId: principal.principalId,
+      originalSessionId: 'expired-original-session',
+      tenantId: principal.tenantId,
+    }),
+  );
+  const harness = makeHarness({ permissionDecision: 'allowed' });
+
+  const result = await Effect.runPromise(
+    harness.runtime.runAction({
+      payload: {
+        checkpoint: 'stopped',
+        originalPrincipalId: principal.principalId,
+        reason: 'Securely terminate support access',
+        sessionRef: 'better-auth-session:impersonated-session',
+        targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+      },
+      principal: recoveryPrincipal,
+      registration: recordSupportImpersonationAction,
+      transport: transport('support-recovery'),
+    }),
+  );
+
+  assert.deepEqual(result, { checkpoint: 'stopped', recorded: true });
+  assert.deepEqual(harness.permissionCounts(), { permissionCheckCount: 1, rejectionCount: 0 });
+
+  const deniedHarness = makeHarness({ permissionDecision: 'denied' });
+  const denied = await Effect.runPromise(
+    Effect.flip(
+      deniedHarness.runtime.runAction({
+        payload: {
+          checkpoint: 'stopped',
+          originalPrincipalId: principal.principalId,
+          reason: 'Securely terminate support access',
+          sessionRef: 'better-auth-session:impersonated-session',
+          targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+        },
+        principal: recoveryPrincipal,
+        registration: recordSupportImpersonationAction,
+        transport: transport('support-recovery-denied'),
+      }),
+    ),
+  );
+  assert.equal(denied._tag, 'ActionPermissionDenied');
+  assert.deepEqual(deniedHarness.permissionCounts(), {
+    permissionCheckCount: 1,
+    rejectionCount: 1,
+  });
+
+  const wrongCheckpoint = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: {
+          checkpoint: 'requested',
+          originalPrincipalId: principal.principalId,
+          reason: 'Attempt to misuse recovery authority',
+          targetPrincipalId: '00000000-0000-4000-8000-000000000099',
+        },
+        principal: recoveryPrincipal,
+        registration: recordSupportImpersonationAction,
+        transport: transport('support-recovery-wrong-checkpoint'),
+      }),
+    ),
+  );
+  assert.equal(wrongCheckpoint._tag, 'ActionTrustedContextValidationError');
+
+  const wrongAction = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: recoveryPrincipal,
+        registration: registration(),
+        transport: transport('support-recovery-wrong-action'),
+      }),
+    ),
+  );
+  assert.equal(wrongAction._tag, 'ActionTrustedContextValidationError');
 });
 
 test('fails business Actions closed before invocation, permission, Policy, or handler access', async () => {
@@ -563,6 +693,69 @@ test('allows configured and unconfigured Actions before Policy evaluation', asyn
     assert.equal(harness.counts().transitionCount, 1);
     assert.equal(harness.counts().transactionCount, 1);
   }
+});
+
+test('requires a declared tenant role independently from the Action executor relation', async () => {
+  const tenantAuthorizedRegistration = defineAction(
+    {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'identity.read.v1' },
+      actionKey: 'core.identity.tenant-authorized',
+      auditProfile: 'sensitive',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'core.identity.tenant-authorized',
+        moduleKey: 'core.identity',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'core.identity',
+      payloadSchema: Schema.Void,
+      policies: [],
+      resultSchema: Schema.Void,
+      schemaVersion: '1',
+      tenantPermission: () => 'manage_identity',
+    },
+    () => Effect.void,
+  );
+
+  for (const [decision, expectedTag] of [
+    ['denied', 'ActionPermissionDenied'],
+    ['unavailable', 'ActionPermissionCheckError'],
+  ] as const) {
+    const harness = makeHarness({
+      permissionDecision: 'allowed',
+      tenantPermissionDecision: decision,
+    });
+    const failure = await Effect.runPromise(
+      Effect.flip(
+        harness.runtime.runAction({
+          payload: undefined,
+          principal,
+          registration: tenantAuthorizedRegistration,
+          transport: transport(`tenant-${decision}`),
+        }),
+      ),
+    );
+    assert.equal(failure._tag, expectedTag);
+    assert.equal(harness.counts().transitionCount, 0);
+  }
+
+  const allowed = makeHarness({
+    permissionDecision: 'allowed',
+    tenantPermissionDecision: 'allowed',
+  });
+  await Effect.runPromise(
+    allowed.runtime.runAction({
+      payload: undefined,
+      principal,
+      registration: tenantAuthorizedRegistration,
+      transport: transport('tenant-allowed'),
+    }),
+  );
+  assert.equal(allowed.counts().transitionCount, 1);
 });
 
 test('persists a definite permission denial before returning it and never evaluates Policies', async () => {
@@ -1095,10 +1288,26 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
       }),
     ),
   );
+  const forgedSystemPrincipal = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal: {
+          authContextRef: 'job:forged:run:plain-object',
+          authMethod: 'system',
+          principalId: principal.principalId,
+          tenantId: principal.tenantId,
+        },
+        registration: registration(),
+        transport: transport('forged-system'),
+      }),
+    ),
+  );
 
   assert.equal(invalidPayload._tag, 'ActionPayloadValidationError');
   assert.equal(invalidPrincipal._tag, 'ActionTrustedContextValidationError');
   assert.equal(missingKey._tag, 'ActionIdempotencyKeyRequired');
+  assert.equal(forgedSystemPrincipal._tag, 'ActionTrustedContextValidationError');
   assert.equal(harness.counts().createCount, 0);
 });
 

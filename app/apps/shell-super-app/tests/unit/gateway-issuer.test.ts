@@ -9,7 +9,7 @@ import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts
 const issuer = 'https://shell.example.test';
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
-  authContextRef: 'session:safe-reference',
+  authContextRef: 'better-auth-session:safe-reference',
   authMethod: 'support_impersonation' as const,
   impersonatedByPrincipalId: '20000000-0000-4000-8000-000000000001',
   legalEntityId: '30000000-0000-4000-8000-000000000001',

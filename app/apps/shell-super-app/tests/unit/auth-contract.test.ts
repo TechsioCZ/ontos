@@ -4,11 +4,15 @@ import {
   CurrentSessionSchema,
   AvailableLegalEntitiesResponseSchema,
   AvailableTenantsResponseSchema,
+  ApiKeyLifecycleResponseSchema,
+  ChangePrincipalStatusPayloadSchema,
+  IdentityRequestHeadersSchema,
   SignInPayloadSchema,
   ShellAuthenticationApi,
   SwitchTenantPayloadSchema,
   SwitchTenantResponseSchema,
   SwitchLegalEntityPayloadSchema,
+  SetApiKeyStatusPayloadSchema,
   shellAuthenticationApiContract,
 } from '../../shared/api.ts';
 
@@ -21,11 +25,14 @@ const statuses = (endpoint: TenantEndpoint) =>
     .map((schema) => schema.ast.annotations?.['httpApiStatus'])
     .toSorted((left, right) => Number(left) - Number(right));
 
-test('publishes the existing authentication operations and one generic gateway operation', () => {
+test('publishes authentication, identity lifecycle, and gateway operations', () => {
   const authenticationEndpoints = Object.keys(
     ShellAuthenticationApi.groups.authentication.endpoints,
   ).toSorted();
   const gatewayEndpoints = Object.keys(ShellAuthenticationApi.groups.gatewayContext.endpoints);
+  const identityEndpoints = Object.keys(
+    ShellAuthenticationApi.groups.identity.endpoints,
+  ).toSorted();
   const legalEntityEndpoints = Object.keys(
     ShellAuthenticationApi.groups.legalEntities.endpoints,
   ).toSorted();
@@ -35,7 +42,21 @@ test('publishes the existing authentication operations and one generic gateway o
   ).toSorted();
 
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
-  expect(gatewayEndpoints).toEqual(['issueGatewayContext']);
+  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
+  expect(identityEndpoints).toEqual([
+    'changePrincipalStatus',
+    'createNonHumanPrincipal',
+    'issueManagedApiKey',
+    'issueSelfApiKey',
+    'listManagedApiKeys',
+    'listSelfApiKeys',
+    'rotateManagedApiKey',
+    'rotateSelfApiKey',
+    'setManagedApiKeyStatus',
+    'setSelfApiKeyStatus',
+    'startSupportImpersonation',
+    'stopSupportImpersonation',
+  ]);
   expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
@@ -43,22 +64,50 @@ test('publishes the existing authentication operations and one generic gateway o
     apiPrefix: '/shell-super-app-api',
     availableLegalEntitiesPath: '/shell-super-app-api/auth/legal-entities',
     availableTenantsPath: '/shell-super-app-api/auth/tenants',
+    changePrincipalStatusPath: '/shell-super-app-api/auth/identity/principal-status',
     compositionPath: '/shell-super-app-api/shell/composition',
+    createNonHumanPrincipalPath: '/shell-super-app-api/auth/identity/principals',
     currentSessionPath: '/shell-super-app-api/auth/session',
+    issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
     issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
+    issueManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed',
+    issueSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self',
+    listManagedApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/managed/list',
+    listSelfApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/self/list',
     mediaAttachmentPath: '/shell-super-app-api/shell/resource/media-attachment',
     ownerId: 'shell-super-app',
     resolveModuleTargetPath: '/shell-super-app-api/shell/module-target',
     resourceDetailPath: '/shell-super-app-api/shell/resource',
+    rotateManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed/rotate',
+    rotateSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self/rotate',
     searchPath: '/shell-super-app-api/shell/search',
+    setManagedApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/managed/status',
+    setSelfApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/self/status',
     signInPath: '/shell-super-app-api/auth/sign-in',
     signOutPath: '/shell-super-app-api/auth/sign-out',
+    startSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/start',
+    stopSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/stop',
     switchLegalEntityPath: '/shell-super-app-api/auth/legal-entity/switch',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(
     /testing|actionKey/u,
   );
+});
+
+test('decodes a missing identity idempotency header so handlers can return declared 428', async () => {
+  await expect(
+    Effect.runPromise(Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({})),
+  ).resolves.toEqual({});
+  await expect(
+    Effect.runPromise(
+      Effect.flip(
+        Schema.decodeUnknownEffect(IdentityRequestHeadersSchema)({
+          'idempotency-key': '',
+        }),
+      ),
+    ),
+  ).resolves.toBeDefined();
 });
 
 test('publishes exact legal-entity endpoints with an ID-only switch payload', async () => {
@@ -111,6 +160,16 @@ test('publishes exact tenant methods, paths, and declared failure statuses', () 
   expect(statuses(switchTenant)).toEqual([401, 403, 500, 503]);
 });
 
+test('publishes the exhaustive identity failure status contract', () => {
+  for (const endpoint of Object.values(ShellAuthenticationApi.groups.identity.endpoints)) {
+    const identityStatuses = [...endpoint.error]
+      .map((schema) => schema.ast.annotations?.['httpApiStatus'])
+      .toSorted((left, right) => Number(left) - Number(right));
+
+    expect(identityStatuses).toEqual([400, 401, 403, 404, 409, 422, 428, 429, 500, 503]);
+  }
+});
+
 test('validates tenant UUIDs and strips all non-contract fields', async () => {
   const tenantId = '30000000-0000-4000-8000-000000000001';
   expect(
@@ -157,6 +216,55 @@ test('rejects malformed credentials through Effect Schema', async () => {
     ),
   );
   expect(error._tag).toBe('SchemaError');
+});
+
+test('requires lifecycle reasons and strips provider-private API key identifiers', async () => {
+  const principalId = '00000000-0000-4000-8000-000000000001';
+  const authBindingId = '00000000-0000-4000-8000-000000000002';
+  const missingPrincipalReason = await Effect.runPromise(
+    Effect.flip(
+      Schema.decodeUnknownEffect(ChangePrincipalStatusPayloadSchema)({
+        expectedStatus: 'active',
+        newStatus: 'disabled',
+        principalId,
+      }),
+    ),
+  );
+  const missingRevocationReason = await Effect.runPromise(
+    Effect.flip(
+      Schema.decodeUnknownEffect(SetApiKeyStatusPayloadSchema)({
+        authBindingId,
+        expectedStatus: 'active',
+        newStatus: 'revoked',
+      }),
+    ),
+  );
+  expect(missingPrincipalReason._tag).toBe('SchemaError');
+  expect(missingRevocationReason._tag).toBe('SchemaError');
+
+  expect(
+    await Effect.runPromise(
+      Schema.decodeUnknownEffect(ApiKeyLifecycleResponseSchema)({
+        authBindingId,
+        cleanupPending: false,
+        createdAt: '2026-08-09T00:00:00.000Z',
+        enabled: true,
+        expiresAt: null,
+        id: 'private-provider-key-id',
+        name: null,
+        providerKeyId: 'private-provider-key-id',
+        start: 'onto',
+      }),
+    ),
+  ).toEqual({
+    authBindingId,
+    cleanupPending: false,
+    createdAt: '2026-08-09T00:00:00.000Z',
+    enabled: true,
+    expiresAt: null,
+    name: null,
+    start: 'onto',
+  });
 });
 
 test('decodes only safe current-session identity fields', async () => {

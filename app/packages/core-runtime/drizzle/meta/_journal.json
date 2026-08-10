@@ -50,6 +50,13 @@
       "when": 1786137039882,
       "tag": "0006_cultured_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786262452464,
+      "tag": "0007_daffy_quicksilver",
+      "breakpoints": true
     }
   ]
 }

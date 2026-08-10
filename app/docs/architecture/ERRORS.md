@@ -74,6 +74,26 @@ Choose the status from the meaning of the failure, not from a generic domain-err
 | `503`  | A required capability is temporarily unavailable and retry may succeed later.                                       |
 | `504`  | A required upstream operation did not complete before its deadline.                                                 |
 
+Identity endpoints apply the same meanings exhaustively. Missing or unusable Shell credentials use
+`401` with a Bearer challenge; the API-key exchange uses an API-key challenge. A definite permission
+denial or active credential bound to a forbidden tenant/principal/legal entity is `403`; lifecycle
+state races are `409`; missing runtime records are `404`; ineligible targets are `422`; a missing
+required idempotency key is `428`; provider throttling is `429`. Structurally invalid operation
+payloads are `400`. Database,
+SpiceDB, resolver, evidence, or provider uncertainty is retryable `503`, while only caught defects
+at the outer handler seam become sanitized `500`. Problem Details never include keys, hashes,
+cookies, provider diagnostics, identifiers, or signature details.
+
+`ActionAlreadyCommitted` is a terminal idempotency conflict (`409`) at identity transports, not a
+retryable capability outage. The internal stopped-impersonation recovery path treats that exact
+outcome as successful checkpoint replay, then retries deletion of its Auth-owned recovery record.
+If any work after provider restoration remains pending, Shell forwards the restored cookie first
+and returns the declared retryable `503` without exposing recovery data.
+Requested and started checkpoint failures preserve their typed Action error: definite permission
+denial maps to `403`, invalid identity state maps to `422`, and authorization or persistence
+uncertainty maps to `503`. A stopped checkpoint that fails after mechanical termination is reported
+only as pending recovery and never reactivates the impersonated session.
+
 Use other RFC 9110 statuses when they are a more accurate semantic match. Do not disguise authentication or authorization failures as validation errors, and do not use `500` for declared business rejections.
 
 ## Core Action Permission Failures

@@ -31,7 +31,7 @@ export const READ_ACCESS_KINDS = [
 export type ReadAccessKind = (typeof READ_ACCESS_KINDS)[number];
 export const READ_EVIDENCE_CAPTURE_MODES = ['hash_only', 'metadata_only'] as const;
 export type ReadEvidenceCaptureMode = (typeof READ_EVIDENCE_CAPTURE_MODES)[number];
-export const READ_PERMISSION_TARGETS = ['legal_entity', 'module', 'resource'] as const;
+export const READ_PERMISSION_TARGETS = ['legal_entity', 'module', 'resource', 'tenant'] as const;
 export type ReadPermissionTarget = (typeof READ_PERMISSION_TARGETS)[number];
 export type ReadPermissionDenialStatus = 409 | 422;
 export interface ReadPolicyDescriptor {
@@ -41,7 +41,8 @@ export interface ReadPolicyDescriptor {
 export type ResolvedReadPermissionTarget =
   | Readonly<{ readonly kind: 'legal_entity' }>
   | Readonly<{ readonly kind: 'module'; readonly moduleId: string }>
-  | Readonly<{ readonly kind: 'resource'; readonly resource: ResourceAccessTarget }>;
+  | Readonly<{ readonly kind: 'resource'; readonly resource: ResourceAccessTarget }>
+  | Readonly<{ readonly kind: 'tenant'; readonly permission: 'access' | 'manage_identity' }>;
 export type ReadPermissionTargetResolver<Input> = (
   input: Input,
   scope: OperationalScope,

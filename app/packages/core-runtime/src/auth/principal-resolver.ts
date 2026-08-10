@@ -1,7 +1,15 @@
+// @effect-diagnostics asyncFunction:off
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
-import { principalAuthBindings, principals, tenants } from '../db/schema.ts';
+import {
+  actionInvocations,
+  auditEvents,
+  principalAuthBindings,
+  principals,
+  tenants,
+} from '../db/schema.ts';
+import type { BindingSubjectType, PrincipalKind } from '../db/schema.ts';
 import {
   PrincipalBindingAmbiguousError,
   PrincipalBindingInactiveError,
@@ -20,9 +28,22 @@ export interface AvailableTenant {
 export interface ResolvedPrincipalIdentity {
   readonly authBindingId: string;
   readonly displayName: string;
+  readonly principalKind: PrincipalKind;
   readonly principalId: string;
   readonly tenantId: string;
 }
+
+export interface ApiKeyBindingAdministration {
+  readonly providerSubjectId: string;
+  readonly status: 'active' | 'disabled' | 'revoked';
+}
+
+export const ProviderSubjectSchema = Schema.Struct({
+  provider: Schema.Literal('better_auth'),
+  providerSubjectId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  subjectType: Schema.Literals(['user', 'api_key']),
+});
+export type ProviderSubject = Schema.Schema.Type<typeof ProviderSubjectSchema>;
 
 export interface PrincipalResolutionRecord {
   readonly authBindingId: string;
@@ -31,6 +52,7 @@ export interface PrincipalResolutionRecord {
   readonly bindingStatus: string;
   readonly displayName: string;
   readonly principalId: string;
+  readonly principalKind: PrincipalKind;
   readonly principalStatus: string;
   readonly tenantId: string;
   readonly tenantName: string;
@@ -83,13 +105,26 @@ const toResolvedIdentity = (record: PrincipalResolutionRecord): ResolvedPrincipa
   authBindingId: record.authBindingId,
   displayName: record.displayName,
   principalId: record.principalId,
+  principalKind: record.principalKind,
   tenantId: record.tenantId,
 });
+
+const eligibleHumanRecords = (
+  records: readonly PrincipalResolutionRecord[],
+): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolutionError> =>
+  eligibleRecords(records).pipe(
+    Effect.flatMap((eligible) => {
+      const humans = eligible.filter((record) => record.principalKind === 'human');
+      return humans.length === 0
+        ? Effect.fail(new PrincipalInactiveError())
+        : Effect.succeed(humans);
+    }),
+  );
 
 export const classifyAvailableTenants = (
   records: readonly PrincipalResolutionRecord[],
 ): Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError> =>
-  eligibleRecords(records).pipe(
+  eligibleHumanRecords(records).pipe(
     Effect.map((eligible) =>
       eligible
         .map((record) => ({ name: record.tenantName, tenantId: record.tenantId }))
@@ -103,7 +138,7 @@ export const classifyAvailableTenants = (
 export const classifyDefaultPrincipal = (
   records: readonly PrincipalResolutionRecord[],
 ): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> =>
-  eligibleRecords(records).pipe(
+  eligibleHumanRecords(records).pipe(
     Effect.map((eligible) =>
       eligible.toSorted(
         (left, right) =>
@@ -122,7 +157,7 @@ export const classifySelectedPrincipal = (
   records: readonly PrincipalResolutionRecord[],
   selectedTenantId: string,
 ): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> =>
-  eligibleRecords(records).pipe(
+  eligibleHumanRecords(records).pipe(
     Effect.flatMap((eligible) => {
       const selected = eligible.find((record) => record.tenantId === selectedTenantId);
       return selected === undefined
@@ -131,7 +166,36 @@ export const classifySelectedPrincipal = (
     }),
   );
 
+export const classifyApiKeyPrincipal = (
+  records: readonly PrincipalResolutionRecord[],
+): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> =>
+  Effect.gen(function* classifyApiKeyPrincipalEffect() {
+    const eligible = yield* eligibleRecords(records);
+    const [only] = eligible;
+    if (eligible.length !== 1 || only === undefined) {
+      return yield* new PrincipalBindingAmbiguousError();
+    }
+    if (!['human', 'service', 'integration'].includes(only.principalKind)) {
+      return yield* new PrincipalInactiveError();
+    }
+    return toResolvedIdentity(only);
+  });
+
 export interface PrincipalResolverShape {
+  readonly resolveBetterAuthUserForPrincipal: (input: {
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<string, PrincipalResolutionError>;
+  readonly resolveApiKeyBindingSubject: (input: {
+    readonly authBindingId: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<string, PrincipalResolutionError>;
+  readonly loadApiKeyBindingForAdministration: (input: {
+    readonly authBindingId: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<ApiKeyBindingAdministration, PrincipalResolutionError>;
   readonly listAvailableTenants: (
     betterAuthUserId: string,
   ) => Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError>;
@@ -142,6 +206,21 @@ export interface PrincipalResolverShape {
     betterAuthUserId: string,
     tenantId: string,
   ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
+  readonly resolveBetterAuthApiKey: (
+    betterAuthApiKeyId: string,
+  ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
+  readonly resolveProviderSubject: (
+    subject: ProviderSubject,
+    tenantId?: string,
+  ) => Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError>;
+  readonly verifySupportImpersonationStarted: (input: {
+    readonly actionId: string;
+    readonly originalPrincipalId: string;
+    readonly reason: string;
+    readonly sessionId: string;
+    readonly targetPrincipalId: string;
+    readonly tenantId: string;
+  }) => Effect.Effect<boolean, PrincipalResolverUnavailableError>;
 }
 
 export class PrincipalResolver extends Context.Service<PrincipalResolver, PrincipalResolverShape>()(
@@ -152,7 +231,7 @@ export const makePrincipalResolver = (
   database: Context.Service.Shape<typeof CoreDatabase>,
 ): PrincipalResolverShape => {
   const loadRecords = (
-    betterAuthUserId: string,
+    subject: ProviderSubject,
     tenantId?: string,
   ): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolverUnavailableError> =>
     Effect.tryPromise({
@@ -169,6 +248,7 @@ export const makePrincipalResolver = (
             bindingStatus: principalAuthBindings.status,
             displayName: principals.displayName,
             principalId: principals.principalId,
+            principalKind: principals.kind,
             principalStatus: principals.status,
             tenantId: tenants.tenantId,
             tenantName: tenants.name,
@@ -185,23 +265,217 @@ export const makePrincipalResolver = (
           .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
           .where(
             and(
-              eq(principalAuthBindings.provider, 'better_auth'),
-              eq(principalAuthBindings.subjectType, 'user'),
-              eq(principalAuthBindings.providerSubjectId, betterAuthUserId),
+              eq(principalAuthBindings.provider, subject.provider),
+              eq(principalAuthBindings.subjectType, subject.subjectType as BindingSubjectType),
+              eq(principalAuthBindings.providerSubjectId, subject.providerSubjectId),
               ...(tenantId === undefined ? [] : [eq(principalAuthBindings.tenantId, tenantId)]),
             ),
           ),
     });
+  const loadApiKeyBindingSubject = (input: {
+    readonly authBindingId: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) =>
+    Effect.tryPromise({
+      catch: () =>
+        new PrincipalResolverUnavailableError({
+          reason: 'Unable to resolve the API key binding',
+        }),
+      try: async () => {
+        const [record] = await database.executor
+          .select({
+            providerSubjectId: principalAuthBindings.providerSubjectId,
+            revokedAt: principalAuthBindings.revokedAt,
+            status: principalAuthBindings.status,
+          })
+          .from(principalAuthBindings)
+          .where(
+            and(
+              eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+              eq(principalAuthBindings.tenantId, input.tenantId),
+              eq(principalAuthBindings.principalId, input.principalId),
+              eq(principalAuthBindings.subjectType, 'api_key'),
+            ),
+          )
+          .limit(1);
+        return record;
+      },
+    });
 
   return {
     listAvailableTenants: (betterAuthUserId) =>
-      loadRecords(betterAuthUserId).pipe(Effect.flatMap(classifyAvailableTenants)),
-    resolveBetterAuthUserForTenant: (betterAuthUserId, tenantId) =>
-      loadRecords(betterAuthUserId, tenantId).pipe(
-        Effect.flatMap((records) => classifySelectedPrincipal(records, tenantId)),
+      loadRecords({
+        provider: 'better_auth',
+        providerSubjectId: betterAuthUserId,
+        subjectType: 'user',
+      }).pipe(Effect.flatMap(classifyAvailableTenants)),
+    loadApiKeyBindingForAdministration: (input) =>
+      loadApiKeyBindingSubject(input).pipe(
+        Effect.flatMap(
+          (record): Effect.Effect<ApiKeyBindingAdministration, PrincipalBindingMissingError> =>
+            record === undefined
+              ? Effect.fail(new PrincipalBindingMissingError())
+              : Effect.succeed({
+                  providerSubjectId: record.providerSubjectId,
+                  status: record.status,
+                }),
+        ),
       ),
+    resolveApiKeyBindingSubject: (input) =>
+      loadApiKeyBindingSubject(input).pipe(
+        Effect.flatMap(
+          (
+            record,
+          ): Effect.Effect<
+            string,
+            PrincipalBindingInactiveError | PrincipalBindingMissingError
+          > => {
+            if (record === undefined) {
+              return Effect.fail(new PrincipalBindingMissingError());
+            }
+            if (record.status === 'revoked' || record.revokedAt !== null) {
+              return Effect.fail(new PrincipalBindingInactiveError());
+            }
+            return Effect.succeed(record.providerSubjectId);
+          },
+        ),
+      ),
+    resolveBetterAuthApiKey: (betterAuthApiKeyId) =>
+      loadRecords({
+        provider: 'better_auth',
+        providerSubjectId: betterAuthApiKeyId,
+        subjectType: 'api_key',
+      }).pipe(Effect.flatMap(classifyApiKeyPrincipal)),
+    resolveBetterAuthUserForPrincipal: (input) =>
+      Effect.tryPromise({
+        catch: () =>
+          new PrincipalResolverUnavailableError({
+            reason: 'Unable to resolve the principal provider subject',
+          }),
+        try: async () =>
+          await database.executor
+            .select({
+              providerSubjectId: principalAuthBindings.providerSubjectId,
+              revokedAt: principalAuthBindings.revokedAt,
+              status: principalAuthBindings.status,
+            })
+            .from(principalAuthBindings)
+            .innerJoin(
+              principals,
+              and(
+                eq(principals.tenantId, principalAuthBindings.tenantId),
+                eq(principals.principalId, principalAuthBindings.principalId),
+              ),
+            )
+            .where(
+              and(
+                eq(principalAuthBindings.tenantId, input.tenantId),
+                eq(principalAuthBindings.principalId, input.principalId),
+                eq(principalAuthBindings.provider, 'better_auth'),
+                eq(principalAuthBindings.subjectType, 'user'),
+                eq(principals.kind, 'human'),
+                eq(principals.status, 'active'),
+              ),
+            ),
+      }).pipe(
+        Effect.flatMap(
+          (
+            records,
+          ): Effect.Effect<
+            string,
+            PrincipalBindingAmbiguousError | PrincipalBindingMissingError
+          > => {
+            const active = records.filter(
+              (record) => record.status === 'active' && record.revokedAt === null,
+            );
+            if (active.length === 0) {
+              return Effect.fail(new PrincipalBindingMissingError());
+            }
+            const [only] = active;
+            if (active.length !== 1 || only === undefined) {
+              return Effect.fail(new PrincipalBindingAmbiguousError());
+            }
+            return Effect.succeed(only.providerSubjectId);
+          },
+        ),
+      ),
+    resolveBetterAuthUserForTenant: (betterAuthUserId, tenantId) =>
+      loadRecords(
+        {
+          provider: 'better_auth',
+          providerSubjectId: betterAuthUserId,
+          subjectType: 'user',
+        },
+        tenantId,
+      ).pipe(Effect.flatMap((records) => classifySelectedPrincipal(records, tenantId))),
     resolveDefaultBetterAuthUser: (betterAuthUserId) =>
-      loadRecords(betterAuthUserId).pipe(Effect.flatMap(classifyDefaultPrincipal)),
+      loadRecords({
+        provider: 'better_auth',
+        providerSubjectId: betterAuthUserId,
+        subjectType: 'user',
+      }).pipe(Effect.flatMap(classifyDefaultPrincipal)),
+    resolveProviderSubject: (subject, tenantId) =>
+      loadRecords(subject, tenantId).pipe(
+        Effect.flatMap((records) => {
+          if (subject.subjectType === 'api_key') {
+            return classifyApiKeyPrincipal(records);
+          }
+          if (tenantId === undefined) {
+            return classifyDefaultPrincipal(records);
+          }
+          return classifySelectedPrincipal(records, tenantId);
+        }),
+      ),
+    verifySupportImpersonationStarted: (input) =>
+      Effect.tryPromise({
+        catch: () =>
+          new PrincipalResolverUnavailableError({
+            reason: 'Unable to verify the support impersonation lifecycle',
+          }),
+        try: () =>
+          database.executor
+            .select({ evidence: auditEvents.evidenceJson })
+            .from(actionInvocations)
+            .innerJoin(
+              auditEvents,
+              and(
+                eq(auditEvents.tenantId, actionInvocations.tenantId),
+                eq(auditEvents.actionInvocationId, actionInvocations.actionInvocationId),
+              ),
+            )
+            .where(
+              and(
+                eq(actionInvocations.tenantId, input.tenantId),
+                eq(actionInvocations.principalId, input.originalPrincipalId),
+                eq(actionInvocations.actionKey, 'core.identity.record-support-impersonation'),
+                eq(actionInvocations.idempotencyKey, `${input.actionId}:started`),
+                eq(actionInvocations.status, 'succeeded'),
+                eq(auditEvents.eventType, 'action.executed'),
+                eq(auditEvents.outcome, 'succeeded'),
+              ),
+            ),
+      }).pipe(
+        Effect.map((records) =>
+          records.some(({ evidence }) => {
+            if (typeof evidence !== 'object' || evidence === null) {
+              return false;
+            }
+            return (
+              'checkpoint' in evidence &&
+              evidence.checkpoint === 'started' &&
+              'originalPrincipalId' in evidence &&
+              evidence.originalPrincipalId === input.originalPrincipalId &&
+              'reason' in evidence &&
+              evidence.reason === input.reason &&
+              'targetPrincipalId' in evidence &&
+              evidence.targetPrincipalId === input.targetPrincipalId &&
+              'sessionRef' in evidence &&
+              evidence.sessionRef === `better-auth-session:${input.sessionId}`
+            );
+          }),
+        ),
+      ),
   };
 };
 

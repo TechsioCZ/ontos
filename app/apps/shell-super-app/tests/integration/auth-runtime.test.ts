@@ -21,6 +21,8 @@ import {
 import type { InstalledModuleCatalog } from '@app/core-runtime';
 import {
   coreDatabaseSchema,
+  actionInvocations,
+  auditEvents,
   dataAccessEvents,
   legalEntities,
   principalAuthBindings,
@@ -98,6 +100,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
   const cleanup = async () => {
     await coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, tenantId));
+    await coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, tenantId));
+    await coreDatabase.delete(actionInvocations).where(eq(actionInvocations.tenantId, tenantId));
     const existingUsers = await authDatabase
       .select({ id: user.id })
       .from(user)
@@ -255,6 +259,87 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         ?.principalId,
       principalId,
     );
+
+    const missingIdempotencyResponse = await unavailableHandler.handler(
+      new Request(`${configuration.baseUrl}/auth/identity/api-keys/self`, {
+        body: JSON.stringify({ name: 'must-not-be-created' }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: authenticatedHeaders.get('cookie') ?? '',
+          origin: configuration.baseUrl,
+        },
+        method: 'POST',
+      }),
+    );
+    assert.equal(missingIdempotencyResponse.status, 428);
+
+    const deniedIdentityAdministrationRuntime = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
+        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+      Effect.succeed(installedCatalog(['testing1'])),
+      false,
+      Layer.succeed(ContextAccess, {
+        ...legalEntitySelectionOptions.contextAccess,
+        tenants: ({
+          permission,
+          tenantIds,
+        }: {
+          readonly permission: 'access' | 'impersonate' | 'manage_identity';
+          readonly tenantIds: readonly string[];
+        }) =>
+          Effect.succeed(
+            tenantIds.map((key) => ({
+              decision:
+                permission === 'manage_identity' ? ('denied' as const) : ('allowed' as const),
+              key,
+            })),
+          ),
+      }),
+    ).createHandler();
+    handlers.push(deniedIdentityAdministrationRuntime);
+    const deniedIdentityAdministrationResponse = await deniedIdentityAdministrationRuntime.handler(
+      new Request(`${configuration.baseUrl}/auth/identity/principals`, {
+        body: JSON.stringify({ displayName: 'Denied managed identity', kind: 'service' }),
+        headers: {
+          'content-type': 'application/json',
+          cookie: authenticatedHeaders.get('cookie') ?? '',
+          'idempotency-key': 'denied-managed-identity',
+          origin: configuration.baseUrl,
+        },
+        method: 'POST',
+      }),
+    );
+    assert.equal(deniedIdentityAdministrationResponse.status, 403);
+    const [deniedIdentityInvocation] = await coreDatabase
+      .select({
+        actionInvocationId: actionInvocations.actionInvocationId,
+        status: actionInvocations.status,
+      })
+      .from(actionInvocations)
+      .where(eq(actionInvocations.idempotencyKey, 'denied-managed-identity'))
+      .limit(1);
+    assert.equal(deniedIdentityInvocation?.status, 'rejected');
+    if (deniedIdentityInvocation === undefined) {
+      throw new Error('The denied identity Action did not persist its invocation');
+    }
+    const [deniedIdentityAudit] = await coreDatabase
+      .select({
+        eventType: auditEvents.eventType,
+        outcomeCode: auditEvents.outcomeCode,
+      })
+      .from(auditEvents)
+      .where(eq(auditEvents.actionInvocationId, deniedIdentityInvocation.actionInvocationId))
+      .limit(1);
+    assert.deepEqual(deniedIdentityAudit, {
+      eventType: 'action.rejected',
+      outcomeCode: 'spicedb_permission_denied',
+    });
 
     const activeModulesResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/shell/composition`, {

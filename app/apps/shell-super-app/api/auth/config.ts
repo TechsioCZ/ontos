@@ -25,6 +25,7 @@ export interface AuthConfigValue {
   readonly connectionString: string;
   readonly secret: string;
   readonly secureCookies: boolean;
+  readonly supportUserIds: readonly string[];
   readonly trustedOrigins: readonly string[];
 }
 
@@ -82,12 +83,21 @@ export const parseAuthConfig = (
       );
       const secureCookies =
         new URL(baseUrl).protocol === 'https:' || environment['NODE_ENV'] === 'production';
+      const supportUserIds = [
+        ...new Set(
+          (environment['BETTER_AUTH_SUPPORT_USER_IDS'] ?? '')
+            .split(',')
+            .map((userId) => userId.trim())
+            .filter((userId) => userId.length > 0),
+        ),
+      ];
 
       return {
         baseUrl,
         connectionString,
         secret,
         secureCookies,
+        supportUserIds,
         trustedOrigins,
       };
     },

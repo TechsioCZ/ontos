@@ -1,0 +1,1 @@
+CREATE INDEX "auth_apikey_metadata_created_at_idx" ON "auth"."apikey" USING btree ("metadata","created_at");

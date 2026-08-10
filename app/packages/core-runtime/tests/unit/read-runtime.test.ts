@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 /* eslint-disable require-await, promise/prefer-await-to-callbacks, unicorn/no-useless-undefined -- The fake transaction mirrors Drizzle's callback and CRUD surface. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -14,7 +15,9 @@ import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoin
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
 
 const scope = Object.freeze({
-  authMethod: 'system' as const,
+  authBindingId: '00000000-0000-4000-8000-000000000005',
+  authContextRef: 'better-auth-session:read-runtime',
+  authMethod: 'session' as const,
   correlationId: 'correlation-1',
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
@@ -105,6 +108,13 @@ const makeHarness = (
           })),
         );
       },
+      tenants: ({ tenantIds }) =>
+        Effect.succeed(
+          tenantIds.map((key) => ({
+            decision: options.permissionDecision ?? ('unavailable' as const),
+            key,
+          })),
+        ),
     },
     { onStage: (stage) => stages.push(stage) },
   );
@@ -145,7 +155,7 @@ test('runs every gate before the handler and persists evidence before releasing 
   const result = await Effect.runPromise(
     harness.runtime.runRead({
       input: {},
-      principal: { authMethod: 'system', principalId: scope.principalId, tenantId: scope.tenantId },
+      principal: scope,
       registration: registration(),
       transport: { correlationId: scope.correlationId },
     }),
@@ -178,11 +188,7 @@ test('uses each denying Policy reference own declared HTTP status', async () => 
         Effect.flip(
           harness.runtime.runRead({
             input: {},
-            principal: {
-              authMethod: 'system',
-              principalId: scope.principalId,
-              tenantId: scope.tenantId,
-            },
+            principal: scope,
             registration: governed,
             transport: { correlationId: scope.correlationId },
           }),
@@ -225,7 +231,9 @@ test('executes every governed access kind and computes hash-only query evidence 
             harness.runtime.runRead({
               input: {},
               principal: {
-                authMethod: 'system',
+                authBindingId: '00000000-0000-4000-8000-000000000005',
+                authContextRef: 'better-auth-session:read-runtime',
+                authMethod: 'session',
                 legalEntityId,
                 principalId: scope.principalId,
                 tenantId: scope.tenantId,
@@ -236,7 +244,7 @@ test('executes every governed access kind and computes hash-only query evidence 
           ),
           [],
         );
-        assert.match(String(harness.evidenceRows()[0]?.queryHash), /^[\da-f]{64}$/u);
+        assert.match(String(harness.evidenceRows()[0]?.['queryHash']), /^[\da-f]{64}$/u);
       },
     ),
   );
@@ -271,7 +279,9 @@ test('preserves typed result-validation failure across transaction rollback', as
       harness.runtime.runRead({
         input: {},
         principal: {
-          authMethod: 'system',
+          authBindingId: '00000000-0000-4000-8000-000000000005',
+          authContextRef: 'better-auth-session:read-runtime',
+          authMethod: 'session',
           principalId: scope.principalId,
           tenantId: scope.tenantId,
         },
@@ -290,11 +300,7 @@ test('never releases an allowed result when required evidence persistence fails'
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authMethod: 'system',
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: scope,
         registration: registration(),
         transport: { correlationId: scope.correlationId },
       }),
@@ -326,11 +332,7 @@ test('preserves scoped service-factory unavailability and never invokes the hand
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authMethod: 'system',
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: scope,
         registration: unavailableRegistration,
         transport: { correlationId: scope.correlationId },
       }),
@@ -366,7 +368,9 @@ test('persists sanitized permission denial and never invokes the private handler
       harness.runtime.runRead({
         input: {},
         principal: {
-          authMethod: 'system',
+          authBindingId: '00000000-0000-4000-8000-000000000005',
+          authContextRef: 'better-auth-session:read-runtime',
+          authMethod: 'session',
           legalEntityId,
           principalId: scope.principalId,
           tenantId: scope.tenantId,
@@ -415,7 +419,13 @@ test('derives the authorized resource from decoded input and ignores conflicting
   const result = await Effect.runPromise(
     harness.runtime.runRead({
       input: target,
-      principal: { ...scope, legalEntityId },
+      principal: {
+        ...scope,
+        authBindingId: '00000000-0000-4000-8000-000000000005',
+        authContextRef: 'better-auth-session:read-runtime',
+        authMethod: 'session',
+        legalEntityId,
+      },
       registration: targetRegistration,
       transport: {
         correlationId: scope.correlationId,
@@ -441,11 +451,7 @@ test('rejects handler-controlled hashes in metadata-only evidence', async () => 
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authMethod: 'system',
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: scope,
         registration: unboundedEvidence,
         transport: { correlationId: scope.correlationId },
       }),
@@ -473,11 +479,7 @@ test('persists late definite denial after rolling back the owner transaction', a
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: {
-          authMethod: 'system',
-          principalId: scope.principalId,
-          tenantId: scope.tenantId,
-        },
+        principal: scope,
         registration: lateDenial,
         transport: { correlationId: scope.correlationId },
       }),
@@ -520,7 +522,13 @@ test('does not release generated search candidates denied by result-level author
     Effect.flip(
       harness.runtime.runRead({
         input: {},
-        principal: { ...scope, legalEntityId },
+        principal: {
+          ...scope,
+          authBindingId: '00000000-0000-4000-8000-000000000005',
+          authContextRef: 'better-auth-session:read-runtime',
+          authMethod: 'session',
+          legalEntityId,
+        },
         registration: searchRegistration,
         transport: { correlationId: scope.correlationId },
       }),
@@ -560,11 +568,7 @@ test('preserves declared owner read availability and not-found failures but sani
         Effect.flip(
           harness.runtime.runRead({
             input: {},
-            principal: {
-              authMethod: 'system',
-              principalId: scope.principalId,
-              tenantId: scope.tenantId,
-            },
+            principal: scope,
             registration: failingRegistration,
             transport: { correlationId: scope.correlationId },
           }),

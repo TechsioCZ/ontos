@@ -1,7 +1,14 @@
+// @effect-diagnostics asyncFunction:off
 /* eslint-disable complexity -- The resolver intentionally keeps the fail-closed gate order visible. */
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect } from 'effect';
+import { alias } from 'drizzle-orm/pg-core';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import {
+  isTrustedSupportRecoveryPrincipalContext,
+  isTrustedSystemPrincipalContext,
+  preserveSystemPrincipalContextTrust,
+} from '../auth/system-principal-context-provenance.ts';
 import { legalEntities, principalAuthBindings, principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 import {
@@ -29,6 +36,8 @@ interface PersistedScopeRecord {
   readonly legalEntityTenantId: null | string;
   readonly principalStatus: null | string;
   readonly principalTenantId: null | string;
+  readonly impersonatorStatus?: null | string;
+  readonly impersonatorTenantId?: null | string;
   readonly tenantStatus: null | string;
 }
 
@@ -39,6 +48,13 @@ export interface OperationalScopeRepository {
 }
 
 export interface LegalEntityScopeAccess {
+  readonly tenants?: (input: {
+    readonly permission: 'access' | 'impersonate' | 'manage_identity';
+    readonly principalId: string;
+    readonly tenantIds: readonly string[];
+  }) => Effect.Effect<
+    readonly { readonly decision: 'allowed' | 'denied' | 'unavailable'; readonly key: string }[]
+  >;
   readonly legalEntities: (input: {
     readonly legalEntityIds: readonly string[];
     readonly principalId: string;
@@ -77,12 +93,15 @@ export const makeOperationalScopeRepository = (database: {
           reason: 'The operation context could not be revalidated',
         }),
       try: async () => {
+        const impersonators = alias(principals, 'impersonators');
         const [record] = await database.executor
           .select({
             bindingPrincipalId: principalAuthBindings.principalId,
             bindingRevokedAt: principalAuthBindings.revokedAt,
             bindingStatus: principalAuthBindings.status,
             bindingTenantId: principalAuthBindings.tenantId,
+            impersonatorStatus: impersonators.status,
+            impersonatorTenantId: impersonators.tenantId,
             legalEntityStatus: legalEntities.status,
             legalEntityTenantId: legalEntities.tenantId,
             principalStatus: principals.status,
@@ -96,6 +115,15 @@ export const makeOperationalScopeRepository = (database: {
               eq(principals.tenantId, tenants.tenantId),
               eq(principals.principalId, principal.principalId),
             ),
+          )
+          .leftJoin(
+            impersonators,
+            principal.impersonatedByPrincipalId === undefined
+              ? eq(impersonators.principalId, '00000000-0000-0000-0000-000000000000')
+              : and(
+                  eq(impersonators.tenantId, principal.tenantId),
+                  eq(impersonators.principalId, principal.impersonatedByPrincipalId),
+                ),
           )
           .leftJoin(
             principalAuthBindings,
@@ -126,6 +154,8 @@ export const makeOperationalScopeRepository = (database: {
             bindingRevokedAt: null,
             bindingStatus: null,
             bindingTenantId: null,
+            impersonatorStatus: null,
+            impersonatorTenantId: null,
             legalEntityStatus: null,
             legalEntityTenantId: null,
             principalStatus: null,
@@ -144,6 +174,7 @@ export const makeOperationalScopeResolver = (
   resolve: (input) =>
     Effect.gen(function* resolveOperationalScope() {
       const { principal } = input;
+      const supportRecovery = isTrustedSupportRecoveryPrincipalContext(principal);
       if (input.correlationId.length === 0) {
         return yield* new OperationContextInvalid({
           code: 'operation_context_invalid',
@@ -162,6 +193,12 @@ export const makeOperationalScopeResolver = (
           reason: 'This operation does not accept legal-entity context',
         });
       }
+      if (principal.authMethod === 'system' && !isTrustedSystemPrincipalContext(principal)) {
+        return yield* new OperationAuthenticationRequired({
+          code: 'operation_authentication_required',
+          reason: 'The system principal context is not trusted',
+        });
+      }
       if (principal.authMethod !== 'system' && principal.authBindingId === undefined) {
         return yield* new OperationAuthenticationRequired({
           code: 'operation_authentication_required',
@@ -171,9 +208,10 @@ export const makeOperationalScopeResolver = (
 
       const persisted = yield* repository.load(principal);
       if (
-        persisted.tenantStatus !== 'active' ||
-        persisted.principalStatus !== 'active' ||
-        persisted.principalTenantId !== principal.tenantId
+        persisted.principalTenantId !== principal.tenantId ||
+        persisted.tenantStatus === null ||
+        (!supportRecovery &&
+          (persisted.tenantStatus !== 'active' || persisted.principalStatus !== 'active'))
       ) {
         return yield* new OperationContextDenied({
           code: 'operation_context_denied',
@@ -182,15 +220,50 @@ export const makeOperationalScopeResolver = (
       }
       if (
         principal.authBindingId !== undefined &&
-        (persisted.bindingStatus !== 'active' ||
-          persisted.bindingRevokedAt !== null ||
-          persisted.bindingTenantId !== principal.tenantId ||
-          persisted.bindingPrincipalId !== principal.principalId)
+        (persisted.bindingTenantId !== principal.tenantId ||
+          persisted.bindingPrincipalId !== principal.principalId ||
+          (!supportRecovery &&
+            (persisted.bindingStatus !== 'active' || persisted.bindingRevokedAt !== null)))
       ) {
         return yield* new OperationAuthenticationRequired({
           code: 'operation_authentication_required',
           reason: 'The authenticated principal binding is no longer valid',
         });
+      }
+      if (principal.authMethod === 'support_impersonation') {
+        if (
+          principal.impersonatedByPrincipalId === undefined ||
+          persisted.impersonatorStatus !== 'active' ||
+          persisted.impersonatorTenantId !== principal.tenantId
+        ) {
+          return yield* new OperationContextDenied({
+            code: 'operation_context_denied',
+            reason: 'The support administrator is no longer active in this tenant',
+          });
+        }
+        if (contextAccess.tenants === undefined) {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Support authorization is temporarily unavailable',
+          });
+        }
+        const [supportDecision] = yield* contextAccess.tenants({
+          permission: 'impersonate',
+          principalId: principal.impersonatedByPrincipalId,
+          tenantIds: [principal.tenantId],
+        });
+        if (supportDecision?.decision === 'denied') {
+          return yield* new OperationContextDenied({
+            code: 'operation_context_denied',
+            reason: 'Support impersonation permission was revoked',
+          });
+        }
+        if (supportDecision?.decision !== 'allowed') {
+          return yield* new OperationContextUnavailable({
+            code: 'operation_context_unavailable',
+            reason: 'Support authorization is temporarily unavailable',
+          });
+        }
       }
       if (
         principal.legalEntityId !== undefined &&
@@ -221,10 +294,13 @@ export const makeOperationalScopeResolver = (
           });
         }
       }
-      return Object.freeze({
-        ...principal,
-        correlationId: input.correlationId,
-        ...(input.traceId === undefined ? {} : { traceId: input.traceId }),
-      });
+      return preserveSystemPrincipalContextTrust(
+        principal,
+        Object.freeze({
+          ...principal,
+          correlationId: input.correlationId,
+          ...(input.traceId === undefined ? {} : { traceId: input.traceId }),
+        }),
+      );
     }),
 });

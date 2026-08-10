@@ -21,12 +21,60 @@ receive or import a database executor.
   owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
 Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
-and active tenant selection—are Shell-owned authentication mechanics, not canonical business-state
+active tenant selection, API-key provider mechanics, and mechanical impersonation-session
+creation/restoration—are Shell-owned authentication mechanics, not canonical business-state
 mutations. They use the strict typed Auth BFF and must not update Core business tables or emit
 Domain Events. Core Principal Auth Bindings remain the tenant-access authority, and a selected
 tenant ID stored on the Auth session grants no permission. Any later canonical Core or
 MicroVertical state change still requires an Action; authentication mechanics do not provide a
 bypass.
+
+All Core identity changes use generated restricted `core.identity.*` Actions: non-human principal
+creation/status, self or managed API-key binding/status, and requested/started/stopped support
+checkpoints. Provider key IDs may appear only in private Shell orchestration and the binding Action
+payload; raw keys, hashes, cookies, provider user IDs, and session tokens may not. Identity handlers
+record invariant reads as Data Access Events. Support checkpoint handlers additionally attach the
+safe reason, original/effective principal IDs, checkpoint, and optional safe session reference to
+the sensitive `action.executed` evidence; the audit row supplies tenant, timestamp, and Action
+identity.
+
+Restricted Action execution and tenant role authorization are independent grants. The self-key
+Actions require their explicit Action executor. Principal creation/status and managed-key mutations
+require both their Action executor and tenant `manage_identity`; support start requires the support
+checkpoint executor and tenant `impersonate`. Provision Action relations with the lossless object ID
+from `toSpiceDbActionObjectId`, never a hand-maintained alternate encoding, and remove them when the
+role or workload authorization is revoked. Bootstrap `allowed-principal` tuples are test-only.
+The generated Action descriptor declares the additional tenant permission, and Core evaluates it
+inside the canonical Action authorization boundary after the executor check. A definite tenant-role
+denial produces the same durable permission-denial outcome; an indeterminate check fails retryably.
+Only a decoded support `stopped` checkpoint omits the continuing `impersonate` requirement so secure
+termination remains possible, while its Action executor check is still mandatory.
+
+Provider cleanup is not an Action retry disguised as a new mutation. Shell compares the governed
+Core binding status with Auth's enabled metadata, reports disagreement as `cleanupPending`, and may
+retry only the provider mechanic when Core already holds the requested terminal state. A rotation
+must never return a retryable failure while leaving a newly active secret undisclosed: it first
+attempts to revoke the replacement, and if that rollback cannot be proven it returns the one-time
+secret with cleanup debt. Newly issued provider keys carry a private mechanical
+`binding_pending_v1` marker from the same provider insert that creates the credential. Shell clears
+the marker after it observes the Core binding; a repeated issuance reconciles any retained marker
+against Core and disables an orphan before creating another key. Each marker is scoped by the
+trusted tenant and issuing Principal and remains leased for five minutes, including retries with the
+same caller idempotency key, so concurrent requests cannot reclaim a credential that is still being
+bound. The marker is neither an OntOS permission nor public metadata.
+Stale-marker lookup is tenant/issuer/staleness-filtered and indexed in Auth, processes at most one
+bounded batch per request, and requires a retry before issuance when more cleanup remains.
+
+Support start creates an Auth-owned non-secret recovery record after the provider session is
+initialized and before the started checkpoint commits; support stop therefore always has durable
+recovery state before Better Auth deletes or expires the impersonated session. The record carries
+only safe correlation, OntOS principal/binding IDs, reason,
+tenant, and safe session reference—not a token or cookie. Stopped evidence is idempotent;
+post-restore evidence or recovery cleanup failure still forwards the restored cookie and a repeated
+stop resumes the checkpoint. The recovery context is accepted only for the exact generated Action
+and a decoded `stopped` payload; it still performs the Action's normal SpiceDB permission check.
+Mechanical session termination therefore remains independent of evidence availability, while a
+denied or unavailable checkpoint remains pending instead of fabricating authorization.
 
 ## Invocation Lifecycle
 
@@ -80,6 +128,7 @@ This increment resolves uncertain commits through an explicit server-side commit
 
 - Persist a successful result Audit Event for every committed Action. Generate any additional successful audit checkpoints required by the Action's evidence profile.
 - Define every expected domain failure, each permitted Domain Event type and payload schema, and the Data Access evidence policy as part of the Action descriptor. The policy—not handler input—selects `metadata_only`, `hash_only`, or `redacted_payload`; this runtime does not accept `stored_artifact` until Core can enforce its media, retention, classification, and encryption contract. An Action may instantiate zero or more declared Domain Events, and every instantiated Domain Event must be persisted. Core rejects undeclared error values, undeclared event types, invalid event payloads, and any event whose producer differs from the descriptor's owning module.
+- Any handler-recorded custom Audit evidence requires its own descriptor schema. Core rejects undeclared fields, invalid JSON, repeated capture, runtime-owned field replacement, and evidence larger than 4 KiB before persistence. The support checkpoint Action declares the only current custom evidence vocabulary.
 - Build idempotency request hashes from canonical decoded business payload, Action/schema identity, trusted tenant/principal scope, and target ResourceRef metadata only. Correlation, tracing, authentication transport, and idempotency metadata are not part of the business request hash.
 - Record a Data Access Event whenever Action processing reads business data whose result contributes to a successful response or write, including reads, lists, searches, exports, downloads, invariant checks, and repository lookups.
 - For a successful Action, persist the business updates, successful Audit Events, instantiated Domain Events, Data Access Events, Domain Event-linked Outbox Messages, and invocation success marker atomically in one business transaction.

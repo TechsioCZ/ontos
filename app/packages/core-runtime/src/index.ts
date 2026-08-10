@@ -10,17 +10,53 @@ export type { PrincipalResolutionError } from './auth/principal-resolver-errors.
 export {
   PrincipalResolver,
   PrincipalResolverLive,
+  ProviderSubjectSchema,
+  classifyApiKeyPrincipal,
   classifyAvailableTenants,
   classifyDefaultPrincipal,
   classifySelectedPrincipal,
   makePrincipalResolver,
 } from './auth/principal-resolver.ts';
 export type {
+  ApiKeyBindingAdministration,
   AvailableTenant,
   PrincipalResolutionRecord,
   PrincipalResolverShape,
+  ProviderSubject,
   ResolvedPrincipalIdentity,
 } from './auth/principal-resolver.ts';
+export {
+  SystemPrincipalContextDeniedError,
+  SystemPrincipalContextInvalidError,
+  SystemPrincipalContextUnavailableError,
+  makeSystemPrincipalContextResolver,
+  registerSystemWorkload,
+} from './auth/system-principal-context.ts';
+export {
+  SupportRecoveryPrincipalContextDeniedError,
+  SupportRecoveryPrincipalContextResolver,
+  SupportRecoveryPrincipalContextResolverLive,
+  SupportRecoveryPrincipalContextUnavailableError,
+  makeSupportRecoveryPrincipalContextResolver,
+} from './auth/support-recovery-principal-context.ts';
+export type {
+  SupportRecoveryPrincipalContextError,
+  SupportRecoveryPrincipalContextResolverShape,
+} from './auth/support-recovery-principal-context.ts';
+export type {
+  SystemPrincipalContextError,
+  SystemWorkloadRegistration,
+} from './auth/system-principal-context.ts';
+export {
+  IdentityLifecycleConflictError,
+  IdentityPersistenceUnavailableError,
+  IdentityTargetInvalidError,
+  PrincipalManagementError,
+} from './auth/principal-management-errors.ts';
+export {
+  managedPrincipalsRead,
+  selfApiKeyBindingsRead,
+} from './auth/principal-administration-reads.ts';
 export {
   LegalEntityContext,
   LegalEntityContextAmbiguousError,
@@ -53,8 +89,18 @@ export {
 export {
   ACTION_AUTH_METHODS,
   ACTION_INVOCATION_STATUSES,
+  BINDING_STATUSES,
+  BINDING_SUBJECT_TYPES,
   CORE_SCHEMA_NAME,
   CORE_TABLE_INVENTORY,
+  PRINCIPAL_KINDS,
+  PRINCIPAL_STATUSES,
+} from './db/schema.ts';
+export type {
+  BindingStatus,
+  BindingSubjectType,
+  PrincipalKind,
+  PrincipalStatus,
 } from './db/schema.ts';
 export {
   enableGovernedRls,
@@ -380,7 +426,14 @@ export type {
 } from './modules/runtime-registration.ts';
 
 // <generated-core-action-exports>
+export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
+export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';
+export { changePrincipalStatusAction } from './modules/actions/change-principal-status.action.ts';
 export { changeTenantModuleStateAction } from './modules/actions/change-tenant-module-state.action.ts';
+export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
+export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
+export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
+export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>
 
 export { defineOutboxWorker } from './outbox/definition.ts';

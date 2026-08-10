@@ -30,6 +30,25 @@ tenant, and checks the principal's legal-entity access. System/background operat
 explicit system entrypoint and `forbidden` legal-entity scope unless their approved descriptor and
 runtime contract state otherwise; they are not reachable through business handler capabilities.
 
+Mode-specific trusted context is closed and revalidated: sessions require an active user binding
+and `better-auth-session:` reference; API keys require the single active key binding and
+`better-auth-api-key:` reference; support impersonation uses the target as effective principal and
+binding while retaining the active original administrator plus continuing tenant `impersonate`
+permission; system work requires a branded registration and `job:{job}:run:{run}` reference with no
+binding, impersonator, or legal entity. Raw credentials and provider ownership never enter the
+scope, read evidence, gateway claims, or Core tables.
+
+Identity list endpoints are governed Core reads. Shell may join their authorized binding IDs to
+Auth-owned non-secret metadata, including terminal revoked bindings for administration, but strips
+the stable provider key ID before encoding a response. The one-key-one-binding database invariant
+prevents an API key from selecting another tenant or principal.
+
+Identity operations are tenant-level and use `legalEntityScope = optional`; resolving their trusted
+session context does not require an unrelated legal-entity selection. When a legal entity is present
+it remains subject to normal Core revalidation. API-key list responses derive provider cleanup debt
+from Core binding status versus Auth enabled state rather than hiding a partially completed
+transition.
+
 ## Scoped Owner Services
 
 Core owns the top-level transaction. It installs transaction-local `ontos.tenant_id` and, when

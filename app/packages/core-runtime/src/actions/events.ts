@@ -96,6 +96,7 @@ export interface CollectedOutboxMessage {
 }
 
 export interface ActionEvidenceSnapshot {
+  readonly auditEvidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>;
   readonly dataAccessEvents: readonly DataAccessEvent[];
   readonly domainEvents: readonly DomainEvent[];
   readonly outboxMessages: readonly CollectedOutboxMessage[];

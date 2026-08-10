@@ -77,7 +77,10 @@ export const decodeGatewayContextProtectedHeader = Schema.decodeUnknownEffect(
   { onExcessProperty: 'error' },
 );
 
-export const GatewayContextRequestSchema = Schema.Struct({ audience: gatewayAudience });
+export const GatewayContextRequestSchema = Schema.Struct({
+  audience: gatewayAudience,
+  legalEntityId: Schema.optionalKey(uuid),
+});
 export type GatewayContextRequest = Schema.Schema.Type<typeof GatewayContextRequestSchema>;
 
 export const GatewayContextResponseSchema = Schema.Struct({
@@ -109,10 +112,19 @@ export interface GatewayUnavailableProblem extends ProblemDetails {
 export interface GatewayInternalProblem extends ProblemDetails {
   readonly _tag: 'GatewayInternalProblem';
 }
+export interface GatewayForbiddenProblem extends ProblemDetails {
+  readonly _tag: 'GatewayForbiddenProblem';
+}
+export interface GatewayRateLimitedProblem extends ProblemDetails {
+  readonly _tag: 'GatewayRateLimitedProblem';
+  readonly retryAfterSeconds: number;
+}
 
 export type GatewayContextProblem =
   | GatewayAuthenticationRequiredProblem
   | GatewayAudienceInvalidProblem
+  | GatewayForbiddenProblem
+  | GatewayRateLimitedProblem
   | GatewayUnavailableProblem
   | GatewayInternalProblem;
 
@@ -143,24 +155,54 @@ export const GatewayInternalProblemSchema = Schema.TaggedStruct(
   'GatewayInternalProblem',
   problemDetailsFields,
 ).pipe(asProblemDetails, HttpApiSchema.status(500));
+export const GatewayForbiddenProblemSchema = Schema.TaggedStruct(
+  'GatewayForbiddenProblem',
+  problemDetailsFields,
+).pipe(asProblemDetails, HttpApiSchema.status(403));
+export const GatewayRateLimitedProblemSchema = Schema.TaggedStruct('GatewayRateLimitedProblem', {
+  ...problemDetailsFields,
+  retryAfterSeconds: Schema.Finite,
+}).pipe(asProblemDetails, HttpApiSchema.status(429));
 
-export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext').add(
-  HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {
-    error: [
-      GatewayAuthenticationRequiredProblemSchema,
-      GatewayAudienceInvalidProblemSchema,
-      GatewayUnavailableProblemSchema,
-      GatewayInternalProblemSchema,
-    ],
-    payload: GatewayContextRequestSchema,
-    success: GatewayContextResponseSchema,
-  }),
-);
+export const ApiKeyGatewayHeadersSchema = Schema.Struct({
+  'x-api-key': Schema.optionalKey(Schema.String),
+});
+
+export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
+  .add(
+    HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {
+      error: [
+        GatewayAuthenticationRequiredProblemSchema,
+        GatewayAudienceInvalidProblemSchema,
+        GatewayForbiddenProblemSchema,
+        GatewayUnavailableProblemSchema,
+        GatewayInternalProblemSchema,
+      ],
+      payload: GatewayContextRequestSchema,
+      success: GatewayContextResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {
+      error: [
+        GatewayAuthenticationRequiredProblemSchema,
+        GatewayAudienceInvalidProblemSchema,
+        GatewayForbiddenProblemSchema,
+        GatewayRateLimitedProblemSchema,
+        GatewayUnavailableProblemSchema,
+        GatewayInternalProblemSchema,
+      ],
+      headers: ApiKeyGatewayHeadersSchema,
+      payload: GatewayContextRequestSchema,
+      success: GatewayContextResponseSchema,
+    }),
+  );
 
 export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(GatewayContextApiGroup);
 
 export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
+  issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
 } as const;
@@ -210,4 +252,18 @@ export const issueGatewayContext = (
 ): GatewayContextClientEffect<GatewayContextResponse> =>
   createGatewayContextClient(options).pipe(
     Effect.flatMap((client) => client.gatewayContext.issueGatewayContext({ payload })),
+  );
+
+export const issueApiKeyGatewayContext = (
+  rawKey: string,
+  payload: GatewayContextRequest,
+  options: Omit<GatewayContextClientOptions, 'cookie'> = {},
+): GatewayContextClientEffect<GatewayContextResponse> =>
+  createGatewayContextClient(options).pipe(
+    Effect.flatMap((client) =>
+      client.gatewayContext.issueApiKeyGatewayContext({
+        headers: { 'x-api-key': rawKey },
+        payload,
+      }),
+    ),
   );

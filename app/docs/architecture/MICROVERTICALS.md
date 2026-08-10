@@ -109,6 +109,27 @@ must be revalidated against an active binding, Principal, and Tenant on every se
 This does not introduce a global Principal, Better Auth Organization/member tables, an Auth
 MicroVertical, or a generic context store.
 
+API-key callers terminate at Shell using `X-API-Key`. Better Auth verifies the credential and
+returns its private stable key ID; Core resolves exactly one active binding; Shell then issues the
+same 300-second assertion for one explicit MicroVertical audience. The key ID remains private join
+data and the raw key never crosses Shell. Separate keys are required for separate tenant/principal
+bindings.
+
+Support impersonation is tenant-local. The assertion and every receiving operation identify the
+target as effective principal and the original administrator as impersonator; authorization and
+Policies use the target. Both identities and support permission are revalidated. Trusted system
+jobs bypass neither boundary: they are constructed inside Core from a branded workload registration
+and active configured `system` or explicitly approved `service` principal, and are not gateway or
+HTTP capabilities.
+
+Stopping impersonation remains available when either identity or support permission changed after
+start. Auth writes a bounded non-secret recovery record before the started checkpoint completes,
+retains it through provider restoration or expiry, always forwards the restored session cookie, and
+retries the stopped Action checkpoint from the original session.
+This recovery table is private Auth mechanics and never becomes a MicroVertical contract or generic
+identity store. Recovery relaxes only the historical active-session validation needed to describe
+the stopped event; the restricted Action still requires its explicit SpiceDB permission.
+
 Authenticated Shell composition also requires exactly one active, tenant-owned, authorized legal
 entity persisted on that session. Tenant changes clear the legal entity; stale, cross-tenant,
 inactive, or newly denied selections fail closed. Browser switch payloads contain only the requested

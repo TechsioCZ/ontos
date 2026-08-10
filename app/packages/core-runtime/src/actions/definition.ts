@@ -17,6 +17,7 @@ const actionServiceFactories = new WeakMap<object, unknown>();
 
 export type ActionIdempotencyRule = 'optional' | 'required';
 export type ActionAuditProfile = 'minimal' | 'sensitive' | 'standard';
+export type ActionTenantPermission = 'impersonate' | 'manage_identity';
 
 export interface ActionDescriptor<
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
@@ -33,6 +34,7 @@ export interface ActionDescriptor<
    * target resources must never replace or derive it.
    */
   readonly actionKey: string;
+  readonly auditEvidenceSchema?: Schema.ConstraintDecoder<unknown, never>;
   readonly auditProfile: ActionAuditProfile;
   readonly domainErrorSchema: DomainErrorSchema;
   readonly domainEvents: DomainEvents;
@@ -44,6 +46,13 @@ export interface ActionDescriptor<
   readonly policies: readonly ActionPolicy<PayloadSchema['Type'], NoInfer<Owner>>[];
   readonly resultSchema: ResultSchema;
   readonly schemaVersion: string;
+  /**
+   * Declares an additional tenant-role permission required for the decoded payload.
+   * Returning undefined means the Action executor relation is sufficient for that payload.
+   */
+  readonly tenantPermission?: (
+    payload: PayloadSchema['Type'],
+  ) => ActionTenantPermission | undefined;
 }
 
 export type ActionHandler<

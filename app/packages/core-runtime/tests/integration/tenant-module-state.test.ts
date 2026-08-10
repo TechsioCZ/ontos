@@ -15,6 +15,7 @@ import {
   actionInvocations,
   auditEvents,
   dataAccessEvents,
+  principalAuthBindings,
   principals,
   tenantModuleStateChanges,
   tenantModuleStates,
@@ -31,6 +32,8 @@ const tenantOne = randomUUID();
 const tenantTwo = randomUUID();
 const principalOne = randomUUID();
 const principalTwo = randomUUID();
+const bindingOne = randomUUID();
+const bindingTwo = randomUUID();
 const tenantIds = [tenantOne, tenantTwo] as const;
 
 type DatabaseShape = Parameters<typeof makeActionRuntime>[0];
@@ -145,6 +148,9 @@ const cleanup = () =>
     await database.executor
       .delete(actionInvocations)
       .where(inArray(actionInvocations.tenantId, tenantIds));
+    await database.executor
+      .delete(principalAuthBindings)
+      .where(inArray(principalAuthBindings.tenantId, tenantIds));
     await database.executor.delete(principals).where(inArray(principals.tenantId, tenantIds));
     await database.executor.delete(tenants).where(inArray(tenants.tenantId, tenantIds));
   });
@@ -184,6 +190,26 @@ before(async () => {
         tenantId: tenantTwo,
       },
     ]);
+    await database.executor.insert(principalAuthBindings).values([
+      {
+        principalAuthBindingId: bindingOne,
+        principalId: principalOne,
+        provider: 'better_auth',
+        providerSubjectId: `tenant-module-state-user-${principalOne}`,
+        status: 'active',
+        subjectType: 'user',
+        tenantId: tenantOne,
+      },
+      {
+        principalAuthBindingId: bindingTwo,
+        principalId: principalTwo,
+        provider: 'better_auth',
+        providerSubjectId: `tenant-module-state-user-${principalTwo}`,
+        status: 'active',
+        subjectType: 'user',
+        tenantId: tenantTwo,
+      },
+    ]);
   });
 });
 
@@ -194,6 +220,8 @@ const unconfiguredPermission = {
 };
 
 const principal = (tenantId = tenantOne, principalId = principalOne) => ({
+  authBindingId: tenantId === tenantOne ? bindingOne : bindingTwo,
+  authContextRef: `better-auth-session:tenant-module-state-${principalId}`,
   authMethod: 'session' as const,
   principalId,
   tenantId,

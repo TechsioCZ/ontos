@@ -1,9 +1,11 @@
+/* eslint-disable no-await-in-loop -- Sequential mode assertions retain the failing principal kind. */
 import assert from 'node:assert/strict';
 // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off
 import test from 'node:test';
 import { Effect } from 'effect';
 import {
   classifyAvailableTenants,
+  classifyApiKeyPrincipal,
   classifyDefaultPrincipal,
   classifySelectedPrincipal,
   makePrincipalResolver,
@@ -18,6 +20,7 @@ const activeRecord: PrincipalResolutionRecord = {
   bindingStatus: 'active',
   displayName: 'Ada Lovelace',
   principalId: 'principal-1',
+  principalKind: 'human',
   principalStatus: 'active',
   tenantId: 'tenant-1',
   tenantName: 'Zeta tenant',
@@ -86,12 +89,14 @@ test('lists and resolves one active tenant binding', async () => {
     authBindingId: 'binding-1',
     displayName: 'Ada Lovelace',
     principalId: 'principal-1',
+    principalKind: 'human',
     tenantId: 'tenant-1',
   });
   assert.deepEqual(await Effect.runPromise(classifySelectedPrincipal([activeRecord], 'tenant-1')), {
     authBindingId: 'binding-1',
     displayName: 'Ada Lovelace',
     principalId: 'principal-1',
+    principalKind: 'human',
     tenantId: 'tenant-1',
   });
 });
@@ -119,6 +124,7 @@ test('chooses the oldest eligible binding and breaks creation ties by tenant ID'
     authBindingId: 'binding-1',
     displayName: 'Tie winner',
     principalId: 'principal-0',
+    principalKind: 'human',
     tenantId: 'tenant-0',
   });
 });
@@ -136,12 +142,39 @@ test('resolves only the exact eligible selected tenant', async () => {
       authBindingId: 'binding-1',
       displayName: 'Grace Hopper',
       principalId: 'principal-2',
+      principalKind: 'human',
       tenantId: 'tenant-2',
     },
   );
   assert.equal(
     await failureTag(classifySelectedPrincipal([activeRecord, selected], 'foreign-tenant')),
     'PrincipalBindingMissingError',
+  );
+});
+
+test('rejects Better Auth user bindings to non-human principals', async () => {
+  for (const principalKind of ['service', 'integration', 'agent', 'system'] as const) {
+    const record = { ...activeRecord, principalKind };
+    assert.equal(await failureTag(classifyDefaultPrincipal([record])), 'PrincipalInactiveError');
+    assert.equal(
+      await failureTag(classifySelectedPrincipal([record], record.tenantId)),
+      'PrincipalInactiveError',
+    );
+    assert.equal(await failureTag(classifyAvailableTenants([record])), 'PrincipalInactiveError');
+  }
+});
+
+test('resolves exactly one API-key subject for human, service, or integration principals', async () => {
+  for (const principalKind of ['human', 'service', 'integration'] as const) {
+    const resolved = await Effect.runPromise(
+      classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]),
+    );
+    assert.equal(resolved.principalKind, principalKind);
+    assert.equal(resolved.authBindingId, activeRecord.authBindingId);
+  }
+  assert.equal(
+    await failureTag(classifyApiKeyPrincipal([activeRecord, { ...activeRecord, tenantId: 't-2' }])),
+    'PrincipalBindingAmbiguousError',
   );
 });
 

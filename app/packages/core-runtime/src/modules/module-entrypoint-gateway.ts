@@ -1,7 +1,7 @@
 // @effect-diagnostics lazyEffect:off
-import { Context, Effect, Layer, Schema } from 'effect';
-import { TrustedPrincipalContextSchema } from '../actions/context.ts';
+import { Context, Effect, Layer } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
+import { decodeTrustedPrincipalContext } from '../auth/system-principal-context-provenance.ts';
 import type { ModuleEntrypointDescriptor } from './module-entrypoint.ts';
 import { ModuleStateGate, ModuleStateGateLive } from './module-state-gate.ts';
 import type { ModuleStateGateShape, ModuleStateSnapshot } from './module-state-gate.ts';
@@ -37,7 +37,7 @@ export const makeModuleEntrypointGateway = (
 ): ModuleEntrypointGatewayShape => ({
   check: gate.check,
   prepareSnapshot: (context, entrypoints) =>
-    Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(context).pipe(
+    decodeTrustedPrincipalContext(context).pipe(
       Effect.mapError(unavailable),
       Effect.flatMap((trustedContext) =>
         gate.prepareSnapshot(trustedContext.tenantId, entrypoints),

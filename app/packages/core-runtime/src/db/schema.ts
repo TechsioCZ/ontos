@@ -60,6 +60,18 @@ export const ACTION_AUTH_METHODS = [
 
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
+export const PRINCIPAL_KINDS = ['human', 'service', 'integration', 'agent', 'system'] as const;
+export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
+
+export const PRINCIPAL_STATUSES = ['active', 'disabled', 'archived'] as const;
+export type PrincipalStatus = (typeof PRINCIPAL_STATUSES)[number];
+
+export const BINDING_SUBJECT_TYPES = ['user', 'api_key'] as const;
+export type BindingSubjectType = (typeof BINDING_SUBJECT_TYPES)[number];
+
+export const BINDING_STATUSES = ['active', 'disabled', 'revoked'] as const;
+export type BindingStatus = (typeof BINDING_STATUSES)[number];
+
 export const coreSchema = pgSchema(CORE_SCHEMA_NAME);
 export const domainEventTenantSequence = coreSchema.sequence('domain_event_tenant_sequence_no_seq');
 
@@ -122,9 +134,9 @@ export const principals = coreSchema.table(
   {
     principalId: uuid('principal_id').defaultRandom().primaryKey(),
     tenantId: tenantId(),
-    kind: text('kind').notNull(),
+    kind: text('kind').$type<PrincipalKind>().notNull(),
     displayName: text('display_name').notNull(),
-    status: text('status').notNull(),
+    status: text('status').$type<PrincipalStatus>().notNull(),
     createdAt: createdAt(),
     disabledAt: timestamp('disabled_at', { withTimezone: true }),
   },
@@ -150,9 +162,9 @@ export const principalAuthBindings = coreSchema.table(
     tenantId: tenantId(),
     principalId: principalId(),
     provider: text('provider').notNull(),
-    subjectType: text('subject_type').notNull(),
+    subjectType: text('subject_type').$type<BindingSubjectType>().notNull(),
     providerSubjectId: text('provider_subject_id').notNull(),
-    status: text('status').notNull(),
+    status: text('status').$type<BindingStatus>().notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
@@ -165,6 +177,9 @@ export const principalAuthBindings = coreSchema.table(
       table.subjectType,
       table.providerSubjectId,
     ),
+    uniqueIndex('core_auth_bindings_api_key_subject_global_uk')
+      .on(table.provider, table.subjectType, table.providerSubjectId)
+      .where(sql`${table.subjectType} = 'api_key'`),
     index('core_auth_bindings_principal_idx').on(table.principalId),
     foreignKey({
       columns: [table.tenantId, table.principalId],
@@ -176,6 +191,10 @@ export const principalAuthBindings = coreSchema.table(
     check(
       'core_auth_bindings_status_ck',
       sql`${table.status} in ('active', 'revoked', 'disabled')`,
+    ),
+    check(
+      'core_auth_bindings_lifecycle_ck',
+      sql`(${table.status} = 'revoked' and ${table.revokedAt} is not null) or (${table.status} in ('active', 'disabled') and ${table.revokedAt} is null)`,
     ),
   ],
 );

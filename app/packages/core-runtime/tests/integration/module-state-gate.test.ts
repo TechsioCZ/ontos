@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit } from 'effect';
+import type { Context } from 'effect';
+import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { tenantModuleStates, tenants } from '../../src/db/schema.ts';
@@ -18,7 +20,7 @@ import {
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
 
-type DatabaseShape = Parameters<typeof makeTenantModuleStateService>[0];
+type DatabaseShape = Context.Service.Shape<typeof CoreDatabase>;
 
 const withDatabase = <Value, Error>(
   operation: (database: DatabaseShape) => Effect.Effect<Value, Error>,

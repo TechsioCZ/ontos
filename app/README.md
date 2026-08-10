@@ -212,6 +212,51 @@ The Shell authentication API is the deliberate Shell-owned instance of this topo
 Authentication and session mechanics remain a Shell/Core capability and must not be
 represented by an Auth MicroVertical.
 
+The Shell is also the only raw-credential boundary for API keys. Better Auth owns key creation,
+hashes, counters, expiry, enabled state, and mechanical support sessions in the private `auth`
+schema. Core stores only stable provider-subject bindings and enforces one Better Auth key ID per
+OntOS tenant/principal binding. External callers exchange `X-API-Key` for the existing five-minute,
+single-audience assertion; MicroVerticals receive the assertion, never the raw key. Human remains
+the V0 kind for internal, external, and guest users; SpiceDB roles and future Party relationships
+express access differences.
+
+Tenant administrators provision `service`, `integration`, and `system` principals through the
+generated `core.identity.*` Actions. API-key issuance binds the provider key before returning its
+secret; binding failure disables it. Disable/revoke closes Core first, re-enable activates Core
+last, and administration lists report `cleanupPending` whenever Core usability and provider enabled
+state disagree so cleanup can be retried without repeating a committed Core transition. Rotation
+either closes the old binding, revokes the replacement before failing, or returns the replacement
+secret with cleanup debt so an active one-time credential is never stranded. Issuance retries first
+reconcile Auth's private binding-pending marker so a failed bind cannot leave an undiscoverable
+active provider key. Markers are leased for five minutes and scoped by trusted tenant and issuer,
+so a concurrent retry cannot disable a key that is still being bound. Cleanup lookup is indexed and
+bounded; another batch defers issuance to a retry. Rotation re-reads Core state after uncertain
+provider cleanup and never withholds the only definitely active replacement. Trusted background jobs use
+a constructor-produced workload registration plus configured tenant/principal
+UUIDs and a bounded non-secret run reference—never HTTP input or a fake Better Auth account.
+
+Support IDs are configured mechanically through `BETTER_AUTH_SUPPORT_USER_IDS` as a comma-separated
+list outside source control. Start and stop still require tenant-local SpiceDB permission and active
+Core user bindings. Impersonation records target/original OntOS principal IDs and safe session
+references; it never exposes provider user IDs, reasons, cookies, or session tokens to clients.
+Before the started checkpoint completes, Auth durably records a non-secret recovery row and retains
+it through provider stop or session expiry. The restored cookie is forwarded on every post-stop
+outcome, and repeated stop completes the
+idempotent stopped checkpoint and removes recovery state. That recovery checkpoint retains the
+restricted Action's normal SpiceDB permission check; session termination succeeds independently and
+evidence remains pending when authorization or storage is unavailable.
+
+Restricted identity Actions also require explicit SpiceDB executor provisioning. Provision
+relations using the exact object ID returned by Core's `toSpiceDbActionObjectId(actionKey)`:
+`action:<object-id>#executor@principal:<principal-uuid>`. Eligible interactive users receive the
+`bind-self-api-key` and `set-self-api-key-binding-status` executors; tenant identity administrators
+receive the create/change and managed-key executors in addition to the separate tenant
+`identity_admin`/`manage_identity` relationship; support administrators receive
+`record-support-impersonation` in addition to tenant `support`/`impersonate`. A configured system
+Principal receives only the executor relations required by its registered jobs. Remove executor
+relations when the corresponding role or workload authorization is removed. The placeholder
+`allowed-principal` bootstrap tuples are test fixtures and are never production provisioning.
+
 When an existing MicroVertical BFF begins accepting Shell-user Action calls, prepare its standard
 identity boundary exactly once:
 

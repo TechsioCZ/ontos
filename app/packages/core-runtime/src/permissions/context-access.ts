@@ -27,6 +27,11 @@ export interface ResourceAccessTarget {
 }
 
 export interface ContextAccessShape {
+  readonly tenants: (input: {
+    readonly permission: 'access' | 'impersonate' | 'manage_identity';
+    readonly principalId: string;
+    readonly tenantIds: readonly string[];
+  }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly legalEntities: (input: {
     readonly legalEntityIds: readonly string[];
     readonly principalId: string;
@@ -225,6 +230,16 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
         })),
         principalId,
       ),
+    tenants: ({ permission, principalId, tenantIds }) =>
+      checkBatch(
+        tenantIds.map((tenantId) => ({
+          key: tenantId,
+          permission,
+          resourceId: tenantId,
+          resourceType: 'tenant',
+        })),
+        principalId,
+      ),
   };
   return Object.freeze(service);
 };
@@ -241,6 +256,7 @@ const unavailableContextAccess = (): ContextAccessShape => {
           ),
         ),
       ),
+    tenants: ({ tenantIds }) => Effect.succeed(unavailable(tenantIds)),
   };
   return Object.freeze(service);
 };

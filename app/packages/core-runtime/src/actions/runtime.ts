@@ -1,4 +1,4 @@
-/* eslint-disable max-classes-per-file, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, and Effect dual flatMap API are deliberate. */
+/* eslint-disable max-classes-per-file, promise/prefer-await-to-callbacks, unicorn/no-array-method-this-argument -- The public Effect service, private sentinels, Effect callbacks, and Effect dual flatMap API are deliberate. */
 // @effect-diagnostics asyncFunction:off
 // Drizzle owns the Promise transaction callback; Effect exits are carried
 // through a private rollback signal so typed handler failures remain typed.
@@ -6,8 +6,12 @@ import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import { makeActionCollector } from './collector.ts';
-import { ActionTransportMetadataSchema, TrustedPrincipalContextSchema } from './context.ts';
+import { ActionTransportMetadataSchema } from './context.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
+import {
+  decodeTrustedPrincipalContext,
+  isTrustedSupportRecoveryPrincipalContext,
+} from '../auth/system-principal-context-provenance.ts';
 import {
   decodeActionPayload,
   decodeActionResult,
@@ -23,6 +27,7 @@ import {
   ActionIdempotencyKeyRequired,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
+  ActionPermissionCheckError,
   ActionPermissionDenied,
   ActionPayloadValidationError,
   ActionPolicyDenied,
@@ -161,6 +166,7 @@ export interface ActionRuntimeService {
 }
 
 export interface ActionRuntimeOptions {
+  readonly contextAccess?: Context.Service.Shape<typeof ContextAccess>;
   readonly moduleEntrypointGateway?: ModuleEntrypointGatewayShape;
   readonly moduleStateGate?: ModuleStateGateShape;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
@@ -267,6 +273,44 @@ const requestHashConflict = () =>
     reason: 'This idempotency key was already used for a different Action request',
   });
 
+const checkTenantActionPermission = (
+  contextAccess: Context.Service.Shape<typeof ContextAccess> | undefined,
+  principal: TrustedPrincipalContext,
+  requiredPermission: (() => 'impersonate' | 'manage_identity' | undefined) | undefined,
+): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> =>
+  Effect.suspend(() => {
+    const permission = requiredPermission?.();
+    if (permission === undefined) {
+      return Effect.succeed('allowed' as const);
+    }
+    if (contextAccess === undefined) {
+      return Effect.fail(
+        new ActionPermissionCheckError({
+          code: 'action_permission_check_failed',
+          reason: 'The authorization service could not determine permission safely',
+        }),
+      );
+    }
+    return contextAccess
+      .tenants({
+        permission,
+        principalId: principal.principalId,
+        tenantIds: [principal.tenantId],
+      })
+      .pipe(
+        Effect.flatMap(([decision]) =>
+          decision?.decision === 'allowed' || decision?.decision === 'denied'
+            ? Effect.succeed(decision.decision)
+            : Effect.fail(
+                new ActionPermissionCheckError({
+                  code: 'action_permission_check_failed',
+                  reason: 'The authorization service could not determine permission safely',
+                }),
+              ),
+        ),
+      );
+  });
+
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
   requestHash: string,
@@ -308,8 +352,25 @@ const verifyInvocation = (
 
 const validatePrincipal = (
   input: unknown,
+  actionRegistration?: object,
+  payload?: unknown,
 ): Effect.Effect<TrustedPrincipalContext, ActionTrustedContextValidationError> =>
-  Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(input).pipe(
+  decodeTrustedPrincipalContext(input).pipe(
+    Effect.filterOrFail(
+      (principal) =>
+        !isTrustedSupportRecoveryPrincipalContext(principal) ||
+        (actionRegistration !== undefined &&
+          isTrustedSupportRecoveryPrincipalContext(principal, actionRegistration) &&
+          typeof payload === 'object' &&
+          payload !== null &&
+          'checkpoint' in payload &&
+          payload.checkpoint === 'stopped'),
+      () =>
+        new ActionTrustedContextValidationError({
+          code: 'action_trusted_context_invalid',
+          reason: 'The support recovery context does not authorize this Action',
+        }),
+    ),
     Effect.mapError(
       () =>
         new ActionTrustedContextValidationError({
@@ -411,7 +472,7 @@ export const makeActionRuntime = (
       );
       notifyStage('payload_decoded');
 
-      const principal = yield* validatePrincipal(input.principal);
+      const principal = yield* validatePrincipal(input.principal, input.registration, payload);
       const transport = yield* validateTransport(input.transport);
       const scope = yield* operationalScopeResolver.resolve({
         correlationId: transport.correlationId,
@@ -489,25 +550,8 @@ export const makeActionRuntime = (
       // The trusted context already represents authentication. Authorization
       // uses only the immutable Action key and trusted principal identity.
       notifyStage('authentication_boundary');
-      const permissionDecision = yield* permission
-        .checkActionPermission({
-          actionKey: input.registration.descriptor.actionKey,
-          correlationId: transport.correlationId,
-          principalId: principal.principalId,
-        })
-        .pipe(
-          Effect.tapError((error) =>
-            Effect.annotateLogs(Effect.logError(error.reason), {
-              actionKey: input.registration.descriptor.actionKey,
-              correlationId: transport.correlationId,
-              invocationId: invocation.actionInvocationId,
-            }),
-          ),
-        );
-      notifyStage('permission_checked');
-
-      if (permissionDecision === 'denied') {
-        yield* repository
+      const rejectPermission = () =>
+        repository
           .rejectPermissionDenied(database.executor, {
             actionInvocationId: invocation.actionInvocationId,
             actionKey: input.registration.descriptor.actionKey,
@@ -539,11 +583,45 @@ export const makeActionRuntime = (
               }
               return Effect.void;
             }),
+            Effect.flatMap(() =>
+              Effect.fail(
+                new ActionPermissionDenied({
+                  code: 'action_permission_denied',
+                  reason: 'The principal is not permitted to execute this Action',
+                }),
+              ),
+            ),
           );
-        return yield* new ActionPermissionDenied({
-          code: 'action_permission_denied',
-          reason: 'The principal is not permitted to execute this Action',
-        });
+      const permissionDecision = yield* permission
+        .checkActionPermission({
+          actionKey: input.registration.descriptor.actionKey,
+          correlationId: transport.correlationId,
+          principalId: principal.principalId,
+        })
+        .pipe(
+          Effect.tapError((error) =>
+            Effect.annotateLogs(Effect.logError(error.reason), {
+              actionKey: input.registration.descriptor.actionKey,
+              correlationId: transport.correlationId,
+              invocationId: invocation.actionInvocationId,
+            }),
+          ),
+        );
+      notifyStage('permission_checked');
+
+      if (permissionDecision === 'denied') {
+        return yield* rejectPermission();
+      }
+
+      const tenantPermissionDecision = yield* checkTenantActionPermission(
+        options.contextAccess,
+        principal,
+        input.registration.descriptor.tenantPermission === undefined
+          ? undefined
+          : () => input.registration.descriptor.tenantPermission?.(payload),
+      );
+      if (tenantPermissionDecision === 'denied') {
+        return yield* rejectPermission();
       }
 
       notifyStage('policy_boundary');
@@ -697,11 +775,13 @@ export const makeActionRuntime = (
               input.registration.descriptor.domainEvents,
               input.registration.descriptor.owningModuleKey,
               input.registration.descriptor.accessEvidencePolicy,
+              input.registration.descriptor.auditEvidenceSchema,
             );
             const handlerContext = Object.freeze({
               actionInvocationId: lockedInvocation.actionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
+              recordAuditEvidence: collector.recordAuditEvidence,
               recordDataAccess: collector.recordDataAccess,
               scope,
               services,
@@ -888,6 +968,7 @@ export const ActionRuntimeLive = Layer.effect(
       permission,
       makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
       {
+        contextAccess,
         moduleEntrypointGateway,
         moduleStateGate,
       },

@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off
 /* eslint-disable max-classes-per-file, prefer-destructuring -- Shell composition owns one closed safe-failure vocabulary and keeps correlation access explicit. */
 import type {
   ContextAccessShape,

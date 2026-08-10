@@ -12,6 +12,7 @@ export interface SafeTenantIdentity {
   readonly email: string;
   readonly principalId: string;
   readonly tenantId: string;
+  readonly impersonating?: true;
 }
 
 export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
@@ -173,6 +174,152 @@ export interface MediaAttachmentResponse {
   readonly attached: true;
 }
 
+export const IdentityRequestHeadersSchema = Schema.Struct({
+  'idempotency-key': Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  ),
+});
+export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  kind: Schema.Literals(['service', 'integration', 'system']),
+});
+const principalStatus = Schema.Literals(['active', 'disabled', 'archived']);
+const identityReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+export const ChangePrincipalStatusPayloadSchema = Schema.Union([
+  Schema.Struct({
+    expectedStatus: principalStatus,
+    newStatus: Schema.Literal('active'),
+    principalId: Schema.String.check(Schema.isUUID()),
+    reason: Schema.optionalKey(identityReason),
+  }),
+  Schema.Struct({
+    expectedStatus: principalStatus,
+    newStatus: Schema.Literals(['disabled', 'archived']),
+    principalId: Schema.String.check(Schema.isUUID()),
+    reason: identityReason,
+  }),
+]);
+export const IssueApiKeyPayloadSchema = Schema.Struct({
+  name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
+});
+export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
+  ...IssueApiKeyPayloadSchema.fields,
+  principalId: Schema.String.check(Schema.isUUID()),
+});
+const MutableApiKeyBindingStatusSchema = Schema.Literals(['active', 'disabled']);
+const apiKeyStatusFields = {
+  authBindingId: Schema.String.check(Schema.isUUID()),
+  expectedStatus: MutableApiKeyBindingStatusSchema,
+};
+export const SetApiKeyStatusPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...apiKeyStatusFields,
+    newStatus: Schema.Literals(['active', 'disabled']),
+    reason: Schema.optionalKey(identityReason),
+  }),
+  Schema.Struct({
+    ...apiKeyStatusFields,
+    newStatus: Schema.Literal('revoked'),
+    reason: identityReason,
+  }),
+]);
+export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...apiKeyStatusFields,
+    newStatus: Schema.Literals(['active', 'disabled']),
+    principalId: Schema.String.check(Schema.isUUID()),
+    reason: Schema.optionalKey(identityReason),
+  }),
+  Schema.Struct({
+    ...apiKeyStatusFields,
+    newStatus: Schema.Literal('revoked'),
+    principalId: Schema.String.check(Schema.isUUID()),
+    reason: identityReason,
+  }),
+]);
+export const RotateApiKeyPayloadSchema = Schema.Struct({
+  name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
+  oldAuthBindingId: Schema.String.check(Schema.isUUID()),
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+});
+export const RotateManagedApiKeyPayloadSchema = Schema.Struct({
+  ...RotateApiKeyPayloadSchema.fields,
+  principalId: Schema.String.check(Schema.isUUID()),
+});
+export const ApiKeyLifecycleResponseSchema = Schema.Struct({
+  authBindingId: Schema.String.check(Schema.isUUID()),
+  cleanupPending: Schema.Boolean,
+  createdAt: Schema.String,
+  enabled: Schema.Boolean,
+  expiresAt: Schema.NullOr(Schema.String),
+  name: Schema.NullOr(Schema.String),
+  start: Schema.NullOr(Schema.String),
+});
+export const ApiKeyIssueResponseSchema = Schema.Struct({
+  ...ApiKeyLifecycleResponseSchema.fields,
+  secret: Schema.String.check(Schema.isMinLength(1)),
+});
+export const IdentityListPayloadSchema = Schema.Struct({
+  limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
+  offset: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
+});
+export const SelfApiKeyListResponseSchema = Schema.Struct({
+  items: Schema.Array(ApiKeyLifecycleResponseSchema),
+  nextOffset: Schema.NullOr(Schema.Finite),
+});
+export const ManagedApiKeyListItemSchema = Schema.Struct({
+  displayName: Schema.String,
+  key: Schema.NullOr(ApiKeyLifecycleResponseSchema),
+  kind: Schema.Literals(['service', 'integration']),
+  principalId: Schema.String.check(Schema.isUUID()),
+  principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
+});
+export const ManagedApiKeyListResponseSchema = Schema.Struct({
+  items: Schema.Array(ManagedApiKeyListItemSchema),
+  nextOffset: Schema.NullOr(Schema.Finite),
+});
+export const PrincipalMutationResponseSchema = Schema.Struct({
+  principalId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  status: Schema.String,
+});
+export const StartSupportImpersonationPayloadSchema = Schema.Struct({
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  targetPrincipalId: Schema.String.check(Schema.isUUID()),
+});
+export const SupportImpersonationResponseSchema = Schema.Struct({
+  active: Schema.Boolean,
+  targetPrincipalId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+});
+
+export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
+  typeof CreateNonHumanPrincipalPayloadSchema
+>;
+export type ChangePrincipalStatusPayload = Schema.Schema.Type<
+  typeof ChangePrincipalStatusPayloadSchema
+>;
+export type IssueApiKeyPayload = Schema.Schema.Type<typeof IssueApiKeyPayloadSchema>;
+export type IssueManagedApiKeyPayload = Schema.Schema.Type<typeof IssueManagedApiKeyPayloadSchema>;
+export type SetApiKeyStatusPayload = Schema.Schema.Type<typeof SetApiKeyStatusPayloadSchema>;
+export type SetManagedApiKeyStatusPayload = Schema.Schema.Type<
+  typeof SetManagedApiKeyStatusPayloadSchema
+>;
+export type RotateApiKeyPayload = Schema.Schema.Type<typeof RotateApiKeyPayloadSchema>;
+export type RotateManagedApiKeyPayload = Schema.Schema.Type<
+  typeof RotateManagedApiKeyPayloadSchema
+>;
+export type IdentityListPayload = Schema.Schema.Type<typeof IdentityListPayloadSchema>;
+export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleResponseSchema>;
+export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
+export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
+export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
+export type ManagedApiKeyListResponse = Schema.Schema.Type<typeof ManagedApiKeyListResponseSchema>;
+export type StartSupportImpersonationPayload = Schema.Schema.Type<
+  typeof StartSupportImpersonationPayloadSchema
+>;
+export type SupportImpersonationResponse = Schema.Schema.Type<
+  typeof SupportImpersonationResponseSchema
+>;
+
 interface ProblemDetails {
   readonly detail: string;
   readonly status: number;
@@ -256,6 +403,14 @@ export interface ShellPolicyUnprocessableProblem extends ProblemDetails {
   readonly _tag: 'ShellPolicyUnprocessableProblem';
 }
 
+export interface ShellInvalidRequestProblem extends ProblemDetails {
+  readonly _tag: 'ShellInvalidRequestProblem';
+}
+
+export interface ShellPreconditionRequiredProblem extends ProblemDetails {
+  readonly _tag: 'ShellPreconditionRequiredProblem';
+}
+
 export interface ShellCapabilityUnavailableProblem extends ProblemDetails {
   readonly _tag: 'ShellCapabilityUnavailableProblem';
   readonly retryable: true;
@@ -264,6 +419,22 @@ export interface ShellCapabilityUnavailableProblem extends ProblemDetails {
 export interface ShellInternalProblem extends ProblemDetails {
   readonly _tag: 'ShellInternalProblem';
 }
+export interface ShellRateLimitedProblem extends ProblemDetails {
+  readonly _tag: 'ShellRateLimitedProblem';
+  readonly retryAfterSeconds: number;
+}
+
+export type IdentityProblem =
+  | ShellAuthenticationRequiredProblem
+  | ShellTargetForbiddenProblem
+  | ShellTargetNotFoundProblem
+  | ShellInvalidRequestProblem
+  | ShellPreconditionRequiredProblem
+  | ShellPolicyConflictProblem
+  | ShellPolicyUnprocessableProblem
+  | ShellRateLimitedProblem
+  | ShellCapabilityUnavailableProblem
+  | ShellInternalProblem;
 
 export type ShellCompositionProblem =
   | ShellAuthenticationRequiredProblem
@@ -283,6 +454,7 @@ export type ShellTargetProblem =
 const safeTenantIdentityFields = {
   displayName: Schema.String,
   email: Schema.String,
+  impersonating: Schema.optionalKey(Schema.Literal(true)),
   principalId: Schema.String,
   tenantId: Schema.String,
 };
@@ -559,6 +731,16 @@ export const ShellPolicyUnprocessableProblemSchema = Schema.TaggedStruct(
   authenticationProblemFields,
 ).pipe(asProblemDetails, HttpApiSchema.status(422));
 
+export const ShellInvalidRequestProblemSchema = Schema.TaggedStruct(
+  'ShellInvalidRequestProblem',
+  authenticationProblemFields,
+).pipe(asProblemDetails, HttpApiSchema.status(400));
+
+export const ShellPreconditionRequiredProblemSchema = Schema.TaggedStruct(
+  'ShellPreconditionRequiredProblem',
+  authenticationProblemFields,
+).pipe(asProblemDetails, HttpApiSchema.status(428));
+
 export const ShellCapabilityUnavailableProblemSchema = Schema.TaggedStruct(
   'ShellCapabilityUnavailableProblem',
   { ...authenticationProblemFields, retryable: Schema.Literal(true) },
@@ -568,6 +750,23 @@ export const ShellInternalProblemSchema = Schema.TaggedStruct(
   'ShellInternalProblem',
   authenticationProblemFields,
 ).pipe(asProblemDetails, HttpApiSchema.status(500));
+export const ShellRateLimitedProblemSchema = Schema.TaggedStruct('ShellRateLimitedProblem', {
+  ...authenticationProblemFields,
+  retryAfterSeconds: Schema.Finite,
+}).pipe(asProblemDetails, HttpApiSchema.status(429));
+
+const identityErrors = [
+  ShellAuthenticationRequiredProblemSchema,
+  ShellTargetForbiddenProblemSchema,
+  ShellTargetNotFoundProblemSchema,
+  ShellInvalidRequestProblemSchema,
+  ShellPreconditionRequiredProblemSchema,
+  ShellPolicyConflictProblemSchema,
+  ShellPolicyUnprocessableProblemSchema,
+  ShellRateLimitedProblemSchema,
+  ShellCapabilityUnavailableProblemSchema,
+  ShellInternalProblemSchema,
+] as const;
 
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
@@ -604,6 +803,102 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             AuthenticationInternalProblemSchema,
           ],
           success: SignOutResponseSchema,
+        }),
+      ),
+  )
+  .add(
+    HttpApiGroup.make('identity')
+      .add(
+        HttpApiEndpoint.post('createNonHumanPrincipal', '/auth/identity/principals', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: CreateNonHumanPrincipalPayloadSchema,
+          success: PrincipalMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('changePrincipalStatus', '/auth/identity/principal-status', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ChangePrincipalStatusPayloadSchema,
+          success: PrincipalMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('issueSelfApiKey', '/auth/identity/api-keys/self', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: IssueApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listSelfApiKeys', '/auth/identity/api-keys/self/list', {
+          error: identityErrors,
+          payload: IdentityListPayloadSchema,
+          success: SelfApiKeyListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('issueManagedApiKey', '/auth/identity/api-keys/managed', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: IssueManagedApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listManagedApiKeys', '/auth/identity/api-keys/managed/list', {
+          error: identityErrors,
+          payload: IdentityListPayloadSchema,
+          success: ManagedApiKeyListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setSelfApiKeyStatus', '/auth/identity/api-keys/self/status', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetApiKeyStatusPayloadSchema,
+          success: ApiKeyLifecycleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setManagedApiKeyStatus', '/auth/identity/api-keys/managed/status', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetManagedApiKeyStatusPayloadSchema,
+          success: ApiKeyLifecycleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('rotateSelfApiKey', '/auth/identity/api-keys/self/rotate', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: RotateApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('rotateManagedApiKey', '/auth/identity/api-keys/managed/rotate', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: RotateManagedApiKeyPayloadSchema,
+          success: ApiKeyIssueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('startSupportImpersonation', '/auth/identity/impersonation/start', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: StartSupportImpersonationPayloadSchema,
+          success: SupportImpersonationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('stopSupportImpersonation', '/auth/identity/impersonation/stop', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          success: SupportImpersonationResponseSchema,
         }),
       ),
   )
@@ -745,16 +1040,29 @@ export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
   availableLegalEntitiesPath: '/shell-super-app-api/auth/legal-entities',
   availableTenantsPath: '/shell-super-app-api/auth/tenants',
+  changePrincipalStatusPath: '/shell-super-app-api/auth/identity/principal-status',
   compositionPath: '/shell-super-app-api/shell/composition',
+  createNonHumanPrincipalPath: '/shell-super-app-api/auth/identity/principals',
   currentSessionPath: '/shell-super-app-api/auth/session',
+  issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
+  issueManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed',
+  issueSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self',
+  listManagedApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/managed/list',
+  listSelfApiKeysPath: '/shell-super-app-api/auth/identity/api-keys/self/list',
   mediaAttachmentPath: '/shell-super-app-api/shell/resource/media-attachment',
   ownerId: 'shell-super-app',
   resolveModuleTargetPath: '/shell-super-app-api/shell/module-target',
   resourceDetailPath: '/shell-super-app-api/shell/resource',
+  rotateManagedApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/managed/rotate',
+  rotateSelfApiKeyPath: '/shell-super-app-api/auth/identity/api-keys/self/rotate',
   searchPath: '/shell-super-app-api/shell/search',
+  setManagedApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/managed/status',
+  setSelfApiKeyStatusPath: '/shell-super-app-api/auth/identity/api-keys/self/status',
   signInPath: '/shell-super-app-api/auth/sign-in',
   signOutPath: '/shell-super-app-api/auth/sign-out',
+  startSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/start',
+  stopSupportImpersonationPath: '/shell-super-app-api/auth/identity/impersonation/stop',
   switchLegalEntityPath: '/shell-super-app-api/auth/legal-entity/switch',
   switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
 } as const;

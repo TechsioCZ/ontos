@@ -3,6 +3,8 @@ import test from 'node:test';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { Effect, Schema } from 'effect';
 import {
+  ApiKeyGatewayHeadersSchema,
+  GatewayContextApiGroup,
   GatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
   GatewayContextRequestSchema,
@@ -11,8 +13,16 @@ import {
   decodeGatewayContextClaims,
 } from '../../src/gateway-context.ts';
 
+const endpointStatuses = (
+  endpoint: (typeof GatewayContextApiGroup.endpoints)[keyof typeof GatewayContextApiGroup.endpoints],
+) =>
+  [...endpoint.error]
+    .map((schema) => schema.ast.annotations?.['httpApiStatus'])
+    .toSorted((left, right) => Number(left) - Number(right));
+
 const principal = {
-  authContextRef: 'session:safe-reference',
+  authBindingId: '70000000-0000-4000-8000-000000000001',
+  authContextRef: 'better-auth-session:safe-reference',
   authMethod: 'session' as const,
   principalId: '40000000-0000-4000-8000-000000000001',
   tenantId: '30000000-0000-4000-8000-000000000001',
@@ -83,6 +93,9 @@ test('rejects credential, display, authorization, Action, and business claim exp
     'email',
     'displayName',
     'credential',
+    'rawApiKey',
+    'providerKeyId',
+    'keyId',
     'cookie',
     'sessionToken',
     'actionKey',
@@ -127,4 +140,12 @@ test('schemas publish only the required public field names', () => {
     'kid',
     'typ',
   ]);
+});
+
+test('publishes the exact API-key credential boundary and failure statuses', () => {
+  assert.deepEqual(Object.keys(ApiKeyGatewayHeadersSchema.fields), ['x-api-key']);
+  assert.deepEqual(
+    endpointStatuses(GatewayContextApiGroup.endpoints.issueApiKeyGatewayContext),
+    [400, 401, 403, 429, 500, 503],
+  );
 });
