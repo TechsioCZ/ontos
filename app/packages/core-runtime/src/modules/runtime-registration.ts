@@ -1,5 +1,6 @@
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
+import { isActionRegistration } from '../actions/definition.ts';
 import type {
   OntosActionContract,
   OntosManifestActionValue,
@@ -79,6 +80,9 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
     'runtime Action',
   );
   for (const action of input.actions) {
+    if (!isActionRegistration(action)) {
+      throw new TypeError('runtime Action must have one owner-local private binding');
+    }
     if (action.descriptor.owningModuleKey !== input.manifest.module.id) {
       throw new TypeError('runtime Action owner must match the manifest module ID');
     }

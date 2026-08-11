@@ -1,0 +1,54 @@
+diff --git a/dist/cjs/runtime/effect/handler/batch.js b/dist/cjs/runtime/effect/handler/batch.js
+--- a/dist/cjs/runtime/effect/handler/batch.js
++++ b/dist/cjs/runtime/effect/handler/batch.js
+@@ -110,12 +110,7 @@ async function prepareJsonRequestBody(request) {
+     const contentType = (request.headers.get('content-type') || '').toLowerCase();
+     if (!contentType.includes('application/json')) return request;
+     if (null === request.body) return cloneWithoutJsonBodyHeaders(request);
+-    try {
+-        const bodyText = await request.clone().text();
+-        if ('' === bodyText) return cloneWithoutJsonBodyHeaders(request);
+-        JSON.parse(bodyText);
+-    } catch  {
+-        return createJsonValidationResponse('Invalid JSON request body');
+-    }
++    const bodyText = await request.clone().text();
++    if ('' === bodyText) return cloneWithoutJsonBodyHeaders(request);
+     return request;
+ }
+diff --git a/dist/esm-node/runtime/effect/handler/batch.mjs b/dist/esm-node/runtime/effect/handler/batch.mjs
+--- a/dist/esm-node/runtime/effect/handler/batch.mjs
++++ b/dist/esm-node/runtime/effect/handler/batch.mjs
+@@ -68,12 +68,7 @@ async function prepareJsonRequestBody(request) {
+     const contentType = (request.headers.get('content-type') || '').toLowerCase();
+     if (!contentType.includes('application/json')) return request;
+     if (null === request.body) return cloneWithoutJsonBodyHeaders(request);
+-    try {
+-        const bodyText = await request.clone().text();
+-        if ('' === bodyText) return cloneWithoutJsonBodyHeaders(request);
+-        JSON.parse(bodyText);
+-    } catch  {
+-        return createJsonValidationResponse('Invalid JSON request body');
+-    }
++    const bodyText = await request.clone().text();
++    if ('' === bodyText) return cloneWithoutJsonBodyHeaders(request);
+     return request;
+ }
+diff --git a/dist/esm/runtime/effect/handler/batch.mjs b/dist/esm/runtime/effect/handler/batch.mjs
+--- a/dist/esm/runtime/effect/handler/batch.mjs
++++ b/dist/esm/runtime/effect/handler/batch.mjs
+@@ -67,12 +67,7 @@ async function prepareJsonRequestBody(request) {
+     const contentType = (request.headers.get('content-type') || '').toLowerCase();
+     if (!contentType.includes('application/json')) return request;
+     if (null === request.body) return cloneWithoutJsonBodyHeaders(request);
+-    try {
+-        const bodyText = await request.clone().text();
+-        if ('' === bodyText) return cloneWithoutJsonBodyHeaders(request);
+-        JSON.parse(bodyText);
+-    } catch  {
+-        return createJsonValidationResponse('Invalid JSON request body');
+-    }
++    const bodyText = await request.clone().text();
++    if ('' === bodyText) return cloneWithoutJsonBodyHeaders(request);
+     return request;
+ }

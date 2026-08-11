@@ -70,6 +70,7 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
+  '@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.96': patches/@bleedingdev__modern-js-plugin-bff@3.5.0-ultramodern.96.patch
   '@tanstack/router-core@1.171.14': patches/@tanstack__router-core@1.171.14.patch
   '@module-federation/bridge-react@2.8.0': patches/@module-federation__bridge-react@2.8.0.patch
   '@module-federation/modern-js-v3@2.8.0': patches/@module-federation__modern-js-v3@2.8.0.patch

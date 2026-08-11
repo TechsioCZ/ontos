@@ -9,6 +9,13 @@ import test from 'node:test';
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import {
+  getActionHandler,
+  getActionServiceFactory,
+  isActionRegistration,
+} from '../../../packages/core-runtime/src/actions/definition.ts';
+import { ActionRuntime } from '../../../packages/core-runtime/src/actions/runtime.ts';
+import { ActionPolicyDenied } from '../../../packages/core-runtime/src/actions/errors.ts';
+import {
   defineEffectBff,
   Effect,
   HttpApi,
@@ -336,6 +343,481 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
+  assert.match(getHelpText('action'), /--legal-entity-scope <required\|optional\|forbidden>/u);
+});
+
+test('generates a public Action contract, strict transport, and owner-private binding seam', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    await run(fixture, 'action', [
+      '--vertical',
+      'inventory-stock',
+      '--action',
+      'create-order',
+      '--legal-entity-scope',
+      'required',
+    ]);
+    const files = {
+      action: await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/src/actions/create-order.action.ts',
+      ),
+      binding: await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/src/actions/create-order.registration.ts',
+      ),
+      client: await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/src/api/create-order-action-client.ts',
+      ),
+      contract: await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/shared/apis/create-order-action.ts',
+      ),
+      server: await readFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/api/create-order-action-server.ts',
+      ),
+    };
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+    const registration = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+
+    assert.match(files.contract, /Schema\.Struct/u);
+    assert.match(files.action, /PayloadSchema/u);
+    assert.match(files.action, /defineActionContract/u);
+    assert.match(files.action, /domainErrorSchema/u);
+    assert.match(files.action, /domainEvents/u);
+    assert.match(files.action, /legalEntityScope: 'required'/u);
+    assert.match(files.binding, /bindAction/u);
+    assert.match(files.binding, /bindCreateOrderAction/u);
+    assert.match(files.contract, /HttpApiEndpoint\.post/u);
+    assert.match(files.contract, /ActionRequestHeadersSchema/u);
+    assert.match(files.contract, /HttpApiMiddleware/u);
+    assert.match(files.contract, /SchemaErrorMiddleware/u);
+    assert.match(files.contract, /application\/problem\+json/u);
+    for (const status of [400, 401, 403, 404, 409, 422, 428, 500, 503]) {
+      assert.match(files.contract, new RegExp(`Schema\\.Literal\\(${status}\\)`, 'u'));
+    }
+    assert.match(files.server, /verifyActionPrincipal/u);
+    assert.match(files.server, /ActionRuntime/u);
+    assert.match(files.server, /actionProblemByTag/u);
+    assert.match(files.server, /satisfies Record<ActionFailureTag/u);
+    assert.doesNotMatch(files.server, /isActionFailure/u);
+    assert.match(files.server, /mapped\.status === 401/u);
+    assert.match(files.server, /policyReasonCode/u);
+    assert.match(files.action, /PolicyDenialStatuses/u);
+    assert.doesNotMatch(files.server, /endsWith\('\.(?:forbidden|conflict)'\)/u);
+    assert.match(files.client, /makeEffectHttpApiClient/u);
+    assert.match(files.client, /makeExecuteCreateOrderAction/u);
+    assert.match(files.client, /operationGateway/u);
+    assert.match(manifest, /createOrderAction,/u);
+    assert.match(manifest, /'create-order-action': CreateOrderActionApi,/u);
+    assert.match(registration, /createOrderAction,/u);
+    assert.match(
+      registration,
+      /'create-order-action': \(\) => import\('\.\/src\/api\/create-order-action-client\.ts'\),/u,
+    );
+
+    const generated = Object.values(files).join('\n');
+    assert.doesNotMatch(generated, /NotImplemented|not_implemented|placeholder/u);
+    assert.doesNotMatch(generated, /const handleCreateOrder|function handleCreateOrder/u);
+    assert.doesNotMatch(files.client, /\.registration|bindAction|ActionHandler/u);
+    assert.doesNotMatch(files.contract, /\.registration|bindAction|ActionHandler/u);
+    assert.doesNotMatch(files.server, /\.registration|bindCreateOrderAction/u);
+    assert.doesNotMatch(manifest, /registration|bindCreateOrderAction/u);
+  });
+});
+
+test('generates a private binding seam for supported Core Actions', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'action', [
+      '--scope',
+      'core',
+      '--module',
+      'core.modules',
+      '--action',
+      'change-tenant-state',
+      '--legal-entity-scope',
+      'forbidden',
+    ]);
+
+    const action = await readFixtureFile(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/change-tenant-state.action.ts',
+    );
+    const binding = await readFixtureFile(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/change-tenant-state.registration.ts',
+    );
+    assert.match(action, /ChangeTenantStateActionHandler/u);
+    assert.match(binding, /bindChangeTenantStateAction/u);
+    assert.match(binding, /ActionServiceFactory/u);
+    assert.doesNotMatch(`${action}\n${binding}`, /NotImplemented|not_implemented|placeholder/u);
+  });
+});
+
+test('executes the generated Action client and endpoint through a manually bound private handler', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
+    await run(fixture, 'action', [
+      '--vertical',
+      'inventory-stock',
+      '--action',
+      'create-order',
+      '--legal-entity-scope',
+      'required',
+    ]);
+    const generatedActionPath = path.join(
+      fixture.root,
+      'verticals/inventory-stock/src/actions/create-order.action.ts',
+    );
+    const generatedActionSource = await readFile(generatedActionPath, 'utf-8');
+    await writeFile(
+      generatedActionPath,
+      generatedActionSource.replace(
+        'export const CreateOrderPolicyDenialStatuses = {} as const',
+        `export const CreateOrderPolicyDenialStatuses = {
+  access_forbidden: 403,
+  order_state_conflict: 409,
+  order_semantically_ineligible: 422,
+} as const`,
+      ),
+      'utf-8',
+    );
+    await mkdir(path.join(fixture.root, 'node_modules', '@app'), { recursive: true });
+    await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime'),
+      path.join(fixture.root, 'node_modules/@app/core-runtime'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/shared-contracts'),
+      path.join(fixture.root, 'node_modules/@app/shared-contracts'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/effect'),
+      path.join(fixture.root, 'node_modules/effect'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
+      path.join(fixture.root, 'node_modules/jose'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-bff'),
+      path.join(fixture.root, 'node_modules/@modern-js/plugin-bff'),
+      'dir',
+    );
+
+    const actionModule = (await import(
+      pathToFileURL(
+        path.join(fixture.root, 'verticals/inventory-stock/src/actions/create-order.action.ts'),
+      ).href
+    )) as { readonly createOrderAction: Parameters<typeof isActionRegistration>[0] };
+    const bindingModule = (await import(
+      pathToFileURL(
+        path.join(
+          fixture.root,
+          'verticals/inventory-stock/src/actions/create-order.registration.ts',
+        ),
+      ).href
+    )) as {
+      readonly bindCreateOrderAction: (
+        handler: (
+          payload: unknown,
+          context: { readonly services: { readonly save: () => void } },
+        ) => Effect.Effect<Readonly<Record<string, never>>>,
+        serviceFactory: () => Effect.Effect<{ readonly save: () => void }>,
+      ) => unknown;
+    };
+    const contractModule = (await import(
+      pathToFileURL(
+        path.join(fixture.root, 'verticals/inventory-stock/shared/apis/create-order-action.ts'),
+      ).href
+    )) as { readonly CreateOrderActionApi: unknown };
+    const serverModule = (await import(
+      pathToFileURL(
+        path.join(fixture.root, 'verticals/inventory-stock/api/create-order-action-server.ts'),
+      ).href
+    )) as { readonly createOrderActionApiLive: Layer.Layer<unknown, unknown, unknown> };
+    const clientModule = (await import(
+      pathToFileURL(
+        path.join(fixture.root, 'verticals/inventory-stock/src/api/create-order-action-client.ts'),
+      ).href
+    )) as {
+      readonly makeExecuteCreateOrderAction: (gateway: {
+        readonly invoke: <Success, Failure>(
+          attempt: (authorization: string) => Effect.Effect<Success, Failure>,
+        ) => Effect.Effect<Success, Failure>;
+      }) => (
+        payload: Readonly<Record<string, never>>,
+        options: {
+          readonly baseUrl: string;
+          readonly correlationId: string;
+          readonly idempotencyKey: string;
+        },
+      ) => Effect.Effect<Readonly<Record<string, never>>, unknown>;
+    };
+    const gatewayModule = (await import(
+      pathToFileURL(path.join(fixture.root, 'verticals/inventory-stock/src/api/action-gateway.ts'))
+        .href
+    )) as {
+      readonly makeActionGateway: (
+        acquire: () => Effect.Effect<{ readonly expiresAt: number; readonly token: string }>,
+      ) => {
+        readonly invoke: <Success, Failure>(
+          attempt: (authorization: string) => Effect.Effect<Success, Failure>,
+        ) => Effect.Effect<Success, Failure>;
+      };
+    };
+
+    let handlerCalls = 0;
+    let serviceFactoryCalls = 0;
+    bindingModule.bindCreateOrderAction(
+      (_payload, context) =>
+        Effect.sync(() => {
+          handlerCalls += 1;
+          context.services.save();
+          return {};
+        }),
+      () =>
+        Effect.sync(() => {
+          serviceFactoryCalls += 1;
+          return { save: () => undefined };
+        }),
+    );
+    assert.equal(isActionRegistration(actionModule.createOrderAction), true);
+
+    let runtimeDefect = false;
+    let policyReasonCode: string | undefined;
+    const runtime = {
+      resolveActionCommit: () => Effect.die('not used in the generated Action transport test'),
+      runAction: (input: {
+        readonly payload: unknown;
+        readonly registration: never;
+        readonly transport: Readonly<Record<string, unknown>>;
+      }) =>
+        Effect.gen(function* executeBoundActionFixture() {
+          if (runtimeDefect) {
+            return yield* Effect.die(new Error('secret generated runtime defect'));
+          }
+          if (policyReasonCode !== undefined) {
+            return yield* Effect.fail(
+              new ActionPolicyDenied({
+                code: 'action_policy_denied',
+                policyReasonCode,
+                reason: 'Denied by generated transport test Policy',
+              }),
+            );
+          }
+          assert.equal(input.registration, actionModule.createOrderAction);
+          assert.equal(input.transport['correlationId'], 'correlation-generated-action');
+          assert.equal(input.transport['idempotencyKey'], 'intent-generated-action');
+          const services = yield* getActionServiceFactory(input.registration)(
+            {} as never,
+            {} as never,
+          );
+          return yield* getActionHandler(input.registration)(
+            input.payload,
+            Object.freeze({ services }) as never,
+          );
+        }),
+    };
+    const actionRuntimeLayer = Layer.succeed(ActionRuntime, runtime as never);
+    const layer = HttpApiBuilder.layer(contractModule.CreateOrderActionApi as never).pipe(
+      Layer.provide(serverModule.createOrderActionApiLive as never),
+      Layer.provide(actionRuntimeLayer),
+    );
+    const generatedRuntime = defineEffectBff({
+      api: contractModule.CreateOrderActionApi as never,
+      layer: layer as never,
+    });
+    const generatedHandler = generatedRuntime.createHandler();
+    const key = await makeGatewayKey('generated-action');
+    const principal = {
+      authBindingId: '30000000-0000-4000-8000-000000000002',
+      authContextRef: 'better-auth-session:generated-action',
+      authMethod: 'session' as const,
+      legalEntityId: '35000000-0000-4000-8000-000000000002',
+      principalId: '40000000-0000-4000-8000-000000000002',
+      tenantId: '50000000-0000-4000-8000-000000000002',
+    };
+    const assertion = await Effect.runPromise(
+      issueGatewayContextAssertion(
+        { audience: 'inventory-stock', principal },
+        {
+          currentTimeSeconds: Effect.sync(() => Math.floor(Date.now() / 1000)),
+          generateJti: Effect.succeed('60000000-0000-4000-8000-000000000002'),
+          loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+          loadConfig: Effect.succeed(key.configuration),
+        },
+      ),
+    );
+    let assertionAcquisitions = 0;
+    const gateway = gatewayModule.makeActionGateway(() => {
+      assertionAcquisitions += 1;
+      return Effect.succeed(assertion);
+    });
+    const execute = clientModule.makeExecuteCreateOrderAction(gateway);
+    const originalFetch = globalThis.fetch;
+    const originalIssuer = process.env['ONTOS_GATEWAY_ISSUER'];
+    const originalJwks = process.env['ONTOS_GATEWAY_PUBLIC_JWKS'];
+    process.env['ONTOS_GATEWAY_ISSUER'] = key.configuration.issuer;
+    process.env['ONTOS_GATEWAY_PUBLIC_JWKS'] = JSON.stringify({ keys: [key.publicJwk] });
+    globalThis.fetch = (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      return generatedHandler.handler(request);
+    };
+    try {
+      const options = {
+        baseUrl: 'https://inventory.example.test',
+        correlationId: 'correlation-generated-action',
+        idempotencyKey: 'intent-generated-action',
+      } as const;
+      await Effect.runPromise(execute({}, options));
+      await Effect.runPromise(execute({}, options));
+      assert.equal(assertionAcquisitions, 2);
+      assert.equal(handlerCalls, 2);
+      assert.equal(serviceFactoryCalls, 2);
+
+      const malformedResponse = await generatedHandler.handler(
+        new Request('https://inventory.example.test/actions/create-order', {
+          body: '{',
+          headers: {
+            authorization: `Bearer ${assertion.token}`,
+            'content-type': 'application/json',
+            'x-correlation-id': options.correlationId,
+            'x-idempotency-key': options.idempotencyKey,
+          },
+          method: 'POST',
+        }),
+      );
+      assert.equal(malformedResponse.status, 400);
+      assert.match(
+        malformedResponse.headers.get('content-type') ?? '',
+        /application\/problem\+json/u,
+      );
+      assert.deepEqual(await malformedResponse.json(), {
+        _tag: 'CreateOrderValidationProblem',
+        detail: 'The Action request is structurally invalid.',
+        status: 400,
+        title: 'Invalid Action request',
+        type: 'https://ontos.dev/problems/action-validation',
+      });
+
+      const missingCorrelationResponse = await generatedHandler.handler(
+        new Request('https://inventory.example.test/actions/create-order', {
+          body: '{}',
+          headers: {
+            authorization: `Bearer ${assertion.token}`,
+            'content-type': 'application/json',
+            'x-idempotency-key': options.idempotencyKey,
+          },
+          method: 'POST',
+        }),
+      );
+      assert.equal(missingCorrelationResponse.status, 400);
+      assert.match(
+        missingCorrelationResponse.headers.get('content-type') ?? '',
+        /application\/problem\+json/u,
+      );
+      assert.equal(handlerCalls, 2);
+
+      for (const [reasonCode, status] of [
+        ['access_forbidden', 403],
+        ['order_state_conflict', 409],
+        ['order_semantically_ineligible', 422],
+      ] as const) {
+        policyReasonCode = reasonCode;
+        const response = await generatedHandler.handler(
+          new Request('https://inventory.example.test/actions/create-order', {
+            body: '{}',
+            headers: {
+              authorization: `Bearer ${assertion.token}`,
+              'content-type': 'application/json',
+              'x-correlation-id': options.correlationId,
+              'x-idempotency-key': options.idempotencyKey,
+            },
+            method: 'POST',
+          }),
+        );
+        assert.equal(response.status, status);
+      }
+
+      policyReasonCode = 'unmapped_policy_reason';
+      const unmappedPolicyResponse = await generatedHandler.handler(
+        new Request('https://inventory.example.test/actions/create-order', {
+          body: '{}',
+          headers: {
+            authorization: `Bearer ${assertion.token}`,
+            'content-type': 'application/json',
+            'x-correlation-id': options.correlationId,
+            'x-idempotency-key': options.idempotencyKey,
+          },
+          method: 'POST',
+        }),
+      );
+      assert.equal(unmappedPolicyResponse.status, 500);
+      assert.doesNotMatch(await unmappedPolicyResponse.text(), /unmapped_policy_reason/u);
+      policyReasonCode = undefined;
+
+      runtimeDefect = true;
+      const defectResponse = await generatedHandler.handler(
+        new Request('https://inventory.example.test/actions/create-order', {
+          body: '{}',
+          headers: {
+            authorization: `Bearer ${assertion.token}`,
+            'content-type': 'application/json',
+            'x-correlation-id': options.correlationId,
+            'x-idempotency-key': options.idempotencyKey,
+          },
+          method: 'POST',
+        }),
+      );
+      assert.equal(defectResponse.status, 500);
+      const defectBody = await defectResponse.text();
+      assert.doesNotMatch(defectBody, /secret generated runtime defect/u);
+      assert.match(defectBody, /Action failed/u);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalIssuer === undefined) delete process.env['ONTOS_GATEWAY_ISSUER'];
+      else process.env['ONTOS_GATEWAY_ISSUER'] = originalIssuer;
+      if (originalJwks === undefined) delete process.env['ONTOS_GATEWAY_PUBLIC_JWKS'];
+      else process.env['ONTOS_GATEWAY_PUBLIC_JWKS'] = originalJwks;
+      await generatedHandler.dispose();
+    }
+  });
+});
+
+test('Action generation leaves the separately prepared identity boundary untouched', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'action', [
+      '--vertical',
+      'inventory-stock',
+      '--action',
+      'create-order',
+      '--legal-entity-scope',
+      'required',
+    ]);
+
+    await assert.rejects(
+      stat(path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts')),
+      { code: 'ENOENT' },
+    );
+    await assert.rejects(
+      stat(path.join(fixture.root, 'verticals/inventory-stock/src/api/action-gateway.ts')),
+      { code: 'ENOENT' },
+    );
+  });
 });
 
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
@@ -814,7 +1296,10 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const current = await makeGatewayKey('current');
     const retiring = await makeGatewayKey('retiring');
     const principal = {
+      authBindingId: '30000000-0000-4000-8000-000000000001',
+      authContextRef: 'better-auth-session:generated-verifier',
       authMethod: 'session' as const,
+      legalEntityId: '35000000-0000-4000-8000-000000000001',
       principalId: '40000000-0000-4000-8000-000000000001',
       tenantId: '50000000-0000-4000-8000-000000000001',
     };
@@ -1111,74 +1596,18 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
   });
 });
 
-test('generates one self-contained typed fail-closed Action and preserves package metadata', async () => {
+test('generates one typed fail-closed Action contract and preserves package metadata', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order2']);
     const action = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/actions/create-order2.action.ts',
     );
-    assert.equal(
-      action,
-      `// @generated by OntOS Codesmith Action v1
-// @ontos-action-owner inventory.stock
-// @ontos-action-slug create-order2
-import { Effect, Schema } from 'effect';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-
-export const CreateOrder2Payload = Schema.Struct({});
-export type CreateOrder2Payload = Schema.Schema.Type<typeof CreateOrder2Payload>;
-
-export const CreateOrder2Result = Schema.Struct({});
-export type CreateOrder2Result = Schema.Schema.Type<typeof CreateOrder2Result>;
-
-export class CreateOrder2NotImplemented extends Schema.TaggedErrorClass<CreateOrder2NotImplemented>()(
-  'CreateOrder2NotImplemented',
-  {
-    code: Schema.Literal('action_not_implemented'),
-    reason: Schema.String,
-  },
-) {}
-
-const handleCreateOrder2 = () =>
-  Effect.fail(
-    new CreateOrder2NotImplemented({
-      code: 'action_not_implemented',
-      reason: 'The Create Order2 Action is not implemented',
-    }),
-  );
-
-export const createOrder2Action = defineAction(
-  {
-    accessEvidencePolicy: {
-      captureMode: 'metadata_only',
-      policyKey: 'inventory.stock.create-order2.access.v1',
-    },
-    actionKey: 'inventory.stock.create-order2',
-    auditProfile: 'standard',
-    domainErrorSchema: CreateOrder2NotImplemented,
-    domainEvents: {},
-    entrypoint: defineTenantModuleEntrypoint({
-      access: 'write',
-      entrypointKey: 'inventory.stock.create-order2',
-      moduleKey: 'inventory.stock',
-      role: 'action',
-    }),
-    idempotency: 'required',
-    legalEntityScope: 'optional',
-    owningModuleKey: 'inventory.stock',
-    payloadSchema: CreateOrder2Payload,
-    policies: [],
-    resultSchema: CreateOrder2Result,
-    schemaVersion: '1',
-  },
-  handleCreateOrder2,
-);
-
-// <generated-outbox-message-exports>
-// </generated-outbox-message-exports>
-`,
-    );
+    assert.match(action, /defineActionContract/u);
+    assert.match(action, /CreateOrder2DomainErrorSchema/u);
+    assert.match(action, /CreateOrder2DomainEvents/u);
+    assert.match(action, /legalEntityScope: 'optional'/u);
+    assert.doesNotMatch(action, /NotImplemented|not_implemented|handleCreateOrder2/u);
     const packageJson = JSON.parse(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
     ) as {
@@ -1196,6 +1625,44 @@ export const createOrder2Action = defineAction(
       /refusing to overwrite/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
+  });
+});
+
+test('sorts Action aggregate slots and rejects identifier collisions without partial writes', async () => {
+  await withFixture(async (fixture) => {
+    const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
+    const originalManifest = await readFile(manifestPath, 'utf-8');
+    await writeFile(
+      manifestPath,
+      `${originalManifest}\nexport const developerOwned = true;\n`,
+      'utf-8',
+    );
+
+    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'z-order']);
+    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'a-order']);
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+    const registration = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+    assert.ok(manifest.indexOf('aOrderAction,') < manifest.indexOf('zOrderAction,'));
+    assert.ok(
+      manifest.indexOf("'a-order-action': AOrderActionApi,") <
+        manifest.indexOf("'z-order-action': ZOrderActionApi,"),
+    );
+    assert.ok(registration.indexOf('aOrderAction,') < registration.indexOf('zOrderAction,'));
+    assert.match(manifest, /export const developerOwned = true/u);
+
+    await run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order2']);
+    const beforeCollision = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'action', ['--vertical', 'inventory-stock', '--action', 'create-order-2']),
+      /Action identifier collision/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeCollision);
   });
 });
 
@@ -1530,7 +1997,7 @@ test('rejects missing, handwritten, duplicate, and normalized-collision Outbox t
     await writeFixtureFile(
       fixture.root,
       governedActionPath,
-      governedAction.replace("      access: 'write',", "      access: 'read',"),
+      governedAction.replace("    access: 'write',", "    access: 'read',"),
     );
     const beforeMismatchedEntrypoint = await snapshotTree(fixture.root);
     await assert.rejects(
@@ -2267,8 +2734,13 @@ test('every generated TypeScript file is already formatter-stable', async () => 
     ]);
     const generatedFiles = [
       'packages/core-runtime/src/modules/actions/change-tenant-state.action.ts',
+      'packages/core-runtime/src/modules/actions/change-tenant-state.registration.ts',
       'packages/core-runtime/src/policies/tenant-active.policy.ts',
       'verticals/inventory-stock/src/actions/create-order.action.ts',
+      'verticals/inventory-stock/src/actions/create-order.registration.ts',
+      'verticals/inventory-stock/shared/apis/create-order-action.ts',
+      'verticals/inventory-stock/src/api/create-order-action-client.ts',
+      'verticals/inventory-stock/api/create-order-action-server.ts',
       'verticals/inventory-stock/src/actions/create-order.orders-created.outbox-message.ts',
       'verticals/inventory-stock/shared/outbox/orders-created.ts',
       'verticals/billing/src/workers/index.ts',
@@ -2329,6 +2801,36 @@ test('all generated files typecheck against the real workspace contracts', async
       path.join(fixture.root, 'node_modules/effect'),
       'dir',
     );
+    await writeFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/actions/create-order.handler.ts',
+      `import { Effect } from 'effect';
+import type { CreateOrderActionHandler } from './create-order.action.ts';
+import { bindCreateOrderAction } from './create-order.registration.ts';
+
+interface CreateOrderServices {
+  readonly create: () => Effect.Effect<Readonly<Record<string, never>>>;
+}
+
+const handleCreateOrder: CreateOrderActionHandler<CreateOrderServices> = (_payload, context) =>
+  context.services.create();
+
+bindCreateOrderAction(
+  handleCreateOrder,
+  () => Effect.succeed({ create: () => Effect.succeed({}) }),
+);
+`,
+    );
+    const registrationPath = path.join(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+    const registrationSource = await readFile(registrationPath, 'utf-8');
+    await writeFile(
+      registrationPath,
+      `import './src/actions/create-order.handler.ts';\n${registrationSource}`,
+      'utf-8',
+    );
     await symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/jose'),
       path.join(fixture.root, 'node_modules/jose'),
@@ -2362,6 +2864,11 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'packages/core-runtime/src/actions'),
       path.join(fixture.root, 'packages/core-runtime/src/actions'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/auth'),
+      path.join(fixture.root, 'packages/core-runtime/src/auth'),
       'dir',
     );
     await symlink(
@@ -2421,6 +2928,8 @@ test('all generated files typecheck against the real workspace contracts', async
           'packages/core-runtime/src/modules/actions/**/*.ts',
           'packages/core-runtime/src/policies/**/*.ts',
           'verticals/inventory-stock/src/actions/**/*.ts',
+          'verticals/inventory-stock/vertical.manifest.ts',
+          'verticals/inventory-stock/vertical.registration.ts',
           'verticals/inventory-stock/shared/outbox/**/*.ts',
           'verticals/billing/src/workers/**/*.ts',
           'verticals/billing/src/worker-host/**/*.ts',
