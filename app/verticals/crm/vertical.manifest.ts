@@ -4,11 +4,18 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { ContactDetailApi } from './shared/apis/contact-detail.ts';
+import { createCustomerAction } from './src/actions/create-customer.action.ts';
+import { CreateCustomerActionApi } from './shared/apis/create-customer-action.ts';
 import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
+import { CustomerDirectoryApi } from './shared/apis/customer-directory.ts';
 import { CustomersPage } from './src/routes/[lang]/customers/page.tsx';
 import { CustomerTimelineApi } from './shared/apis/customer-timeline.ts';
 import { DealDetailApi } from './shared/apis/deal-detail.ts';
 import { DealsPage } from './src/routes/[lang]/deals/page.tsx';
+import { deleteCustomerAction } from './src/actions/delete-customer.action.ts';
+import { DeleteCustomerActionApi } from './shared/apis/delete-customer-action.ts';
+import { editCustomerAction } from './src/actions/edit-customer.action.ts';
+import { EditCustomerActionApi } from './shared/apis/edit-customer-action.ts';
 // </generated-module-manifest-imports>
 
 export const crmManifest = defineOntosModuleManifest({
@@ -36,14 +43,21 @@ export const crmManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      createCustomerAction,
+      deleteCustomerAction,
+      editCustomerAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
       'contact-detail': ContactDetailApi,
+      'create-customer-action': CreateCustomerActionApi,
       'customer-detail': CustomerDetailApi,
+      'customer-directory': CustomerDirectoryApi,
       'customer-timeline': CustomerTimelineApi,
       'deal-detail': DealDetailApi,
+      'delete-customer-action': DeleteCustomerActionApi,
+      'edit-customer-action': EditCustomerActionApi,
       // </generated-module-manifest-apis>
     },
     components: {

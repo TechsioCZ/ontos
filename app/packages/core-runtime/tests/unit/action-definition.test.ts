@@ -3,15 +3,26 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import {
+  bindAction,
   decodeActionPayload,
   decodeActionResult,
   defineAction,
+  defineActionContract,
+  getActionHandler,
+  getActionServiceFactory,
+  isActionContract,
+  isActionRegistration,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
 import {
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
+
+const privateBindingHandler = ({ amount }: { readonly amount: number }) =>
+  Effect.succeed({ reserved: amount > 0 });
+const privateBindingServiceFactory = () =>
+  Effect.succeed(Object.freeze({ repository: 'private' as const }));
 
 test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
   const registration = defineAction(
@@ -116,6 +127,68 @@ test('keeps the private handler outside the public Action registration', () => {
 
   assert.equal('handler' in registration, false);
   assert.deepEqual(Object.keys(registration), ['descriptor']);
+});
+
+test('defines an unbound public contract and binds private behavior exactly once', () => {
+  const contract = defineActionContract({
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.reserve.access.v1' },
+    actionKey: 'inventory.stock.reserve',
+    auditProfile: 'standard',
+    domainErrorSchema: Schema.Never,
+    domainEvents: {},
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'write',
+      entrypointKey: 'inventory.stock.reserve',
+      moduleKey: 'inventory.stock',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleKey: 'inventory.stock',
+    payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+    policies: [],
+    resultSchema: Schema.Struct({ reserved: Schema.Boolean }),
+    schemaVersion: '1',
+  });
+  assert.equal(isActionContract(contract), true);
+  assert.equal(isActionRegistration(contract), false);
+  assert.equal(Object.isFrozen(contract), true);
+  assert.equal(Object.isFrozen(contract.descriptor), true);
+  assert.deepEqual(Object.keys(contract), ['descriptor']);
+  assert.throws(() => getActionHandler(contract), /no owner-local handler binding/u);
+  assert.throws(() => getActionServiceFactory(contract), /no owner-local service binding/u);
+
+  const registration = bindAction(contract, privateBindingHandler, privateBindingServiceFactory);
+
+  assert.equal(registration, contract);
+  assert.equal(isActionRegistration(registration), true);
+  assert.equal(getActionHandler(registration), privateBindingHandler);
+  assert.equal(getActionServiceFactory(registration), privateBindingServiceFactory);
+  assert.deepEqual(Object.keys(registration), ['descriptor']);
+  assert.equal(JSON.stringify(registration).includes('private'), false);
+  assert.throws(
+    () => bindAction(contract, privateBindingHandler, privateBindingServiceFactory),
+    /already has an owner-local binding/u,
+  );
+  assert.throws(
+    () => bindAction({ ...contract } as never, privateBindingHandler, privateBindingServiceFactory),
+    /requires a real Action contract/u,
+  );
+  assert.throws(
+    () =>
+      bindAction(
+        defineActionContract(contract.descriptor),
+        privateBindingHandler,
+        undefined as never,
+      ),
+    /service factory must be callable/u,
+  );
+
+  const compileOnlyMissingServiceFactory = () => {
+    // @ts-expect-error Owner-local bindings always require an explicit scoped service factory.
+    bindAction(defineActionContract(contract.descriptor), privateBindingHandler);
+  };
+  assert.equal(typeof compileOnlyMissingServiceFactory, 'function');
 });
 
 test('rejects invalid declared results through a typed error', async () => {

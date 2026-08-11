@@ -11,7 +11,8 @@ import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
 import type { OperationalScope, LegalEntityScope } from '../operations/context.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 
-const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
+const actionContract: unique symbol = Symbol('@app/core-runtime/actions/contract');
+const actionContracts = new WeakSet<object>();
 const actionHandlers = new WeakMap<object, unknown>();
 const actionServiceFactories = new WeakMap<object, unknown>();
 
@@ -85,7 +86,7 @@ export interface ActionRegistration<
   Services = Readonly<Record<string, never>>,
   HandlerRequirements = never,
 > {
-  readonly [actionRegistration]: true;
+  readonly [actionContract]: true;
   readonly descriptor: Readonly<
     ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>
   >;
@@ -97,8 +98,8 @@ export interface ActionRegistration<
  * Existential public view of an Action registration. Keeping only the deployment-contract
  * fields avoids pretending TypeScript can express "ActionRegistration for some payload".
  */
-export interface AnyActionRegistration {
-  readonly [actionRegistration]: true;
+export interface AnyActionContract {
+  readonly [actionContract]: true;
   readonly descriptor: Readonly<
     Pick<
       ActionDescriptor<
@@ -118,6 +119,9 @@ export interface AnyActionRegistration {
   >;
 }
 
+/** Compatibility alias for code that consumed the pre-split public Action value type. */
+export type AnyActionRegistration = AnyActionContract;
+
 export type ActionRequirements<Registration> =
   Registration extends ActionRegistration<
     Schema.ConstraintDecoder<unknown, never>,
@@ -131,33 +135,22 @@ export type ActionRequirements<Registration> =
     ? Requirements
     : never;
 
-export const defineAction = <
+const freezeActionContract = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
   DomainEvents extends DomainEventContractMap,
   const Owner extends string,
-  Services,
-  HandlerRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
-  handler: ActionHandler<
-    PayloadSchema,
-    ResultSchema,
-    DomainErrorSchema,
-    DomainEvents,
-    Services,
-    HandlerRequirements
-  >,
-  serviceFactory?: ActionServiceFactory<Services, HandlerRequirements>,
 ): ActionRegistration<
   PayloadSchema,
   ResultSchema,
   DomainErrorSchema,
   DomainEvents,
   Owner,
-  Services,
-  HandlerRequirements
+  Readonly<Record<string, never>>,
+  never
 > => {
   if (
     descriptor.entrypoint.role !== 'action' ||
@@ -192,10 +185,10 @@ export const defineAction = <
     DomainErrorSchema,
     DomainEvents,
     Owner,
-    Services,
-    HandlerRequirements
+    Readonly<Record<string, never>>,
+    never
   > = Object.freeze({
-    [actionRegistration]: true as const,
+    [actionContract]: true as const,
     descriptor: Object.freeze({
       ...descriptor,
       accessEvidencePolicy: Object.freeze({ ...descriptor.accessEvidencePolicy }),
@@ -204,21 +197,125 @@ export const defineAction = <
       policies: Object.freeze([...descriptor.policies]),
     }),
   });
-  actionHandlers.set(registration, handler);
-  actionServiceFactories.set(
-    registration,
-    serviceFactory ?? (() => Effect.succeed(Object.freeze({}) as Services)),
-  );
+  actionContracts.add(registration);
   return registration;
 };
 
-/** Runtime guard for the opaque value created by defineAction. */
-export const isActionRegistration = (value: unknown): value is AnyActionRegistration =>
+/** Defines immutable public Action metadata without loading or inventing business behavior. */
+export const defineActionContract = freezeActionContract;
+
+/** Runtime guard for the opaque public value created by defineActionContract. */
+export const isActionContract = (value: unknown): value is AnyActionContract =>
   typeof value === 'object' &&
   value !== null &&
-  actionHandlers.has(value) &&
-  actionRegistration in value &&
-  value[actionRegistration] === true;
+  actionContracts.has(value) &&
+  actionContract in value &&
+  value[actionContract] === true;
+
+/** Runtime guard for a public contract that has its one owner-local private binding. */
+export const isActionRegistration = (value: unknown): value is AnyActionRegistration =>
+  isActionContract(value) && actionHandlers.has(value) && actionServiceFactories.has(value);
+
+/**
+ * Owner-local seam that binds private behavior exactly once. The returned value is the same
+ * immutable contract identity published by the manifest; handler and service values live only in
+ * private weak-map state.
+ */
+export const bindAction = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  contract: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Readonly<Record<string, never>>,
+    never
+  >,
+  handler: ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    HandlerRequirements
+  >,
+  serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements
+> => {
+  if (!isActionContract(contract)) {
+    throw new TypeError('Action binding requires a real Action contract');
+  }
+  if (actionHandlers.has(contract) || actionServiceFactories.has(contract)) {
+    throw new TypeError('Action contract already has an owner-local binding');
+  }
+  if (typeof handler !== 'function') {
+    throw new TypeError('Action binding requires an owner-local handler');
+  }
+  if (typeof serviceFactory !== 'function') {
+    throw new TypeError('Action binding service factory must be callable');
+  }
+  actionHandlers.set(contract, handler);
+  actionServiceFactories.set(contract, serviceFactory);
+  return contract as ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >;
+};
+
+/** Compatibility path for existing Core-owned Actions. */
+export const defineAction = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  handler: ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    HandlerRequirements
+  >,
+  serviceFactory?: ActionServiceFactory<Services, HandlerRequirements>,
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements
+> =>
+  bindAction(
+    defineActionContract(descriptor),
+    handler,
+    serviceFactory ?? (() => Effect.succeed(Object.freeze({}) as Services)),
+  );
 
 /** Internal Core runtime seam. Action handlers are intentionally absent from the public registration. */
 export const getActionHandler = <
@@ -249,7 +346,7 @@ export const getActionHandler = <
 > => {
   const handler = actionHandlers.get(registration);
   if (typeof handler !== 'function') {
-    throw new TypeError('Action registration was not created by defineAction');
+    throw new TypeError('Action contract has no owner-local handler binding');
   }
   return handler as ActionHandler<
     PayloadSchema,
@@ -282,7 +379,7 @@ export const getActionServiceFactory = <
 ): ActionServiceFactory<Services, HandlerRequirements> => {
   const factory = actionServiceFactories.get(registration);
   if (typeof factory !== 'function') {
-    throw new TypeError('Action registration was not created by defineAction');
+    throw new TypeError('Action contract has no owner-local service binding');
   }
   return factory as ActionServiceFactory<Services, HandlerRequirements>;
 };

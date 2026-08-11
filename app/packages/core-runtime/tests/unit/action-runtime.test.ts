@@ -14,7 +14,11 @@ import type {
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { defineAction, getActionHandler } from '../../src/actions/definition.ts';
+import {
+  defineAction,
+  defineActionContract,
+  getActionHandler,
+} from '../../src/actions/definition.ts';
 import {
   ActionInvocationPersistenceError,
   ActionPermissionCheckError,
@@ -426,6 +430,63 @@ test('executes the complete stage order with transaction ownership and success e
     moduleStateReadCount: 0,
     moduleStateRecheckCount: 0,
   });
+});
+
+test('resolves an owner-private binding only after the canonical runtime gates', async () => {
+  const harness = makeHarness();
+  const unbound = defineActionContract({
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+    actionKey: 'shell.counter.unbound-change',
+    auditProfile: 'standard',
+    domainErrorSchema: Schema.Never,
+    domainEvents: {},
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      entrypointKey: 'shell.counter.unbound-change',
+      moduleKey: 'core.shell',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'core.shell',
+    payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+    policies: [],
+    resultSchema: Schema.Struct({ total: Schema.Finite }),
+    schemaVersion: '1',
+  });
+
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: unbound,
+        transport: transport('unbound'),
+      }),
+    ),
+  );
+
+  assert.equal(failure._tag, 'ActionTransactionError');
+  assert.deepEqual(harness.stages, [
+    'payload_decoded',
+    'trusted_context_validated',
+    'module_state_gate',
+    'invocation_prepared',
+    'authentication_boundary',
+    'permission_checked',
+    'policy_boundary',
+    'invocation_running',
+    'invocation_locked',
+    'database_scope_installed',
+    'module_state_rechecked',
+  ]);
+  assert.deepEqual(harness.counts(), {
+    createCount: 1,
+    lockCount: 1,
+    transactionCount: 1,
+    transitionCount: 1,
+  });
+  assert.equal(harness.flushed.length, 0);
 });
 
 test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {

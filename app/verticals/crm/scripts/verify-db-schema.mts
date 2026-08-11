@@ -65,7 +65,47 @@ const verifyAdminCatalog = (configuration: CrmDatabaseConfigValue) =>
       );
       if (JSON.stringify(tableNames) !== JSON.stringify(CRM_TABLE_INVENTORY)) {
         return yield* new CrmDatabaseVerificationError({
-          reason: `CRM table inventory mismatch; expected=[], found=[${tableNames.join(', ')}]`,
+          reason: `CRM table inventory mismatch; expected=[${CRM_TABLE_INVENTORY.join(', ')}], found=[${tableNames.join(', ')}]`,
+        });
+      }
+      const customerBoundary = yield* Effect.tryPromise({
+        catch: () =>
+          new CrmDatabaseVerificationError({
+            reason: 'Unable to inspect the CRM Customer RLS and index boundary',
+          }),
+        try: () =>
+          database.executor.execute<{
+            readonly index_name: string | null;
+            readonly policy_count: string;
+            readonly relforcerowsecurity: boolean;
+            readonly relrowsecurity: boolean;
+          }>(sql`
+            select
+              relation.relrowsecurity,
+              relation.relforcerowsecurity,
+              count(distinct policy.polname)::text as policy_count,
+              max(index_relation.relname) filter (
+                where index_relation.relname = ${'crm_customers_active_registration_uk'}
+              ) as index_name
+            from pg_catalog.pg_class as relation
+            inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+            left join pg_catalog.pg_policy as policy on policy.polrelid = relation.oid
+            left join pg_catalog.pg_index as index_entry on index_entry.indrelid = relation.oid
+            left join pg_catalog.pg_class as index_relation on index_relation.oid = index_entry.indexrelid
+            where namespace.nspname = ${CRM_SCHEMA_NAME} and relation.relname = ${'customers'}
+            group by relation.relrowsecurity, relation.relforcerowsecurity
+          `),
+      });
+      const [boundary] = customerBoundary.rows;
+      if (
+        boundary === undefined ||
+        !boundary.relrowsecurity ||
+        !boundary.relforcerowsecurity ||
+        boundary.policy_count !== '4' ||
+        boundary.index_name !== 'crm_customers_active_registration_uk'
+      ) {
+        return yield* new CrmDatabaseVerificationError({
+          reason: 'CRM Customer table is missing forced tenant RLS, policies, or uniqueness',
         });
       }
       const journal = yield* Effect.tryPromise({

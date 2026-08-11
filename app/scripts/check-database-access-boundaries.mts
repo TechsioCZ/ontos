@@ -131,6 +131,16 @@ const importsGlobalDatabaseCapability = (
     const specifier = match.groups?.['specifier'];
     if (specifier === undefined) continue;
     const dependency = resolveLocalSource(sourceFiles, root, file, specifier);
+    // Public Core runtime imports are the governed framework boundary. Direct use of a hidden
+    // database capability is still rejected below, while following the aggregate's unrelated
+    // persistence exports would incorrectly classify every Action/Read contract as global DB use.
+    if (
+      specifier === '@app/core-runtime' &&
+      dependency !== undefined &&
+      path.relative(root, dependency).split(path.sep).join('/').startsWith('packages/core-runtime/')
+    ) {
+      continue;
+    }
     if (
       dependency !== undefined &&
       importsGlobalDatabaseCapability(dependency, sources, sourceFiles, root, nextVisiting)
@@ -188,6 +198,17 @@ export const checkDatabaseAccessBoundaries = async (
         const specifier = match.groups?.['specifier'];
         if (specifier === undefined) continue;
         const dependency = resolveLocalSource(sourceFiles, root, file, specifier);
+        if (
+          specifier === '@app/core-runtime' &&
+          dependency !== undefined &&
+          path
+            .relative(root, dependency)
+            .split(path.sep)
+            .join('/')
+            .startsWith('packages/core-runtime/')
+        ) {
+          continue;
+        }
         if (
           dependency !== undefined &&
           importsGlobalDatabaseCapability(dependency, sources, sourceFiles, root)

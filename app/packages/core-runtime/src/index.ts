@@ -107,6 +107,7 @@ export {
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from './db/scoped-transaction.ts';
+export type { ScopedTransactionExecutor } from './db/scoped-transaction.ts';
 export {
   ContextAccess,
   ContextAccessLive,
@@ -123,7 +124,13 @@ export type {
   ContextAccessShape,
   ResourceAccessTarget,
 } from './permissions/context-access.ts';
-export { defineAction, isActionRegistration } from './actions/definition.ts';
+export {
+  bindAction,
+  defineAction,
+  defineActionContract,
+  isActionContract,
+  isActionRegistration,
+} from './actions/definition.ts';
 export type {
   ActionAuditProfile,
   ActionDescriptor,
@@ -131,6 +138,8 @@ export type {
   ActionIdempotencyRule,
   ActionRegistration,
   ActionRequirements,
+  ActionServiceFactory,
+  AnyActionContract,
   AnyActionRegistration,
 } from './actions/definition.ts';
 export {

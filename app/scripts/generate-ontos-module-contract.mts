@@ -201,8 +201,8 @@ const toKebab = (value: string): string =>
     .replaceAll('_', '-')
     .toLowerCase();
 
-const deriveApiOperationKeys = (api: HttpApi.AnyWithProps): readonly string[] =>
-  Object.values(api.groups)
+const deriveApiOperationKeys = (api: HttpApi.Any): readonly string[] =>
+  Object.values((api as HttpApi.AnyWithProps).groups)
     .flatMap((group) =>
       Object.values(group.endpoints).map((endpoint) =>
         group.topLevel ? endpoint.name : `${group.identifier}.${endpoint.name}`,

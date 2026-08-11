@@ -1,7 +1,7 @@
 import { Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
-import type { AnyActionRegistration } from '../actions/definition.ts';
-import { isActionRegistration } from '../actions/definition.ts';
+import type { AnyActionContract } from '../actions/definition.ts';
+import { isActionContract } from '../actions/definition.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
@@ -172,7 +172,7 @@ export type OntosOutboxSubscriptionContract = typeof OntosOutboxSubscriptionCont
 export type OntosSerializedModuleManifest = typeof OntosSerializedModuleManifestSchema.Type;
 export type OntosModuleDeploymentContract = typeof OntosModuleDeploymentContractSchema.Type;
 
-export type OntosManifestActionValue = AnyActionRegistration;
+export type OntosManifestActionValue = AnyActionContract;
 
 /** V0 accepts directly callable React-style component values. */
 export type OntosManifestComponentValue = (...arguments_: never[]) => unknown;
@@ -188,7 +188,7 @@ export interface OntosAuthoredPublicEvent<
 
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
-  readonly api: Readonly<Record<string, HttpApi.AnyWithProps>>;
+  readonly api: Readonly<Record<string, HttpApi.Any>>;
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
   readonly reports: readonly OntosReportDescriptor[];
@@ -287,8 +287,8 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
   for (const action of input.publicSurface.actions) {
-    if (!isActionRegistration(action)) {
-      throw new TypeError('manifest Actions must be real values created by defineAction');
+    if (!isActionContract(action)) {
+      throw new TypeError('manifest Actions must be real values created by defineActionContract');
     }
     assertOwner(action.descriptor.owningModuleKey, input.module.id, 'Action');
     if (!action.descriptor.actionKey.startsWith(`${input.module.id}.`)) {

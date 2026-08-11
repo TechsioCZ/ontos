@@ -11,9 +11,13 @@ test('composes readiness and every declared governed resource-provider API', () 
   assert.deepEqual(Object.keys(crmApi.groups), [
     'foundation',
     'contactDetail',
+    'createCustomerActions',
     'customerDetail',
+    'reads',
     'customerTimeline',
     'dealDetail',
+    'deleteCustomerActions',
+    'editCustomerActions',
   ]);
   const endpoints = Object.values(crmApi.groups).flatMap((group) =>
     Object.values(group.endpoints).map(({ method, path: endpointPath }) => ({
@@ -24,9 +28,13 @@ test('composes readiness and every declared governed resource-provider API', () 
   assert.deepEqual(endpoints, [
     { method: 'GET', path: '/crm/readiness' },
     { method: 'POST', path: '/reads/contact-detail' },
+    { method: 'POST', path: '/actions/create-customer' },
     { method: 'POST', path: '/reads/customer-detail' },
+    { method: 'POST', path: '/reads/customer-directory' },
     { method: 'POST', path: '/reads/customer-timeline' },
     { method: 'POST', path: '/reads/deal-detail' },
+    { method: 'POST', path: '/actions/delete-customer' },
+    { method: 'POST', path: '/actions/edit-customer' },
   ]);
   assert.equal(
     endpoints.some(({ path: endpointPath }) => endpointPath === '/crm'),

@@ -100,10 +100,10 @@ export const planOutboxScaffold = async (
     !actionContent.includes(`// @ontos-action-owner ${vertical.moduleId}\n`) ||
     !actionContent.includes(`// @ontos-action-slug ${action}\n`) ||
     !actionContent.includes(`entrypoint: defineTenantModuleEntrypoint({\n`) ||
-    !actionContent.includes(`      access: 'write',\n`) ||
-    !actionContent.includes(`      entrypointKey: '${vertical.moduleId}.${action}',\n`) ||
-    !actionContent.includes(`      moduleKey: '${vertical.moduleId}',\n`) ||
-    !actionContent.includes(`      role: 'action',\n`)
+    !actionContent.includes(`    access: 'write',\n`) ||
+    !actionContent.includes(`    entrypointKey: '${vertical.moduleId}.${action}',\n`) ||
+    !actionContent.includes(`    moduleKey: '${vertical.moduleId}',\n`) ||
+    !actionContent.includes(`    role: 'action',\n`)
   ) {
     throw new Error(
       'Outbox Message can extend only the matching generated Action with its governed write entrypoint',

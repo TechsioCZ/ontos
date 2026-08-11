@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
-import { defineAction } from '../../src/actions/definition.ts';
+import { bindAction, defineAction, defineActionContract } from '../../src/actions/definition.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
@@ -198,6 +198,59 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
   });
   assert.equal(JSON.stringify(descriptors).includes('handler'), false);
   assert.equal(JSON.stringify(descriptors).includes('dashboard'), false);
+});
+
+test('publishes an unbound Action contract but rejects owner runtime registration until binding', () => {
+  const action = defineActionContract({
+    accessEvidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'property.registry.create-unit.access.v1',
+    },
+    actionKey: 'property.registry.create-unit',
+    auditProfile: 'standard',
+    domainErrorSchema: Schema.Never,
+    domainEvents: {},
+    entrypoint: defineTenantModuleEntrypoint({
+      access: 'write',
+      entrypointKey: 'property.registry.create-unit',
+      moduleKey: 'property.registry',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleKey: 'property.registry',
+    payloadSchema: Schema.Struct({ name: Schema.String }),
+    policies: [],
+    resultSchema: Schema.Struct({ id: Schema.String }),
+    schemaVersion: '1',
+  });
+  const manifest = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, actions: [action] },
+  });
+
+  assert.equal(manifest.publicSurface.actions[0], action);
+  assert.throws(
+    () =>
+      defineVerticalRuntimeRegistration({
+        actions: [action],
+        manifest,
+        outboxWorkers: [],
+      }),
+    /must have one owner-local private binding/u,
+  );
+
+  bindAction(action, ({ name }) => Effect.succeed({ id: name }));
+  const registration = defineVerticalRuntimeRegistration({
+    actions: [action],
+    manifest,
+    outboxWorkers: [],
+  });
+  assert.equal(getVerticalRuntimeActions(registration)[0], action);
+  assert.equal(
+    JSON.stringify(extractVerticalRuntimeSafeDescriptors(registration)).includes('handler'),
+    false,
+  );
 });
 
 test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
