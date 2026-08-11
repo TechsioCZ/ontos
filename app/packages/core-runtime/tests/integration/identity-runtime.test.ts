@@ -418,15 +418,22 @@ test('runs identity mutations and tenant-isolated administration through live Ac
       'principal',
       systemPrincipalId,
     );
-    spiceDbRelationships.push(systemIdentityAdministrator);
+    const systemTenantMember = relationship(
+      'tenant',
+      tenantId,
+      'member',
+      'principal',
+      systemPrincipalId,
+    );
+    spiceDbRelationships.push(systemIdentityAdministrator, systemTenantMember);
     await spiceDbClient.promises.writeRelationships(
       v1.WriteRelationshipsRequest.create({
-        updates: [
+        updates: [systemIdentityAdministrator, systemTenantMember].map((item) =>
           v1.RelationshipUpdate.create({
             operation: v1.RelationshipUpdate_Operation.TOUCH,
-            relationship: systemIdentityAdministrator,
+            relationship: item,
           }),
-        ],
+        ),
       }),
     );
     const systemCreated = await Effect.runPromise(

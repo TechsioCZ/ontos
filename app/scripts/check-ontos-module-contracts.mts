@@ -25,6 +25,8 @@ import {
   MODULE_MANIFEST_IMPORT_SLOT_START,
   MODULE_MANIFEST_REPORT_SLOT_END,
   MODULE_MANIFEST_REPORT_SLOT_START,
+  MODULE_MANIFEST_RESOURCE_TYPE_SLOT_END,
+  MODULE_MANIFEST_RESOURCE_TYPE_SLOT_START,
   MODULE_MANIFEST_SEARCH_SLOT_END,
   MODULE_MANIFEST_SEARCH_SLOT_START,
   MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
@@ -35,8 +37,12 @@ import {
   MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
   MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
   MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
+  MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_END,
+  MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_START,
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
+  MODULE_MANIFEST_SHELL_TIMELINE_SLOT_END,
+  MODULE_MANIFEST_SHELL_TIMELINE_SLOT_START,
   MODULE_REGISTRATION_ACTION_SLOT_END,
   MODULE_REGISTRATION_ACTION_SLOT_START,
   MODULE_REGISTRATION_API_SLOT_END,
@@ -227,6 +233,19 @@ export const checkOntosModuleContracts = async (workspaceRoot = process.cwd()): 
     const packageJson = readJson(path.join(verticalDirectory, 'package.json'));
     const modernjs = object(packageJson['modernjs'], `${appId} modernjs`);
     const ontosModule = object(modernjs['ontosModule'], `${appId} modernjs.ontosModule`);
+    const modernConfigPath = path.join(verticalDirectory, 'modern.config.ts');
+    const modernConfig = fs.readFileSync(modernConfigPath, 'utf-8');
+    const ignoredRedirectRoutes = /ignoreRedirectRoutes:\s*\[(?<routes>[\s\S]*?)\]/u.exec(
+      modernConfig,
+    )?.groups?.['routes'];
+    if (
+      ignoredRedirectRoutes === undefined ||
+      !/^\s*['"]\/\.well-known['"],?\s*$/mu.test(ignoredRedirectRoutes)
+    ) {
+      throw new Error(
+        `${appId} must exempt /.well-known from locale redirects so Shell discovery stays redirect-free`,
+      );
+    }
     const manifestPath = path.join(verticalDirectory, 'vertical.manifest.ts');
     const registrationPath = path.join(verticalDirectory, 'vertical.registration.ts');
     const manifestModuleId = validateOwner(manifestPath, [
@@ -240,6 +259,8 @@ export const checkOntosModuleContracts = async (workspaceRoot = process.cwd()): 
       MODULE_MANIFEST_COMPONENT_SLOT_END,
       MODULE_MANIFEST_REPORT_SLOT_START,
       MODULE_MANIFEST_REPORT_SLOT_END,
+      MODULE_MANIFEST_RESOURCE_TYPE_SLOT_START,
+      MODULE_MANIFEST_RESOURCE_TYPE_SLOT_END,
       MODULE_MANIFEST_SEARCH_SLOT_START,
       MODULE_MANIFEST_SEARCH_SLOT_END,
       MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
@@ -250,8 +271,12 @@ export const checkOntosModuleContracts = async (workspaceRoot = process.cwd()): 
       MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
       MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
       MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
+      MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_START,
+      MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_END,
       MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
       MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
+      MODULE_MANIFEST_SHELL_TIMELINE_SLOT_START,
+      MODULE_MANIFEST_SHELL_TIMELINE_SLOT_END,
     ]);
     const registrationModuleId = validateOwner(registrationPath, [
       MODULE_REGISTRATION_IMPORT_SLOT_START,

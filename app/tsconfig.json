@@ -12,6 +12,9 @@
     },
     {
       "path": "apps/shell-super-app"
+    },
+    {
+      "path": "verticals/crm"
     }
   ]
 }

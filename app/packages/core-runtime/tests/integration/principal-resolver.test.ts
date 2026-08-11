@@ -123,7 +123,7 @@ test('lists and selects multiple tenant-scoped principals and fails closed after
 
     await database
       .update(principalAuthBindings)
-      .set({ status: 'revoked' })
+      .set({ revokedAt: new Date(), status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, tenantOne));
     assert.deepEqual(await Effect.runPromise(resolver.listAvailableTenants(subject)), [
       { name: 'Resolver tenant two', tenantId: tenantTwo },
@@ -135,7 +135,7 @@ test('lists and selects multiple tenant-scoped principals and fails closed after
 
     await database
       .update(principalAuthBindings)
-      .set({ status: 'active' })
+      .set({ revokedAt: null, status: 'active' })
       .where(eq(principalAuthBindings.tenantId, tenantOne));
     await database
       .update(principals)

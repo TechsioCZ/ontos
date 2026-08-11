@@ -21,6 +21,7 @@ export const renderActionPrincipalServer = (
 ): string => `${ACTION_BOUNDARY_GENERATOR_HEADER}
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
+/* eslint-disable complexity, max-classes-per-file, prefer-destructuring -- The generated verifier keeps one auditable fail-closed identity boundary. */
 import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
@@ -323,6 +324,7 @@ export const planActionBoundaryScaffold = async (
   const dependencyMutation = withExactDependencies(vertical, {
     '@app/core-runtime': 'workspace:*',
     '@app/shared-contracts': 'workspace:*',
+    '@authzed/authzed-node': '1.6.1',
     effect: '4.0.0-beta.97',
     jose: '6.2.5',
   });

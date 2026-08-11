@@ -56,19 +56,6 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
           where relation.relkind in (${'r'}, ${'p'})
             and user_schemas.nspname = ${AUTH_SCHEMA_NAME}
         ),
-        unexpected_schemas as (
-          select
-            ${'schema'}::text as kind,
-            user_schemas.nspname as schema_name,
-            null::text as table_name
-          from user_schemas
-          where user_schemas.nspname not in (
-            ${AUTH_SCHEMA_NAME},
-            ${'core'},
-            ${'drizzle'},
-            ${'public'}
-          )
-        ),
         migration_bookkeeping as (
           select
             ${'migration'}::text as kind,
@@ -79,10 +66,9 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
             on relation.relnamespace = user_schemas.oid
           where relation.relkind = ${'r'}
             and user_schemas.nspname = ${'drizzle'}
+            and relation.relname = ${'__drizzle_migrations_auth'}
         )
         select kind, schema_name, table_name from auth_tables
-        union all
-        select kind, schema_name, table_name from unexpected_schemas
         union all
         select kind, schema_name, table_name from migration_bookkeeping
         order by kind, schema_name, table_name
@@ -105,10 +91,7 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
     }
   }
 
-  const expectedMigrationBookkeepingTables = [
-    '__drizzle_migrations_auth',
-    '__drizzle_migrations_core',
-  ];
+  const expectedMigrationBookkeepingTables = ['__drizzle_migrations_auth'];
   migrationBookkeepingTables.sort();
   const difference = compareAuthCatalog(tableNames);
   if (

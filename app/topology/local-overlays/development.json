@@ -3,10 +3,69 @@
   "environment": "development",
   "preset": "presetUltramodern",
   "ports": {
-    "shell-super-app": 3020
+    "shell-super-app": 3020,
+    "crm": 4101
   },
-  "manifests": {},
-  "ontosModuleManifests": {},
-  "serverExecution": {},
-  "apis": {}
+  "manifests": {
+    "crm": "http://localhost:4101/mf-manifest.json"
+  },
+  "ontosModuleManifests": {
+    "crm": "http://localhost:4101/.well-known/ontos-module-manifest.json"
+  },
+  "serverExecution": {
+    "crm": {
+      "apiBaseUrl": "http://localhost:4101/crm-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/crm",
+        "buildMarker": "b08ddded31ae2315"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-crm",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_CRM_WORKER",
+          "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalCrmBackend",
+        "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff/effect",
+        "expected": {
+          "unitId": "app/crm",
+          "buildMarker": "b08ddded31ae2315"
+        }
+      }
+    }
+  },
+  "apis": {
+    "crm": "http://localhost:4101/crm-api"
+  }
 }

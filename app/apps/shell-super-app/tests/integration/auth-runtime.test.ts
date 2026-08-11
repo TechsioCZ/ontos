@@ -247,6 +247,11 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const current = await Effect.runPromise(authentication.currentSession(authenticatedHeaders));
     assert.equal(current.identity?.tenantId, tenantId);
     assert.ok(current.identity);
+    const [persistedSession] = await authDatabase
+      .select({ id: session.id })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.ok(persistedSession);
 
     const currentSessionResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/session`, {
@@ -401,6 +406,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
                 },
                 principal: {
                   authBindingId: '45000000-0000-4000-8000-000000000001',
+                  authContextRef: `better-auth-session:${persistedSession.id}`,
                   authMethod: 'session' as const,
                   legalEntityId: fixtureLegalEntityId,
                   principalId: current.identity.principalId,
@@ -549,6 +555,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     });
     assert.deepEqual(verifiedAssertion.payload.principal, {
       authBindingId: fixtureAuthBindingId,
+      authContextRef: `better-auth-session:${persistedSession.id}`,
       authMethod: 'session',
       legalEntityId: fixtureLegalEntityId,
       principalId,
@@ -612,6 +619,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       ),
       {
         authBindingId: fixtureAuthBindingId,
+        authContextRef: `better-auth-session:${persistedSession.id}`,
         authMethod: 'session',
         legalEntityId: fixtureLegalEntityId,
         principalId,
@@ -667,7 +675,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     await coreDatabase
       .update(principalAuthBindings)
-      .set({ status: 'revoked' })
+      .set({ revokedAt: new Date(), status: 'revoked' })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
     const revoked = await Effect.runPromise(
       Effect.flip(authentication.currentSession(authenticatedHeaders)),
@@ -684,7 +692,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     await coreDatabase
       .update(principalAuthBindings)
-      .set({ status: 'active' })
+      .set({ revokedAt: null, status: 'active' })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
     const signOutResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/sign-out`, {
@@ -899,7 +907,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       origin: configuration.baseUrl,
     });
     const initialSessions = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
+      .select({ activeTenantId: session.activeTenantId, id: session.id })
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
     assert.equal(initialSessions[0]?.activeTenantId, firstTenantId);
@@ -1154,6 +1162,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     });
     assert.deepEqual(verified.payload.principal, {
       authBindingId: secondAuthBindingId,
+      authContextRef: `better-auth-session:${initialSessions[0]?.id}`,
       authMethod: 'session',
       legalEntityId: secondLegalEntityId,
       principalId: secondPrincipalId,
@@ -1258,7 +1267,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     await Effect.runPromise(authentication.switchTenant(secondTenantId, authenticatedHeaders));
     await coreDatabase
       .update(principalAuthBindings)
-      .set({ status: 'revoked' })
+      .set({ revokedAt: new Date(), status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
     const revokedSession = await Effect.runPromise(
       Effect.flip(authentication.currentSession(authenticatedHeaders)),

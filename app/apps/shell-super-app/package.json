@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
+    "@app/crm": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
@@ -64,6 +65,7 @@
     "@types/pg": "8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@typescript/native": "npm:typescript@7.0.2",
     "auth": "1.6.23",
     "drizzle-kit": "0.31.10",
     "happy-dom": "20.8.3",
@@ -78,5 +80,7 @@
     "appId": "shell-super-app",
     "topology": "../../topology/reference-topology.json"
   },
-  "zephyr:dependencies": {}
+  "zephyr:dependencies": {
+    "crm": "@app/crm@workspace:*"
+  }
 }

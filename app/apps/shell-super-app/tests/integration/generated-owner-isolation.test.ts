@@ -477,6 +477,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     authBindingId: string,
   ): TrustedPrincipalContext => ({
     authBindingId,
+    authContextRef: `better-auth-session:generated-owner-${authBindingId}`,
     authMethod: 'session',
     legalEntityId,
     principalId,

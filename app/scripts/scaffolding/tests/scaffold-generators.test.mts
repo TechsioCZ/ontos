@@ -120,6 +120,22 @@ const writeFixtureFile = async (
 const createVertical = async (root: string, vertical: FixtureVertical): Promise<void> => {
   await writeFixtureFile(
     root,
+    `verticals/${vertical.slug}/modern.config.ts`,
+    `export default {
+  plugins: [
+    i18nPlugin({
+      localeDetection: {
+        ignoreRedirectRoutes: [
+          '/static',
+        ],
+      },
+    }),
+  ],
+};
+`,
+  );
+  await writeFixtureFile(
+    root,
     `verticals/${vertical.slug}/module-federation.config.ts`,
     'export default { exposes: {} };\n',
   );
@@ -289,8 +305,8 @@ const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => 
   await writeFile(
     manifestPath,
     manifest.replace(
-      '    resourceTypes: [],',
-      `    resourceTypes: [
+      '      // <generated-module-manifest-resource-types>\n',
+      `      // <generated-module-manifest-resource-types>
       {
         capabilities: {
           graphVisible: false,
@@ -304,7 +320,7 @@ const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => 
         label: 'Inventory item',
         owningModuleId: 'inventory.stock',
       },
-    ],`,
+`,
     ),
     'utf8',
   );
@@ -324,6 +340,7 @@ test('documents every command and treats --help as a write-free operation', asyn
         'policy',
         'public-component',
         'report',
+        'resource-provider',
         'search-provider',
       ] as const
     ).map(async (command) => {
@@ -336,6 +353,18 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
+});
+
+test('module contracts preserve the root discovery path across locale redirects', async () => {
+  await withFixture(async (fixture) => {
+    for (const vertical of ['billing', 'inventory-stock']) {
+      const modernConfig = await readFixtureFile(
+        fixture.root,
+        `verticals/${vertical}/modern.config.ts`,
+      );
+      assert.match(modernConfig, /ignoreRedirectRoutes:\s*\[\s*'\/\.well-known',/u);
+    }
+  });
 });
 
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
@@ -451,7 +480,7 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     assert.match(moduleApiRead, /defineRead\(/u);
     assert.match(moduleApiRead, /legalEntityScope: 'required'/u);
     for (const server of [moduleApiServer, searchServer, reportServer]) {
-      assert.match(server, /verifyOperationPrincipal\(request\.headers\.authorization,/u);
+      assert.match(server, /verifyOperationPrincipal\(request\.headers\['authorization'\],/u);
       assert.match(server, /yield\* ReadRuntime/u);
       assert.match(server, /\.runRead\(\{/u);
       assert.match(server, /HttpEffect\.appendPreResponseHandler/u);
@@ -506,6 +535,112 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       /exposes object is missing/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeUnpatchable);
+  });
+});
+
+test('resource-provider generator composes safe detail and timeline entrypoints atomically', async () => {
+  await withFixture(async (fixture) => {
+    const beforeUnsupportedTimeline = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'resource-provider', [
+        '--vertical',
+        'inventory-stock',
+        '--resource',
+        'item',
+        '--surface',
+        'timeline',
+      ]),
+      /must be declared by a same-owner detail provider/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeUnsupportedTimeline);
+
+    await run(fixture, 'resource-provider', [
+      '--vertical',
+      'inventory-stock',
+      '--resource',
+      'item',
+      '--surface',
+      'detail',
+    ]);
+    await run(fixture, 'resource-provider', [
+      '--vertical',
+      'inventory-stock',
+      '--resource',
+      'warehouse',
+      '--surface',
+      'detail',
+    ]);
+    await run(fixture, 'resource-provider', [
+      '--vertical',
+      'inventory-stock',
+      '--resource',
+      'item',
+      '--surface',
+      'timeline',
+    ]);
+
+    const [manifest, registration, contract, read, client, server, serverSupport] =
+      await Promise.all([
+        readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts'),
+        readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.registration.ts'),
+        readFixtureFile(fixture.root, 'verticals/inventory-stock/shared/apis/item-detail.ts'),
+        readFixtureFile(fixture.root, 'verticals/inventory-stock/src/api/item-detail.read.ts'),
+        readFixtureFile(fixture.root, 'verticals/inventory-stock/src/api/item-detail-client.ts'),
+        readFixtureFile(fixture.root, 'verticals/inventory-stock/api/item-detail-read-server.ts'),
+        readFixtureFile(
+          fixture.root,
+          'verticals/inventory-stock/api/auth/resource-provider-server.ts',
+        ),
+      ]);
+    assert.match(manifest, /key: 'inventory\.stock\.item'/u);
+    assert.match(manifest, /timelineVisible: true/u);
+    assert.match(manifest, /inventory\.stock\.resource-detail\.item/u);
+    assert.match(manifest, /inventory\.stock\.resource-timeline\.item/u);
+    assert.match(manifest, /Item resource owned by inventory\.stock\./u);
+    assert.ok(
+      manifest.indexOf('inventory.stock.item') < manifest.indexOf('inventory.stock.warehouse'),
+    );
+    assert.match(
+      registration,
+      /'item-detail': \(\) => import\('\.\/src\/api\/item-detail-client\.ts'\)/u,
+    );
+    assert.match(contract, /resourceType: Schema\.Literal\('inventory\.stock\.item'\)/u);
+    assert.match(contract, /HttpApiGroup\.make\('itemDetail'\)/u);
+    assert.match(read, /permissionTarget: 'resource'/u);
+    assert.match(read, /ReadHandlerUnavailable/u);
+    assert.doesNotMatch(read, /from 'pg'|drizzle|repository/u);
+    assert.match(client, /makeEffectHttpApiClient\(ItemDetailApi,/u);
+    assert.doesNotMatch(client, /\.read\.ts|read-server|vertical\.registration/u);
+    assert.match(server, /verifyResourceProviderPrincipal/u);
+    assert.match(server, /Unexpected governed resource-provider failure/u);
+    assert.match(server, /yield\* ReadRuntime/u);
+    assert.doesNotMatch(server, /from 'pg'|drizzle|repository/u);
+    assert.match(serverSupport, /verifyOperationPrincipal/u);
+    assert.match(serverSupport, /classifyResourceProviderReadFailure/u);
+
+    const beforeRerun = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'resource-provider', [
+        '--vertical',
+        'inventory-stock',
+        '--resource',
+        'item',
+        '--surface',
+        'detail',
+      ]),
+      /refusing to overwrite/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
+
+    const billingBefore = Object.fromEntries(
+      Object.entries(beforeRerun).filter(([file]) => file.startsWith('verticals/billing/')),
+    );
+    const billingAfter = Object.fromEntries(
+      Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
+        file.startsWith('verticals/billing/'),
+      ),
+    );
+    assert.deepEqual(billingAfter, billingBefore);
   });
 });
 
@@ -622,6 +757,16 @@ test('rejects malformed command contracts and leaves the fixture unchanged', asy
         ['--vertical', 'inventory-stock', '--unknown', 'x'],
         /unknown flag --unknown/u,
       ],
+      [
+        'resource-provider',
+        ['--vertical', 'inventory-stock', '--resource', 'item', '--surface', 'other'],
+        /detail or timeline/u,
+      ],
+      [
+        'resource-provider',
+        ['--vertical', 'inventory-stock', '--resource', '../item', '--surface', 'detail'],
+        /lower-kebab-case/u,
+      ],
       ['microvertical-action-boundary', ['--vertical', '../billing'], /lower-kebab-case/u],
       [
         'policy',
@@ -695,6 +840,7 @@ test('generates one immutable Action identity boundary and exact direct dependen
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': 'workspace:*',
       '@app/shared-contracts': 'workspace:*',
+      '@authzed/authzed-node': '1.6.1',
       effect: '4.0.0-beta.97',
       jose: '6.2.5',
       zeta: '1.0.0',
@@ -814,6 +960,8 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
     const current = await makeGatewayKey('current');
     const retiring = await makeGatewayKey('retiring');
     const principal = {
+      authBindingId: '30000000-0000-4000-8000-000000000001',
+      authContextRef: 'better-auth-session:scaffold-verifier-test',
       authMethod: 'session' as const,
       principalId: '40000000-0000-4000-8000-000000000001',
       tenantId: '50000000-0000-4000-8000-000000000001',
@@ -2009,11 +2157,12 @@ export default PurchaseOrdersPage;
     );
     assert.match(manifest, /inventory\.stock\.navigation\.purchase-orders/u);
     assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
+    assert.match(manifest, /'page-purchase-orders': PurchaseOrdersPage/u);
     assert.match(registration, /page-purchase-orders/u);
     assert.match(federation, /\.\/PagePurchaseOrders/u);
     assert.match(
       shellClients,
-      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('verticalInventoryStock\/PagePurchaseOrders'\)/u,
+      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('inventoryStock\/PagePurchaseOrders'\)/u,
     );
     assert.equal(
       await readFixtureFile(
@@ -2164,7 +2313,6 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
 });
 
 const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<string, string>>> => {
-  await addInventoryItemResourceType(fixture);
   await run(fixture, 'microvertical-action-boundary', ['--vertical', 'inventory-stock']);
   await run(fixture, 'action', [
     '--scope',
@@ -2193,6 +2341,23 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
     'inventory-stock',
   ]);
   await run(fixture, 'module-api', ['--vertical', 'inventory-stock', '--name', 'resource-detail']);
+  await run(fixture, 'resource-provider', [
+    '--vertical',
+    'inventory-stock',
+    '--resource',
+    'record',
+    '--surface',
+    'detail',
+  ]);
+  await run(fixture, 'resource-provider', [
+    '--vertical',
+    'inventory-stock',
+    '--resource',
+    'record',
+    '--surface',
+    'timeline',
+  ]);
+  await addInventoryItemResourceType(fixture);
   await run(fixture, 'search-provider', [
     '--vertical',
     'inventory-stock',
@@ -2284,6 +2449,14 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/inventory-stock/src/api/resource-detail.read.ts',
       'verticals/inventory-stock/src/api/resource-detail-client.ts',
       'verticals/inventory-stock/api/resource-detail-read-server.ts',
+      'verticals/inventory-stock/shared/apis/record-detail.ts',
+      'verticals/inventory-stock/src/api/record-detail.read.ts',
+      'verticals/inventory-stock/src/api/record-detail-client.ts',
+      'verticals/inventory-stock/api/record-detail-read-server.ts',
+      'verticals/inventory-stock/shared/apis/record-timeline.ts',
+      'verticals/inventory-stock/src/api/record-timeline.read.ts',
+      'verticals/inventory-stock/src/api/record-timeline-client.ts',
+      'verticals/inventory-stock/api/record-timeline-read-server.ts',
       'verticals/inventory-stock/shared/apis/inventory-items-search.ts',
       'verticals/inventory-stock/src/search/inventory-items.provider.ts',
       'verticals/inventory-stock/src/api/inventory-items-search-client.ts',
@@ -2373,6 +2546,15 @@ test('all generated files typecheck against the real workspace contracts', async
       path.join(appRoot, 'packages/core-runtime/src/operations'),
       path.join(fixture.root, 'packages/core-runtime/src/operations'),
       'dir',
+    );
+    await mkdir(path.join(fixture.root, 'packages/core-runtime/src/auth'), { recursive: true });
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/auth/system-principal-context-provenance.ts'),
+      path.join(
+        fixture.root,
+        'packages/core-runtime/src/auth/system-principal-context-provenance.ts',
+      ),
+      'file',
     );
     await symlink(
       path.join(appRoot, 'packages/core-runtime/src/modules/module-entrypoint.ts'),

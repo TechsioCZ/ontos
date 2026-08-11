@@ -35,6 +35,8 @@ import {
   VERTICAL_SEARCH_SLOT_START,
   MODULE_MANIFEST_REPORT_SLOT_END,
   MODULE_MANIFEST_REPORT_SLOT_START,
+  MODULE_MANIFEST_RESOURCE_TYPE_SLOT_END,
+  MODULE_MANIFEST_RESOURCE_TYPE_SLOT_START,
   MODULE_MANIFEST_SEARCH_SLOT_END,
   MODULE_MANIFEST_SEARCH_SLOT_START,
   MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
@@ -45,8 +47,12 @@ import {
   MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
   MODULE_MANIFEST_SHELL_REPORT_SLOT_END,
   MODULE_MANIFEST_SHELL_REPORT_SLOT_START,
+  MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_END,
+  MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_START,
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_END,
   MODULE_MANIFEST_SHELL_SEARCH_SLOT_START,
+  MODULE_MANIFEST_SHELL_TIMELINE_SLOT_END,
+  MODULE_MANIFEST_SHELL_TIMELINE_SLOT_START,
   asJsonObject,
   createMutation,
   discoverVertical,
@@ -151,7 +157,10 @@ export const ${valueName} = defineOntosModuleManifest({
       ${MODULE_MANIFEST_REPORT_SLOT_START}
       ${MODULE_MANIFEST_REPORT_SLOT_END}
     ],
-    resourceTypes: [],
+    resourceTypes: [
+      ${MODULE_MANIFEST_RESOURCE_TYPE_SLOT_START}
+      ${MODULE_MANIFEST_RESOURCE_TYPE_SLOT_END}
+    ],
     search: [
       ${MODULE_MANIFEST_SEARCH_SLOT_START}
       ${MODULE_MANIFEST_SEARCH_SLOT_END}
@@ -174,12 +183,18 @@ export const ${valueName} = defineOntosModuleManifest({
         ${MODULE_MANIFEST_SHELL_REPORT_SLOT_START}
         ${MODULE_MANIFEST_SHELL_REPORT_SLOT_END}
       ],
-      resourceDetails: [],
+      resourceDetails: [
+        ${MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_START}
+        ${MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_END}
+      ],
       search: [
         ${MODULE_MANIFEST_SHELL_SEARCH_SLOT_START}
         ${MODULE_MANIFEST_SHELL_SEARCH_SLOT_END}
       ],
-      timelines: [],
+      timelines: [
+        ${MODULE_MANIFEST_SHELL_TIMELINE_SLOT_START}
+        ${MODULE_MANIFEST_SHELL_TIMELINE_SLOT_END}
+      ],
     },
   },
 });
@@ -318,6 +333,26 @@ const patchTsconfig = async (
   );
 };
 
+const patchModernConfig = async (
+  vertical: VerticalMetadata,
+): Promise<ReturnType<typeof updateMutation>> => {
+  const modernConfigPath = resolveContainedPath(vertical.directory, 'modern.config.ts');
+  const content = await readFile(modernConfigPath, 'utf-8');
+  const ignoreRoutesStart = /^(?<indent>\s*)ignoreRedirectRoutes:\s*\[\s*$/mu;
+  const match = ignoreRoutesStart.exec(content);
+  if (match === null) {
+    throw new Error(
+      `vertical ${vertical.slug} modern.config.ts has no generated i18n redirect exclusion list`,
+    );
+  }
+  if (/^\s*['"]\/\.well-known['"],?\s*$/mu.test(content)) {
+    return undefined;
+  }
+  const indentation = match.groups?.['indent'] ?? '';
+  const next = content.replace(ignoreRoutesStart, `${match[0]}\n${indentation}  '/.well-known',`);
+  return updateMutation(modernConfigPath, content, next);
+};
+
 export const planModuleContractScaffold = async (
   workspaceRoot: string,
   config: ModuleContractScaffoldConfig,
@@ -339,11 +374,13 @@ export const planModuleContractScaffold = async (
     packageContent,
   );
   const tsconfigMutation = await patchTsconfig(vertical);
+  const modernConfigMutation = await patchModernConfig(vertical);
   const mutations = [
     manifestMutation,
     registrationMutation,
     packageMutation,
     tsconfigMutation,
+    modernConfigMutation,
   ].filter((mutation): mutation is NonNullable<typeof mutation> => mutation !== undefined);
   ensureUniqueMutationPaths(mutations);
   return {

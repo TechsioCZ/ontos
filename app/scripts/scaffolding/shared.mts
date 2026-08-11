@@ -41,6 +41,10 @@ export const MODULE_MANIFEST_COMPONENT_SLOT_START = '// <generated-module-manife
 export const MODULE_MANIFEST_COMPONENT_SLOT_END = '// </generated-module-manifest-components>';
 export const MODULE_MANIFEST_REPORT_SLOT_START = '// <generated-module-manifest-reports>';
 export const MODULE_MANIFEST_REPORT_SLOT_END = '// </generated-module-manifest-reports>';
+export const MODULE_MANIFEST_RESOURCE_TYPE_SLOT_START =
+  '// <generated-module-manifest-resource-types>';
+export const MODULE_MANIFEST_RESOURCE_TYPE_SLOT_END =
+  '// </generated-module-manifest-resource-types>';
 export const MODULE_MANIFEST_SEARCH_SLOT_START = '// <generated-module-manifest-search>';
 export const MODULE_MANIFEST_SEARCH_SLOT_END = '// </generated-module-manifest-search>';
 export const MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START = '// <generated-module-shell-navigation>';
@@ -51,8 +55,14 @@ export const MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START = '// <generated-module-
 export const MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END = '// </generated-module-shell-components>';
 export const MODULE_MANIFEST_SHELL_REPORT_SLOT_START = '// <generated-module-shell-reports>';
 export const MODULE_MANIFEST_SHELL_REPORT_SLOT_END = '// </generated-module-shell-reports>';
+export const MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_START =
+  '// <generated-module-shell-resource-details>';
+export const MODULE_MANIFEST_SHELL_RESOURCE_DETAIL_SLOT_END =
+  '// </generated-module-shell-resource-details>';
 export const MODULE_MANIFEST_SHELL_SEARCH_SLOT_START = '// <generated-module-shell-search>';
 export const MODULE_MANIFEST_SHELL_SEARCH_SLOT_END = '// </generated-module-shell-search>';
+export const MODULE_MANIFEST_SHELL_TIMELINE_SLOT_START = '// <generated-module-shell-timelines>';
+export const MODULE_MANIFEST_SHELL_TIMELINE_SLOT_END = '// </generated-module-shell-timelines>';
 export const MODULE_REGISTRATION_IMPORT_SLOT_START = '// <generated-module-registration-imports>';
 export const MODULE_REGISTRATION_IMPORT_SLOT_END = '// </generated-module-registration-imports>';
 export const MODULE_REGISTRATION_ACTION_SLOT_START = '// <generated-module-registration-actions>';
@@ -114,6 +124,12 @@ export interface GovernedContributionScaffoldConfig {
   readonly vertical: string;
 }
 
+export interface ResourceProviderScaffoldConfig {
+  readonly resource: string;
+  readonly surface: 'detail' | 'timeline';
+  readonly vertical: string;
+}
+
 export interface ActionBoundaryScaffoldConfig {
   readonly vertical: string;
 }
@@ -168,6 +184,13 @@ export interface GovernedContributionScaffoldResult {
   readonly artifactPath: string;
   readonly clientPath?: string;
   readonly serverPath?: string;
+}
+
+export interface ResourceProviderScaffoldResult {
+  readonly clientPath: string;
+  readonly contractPath: string;
+  readonly readPath: string;
+  readonly serverPath: string;
 }
 
 export interface ActionBoundaryScaffoldResult {

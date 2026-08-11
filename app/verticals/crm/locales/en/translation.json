@@ -1,0 +1,41 @@
+{
+  "crm": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "role": "Customer relationship management",
+    "title": "CRM",
+    "pages": {
+      "customers": {
+        "description": "Manage customer companies and contacts.",
+        "empty": "No customers yet.",
+        "loading": "Loading customers…",
+        "title": "Customers",
+        "unavailable": {
+          "description": "Customer data is temporarily unavailable.",
+          "retry": "Try again",
+          "title": "Customers unavailable"
+        }
+      },
+      "deals": {
+        "description": "Manage sales opportunities and their progress.",
+        "empty": "No deals yet.",
+        "loading": "Loading deals…",
+        "title": "Deals",
+        "unavailable": {
+          "description": "Deal data is temporarily unavailable.",
+          "retry": "Try again",
+          "title": "Deals unavailable"
+        }
+      }
+    }
+  }
+}

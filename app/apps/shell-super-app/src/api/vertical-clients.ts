@@ -14,6 +14,16 @@ export interface ApprovedVerticalPageClient {
 /** Codesmith-owned allowlist. Executable imports remain lazy and owner-deployment-specific. */
 export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
   // @ontos-codegen-start shell-page-clients
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-customers',
+    load: () => import('crm/PageCustomers'),
+  },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-deals',
+    load: () => import('crm/PageDeals'),
+  },
   // @ontos-codegen-end shell-page-clients
 ];
 

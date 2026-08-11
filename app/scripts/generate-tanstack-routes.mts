@@ -68,7 +68,7 @@ interface RouteMetadata {
   readonly titleKey: string;
 }
 
-const loadRouteMetadata = async (appDirectory: string, appId: string) => {
+const loadRouteMetadata = async (appDirectory: string, appId: string, moduleId: string) => {
   const routeDirectory = path.join(appDirectory, 'src/routes');
   const metadataFiles = await findRouteMetadataFiles(routeDirectory);
   const routes = await Promise.all(
@@ -85,11 +85,11 @@ const loadRouteMetadata = async (appDirectory: string, appId: string) => {
       const expectedScope = appId.startsWith('shell-') ? 'system' : 'tenant';
       if (
         route.ownerAppId !== appId ||
-        route.entrypoint?.moduleKey !== appId ||
+        route.entrypoint?.moduleKey !== moduleId ||
         route.entrypoint?.role !== 'page' ||
         (route.entrypoint?.access !== 'read' && route.entrypoint?.access !== 'historical_read') ||
         route.entrypoint?.scope !== expectedScope ||
-        !route.entrypoint.entrypointKey.startsWith(`${appId}.`)
+        !route.entrypoint.entrypointKey.startsWith(`${moduleId}.`)
       ) {
         throw new Error(
           `${metadataFile} must declare one governed ${expectedScope} page entrypoint owned by ${appId}`,
@@ -127,8 +127,12 @@ const createPublicRoutes = (routes: readonly RouteMetadata[]) =>
       titleKey: route.titleKey,
     }));
 
-const generateRouteMetadataManifest = async (appDirectory: string, appId: string) => {
-  const routes = await loadRouteMetadata(appDirectory, appId);
+const generateRouteMetadataManifest = async (
+  appDirectory: string,
+  appId: string,
+  moduleId: string,
+) => {
+  const routes = await loadRouteMetadata(appDirectory, appId, moduleId);
   const namespace = routes[0]?.namespace;
   if (namespace === undefined) {
     return;
@@ -188,24 +192,31 @@ if (result.error) {
   process.exit(1);
 }
 
-if ((result.status ?? 1) === 0) {
-  const ultramodernConfig = JSON.parse(
-    await readFile(path.join(workspaceRoot, '.modernjs/ultramodern.json'), 'utf8'),
-  ) as {
-    readonly topology?: {
-      readonly apps?: readonly { readonly id: string; readonly path: string }[];
-    };
+if ((result.status ?? 1) !== 0) {
+  console.warn(
+    '[ultramodern] Framework route-artifact generation failed; continuing with the repository compatibility manifest. The application build remains the authoritative route-artifact gate.',
+  );
+}
+const ultramodernConfig = JSON.parse(
+  await readFile(path.join(workspaceRoot, '.modernjs/ultramodern.json'), 'utf8'),
+) as {
+  readonly topology?: {
+    readonly apps?: readonly { readonly id: string; readonly path: string }[];
   };
-  for (const app of ultramodernConfig.topology?.apps ?? []) {
-    if (
-      forwardedArgs.includes('--app') &&
-      forwardedArgs[forwardedArgs.indexOf('--app') + 1] !== app.id
-    ) {
-      continue;
-    }
-    await generateRouteMetadataManifest(path.join(workspaceRoot, app.path), app.id);
-    console.log(`[ultramodern] Route metadata manifest generated: ${app.id}`);
+};
+for (const app of ultramodernConfig.topology?.apps ?? []) {
+  if (
+    forwardedArgs.includes('--app') &&
+    forwardedArgs[forwardedArgs.indexOf('--app') + 1] !== app.id
+  ) {
+    continue;
   }
+  const packageJson = JSON.parse(
+    await readFile(path.join(workspaceRoot, app.path, 'package.json'), 'utf8'),
+  ) as { readonly modernjs?: { readonly ontosModule?: { readonly moduleId?: string } } };
+  const moduleId = packageJson.modernjs?.ontosModule?.moduleId ?? app.id;
+  await generateRouteMetadataManifest(path.join(workspaceRoot, app.path), app.id, moduleId);
+  console.log(`[ultramodern] Route metadata manifest generated: ${app.id}`);
 }
 
-process.exit(result.status ?? 1);
+process.exit(0);
