@@ -75,7 +75,7 @@ export const ${value} = () => null;
 `;
 };
 
-const renderApiContract = (name: string): string => {
+export const renderApiContract = (name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader('module-api')}
@@ -231,7 +231,7 @@ export const ${toCamelCase(name)}Read = defineRead(
 `;
 };
 
-const renderApiClient = (name: string): string => {
+export const renderApiClient = (name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader('module-api')}
@@ -489,7 +489,7 @@ export const ${apiValue} = HttpApi.make('${apiValue}').add(
 `;
 };
 
-const renderGovernedServer = (
+export const renderGovernedServer = (
   kind: 'module-api' | 'report' | 'search-provider',
   name: string,
 ): string => {
@@ -620,7 +620,7 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
           ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
           ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
         }).pipe(Effect.mapError(unavailableProblem));
-        const principal = yield* verifyOperationPrincipal(request.headers.authorization, {
+        const principal = yield* verifyOperationPrincipal(request.headers['authorization'], {
           environment,
         }).pipe(
           Effect.catch((error) => {

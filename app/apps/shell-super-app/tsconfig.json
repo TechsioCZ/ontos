@@ -11,13 +11,7 @@
     "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/apps__shell-super-app.tsbuildinfo"
   },
-  "include": [
-    "api",
-    "src",
-    "locales/**/*.json",
-    "package.json",
-    "shared"
-  ],
+  "include": ["api", "src", "locales/**/*.json", "package.json", "shared"],
   "references": [
     {
       "path": "../../packages/core-runtime"
@@ -27,6 +21,9 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../../verticals/crm"
     }
   ]
 }

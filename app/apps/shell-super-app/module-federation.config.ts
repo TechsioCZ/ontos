@@ -3,6 +3,49 @@ import { createRequire } from 'node:module';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 import { dependencies } from './package.json';
 
+import { getBuildConfigEnvironment } from '@modern-js/app-tools/config';
+
+const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+const cloudflareWorkersDevSubdomain = getBuildConfigEnvironment(
+  'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+)?.trim();
+const requireCloudflarePublicUrls =
+  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true';
+
+const createRemoteManifestUrl = (options: {
+  manifestEnv: string;
+  mfName: string;
+  port: number;
+  publicUrlEnv: string;
+  workerName: string;
+}) => {
+  const configuredManifest = getBuildConfigEnvironment(options.manifestEnv)?.trim();
+  if (configuredManifest !== undefined && configuredManifest.length > 0) {
+    return configuredManifest;
+  }
+
+  const configuredPublicUrl = getBuildConfigEnvironment(options.publicUrlEnv)?.trim();
+  if (configuredPublicUrl !== undefined && configuredPublicUrl.length > 0) {
+    return `${options.mfName}@${configuredPublicUrl.replace(/\/+$/u, '')}/mf-manifest.json`;
+  }
+
+  if (
+    cloudflareDeployEnabled &&
+    cloudflareWorkersDevSubdomain !== undefined &&
+    cloudflareWorkersDevSubdomain.length > 0
+  ) {
+    return `${options.mfName}@https://${options.workerName}.${cloudflareWorkersDevSubdomain}.workers.dev/mf-manifest.json`;
+  }
+
+  if (cloudflareDeployEnabled && requireCloudflarePublicUrls) {
+    throw new Error(
+      `Cloudflare deploy needs ${options.publicUrlEnv}, ${options.manifestEnv}, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN for remote ${options.mfName}.`,
+    );
+  }
+
+  return `${options.mfName}@http://localhost:${options.port}/mf-manifest.json`;
+};
+
 const require = createRequire(import.meta.url);
 const pluginI18nVersion = (require('@modern-js/plugin-i18n/package.json') as { version: string })
   .version;
@@ -22,6 +65,15 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     filename: 'remoteEntry.js',
     name: 'shellSuperApp',
+    remotes: {
+      crm: createRemoteManifestUrl({
+        manifestEnv: 'VERTICAL_CRM_MF_MANIFEST',
+        mfName: 'verticalCrm',
+        port: 4101,
+        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+        workerName: 'app-crm',
+      }),
+    },
     shared: {
       '@modern-js/plugin-i18n/runtime/no-react-i18next': {
         requiredVersion: pluginI18nVersion,

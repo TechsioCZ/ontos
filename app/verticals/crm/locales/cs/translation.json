@@ -1,0 +1,41 @@
+{
+  "crm": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "role": "Řízení vztahů se zákazníky",
+    "title": "CRM",
+    "pages": {
+      "customers": {
+        "description": "Správa zákaznických společností a kontaktů.",
+        "empty": "Zatím zde nejsou žádní zákazníci.",
+        "loading": "Načítání zákazníků…",
+        "title": "Zákazníci",
+        "unavailable": {
+          "description": "Data zákazníků jsou dočasně nedostupná.",
+          "retry": "Zkusit znovu",
+          "title": "Zákazníci nejsou dostupní"
+        }
+      },
+      "deals": {
+        "description": "Správa obchodních příležitostí a jejich postupu.",
+        "empty": "Zatím zde nejsou žádné obchodní příležitosti.",
+        "loading": "Načítání obchodních příležitostí…",
+        "title": "Obchodní příležitosti",
+        "unavailable": {
+          "description": "Data obchodních příležitostí jsou dočasně nedostupná.",
+          "retry": "Zkusit znovu",
+          "title": "Obchodní příležitosti nejsou dostupné"
+        }
+      }
+    }
+  }
+}
