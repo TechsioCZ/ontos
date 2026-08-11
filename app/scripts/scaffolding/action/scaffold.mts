@@ -46,6 +46,7 @@ const renderActionContract = (
   const type = toPascalCase(action);
   const value = `${toCamelCase(action)}Action`;
   return `${ACTION_GENERATOR_HEADER}
+/* eslint-disable max-classes-per-file, unicorn/prefer-export-from -- generated closed Action vocabulary and schema re-exports */
 // @ontos-action-owner ${vertical.moduleId}
 // @ontos-action-slug ${action}
 import { Schema } from 'effect';
@@ -174,7 +175,7 @@ export class ${type}SchemaErrorMiddleware extends HttpApiMiddleware.Service<${ty
 ) {}
 
 export const ${type}ActionApi = HttpApi.make('${type}ActionApi').add(
-  HttpApiGroup.make('actions').add(
+  HttpApiGroup.make('${toCamelCase(action)}Actions').add(
     HttpApiEndpoint.post('execute', '/actions/${action}', {
       error: [
         ${type}ValidationProblemSchema,
@@ -234,11 +235,12 @@ export const execute${type}ActionWithAuthorization = (
   authorization: string,
   options: ${type}ActionRequestOptions,
 ) =>
-  makeEffectHttpApiClient(${type}ActionApi, {
-    baseUrl: options.baseUrl,
-  }).pipe(
+  makeEffectHttpApiClient(
+    ${type}ActionApi,
+    options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
+  ).pipe(
     Effect.flatMap((client) =>
-      client.actions.execute({
+      client.${toCamelCase(action)}Actions.execute({
         headers: {
         authorization,
         'x-correlation-id': options.correlationId,
@@ -284,10 +286,7 @@ import {
   ${type}SchemaErrorMiddleware,
 } from '../shared/apis/${action}-action.ts';
 import {
-  ${type}Conflict,
-  ${type}NotFound,
   ${type}PolicyDenialStatuses,
-  ${type}Rejected,
   ${value},
 } from '../src/actions/${action}.action.ts';
 import type { ${type}DomainError } from '../src/actions/${action}.action.ts';
@@ -403,9 +402,9 @@ const ${toCamelCase(action)}ActionSchemaErrorLive = HttpApiMiddleware.layerSchem
 
 export const ${toCamelCase(action)}ActionApiLive = HttpApiBuilder.group(
   ${type}ActionApi,
-  'actions',
+  '${toCamelCase(action)}Actions',
   (handlers) =>
-    handlers.handle('execute', ({ headers, payload, request }) =>
+    handlers.handle('execute', ({ headers, payload }) =>
       Effect.gen(function* execute${type}Action() {
         const environment = yield* Config.all({
           ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),

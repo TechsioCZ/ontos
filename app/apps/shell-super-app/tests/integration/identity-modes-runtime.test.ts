@@ -46,7 +46,12 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
     const [pair] = header.split(';');
     const separator = pair?.indexOf('=') ?? -1;
     if (pair !== undefined && separator > 0) {
-      cookies.set(pair.slice(0, separator), pair);
+      const name = pair.slice(0, separator);
+      if (pair.slice(separator + 1).length === 0) {
+        cookies.delete(name);
+      } else {
+        cookies.set(name, pair);
+      }
     }
   }
   return [...cookies.values()].join('; ');

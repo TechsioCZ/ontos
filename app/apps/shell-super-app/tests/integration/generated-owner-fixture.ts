@@ -137,7 +137,10 @@ const addResourceType = async (root: string): Promise<void> => {
   const manifest = await readFile(manifestPath, 'utf-8');
   const withResourceType = replaceRequired(
     manifest,
-    '    resourceTypes: [],',
+    `    resourceTypes: [
+      // <generated-module-manifest-resource-types>
+      // </generated-module-manifest-resource-types>
+    ],`,
     `    resourceTypes: [
       {
         capabilities: {
@@ -156,7 +159,10 @@ const addResourceType = async (root: string): Promise<void> => {
   );
   const withResourceDetail = replaceRequired(
     withResourceType,
-    '      resourceDetails: [],',
+    `      resourceDetails: [
+        // <generated-module-shell-resource-details>
+        // </generated-module-shell-resource-details>
+      ],`,
     `      resourceDetails: [
         {
           apiKey: '${GENERATED_OWNER.moduleId}.resource-detail',
@@ -176,7 +182,10 @@ const addResourceType = async (root: string): Promise<void> => {
     manifestPath,
     replaceRequired(
       withResourceDetail,
-      '      timelines: [],',
+      `      timelines: [
+        // <generated-module-shell-timelines>
+        // </generated-module-shell-timelines>
+      ],`,
       `      timelines: [
         {
           apiKey: '${GENERATED_OWNER.moduleId}.resource-list',

@@ -101,6 +101,19 @@ const assertNotContains = (
   assert(!pattern.test(content), `${relativePath}: ${message}`);
 };
 
+const isGeneratedInfrastructureReadinessApi = (verticalPath: string, content: string): boolean => {
+  const stem = path.posix.basename(verticalPath);
+  const endpoints = [
+    ...content.matchAll(/HttpApiEndpoint\.(get|post)\(\s*'([^']+)'\s*,\s*'([^']+)'/gu),
+  ].map((match) => `${match[1]}:${match[2]}:${match[3]}`);
+  return (
+    endpoints.length === 1 &&
+    endpoints[0] === `get:readiness:/${stem}/readiness` &&
+    content.includes(`export const ${stem}ApiContract = {`) &&
+    content.includes(`readinessPath: '/${stem}-api/${stem}/readiness'`)
+  );
+};
+
 const assertPrivateOwnerImports = (file, content) => {
   const imports = content.matchAll(
     /(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu,
@@ -329,15 +342,27 @@ const assertApiSurface = (appPath: string): void => {
 
   if (exists(packageJsonPath)) {
     const packageJson = JSON.parse(readText(packageJsonPath));
-    assert(
-      packageJson.exports?.['./api'] === './shared/api.ts',
-      `${packageJsonPath}: package must export ./api from shared/api.ts.`,
-    );
-    assert(
-      typeof packageJson.exports?.['./api/client'] === 'string' &&
-        packageJson.exports['./api/client'].startsWith('./src/api/'),
-      `${packageJsonPath}: package must export ./api/client from src/api/*.`,
-    );
+    const isPrivateVerticalInfrastructureApi =
+      appPath.startsWith('verticals/') &&
+      exists(sharedApi) &&
+      isGeneratedInfrastructureReadinessApi(appPath, readText(sharedApi));
+    if (isPrivateVerticalInfrastructureApi) {
+      assert(
+        packageJson.exports?.['./api'] === undefined &&
+          packageJson.exports?.['./api/client'] === undefined,
+        `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
+      );
+    } else {
+      assert(
+        packageJson.exports?.['./api'] === './shared/api.ts',
+        `${packageJsonPath}: package must export ./api from shared/api.ts.`,
+      );
+      assert(
+        typeof packageJson.exports?.['./api/client'] === 'string' &&
+          packageJson.exports['./api/client'].startsWith('./src/api/'),
+        `${packageJsonPath}: package must export ./api/client from src/api/*.`,
+      );
+    }
   }
 };
 
@@ -350,7 +375,11 @@ for (const appPath of listDirectories('apps')) {
 for (const verticalPath of verticalDirectories) {
   assertApiSurface(verticalPath);
   const sharedApi = `${verticalPath}/shared/api.ts`;
-  if (exists(sharedApi) && /\bHttpApiEndpoint\./u.test(readText(sharedApi))) {
+  const sharedApiContent = exists(sharedApi) ? readText(sharedApi) : '';
+  if (
+    /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
+    !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent)
+  ) {
     fail(
       `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
     );

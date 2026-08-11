@@ -14,6 +14,7 @@ import policyGenerator from './policy/scaffold.mts';
 import publicComponentGenerator from './public-component/scaffold.mts';
 import moduleApiGenerator from './module-api/scaffold.mts';
 import reportGenerator from './report/scaffold.mts';
+import resourceProviderGenerator from './resource-provider/scaffold.mts';
 import searchProviderGenerator from './search-provider/scaffold.mts';
 import type {
   ActionScaffoldConfig,
@@ -32,6 +33,8 @@ import type {
   PolicyScaffoldResult,
   GovernedContributionScaffoldConfig,
   GovernedContributionScaffoldResult,
+  ResourceProviderScaffoldConfig,
+  ResourceProviderScaffoldResult,
 } from './shared.mts';
 
 export type ScaffoldCommand =
@@ -45,6 +48,7 @@ export type ScaffoldCommand =
   | 'policy'
   | 'public-component'
   | 'report'
+  | 'resource-provider'
   | 'search-provider';
 
 type GeneratorResult =
@@ -55,7 +59,8 @@ type GeneratorResult =
   | OutboxScaffoldResult
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
-  | PolicyScaffoldResult;
+  | PolicyScaffoldResult
+  | ResourceProviderScaffoldResult;
 
 type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
@@ -65,7 +70,8 @@ type GeneratorConfig =
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
-  | PolicyScaffoldConfig;
+  | PolicyScaffoldConfig
+  | ResourceProviderScaffoldConfig;
 
 type LocalGenerator<Result extends GeneratorResult> = (
   context: GeneratorContext,
@@ -358,6 +364,34 @@ Options:
       resource: flags['resource'] ?? '',
       vertical: flags['vertical'] ?? '',
     }),
+  },
+  'resource-provider': {
+    flags: ['resource', 'surface', 'vertical'],
+    generator: resourceProviderGenerator,
+    help: `Usage: pnpm scaffold:resource-provider -- --vertical <vertical> --resource <resource> --surface <detail|timeline>
+
+Generate one governed resource detail or timeline API, client, server, safe Shell binding, and owner-private lazy registration.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --resource <resource>  Owner-local resource key (lower-kebab-case)
+  --surface <surface>    Provider surface: detail or timeline
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['resource', 'surface', 'vertical'],
+    toConfig: (flags) => {
+      const surface = flags['surface'];
+      if (surface !== 'detail' && surface !== 'timeline') {
+        throw new Error('--surface must be detail or timeline');
+      }
+      return {
+        resource: flags['resource'] ?? '',
+        surface,
+        vertical: flags['vertical'] ?? '',
+      };
+    },
   },
   'search-provider': {
     flags: ['name', 'resource', 'vertical'],

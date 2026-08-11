@@ -1,0 +1,80 @@
+{
+  "name": "@app/crm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./locales/cs": "./locales/cs/crm.json",
+    "./locales/en": "./locales/en/crm.json"
+  },
+  "scripts": {
+    "dev": "modern dev",
+    "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical crm --target dist && node ../../scripts/generate-public-surface-assets.mts --app crm --target dist && MODERNJS_DEPLOY=node modern deploy --skip-build",
+    "cloudflare:build": "MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical crm --target cloudflare-dist && node ../../scripts/generate-public-surface-assets.mts --app crm --target cloudflare-dist && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && node ../../scripts/verify-cloudflare-output.mts --app crm",
+    "cloudflare:deploy": "ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
+    "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
+    "cloudflare:proof": "node ../../scripts/proof-cloudflare-version.mts --app crm",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
+    "db:test": "pnpm test:unit && pnpm test:integration",
+    "db:verify": "node scripts/verify-db-schema.mts",
+    "serve": "modern serve",
+    "test:integration": "node --test tests/integration/*.test.ts",
+    "test:unit": "node --test tests/unit/*.test.ts",
+    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+  },
+  "dependencies": {
+    "@app/core-runtime": "workspace:*",
+    "@app/shared-contracts": "workspace:*",
+    "@app/shared-design-tokens": "workspace:*",
+    "@authzed/authzed-node": "1.6.1",
+    "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.96",
+    "@modern-js/plugin-i18n": "npm:@bleedingdev/modern-js-plugin-i18n@3.5.0-ultramodern.96",
+    "@modern-js/plugin-tanstack": "npm:@bleedingdev/modern-js-plugin-tanstack@3.5.0-ultramodern.96",
+    "@modern-js/runtime": "npm:@bleedingdev/modern-js-runtime@3.5.0-ultramodern.96",
+    "@module-federation/bridge-react": "2.8.0",
+    "@module-federation/modern-js-v3": "2.8.0",
+    "@module-federation/runtime": "2.8.0",
+    "@tanstack/react-router": "1.170.17",
+    "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
+    "effect": "4.0.0-beta.97",
+    "i18next": "26.3.6",
+    "jose": "6.2.5",
+    "node-fetch": "^3.3.2",
+    "pg": "8.22.0",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "react-router": "7.18.1"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "0.19.0",
+    "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.5.0-ultramodern.96",
+    "@rsbuild/plugin-tailwindcss": "^2.0.3",
+    "@types/node": "^20",
+    "@types/pg": "8.20.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "drizzle-kit": "0.31.10",
+    "tailwindcss": "^4.3.2",
+    "typescript": "7.0.2",
+    "wrangler": "4.110.0",
+    "zephyr-rspack-plugin": "1.1.1"
+  },
+  "modernjs": {
+    "preset": "presetUltramodern",
+    "role": "module-federation-remote",
+    "appId": "crm",
+    "topology": "../../topology/reference-topology.json",
+    "apiRuntime": "effect",
+    "ontosModule": {
+      "contractPath": "/.well-known/ontos-module-manifest.json",
+      "manifest": "./vertical.manifest.ts",
+      "moduleId": "crm.core",
+      "registration": "./vertical.registration.ts",
+      "schemaVersion": 2
+    }
+  },
+  "zephyr:dependencies": {}
+}

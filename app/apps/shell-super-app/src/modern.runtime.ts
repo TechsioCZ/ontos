@@ -36,6 +36,14 @@ export const ultramodernBoundaryMetadata = {
       packageName: '@app/shell-super-app',
       role: 'host',
     },
+    {
+      appId: 'crm',
+      label: 'CRM',
+      mfName: 'verticalCrm',
+      ownerTeam: 'super-app-platform',
+      packageName: '@app/crm',
+      role: 'vertical',
+    },
   ],
   schemaVersion: 1,
 } as const;

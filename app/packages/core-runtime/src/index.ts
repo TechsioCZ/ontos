@@ -107,6 +107,7 @@ export {
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from './db/scoped-transaction.ts';
+export type { ScopedTransactionExecutor } from './db/scoped-transaction.ts';
 export {
   ContextAccess,
   ContextAccessLive,

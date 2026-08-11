@@ -200,7 +200,7 @@ const pageWiring = (vertical: PageVerticalMetadata, page: string) => {
     manifestNavigation: `{ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' },`,
     manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint} },`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${page}/page.tsx'),`,
-    shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${vertical.mfBoundaryId}/Page${toPascalCase(page)}') },`,
+    shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${toCamelCase(vertical.appId)}/Page${toPascalCase(page)}') },`,
   } as const;
 };
 

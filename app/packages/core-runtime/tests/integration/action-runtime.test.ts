@@ -39,6 +39,7 @@ import {
   domainEvents,
   legalEntities,
   outboxMessages,
+  principalAuthBindings,
   principals,
   tenantModuleStateChanges,
   tenantModuleStates,
@@ -62,8 +63,11 @@ class TestDomainRejected extends Schema.TaggedErrorClass<TestDomainRejected>()(
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
+const authBindingId = randomUUID();
 
 const principal = {
+  authBindingId,
+  authContextRef: `better-auth-session:action-runtime-${authBindingId}`,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -241,6 +245,15 @@ before(async () => {
       status: 'active',
       tenantId,
     });
+    await database.executor.insert(principalAuthBindings).values({
+      principalAuthBindingId: authBindingId,
+      principalId,
+      provider: 'better_auth',
+      providerSubjectId: `action-runtime-${principalId}`,
+      status: 'active',
+      subjectType: 'user',
+      tenantId,
+    });
     await database.executor.insert(tenantModuleStates).values({
       moduleKey: 'inventory.stock',
       state: 'active',
@@ -264,6 +277,9 @@ after(async () => {
     await database.executor
       .delete(actionInvocations)
       .where(eq(actionInvocations.tenantId, tenantId));
+    await database.executor
+      .delete(principalAuthBindings)
+      .where(eq(principalAuthBindings.tenantId, tenantId));
     await database.executor.delete(principals).where(eq(principals.tenantId, tenantId));
     await database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
     await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
