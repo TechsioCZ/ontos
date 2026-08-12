@@ -1,4 +1,6 @@
 import { Effect } from 'effect';
+import { changeCustomerPrimaryContactHandler } from '../actions/change-customer-primary-contact.handler.ts';
+import { bindChangeCustomerPrimaryContactAction } from '../actions/change-customer-primary-contact.registration.ts';
 import { createContactHandler } from '../actions/create-contact.handler.ts';
 import { bindCreateContactAction } from '../actions/create-contact.registration.ts';
 import { deleteContactHandler } from '../actions/delete-contact.handler.ts';
@@ -14,6 +16,10 @@ const contactServiceFactory = (
 
 export const boundCreateContactAction = bindCreateContactAction(
   createContactHandler,
+  contactServiceFactory,
+);
+export const boundChangeCustomerPrimaryContactAction = bindChangeCustomerPrimaryContactAction(
+  changeCustomerPrimaryContactHandler,
   contactServiceFactory,
 );
 export const boundEditContactAction = bindEditContactAction(

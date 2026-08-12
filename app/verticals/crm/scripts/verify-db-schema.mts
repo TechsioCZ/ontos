@@ -117,8 +117,9 @@ const verifyAdminCatalog = (configuration: CrmDatabaseConfigValue) =>
           database.executor.execute<{
             readonly check_count: string;
             readonly foreign_key_name: null | string;
-            readonly index_name: null | string;
+            readonly pagination_index_name: null | string;
             readonly policy_count: string;
+            readonly primary_index_name: null | string;
             readonly relforcerowsecurity: boolean;
             readonly relrowsecurity: boolean;
           }>(sql`
@@ -134,7 +135,10 @@ const verifyAdminCatalog = (configuration: CrmDatabaseConfigValue) =>
               ) as foreign_key_name,
               max(index_relation.relname) filter (
                 where index_relation.relname = ${'crm_contacts_active_customer_name_id_idx'}
-              ) as index_name
+              ) as pagination_index_name,
+              max(index_relation.relname) filter (
+                where index_relation.relname = ${'crm_contacts_active_primary_uk'}
+              ) as primary_index_name
             from pg_catalog.pg_class as relation
             inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
             left join pg_catalog.pg_policy as policy on policy.polrelid = relation.oid
@@ -154,11 +158,12 @@ const verifyAdminCatalog = (configuration: CrmDatabaseConfigValue) =>
         contact.policy_count !== '4' ||
         contact.check_count !== '2' ||
         contact.foreign_key_name !== 'crm_contacts_customer_fk' ||
-        contact.index_name !== 'crm_contacts_active_customer_name_id_idx'
+        contact.pagination_index_name !== 'crm_contacts_active_customer_name_id_idx' ||
+        contact.primary_index_name !== 'crm_contacts_active_primary_uk'
       ) {
         return yield* new CrmDatabaseVerificationError({
           reason:
-            'CRM Contact table is missing forced tenant RLS, parent FK, checks, or pagination index',
+            'CRM Contact table is missing forced tenant RLS, parent FK, checks, pagination, or primary uniqueness',
         });
       }
       const journal = yield* Effect.tryPromise({

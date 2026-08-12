@@ -4,6 +4,7 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { crmManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { changeCustomerPrimaryContactAction } from './src/actions/change-customer-primary-contact.action.ts';
 import { createContactAction } from './src/actions/create-contact.action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { deleteContactAction } from './src/actions/delete-contact.action.ts';
@@ -17,6 +18,7 @@ import './src/customers/customer-actions.runtime.ts';
 export const crmRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    changeCustomerPrimaryContactAction,
     createContactAction,
     createCustomerAction,
     deleteContactAction,
@@ -28,6 +30,8 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'change-customer-primary-contact-action': () =>
+        import('./src/api/change-customer-primary-contact-action-client.ts'),
       'contact-detail': () => import('./src/api/contact-detail-client.ts'),
       'create-contact-action': () => import('./src/api/create-contact-action-client.ts'),
       'create-customer-action': () => import('./src/api/create-customer-action-client.ts'),

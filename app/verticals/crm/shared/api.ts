@@ -4,6 +4,7 @@ import {
   HttpApiGroup,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
+import { ChangeCustomerPrimaryContactActionApi } from './apis/change-customer-primary-contact-action.ts';
 import { ContactDetailApi } from './apis/contact-detail.ts';
 import { CreateContactActionApi } from './apis/create-contact-action.ts';
 import { CreateCustomerActionApi } from './apis/create-customer-action.ts';
@@ -82,6 +83,7 @@ export const crmFoundationApi = HttpApi.make('CrmFoundationApi').add(
 
 export const crmApi = HttpApi.make('CrmApi')
   .addHttpApi(crmFoundationApi)
+  .addHttpApi(ChangeCustomerPrimaryContactActionApi)
   .addHttpApi(ContactDetailApi)
   .addHttpApi(CreateContactActionApi)
   .addHttpApi(CreateCustomerActionApi)
