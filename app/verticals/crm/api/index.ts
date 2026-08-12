@@ -4,6 +4,7 @@ import { ActionRuntimeLive, CorePersistenceLive, ReadRuntimeLive } from '@app/co
 import '../src/contacts/contact-actions.runtime.ts';
 import '../src/customers/customer-actions.runtime.ts';
 import '../src/deals/deal-actions.runtime.ts';
+import { changeCustomerPrimaryContactActionApiLive } from './change-customer-primary-contact-action-server.ts';
 import { contactDetailReadApiLive } from './contact-detail-read-server.ts';
 import { createContactActionApiLive } from './create-contact-action-server.ts';
 import { createCustomerActionApiLive } from './create-customer-action-server.ts';
@@ -60,6 +61,7 @@ const layer = HttpApiBuilder.layer(crmApi).pipe(
   Layer.provide(
     Layer.mergeAll(
       crmLayer,
+      changeCustomerPrimaryContactActionApiLive,
       contactDetailReadApiLive,
       createContactActionApiLive,
       createCustomerActionApiLive,

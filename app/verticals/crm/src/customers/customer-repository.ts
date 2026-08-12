@@ -43,6 +43,12 @@ export interface CustomerListCursor {
 }
 
 export interface CustomerRepository {
+  readonly advanceVersion: (
+    tenantId: string,
+    customerId: string,
+    expectedVersion: number,
+    updatedAt: Date,
+  ) => Effect.Effect<number | undefined, CustomerRepositoryUnavailable>;
   readonly create: (
     customer: CustomerInsert,
   ) => Effect.Effect<CustomerRow, CustomerRepositoryError>;
@@ -125,6 +131,23 @@ export const makeCustomerRepository = (
     }).pipe(Effect.map(([row]) => row));
 
   const repository: CustomerRepository = {
+    advanceVersion: (tenantId, customerId, expectedVersion, updatedAt) =>
+      Effect.tryPromise({
+        catch: unavailable,
+        try: () =>
+          transaction
+            .update(customers)
+            .set({ updatedAt, version: sql`${customers.version} + 1` })
+            .where(
+              and(
+                eq(customers.tenantId, tenantId),
+                eq(customers.customerId, customerId),
+                eq(customers.version, expectedVersion),
+                isNull(customers.deletedAt),
+              ),
+            )
+            .returning({ version: customers.version }),
+      }).pipe(Effect.map(([updated]) => updated?.version)),
     create,
     findActiveById,
     findActiveByRegistrationNumber: (tenantId, companyRegistrationNumber, excludingCustomerId) =>

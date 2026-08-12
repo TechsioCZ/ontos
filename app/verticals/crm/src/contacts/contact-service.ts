@@ -3,6 +3,10 @@ import type { DataAccessEventInput, ScopedTransactionExecutor } from '@app/core-
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import type {
+  ChangeCustomerPrimaryContactPayload,
+  ChangeCustomerPrimaryContactResult,
+} from '../../shared/apis/change-customer-primary-contact-action.ts';
+import type {
   ContactFields,
   ContactView,
   CustomerDirectoryResponse,
@@ -21,6 +25,12 @@ import type {
   EditContactResult,
 } from '../../shared/apis/edit-contact-action.ts';
 import {
+  ChangeCustomerPrimaryContactConflict,
+  ChangeCustomerPrimaryContactNotFound,
+  ChangeCustomerPrimaryContactRejected,
+  ChangeCustomerPrimaryContactUnavailable,
+} from '../actions/change-customer-primary-contact.action.ts';
+import {
   CreateContactNotFound,
   CreateContactRejected,
   CreateContactUnavailable,
@@ -38,12 +48,15 @@ import {
 } from '../actions/edit-contact.action.ts';
 import { makeCustomerLookup } from '../customers/customer-service.ts';
 import type { CustomerLookup, CustomerLookupUnavailable } from '../customers/customer-service.ts';
+import { makeCustomerRepository } from '../customers/customer-repository.ts';
+import type { CustomerRepositoryUnavailable } from '../customers/customer-repository.ts';
 import { makeContactRepository } from './contact-repository.ts';
 import type {
   ContactListCursor,
   ContactRepository,
   ContactRepositoryUnavailable,
   ContactRow,
+  PrimaryContactRepositoryError,
 } from './contact-repository.ts';
 
 export class ContactValidationError extends Schema.TaggedErrorClass<ContactValidationError>()(
@@ -147,6 +160,18 @@ const customerReadEvidence = (customerId: string, resultCount: number): DataAcce
   targetResourceId: customerId,
   targetResourceType: 'crm.core.customer',
 });
+const currentPrimaryReadEvidence = (
+  customerId: string,
+  resultCount: number,
+): DataAccessEventInput => ({
+  accessKind: 'read',
+  queryHash: hashQuery('crm.contacts.active-primary-for-customer.v1'),
+  resultCount,
+  servingModuleKey: 'crm.core',
+  targetModuleKey: 'crm.core',
+  targetResourceId: customerId,
+  targetResourceType: 'crm.core.customer',
+});
 
 const normalizedName = (value: null | string): string =>
   value?.normalize('NFKC').toLowerCase() ?? '';
@@ -190,10 +215,33 @@ const deleteUnavailable = (_error: ContactRepositoryUnavailable | CustomerLookup
     code: 'contact_persistence_unavailable',
     reason: 'Contact persistence is temporarily unavailable',
   });
+const primaryContactUnavailable = (
+  _error: ContactRepositoryUnavailable | CustomerLookupUnavailable | CustomerRepositoryUnavailable,
+) =>
+  new ChangeCustomerPrimaryContactUnavailable({
+    code: 'primary_contact_persistence_unavailable',
+    reason: 'Primary Contact persistence is temporarily unavailable',
+  });
+const primaryContactPersistenceError = (error: PrimaryContactRepositoryError) =>
+  error._tag === 'PrimaryContactRepositoryConflict'
+    ? new ChangeCustomerPrimaryContactConflict({
+        code: 'action_conflict',
+        reason: 'The primary Contact changed concurrently',
+      })
+    : primaryContactUnavailable(error);
 
 type ContactListResponse = Extract<CustomerDirectoryResponse, { readonly operation: 'contacts' }>;
 
 export interface ContactService {
+  readonly changeCustomerPrimaryContact: (
+    input: ChangeCustomerPrimaryContactPayload,
+  ) => Effect.Effect<
+    ContactMutationOutcome<ChangeCustomerPrimaryContactResult>,
+    | ChangeCustomerPrimaryContactConflict
+    | ChangeCustomerPrimaryContactNotFound
+    | ChangeCustomerPrimaryContactRejected
+    | ChangeCustomerPrimaryContactUnavailable
+  >;
   readonly createContact: (
     input: CreateContactPayload,
   ) => Effect.Effect<
@@ -232,8 +280,164 @@ export const makeContactService = (
 ): ContactService => {
   const repository: ContactRepository = makeContactRepository(transaction);
   const customers: CustomerLookup = makeCustomerLookup(transaction, tenantId);
+  const customerRepository = makeCustomerRepository(transaction);
 
   const service: ContactService = {
+    changeCustomerPrimaryContact: (input) =>
+      // eslint-disable-next-line complexity -- Atomic set/replace/clear keeps every version and ownership gate visible in transaction order.
+      Effect.gen(function* changeCustomerPrimaryContact() {
+        const hasCurrentId = input.expectedCurrentPrimaryContactId !== null;
+        const hasCurrentVersion = input.expectedCurrentPrimaryContactVersion !== null;
+        if (hasCurrentId !== hasCurrentVersion) {
+          return yield* new ChangeCustomerPrimaryContactRejected({
+            code: 'action_semantically_rejected',
+            reason: 'Expected current primary Contact ID and version must both be null or present',
+          });
+        }
+        const hasSelectedId = input.selectedContactId !== null;
+        const hasSelectedVersion = input.expectedSelectedContactVersion !== null;
+        if (hasSelectedId !== hasSelectedVersion) {
+          return yield* new ChangeCustomerPrimaryContactRejected({
+            code: 'action_semantically_rejected',
+            reason: 'Selected Contact ID and expected version must both be null or present',
+          });
+        }
+
+        const customer = yield* customers
+          .lockActiveCustomer(input.customerId)
+          .pipe(Effect.mapError(primaryContactUnavailable));
+        if (customer === undefined) {
+          return yield* new ChangeCustomerPrimaryContactNotFound({
+            code: 'action_target_not_found',
+            reason: 'The requested Customer was not found',
+          });
+        }
+        if (customer.version !== input.expectedCustomerVersion) {
+          return yield* new ChangeCustomerPrimaryContactConflict({
+            code: 'action_conflict',
+            reason: 'The Customer version is stale',
+          });
+        }
+
+        const candidates = yield* repository
+          .lockPrimaryCandidates(tenantId, input.customerId, input.selectedContactId)
+          .pipe(Effect.mapError(primaryContactUnavailable));
+        const current = candidates.find(({ isPrimaryContact }) => isPrimaryContact);
+        const selected =
+          input.selectedContactId === null
+            ? undefined
+            : candidates.find(({ contactId }) => contactId === input.selectedContactId);
+
+        if (input.selectedContactId !== null && selected === undefined) {
+          const visibleSelected = yield* repository
+            .findActiveById(tenantId, input.selectedContactId)
+            .pipe(Effect.mapError(primaryContactUnavailable));
+          if (visibleSelected === undefined) {
+            return yield* new ChangeCustomerPrimaryContactNotFound({
+              code: 'action_target_not_found',
+              reason: 'The selected Contact was not found',
+            });
+          }
+          return yield* new ChangeCustomerPrimaryContactRejected({
+            code: 'action_semantically_rejected',
+            reason: 'The selected Contact does not belong to the Customer',
+          });
+        }
+
+        if (
+          (current?.contactId ?? null) !== input.expectedCurrentPrimaryContactId ||
+          (current?.version ?? null) !== input.expectedCurrentPrimaryContactVersion
+        ) {
+          return yield* new ChangeCustomerPrimaryContactConflict({
+            code: 'action_conflict',
+            reason: 'The current primary Contact changed',
+          });
+        }
+        if (selected !== undefined && selected.version !== input.expectedSelectedContactVersion) {
+          return yield* new ChangeCustomerPrimaryContactConflict({
+            code: 'action_conflict',
+            reason: 'The selected Contact version is stale',
+          });
+        }
+        if (selected !== undefined && selected.contactId === current?.contactId) {
+          return yield* new ChangeCustomerPrimaryContactRejected({
+            code: 'action_semantically_rejected',
+            reason: 'The selected Contact is already primary',
+          });
+        }
+        if (selected === undefined && current === undefined) {
+          return yield* new ChangeCustomerPrimaryContactRejected({
+            code: 'action_semantically_rejected',
+            reason: 'The Customer has no primary Contact to clear',
+          });
+        }
+
+        const changedAt = now();
+        const cleared =
+          current === undefined
+            ? undefined
+            : yield* repository
+                .updatePrimaryStatus(
+                  tenantId,
+                  input.customerId,
+                  current.contactId,
+                  current.version,
+                  false,
+                  changedAt,
+                )
+                .pipe(Effect.mapError(primaryContactPersistenceError));
+        if (current !== undefined && cleared === undefined) {
+          return yield* new ChangeCustomerPrimaryContactConflict({
+            code: 'action_conflict',
+            reason: 'The current primary Contact changed concurrently',
+          });
+        }
+        const assigned =
+          selected === undefined
+            ? undefined
+            : yield* repository
+                .updatePrimaryStatus(
+                  tenantId,
+                  input.customerId,
+                  selected.contactId,
+                  selected.version,
+                  true,
+                  changedAt,
+                )
+                .pipe(Effect.mapError(primaryContactPersistenceError));
+        if (selected !== undefined && assigned === undefined) {
+          return yield* new ChangeCustomerPrimaryContactConflict({
+            code: 'action_conflict',
+            reason: 'The selected Contact changed concurrently',
+          });
+        }
+        const customerVersion = yield* customerRepository
+          .advanceVersion(tenantId, input.customerId, input.expectedCustomerVersion, changedAt)
+          .pipe(Effect.mapError(primaryContactUnavailable));
+        if (customerVersion === undefined) {
+          return yield* new ChangeCustomerPrimaryContactConflict({
+            code: 'action_conflict',
+            reason: 'The Customer changed concurrently',
+          });
+        }
+
+        return {
+          dataAccess: [
+            customerReadEvidence(input.customerId, 1),
+            currentPrimaryReadEvidence(input.customerId, current === undefined ? 0 : 1),
+            ...(selected === undefined ? [] : [contactReadEvidence(selected.contactId, 1)]),
+          ],
+          result: {
+            changedAt: changedAt.toISOString(),
+            customerId: input.customerId,
+            customerVersion,
+            previousPrimaryContactId: current?.contactId ?? null,
+            previousPrimaryContactVersion: cleared?.version ?? null,
+            primaryContactId: assigned?.contactId ?? null,
+            primaryContactVersion: assigned?.version ?? null,
+          },
+        };
+      }),
     createContact: (input) =>
       Effect.gen(function* createContact() {
         const normalized = yield* normalizeContactFields(input).pipe(

@@ -1,6 +1,6 @@
 /* eslint-disable max-classes-per-file -- Closed private Contact persistence error vocabulary. */
 import type { ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 import { contacts } from '../db/schema.ts';
 
@@ -12,8 +12,44 @@ export class ContactRepositoryUnavailable extends Schema.TaggedErrorClass<Contac
   { reason: Schema.String },
 ) {}
 
+export class PrimaryContactRepositoryConflict extends Schema.TaggedErrorClass<PrimaryContactRepositoryConflict>()(
+  'PrimaryContactRepositoryConflict',
+  { reason: Schema.String },
+) {}
+
+export type PrimaryContactRepositoryError =
+  | ContactRepositoryUnavailable
+  | PrimaryContactRepositoryConflict;
+
 const unavailable = () =>
   new ContactRepositoryUnavailable({ reason: 'Contact persistence is temporarily unavailable' });
+
+const primaryConflict = () =>
+  new PrimaryContactRepositoryConflict({
+    reason: 'Another active primary Contact already exists for the Customer',
+  });
+
+const isPrimaryUniquenessConflict = (error: unknown): boolean => {
+  let current = error;
+  for (let depth = 0; depth < 3; depth += 1) {
+    if (typeof current !== 'object' || current === null) {
+      return false;
+    }
+    if (
+      'code' in current &&
+      current.code === '23505' &&
+      'constraint' in current &&
+      current.constraint === 'crm_contacts_active_primary_uk'
+    ) {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+};
+
+const primaryPersistenceError = (error: unknown): PrimaryContactRepositoryError =>
+  isPrimaryUniquenessConflict(error) ? primaryConflict() : unavailable();
 
 export interface ContactListCursor {
   readonly contactId: string;
@@ -43,6 +79,11 @@ export interface ContactRepository {
     tenantId: string,
     contactId: string,
   ) => Effect.Effect<ContactRow | undefined, ContactRepositoryUnavailable>;
+  readonly lockPrimaryCandidates: (
+    tenantId: string,
+    customerId: string,
+    selectedContactId: null | string,
+  ) => Effect.Effect<readonly ContactRow[], ContactRepositoryUnavailable>;
   readonly softDelete: (
     tenantId: string,
     contactId: string,
@@ -62,6 +103,14 @@ export interface ContactRepository {
     },
     updatedAt: Date,
   ) => Effect.Effect<ContactRow | undefined, ContactRepositoryUnavailable>;
+  readonly updatePrimaryStatus: (
+    tenantId: string,
+    customerId: string,
+    contactId: string,
+    expectedVersion: number,
+    isPrimaryContact: boolean,
+    updatedAt: Date,
+  ) => Effect.Effect<ContactRow | undefined, PrimaryContactRepositoryError>;
 }
 
 export const makeContactRepository = (
@@ -144,6 +193,29 @@ export const makeContactRepository = (
             .limit(1)
             .for('update'),
       }).pipe(Effect.map(([row]) => row)),
+    lockPrimaryCandidates: (tenantId, customerId, selectedContactId) =>
+      Effect.tryPromise({
+        catch: unavailable,
+        try: () =>
+          transaction
+            .select()
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.tenantId, tenantId),
+                eq(contacts.customerId, customerId),
+                isNull(contacts.deletedAt),
+                or(
+                  eq(contacts.isPrimaryContact, true),
+                  ...(selectedContactId === null
+                    ? []
+                    : [eq(contacts.contactId, selectedContactId)]),
+                ),
+              ),
+            )
+            .orderBy(asc(contacts.contactId))
+            .for('update'),
+      }),
     softDelete: (tenantId, contactId, expectedVersion, deletedAt) =>
       Effect.tryPromise({
         catch: unavailable,
@@ -175,6 +247,35 @@ export const makeContactRepository = (
             .where(
               and(
                 eq(contacts.tenantId, tenantId),
+                eq(contacts.contactId, contactId),
+                eq(contacts.version, expectedVersion),
+                isNull(contacts.deletedAt),
+              ),
+            )
+            .returning(),
+      }).pipe(Effect.map(([updated]) => updated)),
+    updatePrimaryStatus: (
+      tenantId,
+      customerId,
+      contactId,
+      expectedVersion,
+      isPrimaryContact,
+      updatedAt,
+    ) =>
+      Effect.tryPromise({
+        catch: primaryPersistenceError,
+        try: () =>
+          transaction
+            .update(contacts)
+            .set({
+              isPrimaryContact,
+              updatedAt,
+              version: sql`${contacts.version} + 1`,
+            })
+            .where(
+              and(
+                eq(contacts.tenantId, tenantId),
+                eq(contacts.customerId, customerId),
                 eq(contacts.contactId, contactId),
                 eq(contacts.version, expectedVersion),
                 isNull(contacts.deletedAt),

@@ -19,6 +19,7 @@ import {
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
+import { changeCustomerPrimaryContactActionApiLive } from '../../api/change-customer-primary-contact-action-server.ts';
 import { contactDetailReadApiLive } from '../../api/contact-detail-read-server.ts';
 import { createContactActionApiLive } from '../../api/create-contact-action-server.ts';
 import { createCustomerActionApiLive } from '../../api/create-customer-action-server.ts';
@@ -420,6 +421,7 @@ test('serves strict CRM Action/read problems and decodes generated Effect client
     Layer.provide(
       Layer.mergeAll(
         foundationLive,
+        changeCustomerPrimaryContactActionApiLive,
         contactDetailReadApiLive,
         createContactActionApiLive,
         createCustomerActionApiLive,

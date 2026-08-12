@@ -40,6 +40,7 @@ test('owns the exact typed CRM Customer, Contact, and Deal table inventory', () 
   ]);
   assert.deepEqual(contactConfig.indexes.map(({ config: index }) => index.name).toSorted(), [
     'crm_contacts_active_customer_name_id_idx',
+    'crm_contacts_active_primary_uk',
     'crm_contacts_tenant_contact_uk',
     'crm_contacts_tenant_customer_contact_uk',
   ]);

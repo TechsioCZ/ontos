@@ -105,6 +105,9 @@ export const contacts = enableGovernedRls(
         table.customerId,
         table.contactId,
       ),
+      uniqueIndex('crm_contacts_active_primary_uk')
+        .on(table.tenantId, table.customerId)
+        .where(sql`${table.isPrimaryContact} = true and ${table.deletedAt} is null`),
       foreignKey({
         columns: [table.tenantId, table.customerId],
         foreignColumns: [customers.tenantId, customers.customerId],

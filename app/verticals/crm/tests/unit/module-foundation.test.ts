@@ -16,6 +16,18 @@ test('publishes the safe CRM module identity and generated contribution descript
 
   assert.equal(contract.deployment.appId, 'crm');
   assert.equal(contract.manifest.module.id, 'crm.core');
+  assert.equal(
+    contract.manifest.publicSurface.actions.some(
+      ({ actionKey }) => actionKey === 'crm.core.change-customer-primary-contact',
+    ),
+    true,
+  );
+  assert.equal(
+    contract.manifest.publicSurface.api.some(
+      ({ key }) => key === 'crm.core.change-customer-primary-contact-action',
+    ),
+    true,
+  );
   assert.deepEqual(
     contract.manifest.publicSurface.resourceTypes.map(({ key }) => key),
     ['crm.core.contact', 'crm.core.customer', 'crm.core.deal'],

@@ -3,6 +3,8 @@
 // @ontos-module-id crm.core
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { changeCustomerPrimaryContactAction } from './src/actions/change-customer-primary-contact.action.ts';
+import { ChangeCustomerPrimaryContactActionApi } from './shared/apis/change-customer-primary-contact-action.ts';
 import { ContactDetailApi } from './shared/apis/contact-detail.ts';
 import { createContactAction } from './src/actions/create-contact.action.ts';
 import { CreateContactActionApi } from './shared/apis/create-contact-action.ts';
@@ -56,6 +58,7 @@ export const crmManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      changeCustomerPrimaryContactAction,
       createContactAction,
       createCustomerAction,
       createDealAction,
@@ -69,6 +72,7 @@ export const crmManifest = defineOntosModuleManifest({
     ],
     api: {
       // <generated-module-manifest-apis>
+      'change-customer-primary-contact-action': ChangeCustomerPrimaryContactActionApi,
       'contact-detail': ContactDetailApi,
       'create-contact-action': CreateContactActionApi,
       'create-customer-action': CreateCustomerActionApi,

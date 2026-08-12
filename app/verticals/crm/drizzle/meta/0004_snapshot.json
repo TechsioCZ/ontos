@@ -1,6 +1,6 @@
 {
-  "id": "dcec34d6-b6b5-47cb-b653-72763cc7d6cd",
-  "prevId": "32500a1b-cf92-479e-86bd-e1c4c95a36de",
+  "id": "7951c607-62c7-49d1-b21f-35558d415c7d",
+  "prevId": "dcec34d6-b6b5-47cb-b653-72763cc7d6cd",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -521,9 +521,503 @@
         }
       },
       "isRLSEnabled": true
+    },
+    "crm.deals": {
+      "name": "deals",
+      "schema": "crm",
+      "columns": {
+        "deal_id": {
+          "name": "deal_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "legal_entity_id": {
+          "name": "legal_entity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_value": {
+          "name": "expected_value",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "deal_currency_code",
+          "typeSchema": "crm",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expected_close_date": {
+          "name": "expected_close_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'New'"
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "crm_deals_tenant_legal_entity_deal_uk": {
+          "name": "crm_deals_tenant_legal_entity_deal_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "legal_entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "deal_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_deals_active_scope_updated_id_idx": {
+          "name": "crm_deals_active_scope_updated_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "legal_entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "deal_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"deals\".\"deleted_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_deals_active_scope_customer_updated_id_idx": {
+          "name": "crm_deals_active_scope_customer_updated_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "legal_entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "deal_id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"deals\".\"deleted_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "crm_deals_customer_fk": {
+          "name": "crm_deals_customer_fk",
+          "tableFrom": "deals",
+          "tableTo": "customers",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "crm_deals_contact_fk": {
+          "name": "crm_deals_contact_fk",
+          "tableFrom": "deals",
+          "tableTo": "contacts",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id",
+            "contact_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "customer_id",
+            "contact_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "crm_deals_tenant_legal_entity_select": {
+          "name": "crm_deals_tenant_legal_entity_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"deals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"crm\".\"deals\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid"
+        },
+        "crm_deals_tenant_legal_entity_insert": {
+          "name": "crm_deals_tenant_legal_entity_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"crm\".\"deals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"crm\".\"deals\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid"
+        },
+        "crm_deals_tenant_legal_entity_update": {
+          "name": "crm_deals_tenant_legal_entity_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"deals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"crm\".\"deals\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+          "withCheck": "\"crm\".\"deals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"crm\".\"deals\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid"
+        },
+        "crm_deals_tenant_legal_entity_delete": {
+          "name": "crm_deals_tenant_legal_entity_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"deals\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"crm\".\"deals\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "crm_deals_title_ck": {
+          "name": "crm_deals_title_ck",
+          "value": "\"crm\".\"deals\".\"title\" = btrim(\"crm\".\"deals\".\"title\") and char_length(\"crm\".\"deals\".\"title\") between 1 and 300"
+        },
+        "crm_deals_description_ck": {
+          "name": "crm_deals_description_ck",
+          "value": "\"crm\".\"deals\".\"description\" is null or (\"crm\".\"deals\".\"description\" = btrim(\"crm\".\"deals\".\"description\") and char_length(\"crm\".\"deals\".\"description\") between 1 and 5000)"
+        },
+        "crm_deals_expected_value_ck": {
+          "name": "crm_deals_expected_value_ck",
+          "value": "\"crm\".\"deals\".\"expected_value\" >= 0 and \"crm\".\"deals\".\"expected_value\" <= 999999999999.99"
+        },
+        "crm_deals_expected_close_date_ck": {
+          "name": "crm_deals_expected_close_date_ck",
+          "value": "\"crm\".\"deals\".\"expected_close_date\" is null or extract(year from \"crm\".\"deals\".\"expected_close_date\") between 1 and 9999"
+        },
+        "crm_deals_status_ck": {
+          "name": "crm_deals_status_ck",
+          "value": "\"crm\".\"deals\".\"status\" in ('New', 'Qualified', 'Offer sent', 'Negotiation', 'Won', 'Lost')"
+        },
+        "crm_deals_version_ck": {
+          "name": "crm_deals_version_ck",
+          "value": "\"crm\".\"deals\".\"version\" >= 1"
+        }
+      },
+      "isRLSEnabled": true
     }
   },
-  "enums": {},
+  "enums": {
+    "crm.deal_currency_code": {
+      "name": "deal_currency_code",
+      "schema": "crm",
+      "values": [
+        "AED",
+        "AFN",
+        "ALL",
+        "AMD",
+        "AOA",
+        "ARS",
+        "AUD",
+        "AWG",
+        "AZN",
+        "BAM",
+        "BBD",
+        "BDT",
+        "BHD",
+        "BIF",
+        "BMD",
+        "BND",
+        "BOB",
+        "BOV",
+        "BRL",
+        "BSD",
+        "BTN",
+        "BWP",
+        "BYN",
+        "BZD",
+        "CAD",
+        "CDF",
+        "CHE",
+        "CHF",
+        "CHW",
+        "CLF",
+        "CLP",
+        "CNY",
+        "COP",
+        "COU",
+        "CRC",
+        "CUP",
+        "CVE",
+        "CZK",
+        "DJF",
+        "DKK",
+        "DOP",
+        "DZD",
+        "EGP",
+        "ERN",
+        "ETB",
+        "EUR",
+        "FJD",
+        "FKP",
+        "GBP",
+        "GEL",
+        "GHS",
+        "GIP",
+        "GMD",
+        "GNF",
+        "GTQ",
+        "GYD",
+        "HKD",
+        "HNL",
+        "HTG",
+        "HUF",
+        "IDR",
+        "ILS",
+        "INR",
+        "IQD",
+        "IRR",
+        "ISK",
+        "JMD",
+        "JOD",
+        "JPY",
+        "KES",
+        "KGS",
+        "KHR",
+        "KMF",
+        "KPW",
+        "KRW",
+        "KWD",
+        "KYD",
+        "KZT",
+        "LAK",
+        "LBP",
+        "LKR",
+        "LRD",
+        "LSL",
+        "LYD",
+        "MAD",
+        "MDL",
+        "MGA",
+        "MKD",
+        "MMK",
+        "MNT",
+        "MOP",
+        "MRU",
+        "MUR",
+        "MVR",
+        "MWK",
+        "MXN",
+        "MXV",
+        "MYR",
+        "MZN",
+        "NAD",
+        "NGN",
+        "NIO",
+        "NOK",
+        "NPR",
+        "NZD",
+        "OMR",
+        "PAB",
+        "PEN",
+        "PGK",
+        "PHP",
+        "PKR",
+        "PLN",
+        "PYG",
+        "QAR",
+        "RON",
+        "RSD",
+        "RUB",
+        "RWF",
+        "SAR",
+        "SBD",
+        "SCR",
+        "SDG",
+        "SEK",
+        "SGD",
+        "SHP",
+        "SLE",
+        "SOS",
+        "SRD",
+        "SSP",
+        "STN",
+        "SVC",
+        "SYP",
+        "SZL",
+        "THB",
+        "TJS",
+        "TMT",
+        "TND",
+        "TOP",
+        "TRY",
+        "TTD",
+        "TWD",
+        "TZS",
+        "UAH",
+        "UGX",
+        "USD",
+        "USN",
+        "UYI",
+        "UYU",
+        "UYW",
+        "UZS",
+        "VED",
+        "VES",
+        "VND",
+        "VUV",
+        "WST",
+        "XAD",
+        "XAF",
+        "XAG",
+        "XAU",
+        "XBA",
+        "XBB",
+        "XBC",
+        "XBD",
+        "XCD",
+        "XCG",
+        "XDR",
+        "XOF",
+        "XPD",
+        "XPF",
+        "XPT",
+        "XSU",
+        "XTS",
+        "XUA",
+        "XXX",
+        "YER",
+        "ZAR",
+        "ZMW",
+        "ZWG"
+      ]
+    }
+  },
   "schemas": {
     "crm": "crm"
   },

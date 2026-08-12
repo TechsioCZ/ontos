@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "crm_contacts_active_primary_uk" ON "crm"."contacts" USING btree ("tenant_id","customer_id") WHERE "crm"."contacts"."is_primary_contact" = true and "crm"."contacts"."deleted_at" is null;

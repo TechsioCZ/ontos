@@ -10,6 +10,7 @@ test('composes readiness and every declared governed resource-provider API', () 
   assert.strictEqual(apiRuntime.api, crmApi);
   assert.deepEqual(Object.keys(crmApi.groups), [
     'foundation',
+    'changeCustomerPrimaryContactActions',
     'contactDetail',
     'createContactActions',
     'createCustomerActions',
@@ -34,6 +35,7 @@ test('composes readiness and every declared governed resource-provider API', () 
   );
   assert.deepEqual(endpoints, [
     { method: 'GET', path: '/crm/readiness' },
+    { method: 'POST', path: '/actions/change-customer-primary-contact' },
     { method: 'POST', path: '/reads/contact-detail' },
     { method: 'POST', path: '/actions/create-contact' },
     { method: 'POST', path: '/actions/create-customer' },
