@@ -65,15 +65,25 @@ test('parses bounded shareable cursor, page, and selected customer state', () =>
 });
 
 test('maps list and direct detail reads through the generated directory client', async () => {
-  const directory = rstest.fn<CustomerPageClients['directory']>((payload) =>
-    payload.operation === 'list'
-      ? Effect.succeed({
-          items: [customer()],
-          nextCursor: cursor,
-          operation: 'list' as const,
-        })
-      : Effect.succeed({ customer: customer(), operation: 'detail' as const }),
-  );
+  const directory = rstest.fn<CustomerPageClients['directory']>((payload) => {
+    if (payload.operation === 'list') {
+      return Effect.succeed({
+        items: [customer()],
+        nextCursor: cursor,
+        operation: 'list' as const,
+      });
+    }
+    if (payload.operation === 'detail') {
+      return Effect.succeed({ customer: customer(), operation: 'detail' as const });
+    }
+    return Effect.succeed({
+      customerId,
+      customerLabel: customer().name,
+      items: [],
+      nextCursor: null,
+      operation: 'contacts' as const,
+    });
+  });
   const model = await loadCustomerPageModel(
     { url: `https://crm.example.test/en/customers?customer=${customerId}` },
     { directory },
@@ -88,9 +98,14 @@ test('maps list and direct detail reads through the generated directory client',
   expect(model.state === 'resolved' ? model.pagination.nextHref : undefined).toBe(
     `/en/customers?page=2&cursor=${encodeURIComponent(cursor)}&customer=${customerId}`,
   );
-  expect(directory).toHaveBeenCalledTimes(2);
+  expect(directory).toHaveBeenCalledTimes(3);
   expect(directory.mock.calls[0]?.[0]).toEqual({ limit: 20, operation: 'list' });
   expect(directory.mock.calls[1]?.[0]).toEqual({ customerId, operation: 'detail' });
+  expect(directory.mock.calls[2]?.[0]).toEqual({
+    customerId,
+    limit: 20,
+    operation: 'contacts',
+  });
 });
 
 test('does not add a CRM search request or behavior when unrelated URL parameters exist', async () => {
@@ -109,28 +124,16 @@ test.each([
   ['CustomerDirectoryForbiddenProblem', 'forbidden'],
   ['CustomerDirectoryNotFoundProblem', 'not_found'],
   ['CustomerDirectoryUnavailableProblem', 'unavailable'],
+  ['GatewayAuthenticationRequiredProblem', 'forbidden'],
+  ['GatewayForbiddenProblem', 'forbidden'],
   ['HttpClientError', 'unavailable'],
+  ['SchemaError', 'unavailable'],
 ] as const)('maps %s to the explicit %s route state', async (tag, expectedState) => {
   const directory = (() => Effect.fail({ _tag: tag })) as CustomerPageClients['directory'];
   await expect(
     loadCustomerPageModel({ url: 'https://crm.example.test/en/customers' }, { directory }),
   ).resolves.toMatchObject({ state: expectedState });
 });
-
-test.each([
-  [401, 'forbidden'],
-  [403, 'forbidden'],
-  [404, 'not_found'],
-  [503, 'unavailable'],
-] as const)(
-  'maps transport status %s to the explicit %s route state',
-  async (status, expectedState) => {
-    const directory = (() => Effect.fail({ status })) as CustomerPageClients['directory'];
-    await expect(
-      loadCustomerPageModel({ url: 'https://crm.example.test/en/customers' }, { directory }),
-    ).resolves.toMatchObject({ state: expectedState });
-  },
-);
 
 test('validates every client-side field without erasing partially supplied address values', () => {
   expect(

@@ -1,3 +1,5 @@
+import type { ContactPanelModel } from '../contacts/contact-view-model.ts';
+
 export const customerFieldNames = [
   'name',
   'companyRegistrationNumber',
@@ -89,7 +91,11 @@ export interface CustomerPaginationModel {
   readonly page: number;
 }
 
-export type CustomerRouteValidationReason = 'invalid_cursor' | 'invalid_page' | 'invalid_selection';
+export type CustomerRouteValidationReason =
+  | 'invalid_cursor'
+  | 'invalid_page'
+  | 'invalid_selection'
+  | 'policy';
 
 export type CustomerPageModel =
   | { readonly state: 'loading' }
@@ -106,6 +112,7 @@ export type CustomerPageModel =
   | { readonly state: 'not_found' }
   | { readonly retryHref: string; readonly state: 'unavailable' }
   | {
+      readonly contacts?: ContactPanelModel;
       readonly detail?: CustomerDetailModel;
       readonly pagination: CustomerPaginationModel;
       readonly rows: readonly CustomerListRowModel[];

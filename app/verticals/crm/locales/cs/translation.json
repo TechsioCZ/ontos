@@ -29,6 +29,77 @@
           "pending": "Mazání…",
           "title": "Potvrdit smazání zákazníka"
         },
+        "contacts": {
+          "actions": {
+            "cancel": "Zrušit",
+            "create": "Vytvořit kontakt",
+            "delete": "Smazat kontakt",
+            "edit": "Upravit kontakt",
+            "nextPage": "Další stránka kontaktů",
+            "retry": "Zkusit znovu",
+            "save": "Uložit změny"
+          },
+          "deleteDialog": {
+            "description": "Smazat kontakt {{contactName}} z tohoto zákazníka? Kontakt zmizí z běžných pohledů, existující historie však zůstane zachována.",
+            "pending": "Mazání…",
+            "title": "Potvrdit smazání kontaktu"
+          },
+          "detail": {
+            "heading": "Detail kontaktu",
+            "notProvided": "Neuvedeno",
+            "selectPrompt": "Výběrem kontaktu zobrazíte jeho detail."
+          },
+          "fields": {
+            "email": "E-mail",
+            "firstName": "Jméno",
+            "jobTitle": "Pracovní pozice",
+            "lastName": "Příjmení",
+            "phone": "Telefon"
+          },
+          "form": {
+            "createTitle": "Vytvořit kontakt",
+            "editTitle": "Upravit kontakt",
+            "pending": "Ukládání…",
+            "summary": "Zkontrolujte zvýrazněná pole."
+          },
+          "heading": "Kontakty zákazníka {{customerName}}",
+          "issues": {
+            "invalidEmail": "Zadejte platnou e-mailovou adresu.",
+            "nameRequired": "Zadejte alespoň jméno nebo příjmení.",
+            "serverValidation": "Kontakt se nepodařilo uložit. Zkontrolujte zadané hodnoty.",
+            "tooLong": "Tato hodnota je příliš dlouhá."
+          },
+          "list": {
+            "caption": "Kontakty zákazníka",
+            "email": "E-mail",
+            "jobTitle": "Pracovní pozice",
+            "name": "Kontakt",
+            "page": "Stránka kontaktů {{page}}",
+            "phone": "Telefon"
+          },
+          "nameFallback": "Kontakt bez jména",
+          "states": {
+            "conflict": "Kontakt byl od otevření změněn. Načetli jsme aktuální data; zkontrolujte své hodnoty a zkuste to znovu.",
+            "empty": "Tento zákazník zatím nemá žádné kontakty. Pokud je modul zapisovatelný, vytvořte první kontakt.",
+            "forbidden": "K zobrazení nebo změně těchto kontaktů nemáte oprávnění.",
+            "loading": "Načítání kontaktů…",
+            "notFound": "Vybraný kontakt nebyl nalezen. Mohl být smazán.",
+            "readOnly": "Tento modul je pouze pro čtení. Detaily kontaktů jsou dostupné, ale změny jsou vypnuté.",
+            "unavailable": "Data kontaktů jsou dočasně nedostupná. Hodnoty formuláře zůstaly zachovány.",
+            "validation": {
+              "foreignSelection": "Vybraný kontakt nepatří tomuto zákazníkovi.",
+              "invalidCursor": "Odkaz na stránku kontaktů obsahuje neplatný stránkovací kurzor.",
+              "invalidPage": "Číslo stránky kontaktů je neplatné.",
+              "invalidSelection": "Odkaz na vybraný kontakt je neplatný.",
+              "policy": "Kontakty tohoto zákazníka nelze v aktuálním obchodním kontextu zobrazit."
+            }
+          },
+          "toast": {
+            "created": "Kontakt byl vytvořen",
+            "deleted": "Kontakt byl smazán",
+            "updated": "Kontakt byl upraven"
+          }
+        },
         "description": "Správa zákaznických společností a kontaktů.",
         "detail": {
           "heading": "Detail zákazníka",
@@ -84,7 +155,8 @@
           "validation": {
             "invalidCursor": "Odkaz na stránku zákazníků obsahuje neplatný stránkovací kurzor.",
             "invalidPage": "Číslo stránky zákazníků je neplatné.",
-            "invalidSelection": "Odkaz na vybraného zákazníka je neplatný."
+            "invalidSelection": "Odkaz na vybraného zákazníka je neplatný.",
+            "policy": "Zákazníky nelze v aktuálním obchodním kontextu zobrazit."
           }
         },
         "title": "Zákazníci",

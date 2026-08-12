@@ -29,6 +29,77 @@
           "pending": "Deleting…",
           "title": "Confirm customer deletion"
         },
+        "contacts": {
+          "actions": {
+            "cancel": "Cancel",
+            "create": "Create contact",
+            "delete": "Delete contact",
+            "edit": "Edit contact",
+            "nextPage": "Next contact page",
+            "retry": "Try again",
+            "save": "Save changes"
+          },
+          "deleteDialog": {
+            "description": "Delete {{contactName}} from this customer? The contact is removed from ordinary views, while existing history is retained.",
+            "pending": "Deleting…",
+            "title": "Confirm contact deletion"
+          },
+          "detail": {
+            "heading": "Contact details",
+            "notProvided": "Not provided",
+            "selectPrompt": "Select a contact to view their details."
+          },
+          "fields": {
+            "email": "Email",
+            "firstName": "First name",
+            "jobTitle": "Job title",
+            "lastName": "Last name",
+            "phone": "Phone"
+          },
+          "form": {
+            "createTitle": "Create contact",
+            "editTitle": "Edit contact",
+            "pending": "Saving…",
+            "summary": "Review the highlighted fields."
+          },
+          "heading": "Contacts for {{customerName}}",
+          "issues": {
+            "invalidEmail": "Enter a valid email address.",
+            "nameRequired": "Enter at least a first name or a last name.",
+            "serverValidation": "The contact could not be saved. Review the submitted values.",
+            "tooLong": "This value is too long."
+          },
+          "list": {
+            "caption": "Customer contacts",
+            "email": "Email",
+            "jobTitle": "Job title",
+            "name": "Contact",
+            "page": "Contact page {{page}}",
+            "phone": "Phone"
+          },
+          "nameFallback": "Unnamed contact",
+          "states": {
+            "conflict": "This contact changed since it was opened. Current data has been reloaded; review your values and try again.",
+            "empty": "This customer has no contacts yet. Create the first contact when this module is writable.",
+            "forbidden": "You do not have permission to view or change these contacts.",
+            "loading": "Loading contacts…",
+            "notFound": "The selected contact was not found. It may have been deleted.",
+            "readOnly": "This module is read-only. Contact details remain available, but changes are disabled.",
+            "unavailable": "Contact data is temporarily unavailable. Your form values have been preserved.",
+            "validation": {
+              "foreignSelection": "The selected contact does not belong to this customer.",
+              "invalidCursor": "This contact page link contains an invalid pagination cursor.",
+              "invalidPage": "This contact page number is invalid.",
+              "invalidSelection": "This selected contact link is invalid.",
+              "policy": "Contacts cannot be shown for this customer in the current business context."
+            }
+          },
+          "toast": {
+            "created": "Contact created",
+            "deleted": "Contact deleted",
+            "updated": "Contact updated"
+          }
+        },
         "description": "Manage customer companies and contacts.",
         "detail": {
           "heading": "Customer details",
@@ -84,7 +155,8 @@
           "validation": {
             "invalidCursor": "This customer page link contains an invalid pagination cursor.",
             "invalidPage": "This customer page number is invalid.",
-            "invalidSelection": "This selected customer link is invalid."
+            "invalidSelection": "This selected customer link is invalid.",
+            "policy": "Customers cannot be shown in the current business context."
           }
         },
         "title": "Customers",

@@ -24,10 +24,21 @@ import type {
   CustomerWorkspaceProps,
 } from './customer-view-model.ts';
 
-const mutationMessage = (
-  result: Exclude<CustomerMutationResult, { state: 'success' }>,
-  copy: CustomerWorkspaceCopy,
-) => {
+interface CrudFailureCopy {
+  readonly issues: { readonly server_validation: string };
+  readonly states: {
+    readonly conflict: string;
+    readonly forbidden: string;
+    readonly notFound: string;
+    readonly unavailable: string;
+  };
+}
+
+type CrudFailure<Issue> =
+  | { readonly issues: readonly Issue[]; readonly state: 'validation' }
+  | { readonly state: 'conflict' | 'forbidden' | 'not_found' | 'unavailable' };
+
+export const crudMutationMessage = <Issue,>(result: CrudFailure<Issue>, copy: CrudFailureCopy) => {
   switch (result.state) {
     case 'conflict': {
       return copy.states.conflict;
@@ -50,44 +61,52 @@ const mutationMessage = (
   }
 };
 
-interface CustomerFormDialogProps {
-  readonly copy: CustomerWorkspaceCopy;
-  readonly customer?: CustomerDetailModel;
-  readonly finalFocusRef: RefObject<HTMLButtonElement | null>;
-  readonly onClose: () => void;
-  readonly onSubmit: (values: CustomerFormValues) => Promise<CustomerMutationResult>;
-  readonly onSuccess: (result: Extract<CustomerMutationResult, { state: 'success' }>) => void;
-  readonly open: boolean;
+interface CrudFormStateOptions<
+  Values,
+  Field extends string,
+  Issue extends { readonly field?: Field },
+  Success extends { readonly state: 'success' },
+> {
+  readonly initialValues: Values;
+  readonly mutationMessage: (failure: CrudFailure<Issue>) => string;
+  readonly onSubmit: (values: Values) => Promise<Success | CrudFailure<Issue>>;
+  readonly onSuccess: (result: Success) => void;
+  readonly validate: (values: Values) => readonly Issue[];
 }
 
-const CustomerFormDialog = ({
-  copy,
-  customer,
-  finalFocusRef,
-  onClose,
+export const useCrudFormState = <
+  Values,
+  Field extends string,
+  Issue extends { readonly field?: Field },
+  Success extends { readonly state: 'success' },
+>({
+  initialValues,
+  mutationMessage,
   onSubmit,
   onSuccess,
-  open,
-}: CustomerFormDialogProps) => {
+  validate,
+}: CrudFormStateOptions<Values, Field, Issue, Success>) => {
   const formId = useId();
-  const [values, setValues] = useState<CustomerFormValues>(() =>
-    customer === undefined ? emptyCustomerFormValues : customerFormValuesFromDetail(customer),
-  );
-  const [issues, setIssues] = useState<readonly CustomerFormIssue[]>([]);
+  const [values, setValues] = useState(initialValues);
+  const [issues, setIssues] = useState<readonly Issue[]>([]);
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const [failure, setFailure] = useState<string>();
-  const fieldRefs = useRef<Partial<Record<CustomerFieldName, HTMLInputElement | null>>>({});
+  const fieldRefs = useRef<Partial<Record<Field, HTMLInputElement | null>>>({});
   const summaryRef = useRef<HTMLDivElement>(null);
-
-  const issueFor = (field: CustomerFieldName) => issues.find((issue) => issue.field === field);
-
+  const issueFor = (field: Field) => issues.find((issue) => issue.field === field);
+  const setFieldElement = (field: Field, element: HTMLInputElement | null) => {
+    fieldRefs.current[field] = element;
+  };
+  const setSummaryElement = (element: HTMLDivElement | null) => {
+    summaryRef.current = element;
+  };
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pendingRef.current) {
       return;
     }
-    const clientIssues = validateCustomerForm(values);
+    const clientIssues = validate(values);
     setIssues(clientIssues);
     setFailure(undefined);
     if (clientIssues.length > 0) {
@@ -109,7 +128,7 @@ const CustomerFormDialog = ({
           onSuccess(result);
           return;
         }
-        setFailure(mutationMessage(result, copy));
+        setFailure(mutationMessage(result));
         if (result.state === 'validation') {
           setIssues(result.issues);
           requestAnimationFrame(() => summaryRef.current?.focus());
@@ -120,6 +139,114 @@ const CustomerFormDialog = ({
         setPending(false);
       });
   };
+  return {
+    failure,
+    formId,
+    handleSubmit,
+    issueFor,
+    issues,
+    pending,
+    setFieldElement,
+    setSummaryElement,
+    setValues,
+    values,
+  };
+};
+
+type CrudDeleteResult =
+  | { readonly state: 'success' }
+  | { readonly state: 'conflict' | 'forbidden' | 'not_found' | 'unavailable' };
+
+interface CrudDeleteStateOptions<Selected> {
+  readonly failureMessage: (failure: Exclude<CrudDeleteResult, { state: 'success' }>) => string;
+  readonly onDelete: (selected: Selected) => Promise<CrudDeleteResult>;
+  readonly onSuccess: () => void;
+  readonly selected: Selected | undefined;
+}
+
+export const useCrudDeleteState = <Selected,>({
+  failureMessage,
+  onDelete,
+  onSuccess,
+  selected,
+}: CrudDeleteStateOptions<Selected>) => {
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+  const [failure, setFailure] = useState<string>();
+  const handleDelete = () => {
+    if (selected === undefined || pendingRef.current) {
+      return;
+    }
+    pendingRef.current = true;
+    setPending(true);
+    setFailure(undefined);
+    void onDelete(selected)
+      .then((result) => {
+        if (result.state === 'success') {
+          setOpen(false);
+          onSuccess();
+          return;
+        }
+        setFailure(failureMessage(result));
+      })
+      .finally(() => {
+        pendingRef.current = false;
+        setPending(false);
+      });
+  };
+  const onOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && !pending) {
+      setOpen(false);
+      setFailure(undefined);
+    }
+  };
+  return { failure, handleDelete, onOpenChange, open, pending, setOpen };
+};
+
+interface CustomerFormDialogProps {
+  readonly copy: CustomerWorkspaceCopy;
+  readonly customer?: CustomerDetailModel;
+  readonly finalFocusRef: RefObject<HTMLButtonElement | null>;
+  readonly onClose: () => void;
+  readonly onSubmit: (values: CustomerFormValues) => Promise<CustomerMutationResult>;
+  readonly onSuccess: (result: Extract<CustomerMutationResult, { state: 'success' }>) => void;
+  readonly open: boolean;
+}
+
+const CustomerFormDialog = ({
+  copy,
+  customer,
+  finalFocusRef,
+  onClose,
+  onSubmit,
+  onSuccess,
+  open,
+}: CustomerFormDialogProps) => {
+  const {
+    failure,
+    formId,
+    handleSubmit,
+    issueFor,
+    issues,
+    pending,
+    setFieldElement,
+    setSummaryElement,
+    setValues,
+    values,
+  } = useCrudFormState<
+    CustomerFormValues,
+    CustomerFieldName,
+    CustomerFormIssue,
+    Extract<CustomerMutationResult, { state: 'success' }>
+  >({
+    initialValues:
+      customer === undefined ? emptyCustomerFormValues : customerFormValuesFromDetail(customer),
+    mutationMessage: (result) => crudMutationMessage(result, copy),
+    onSubmit,
+    onSuccess,
+    validate: validateCustomerForm,
+  });
 
   return (
     <Dialog
@@ -139,7 +266,7 @@ const CustomerFormDialog = ({
     >
       <form className="crm:grid crm:gap-5" id={formId} onSubmit={handleSubmit}>
         {(issues.length > 0 || failure !== undefined) && (
-          <div ref={summaryRef} tabIndex={-1}>
+          <div ref={setSummaryElement} tabIndex={-1}>
             <StatusText aria-live="assertive" showIcon status="error">
               {failure ?? copy.form.summary}
             </StatusText>
@@ -176,7 +303,7 @@ const CustomerFormDialog = ({
                   setValues((current) => ({ ...current, [field]: nextValue }));
                 }}
                 ref={(element) => {
-                  fieldRefs.current[field] = element;
+                  setFieldElement(field, element);
                 }}
                 required={field === 'name'}
                 type={inputType}
@@ -210,7 +337,7 @@ const CustomerFormDialog = ({
   );
 };
 
-const StatePanel = ({
+export const CrudStatePanel = ({
   children,
   status = 'default',
 }: {
@@ -239,37 +366,17 @@ export const CustomerWorkspace = ({
   const editTriggerRef = useRef<HTMLButtonElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
   const [formMode, setFormMode] = useState<'create' | 'edit'>();
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
-  const deletePendingRef = useRef(false);
-  const [deleteFailure, setDeleteFailure] = useState<string>();
   const selected = model.state === 'resolved' ? model.detail : undefined;
+  const deletion = useCrudDeleteState({
+    failureMessage: (result) => crudMutationMessage(result, copy),
+    onDelete,
+    onSuccess: () => toast.create({ title: copy.toast.deleted, type: 'success' }),
+    selected,
+  });
 
   const navigate = (event: MouseEvent<HTMLAnchorElement>, href: string) => {
     event.preventDefault();
     onNavigate(href);
-  };
-
-  const handleDelete = () => {
-    if (selected === undefined || deletePendingRef.current) {
-      return;
-    }
-    deletePendingRef.current = true;
-    setDeletePending(true);
-    setDeleteFailure(undefined);
-    void onDelete(selected)
-      .then((result) => {
-        if (result.state === 'success') {
-          setDeleteOpen(false);
-          toast.create({ title: copy.toast.deleted, type: 'success' });
-          return;
-        }
-        setDeleteFailure(mutationMessage(result, copy));
-      })
-      .finally(() => {
-        deletePendingRef.current = false;
-        setDeletePending(false);
-      });
   };
 
   const announceSuccess = (title: string) => {
@@ -285,12 +392,12 @@ export const CustomerWorkspace = ({
           {copy.states.readOnly}
         </StatusText>
       )}
-      {model.state === 'loading' && <StatePanel>{copy.states.loading}</StatePanel>}
+      {model.state === 'loading' && <CrudStatePanel>{copy.states.loading}</CrudStatePanel>}
       {model.state === 'forbidden' && (
-        <StatePanel status="error">{copy.states.forbidden}</StatePanel>
+        <CrudStatePanel status="error">{copy.states.forbidden}</CrudStatePanel>
       )}
       {model.state === 'not_found' && (
-        <StatePanel status="warning">{copy.states.notFound}</StatePanel>
+        <CrudStatePanel status="warning">{copy.states.notFound}</CrudStatePanel>
       )}
       {model.state === 'validation' && (
         <section className="crm:grid crm:gap-4 crm:bg-(--color-surface) crm:p-6">
@@ -330,7 +437,7 @@ export const CustomerWorkspace = ({
               )}
             </div>
             {model.state === 'empty' ? (
-              <StatePanel>{copy.states.empty}</StatePanel>
+              <CrudStatePanel>{copy.states.empty}</CrudStatePanel>
             ) : (
               <>
                 <div className="crm:hidden crm:overflow-x-auto crm:sm:block">
@@ -441,7 +548,7 @@ export const CustomerWorkspace = ({
                       {copy.actions.edit}
                     </Button>
                     <Button
-                      onClick={() => setDeleteOpen(true)}
+                      onClick={() => deletion.setOpen(true)}
                       ref={deleteTriggerRef}
                       theme="outlined"
                       variant="danger"
@@ -478,26 +585,21 @@ export const CustomerWorkspace = ({
       )}
       {selected !== undefined && (
         <Dialog
-          closeOnEscape={!deletePending}
-          closeOnInteractOutside={!deletePending}
+          closeOnEscape={!deletion.pending}
+          closeOnInteractOutside={!deletion.pending}
           customTrigger
           description={copy.deleteDialog.description(selected.name)}
           finalFocusEl={() => deleteTriggerRef.current}
           hideCloseButton
-          onOpenChange={({ open }) => {
-            if (!open && !deletePending) {
-              setDeleteOpen(false);
-              setDeleteFailure(undefined);
-            }
-          }}
-          open={deleteOpen}
+          onOpenChange={({ open }) => deletion.onOpenChange(open)}
+          open={deletion.open}
           role="alertdialog"
           title={copy.deleteDialog.title}
           actions={
             <div className="crm:flex crm:flex-wrap crm:justify-end crm:gap-3">
               <Button
-                disabled={deletePending}
-                onClick={() => setDeleteOpen(false)}
+                disabled={deletion.pending}
+                onClick={() => deletion.setOpen(false)}
                 theme="outlined"
                 type="button"
                 variant="secondary"
@@ -505,9 +607,9 @@ export const CustomerWorkspace = ({
                 {copy.actions.cancel}
               </Button>
               <Button
-                isLoading={deletePending}
+                isLoading={deletion.pending}
                 loadingText={copy.deleteDialog.pending}
-                onClick={handleDelete}
+                onClick={deletion.handleDelete}
                 type="button"
                 variant="danger"
               >
@@ -516,9 +618,9 @@ export const CustomerWorkspace = ({
             </div>
           }
         >
-          {deleteFailure !== undefined && (
+          {deletion.failure !== undefined && (
             <StatusText aria-live="assertive" showIcon status="error">
-              {deleteFailure}
+              {deletion.failure}
             </StatusText>
           )}
         </Dialog>
