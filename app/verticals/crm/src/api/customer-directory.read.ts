@@ -7,7 +7,13 @@ import {
   CustomerDirectoryDetailResponseSchema,
   CustomerDirectoryListRequestSchema,
   CustomerDirectoryListResponseSchema,
+  CustomerContactDetailRequestSchema,
+  CustomerContactDetailResponseSchema,
+  CustomerContactListRequestSchema,
+  CustomerContactListResponseSchema,
 } from '../../shared/apis/customer-directory.ts';
+import { makeContactService } from '../contacts/contact-service.ts';
+import type { ContactService } from '../contacts/contact-service.ts';
 import { makeCustomerService } from '../customers/customer-service.ts';
 import type { CustomerService } from '../customers/customer-service.ts';
 
@@ -22,6 +28,11 @@ const customerServiceFactory = (
   transaction: Parameters<typeof makeCustomerService>[0],
   scope: { readonly tenantId: string },
 ) => Effect.succeed(makeCustomerService(transaction, scope.tenantId));
+
+const contactServiceFactory = (
+  transaction: Parameters<typeof makeContactService>[0],
+  scope: { readonly tenantId: string },
+) => Effect.succeed(makeContactService(transaction, scope.tenantId));
 
 export const customerDirectoryListRead = defineRead(
   {
@@ -76,5 +87,64 @@ export const customerDirectoryDetailRead = defineRead(
   ({ customerId }) => ({
     kind: 'resource',
     resource: { moduleId: 'crm.core', resourceId: customerId, resourceType: 'crm.core.customer' },
+  }),
+);
+
+export const customerContactListRead = defineRead(
+  {
+    accessKind: 'list',
+    entrypoint: customerDirectoryEntrypoint,
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'crm.core.api.customer-directory.contacts.evidence.v1',
+    },
+    inputSchema: CustomerContactListRequestSchema,
+    legalEntityScope: 'required',
+    owningModuleKey: 'crm.core',
+    permissionTarget: 'resource',
+    policies: [],
+    readKey: 'crm.core.api.customer-directory.contacts',
+    resultSchema: CustomerContactListResponseSchema,
+    schemaVersion: '1',
+  },
+  (input, context: ReadHandlerContext<ContactService>) =>
+    context.services
+      .listContacts(input.customerId, input.limit, input.cursor)
+      .pipe(Effect.map((result) => ({ evidence: { resultCount: result.items.length }, result }))),
+  contactServiceFactory,
+  ({ customerId }) => ({
+    kind: 'resource',
+    resource: { moduleId: 'crm.core', resourceId: customerId, resourceType: 'crm.core.customer' },
+  }),
+);
+
+export const customerContactDetailRead = defineRead(
+  {
+    accessKind: 'detail',
+    entrypoint: customerDirectoryEntrypoint,
+    evidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'crm.core.api.customer-directory.contact-detail.evidence.v1',
+    },
+    inputSchema: CustomerContactDetailRequestSchema,
+    legalEntityScope: 'required',
+    owningModuleKey: 'crm.core',
+    permissionTarget: 'resource',
+    policies: [],
+    readKey: 'crm.core.api.customer-directory.contact-detail',
+    resultSchema: CustomerContactDetailResponseSchema,
+    schemaVersion: '1',
+  },
+  (input, context: ReadHandlerContext<ContactService>) =>
+    context.services.getContact(input.contactId).pipe(
+      Effect.map((contact) => ({
+        evidence: { resultCount: 1 },
+        result: { contact, operation: 'contact_detail' as const },
+      })),
+    ),
+  contactServiceFactory,
+  ({ contactId }) => ({
+    kind: 'resource',
+    resource: { moduleId: 'crm.core', resourceId: contactId, resourceType: 'crm.core.contact' },
   }),
 );

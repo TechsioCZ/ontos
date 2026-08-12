@@ -1,3 +1,4 @@
+/* eslint-disable max-classes-per-file, no-use-before-define -- The owner-local lookup error belongs with Customer behavior and reuses the canonical row mapper declared below. */
 import { createHash } from 'node:crypto';
 import type { DataAccessEventInput, ScopedTransactionExecutor } from '@app/core-runtime';
 import { ReadHandlerNotFound, ReadHandlerUnavailable } from '@app/core-runtime';
@@ -47,6 +48,48 @@ export class CustomerValidationError extends Schema.TaggedErrorClass<CustomerVal
   'CustomerValidationError',
   { reason: Schema.String },
 ) {}
+
+export class CustomerLookupUnavailable extends Schema.TaggedErrorClass<CustomerLookupUnavailable>()(
+  'CustomerLookupUnavailable',
+  { reason: Schema.String },
+) {}
+
+export interface CustomerLookup {
+  readonly findActiveCustomer: (
+    customerId: string,
+  ) => Effect.Effect<CustomerView | undefined, CustomerLookupUnavailable>;
+  readonly findCustomer: (
+    customerId: string,
+  ) => Effect.Effect<CustomerView | undefined, CustomerLookupUnavailable>;
+  readonly lockActiveCustomer: (
+    customerId: string,
+  ) => Effect.Effect<CustomerView | undefined, CustomerLookupUnavailable>;
+}
+
+export const makeCustomerLookup = (
+  transaction: ScopedTransactionExecutor,
+  tenantId: string,
+): CustomerLookup => {
+  const repository = makeCustomerRepository(transaction);
+  const mapLookup = (
+    lookup: Effect.Effect<CustomerRow | undefined, CustomerRepositoryUnavailable>,
+  ) =>
+    lookup.pipe(
+      Effect.mapError(
+        () =>
+          new CustomerLookupUnavailable({
+            reason: 'Customer persistence is temporarily unavailable',
+          }),
+      ),
+      Effect.map((row) => (row === undefined ? undefined : customerRowToView(row))),
+    );
+  const lookup: CustomerLookup = {
+    findActiveCustomer: (customerId) => mapLookup(repository.findActiveById(tenantId, customerId)),
+    findCustomer: (customerId) => mapLookup(repository.findById(tenantId, customerId)),
+    lockActiveCustomer: (customerId) => mapLookup(repository.lockActiveById(tenantId, customerId)),
+  };
+  return Object.freeze(lookup);
+};
 
 export interface NormalizedCustomerFields {
   readonly addressLine1: null | string;

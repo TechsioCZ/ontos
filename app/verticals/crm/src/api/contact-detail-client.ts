@@ -10,8 +10,10 @@ export const executeContactDetailWithAuthorization = (
   payload: ContactDetailRequest,
   authorization: string,
   correlationId: string,
+  baseUrl?: string,
 ) =>
   makeEffectHttpApiClient(ContactDetailApi, {
+    ...(baseUrl === undefined ? {} : { baseUrl }),
     transformClient: HttpClient.mapRequest(
       HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
     ),

@@ -15,6 +15,36 @@ export const CustomerVersionSchema = Schema.Finite.check(
   Schema.isInt(),
   Schema.isGreaterThanOrEqualTo(1),
 );
+export const ContactIdSchema = Schema.String.check(Schema.isUUID());
+export const ContactVersionSchema = Schema.Finite.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(1),
+);
+export const ContactWritableFields = {
+  email: Schema.optionalKey(bounded(320)),
+  firstName: Schema.optionalKey(bounded(200)),
+  jobTitle: Schema.optionalKey(bounded(200)),
+  lastName: Schema.optionalKey(bounded(200)),
+  phone: Schema.optionalKey(bounded(64)),
+} as const;
+export const ContactFieldsSchema = Schema.Struct(ContactWritableFields);
+export type ContactFields = typeof ContactFieldsSchema.Type;
+export const ContactViewSchema = Schema.Struct({
+  contactId: ContactIdSchema,
+  createdAt: Schema.String,
+  customerId: CustomerIdSchema,
+  customerLabel: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(401)),
+  email: Schema.NullOr(Schema.String),
+  firstName: Schema.NullOr(Schema.String),
+  isPrimaryContact: Schema.Boolean,
+  jobTitle: Schema.NullOr(Schema.String),
+  lastName: Schema.NullOr(Schema.String),
+  phone: Schema.NullOr(Schema.String),
+  updatedAt: Schema.String,
+  version: ContactVersionSchema,
+});
+export type ContactView = typeof ContactViewSchema.Type;
 export const CustomerWritableFields = {
   address: Schema.optionalKey(
     Schema.Struct({
@@ -67,6 +97,57 @@ const CustomerCursorSchema = Schema.String.check(
     /^[A-Za-z0-9_-]+\.[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u,
   ),
 );
+export interface DecodedContactCursor {
+  readonly contactId: string;
+  readonly normalizedFirstName: string;
+  readonly normalizedLastName: string;
+}
+export const decodeContactCursorValue = (cursor: string): DecodedContactCursor | undefined => {
+  const separator = cursor.lastIndexOf('.');
+  if (separator <= 0) {
+    return undefined;
+  }
+  const encodedNames = cursor.slice(0, separator);
+  const contactId = cursor.slice(separator + 1);
+  if (!/^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u.test(contactId)) {
+    return undefined;
+  }
+  try {
+    const standardBase64 = encodedNames.replaceAll('-', '+').replaceAll('_', '/');
+    const paddedBase64 = `${standardBase64}${'='.repeat((4 - (standardBase64.length % 4)) % 4)}`;
+    const binary = atob(paddedBase64);
+    const canonical = btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+    const decoded = new TextDecoder('utf-8', { fatal: true }).decode(
+      Uint8Array.from(binary, (character) => character.codePointAt(0) ?? 0),
+    );
+    const names: unknown = JSON.parse(decoded);
+    return canonical === encodedNames &&
+      Array.isArray(names) &&
+      names.length === 2 &&
+      names.every((name) => typeof name === 'string' && name.length <= 200)
+      ? {
+          contactId,
+          normalizedFirstName: names[1] as string,
+          normalizedLastName: names[0] as string,
+        }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+const isCanonicalContactCursor = Schema.makeFilter((cursor: string) =>
+  decodeContactCursorValue(cursor) === undefined
+    ? 'Contact cursor must contain canonical bounded name parts and a Contact ID'
+    : undefined,
+);
+const ContactCursorSchema = Schema.String.check(
+  Schema.isMinLength(39),
+  Schema.isMaxLength(2400),
+  Schema.isPattern(
+    /^[A-Za-z0-9_-]+\.[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/u,
+  ),
+  isCanonicalContactCursor,
+);
 export const CustomerDirectoryListRequestSchema = Schema.Struct({
   cursor: Schema.optionalKey(CustomerCursorSchema),
   limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
@@ -76,9 +157,21 @@ export const CustomerDirectoryDetailRequestSchema = Schema.Struct({
   customerId: CustomerIdSchema,
   operation: Schema.Literal('detail'),
 });
+export const CustomerContactListRequestSchema = Schema.Struct({
+  cursor: Schema.optionalKey(ContactCursorSchema),
+  customerId: CustomerIdSchema,
+  limit: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 100, minimum: 1 })),
+  operation: Schema.Literal('contacts'),
+});
+export const CustomerContactDetailRequestSchema = Schema.Struct({
+  contactId: ContactIdSchema,
+  operation: Schema.Literal('contact_detail'),
+});
 export const CustomerDirectoryRequestSchema = Schema.Union([
   CustomerDirectoryListRequestSchema,
   CustomerDirectoryDetailRequestSchema,
+  CustomerContactListRequestSchema,
+  CustomerContactDetailRequestSchema,
 ]);
 export type CustomerDirectoryRequest = typeof CustomerDirectoryRequestSchema.Type;
 export const CustomerDirectoryListResponseSchema = Schema.Struct({
@@ -90,9 +183,22 @@ export const CustomerDirectoryDetailResponseSchema = Schema.Struct({
   customer: CustomerViewSchema,
   operation: Schema.Literal('detail'),
 });
+export const CustomerContactListResponseSchema = Schema.Struct({
+  customerId: CustomerIdSchema,
+  customerLabel: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+  items: Schema.Array(ContactViewSchema),
+  nextCursor: Schema.NullOr(ContactCursorSchema),
+  operation: Schema.Literal('contacts'),
+});
+export const CustomerContactDetailResponseSchema = Schema.Struct({
+  contact: ContactViewSchema,
+  operation: Schema.Literal('contact_detail'),
+});
 export const CustomerDirectoryResponseSchema = Schema.Union([
   CustomerDirectoryListResponseSchema,
   CustomerDirectoryDetailResponseSchema,
+  CustomerContactListResponseSchema,
+  CustomerContactDetailResponseSchema,
 ]);
 export type CustomerDirectoryResponse = typeof CustomerDirectoryResponseSchema.Type;
 

@@ -13,6 +13,8 @@ import { Config } from 'effect';
 import { CustomerDirectorySchemaErrorMiddleware } from '../shared/apis/customer-directory.ts';
 import { crmApi } from '../shared/api.ts';
 import {
+  customerContactDetailRead,
+  customerContactListRead,
   customerDirectoryDetailRead,
   customerDirectoryListRead,
 } from '../src/api/customer-directory.read.ts';
@@ -152,24 +154,49 @@ export const customerDirectoryReadApiLive = HttpApiBuilder.group(crmApi, 'reads'
           Effect.andThen(Effect.fail(problem)),
         );
       };
-      if (payload.operation === 'list') {
-        return yield* runtime
-          .runRead({
-            input: payload,
-            principal,
-            registration: customerDirectoryListRead,
-            transport,
-          })
-          .pipe(Effect.catch(handleFailure));
+      // eslint-disable-next-line default-case -- The contract's discriminated union makes this switch exhaustive.
+      switch (payload.operation) {
+        case 'list': {
+          return yield* runtime
+            .runRead({
+              input: payload,
+              principal,
+              registration: customerDirectoryListRead,
+              transport,
+            })
+            .pipe(Effect.catch(handleFailure));
+        }
+        case 'detail': {
+          return yield* runtime
+            .runRead({
+              input: payload,
+              principal,
+              registration: customerDirectoryDetailRead,
+              transport,
+            })
+            .pipe(Effect.catch(handleFailure));
+        }
+        case 'contacts': {
+          return yield* runtime
+            .runRead({
+              input: payload,
+              principal,
+              registration: customerContactListRead,
+              transport,
+            })
+            .pipe(Effect.catch(handleFailure));
+        }
+        case 'contact_detail': {
+          return yield* runtime
+            .runRead({
+              input: payload,
+              principal,
+              registration: customerContactDetailRead,
+              transport,
+            })
+            .pipe(Effect.catch(handleFailure));
+        }
       }
-      return yield* runtime
-        .runRead({
-          input: payload,
-          principal,
-          registration: customerDirectoryDetailRead,
-          transport,
-        })
-        .pipe(Effect.catch(handleFailure));
     }),
   ),
 ).pipe(Layer.provide(customerDirectorySchemaErrorLive));

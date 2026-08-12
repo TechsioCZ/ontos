@@ -1,14 +1,18 @@
 import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/plugin-bff/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/plugin-bff/effect-edge';
 import { ActionRuntimeLive, CorePersistenceLive, ReadRuntimeLive } from '@app/core-runtime';
+import '../src/contacts/contact-actions.runtime.ts';
 import '../src/customers/customer-actions.runtime.ts';
 import { contactDetailReadApiLive } from './contact-detail-read-server.ts';
+import { createContactActionApiLive } from './create-contact-action-server.ts';
 import { createCustomerActionApiLive } from './create-customer-action-server.ts';
 import { customerDetailReadApiLive } from './customer-detail-read-server.ts';
 import { customerDirectoryReadApiLive } from './customer-directory-read-server.ts';
 import { customerTimelineReadApiLive } from './customer-timeline-read-server.ts';
 import { dealDetailReadApiLive } from './deal-detail-read-server.ts';
+import { deleteContactActionApiLive } from './delete-contact-action-server.ts';
 import { deleteCustomerActionApiLive } from './delete-customer-action-server.ts';
+import { editContactActionApiLive } from './edit-contact-action-server.ts';
 import { editCustomerActionApiLive } from './edit-customer-action-server.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { crmApi, crmOperationContexts } from '../shared/api.ts';
@@ -52,12 +56,15 @@ const layer = HttpApiBuilder.layer(crmApi).pipe(
     Layer.mergeAll(
       crmLayer,
       contactDetailReadApiLive,
+      createContactActionApiLive,
       createCustomerActionApiLive,
       customerDetailReadApiLive,
       customerDirectoryReadApiLive,
       customerTimelineReadApiLive,
       dealDetailReadApiLive,
+      deleteContactActionApiLive,
       deleteCustomerActionApiLive,
+      editContactActionApiLive,
       editCustomerActionApiLive,
     ),
   ),

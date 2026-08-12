@@ -15,6 +15,13 @@
       "when": 1786464187346,
       "tag": "0001_flimsy_killer_shrike",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786481108251,
+      "tag": "0002_equal_moondragon",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,8 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
 import { ContactDetailApi } from './shared/apis/contact-detail.ts';
+import { createContactAction } from './src/actions/create-contact.action.ts';
+import { CreateContactActionApi } from './shared/apis/create-contact-action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { CreateCustomerActionApi } from './shared/apis/create-customer-action.ts';
 import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
@@ -12,8 +14,12 @@ import { CustomersPage } from './src/routes/[lang]/customers/page.tsx';
 import { CustomerTimelineApi } from './shared/apis/customer-timeline.ts';
 import { DealDetailApi } from './shared/apis/deal-detail.ts';
 import { DealsPage } from './src/routes/[lang]/deals/page.tsx';
+import { deleteContactAction } from './src/actions/delete-contact.action.ts';
+import { DeleteContactActionApi } from './shared/apis/delete-contact-action.ts';
 import { deleteCustomerAction } from './src/actions/delete-customer.action.ts';
 import { DeleteCustomerActionApi } from './shared/apis/delete-customer-action.ts';
+import { editContactAction } from './src/actions/edit-contact.action.ts';
+import { EditContactActionApi } from './shared/apis/edit-contact-action.ts';
 import { editCustomerAction } from './src/actions/edit-customer.action.ts';
 import { EditCustomerActionApi } from './shared/apis/edit-customer-action.ts';
 // </generated-module-manifest-imports>
@@ -43,20 +49,26 @@ export const crmManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      createContactAction,
       createCustomerAction,
+      deleteContactAction,
       deleteCustomerAction,
+      editContactAction,
       editCustomerAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
       'contact-detail': ContactDetailApi,
+      'create-contact-action': CreateContactActionApi,
       'create-customer-action': CreateCustomerActionApi,
       'customer-detail': CustomerDetailApi,
       'customer-directory': CustomerDirectoryApi,
       'customer-timeline': CustomerTimelineApi,
       'deal-detail': DealDetailApi,
+      'delete-contact-action': DeleteContactActionApi,
       'delete-customer-action': DeleteCustomerActionApi,
+      'edit-contact-action': EditContactActionApi,
       'edit-customer-action': EditCustomerActionApi,
       // </generated-module-manifest-apis>
     },

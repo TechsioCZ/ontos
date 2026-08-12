@@ -10,8 +10,10 @@ export const executeCustomerDirectoryWithAuthorization = (
   payload: CustomerDirectoryRequest,
   authorization: string,
   correlationId: string,
+  baseUrl?: string,
 ) =>
   makeEffectHttpApiClient(CustomerDirectoryApi, {
+    ...(baseUrl === undefined ? {} : { baseUrl }),
     transformClient: HttpClient.mapRequest(
       HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
     ),

@@ -5,12 +5,15 @@ import {
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import { ContactDetailApi } from './apis/contact-detail.ts';
+import { CreateContactActionApi } from './apis/create-contact-action.ts';
 import { CreateCustomerActionApi } from './apis/create-customer-action.ts';
 import { CustomerDetailApi } from './apis/customer-detail.ts';
 import { CustomerDirectoryApi } from './apis/customer-directory.ts';
 import { CustomerTimelineApi } from './apis/customer-timeline.ts';
 import { DealDetailApi } from './apis/deal-detail.ts';
+import { DeleteContactActionApi } from './apis/delete-contact-action.ts';
 import { DeleteCustomerActionApi } from './apis/delete-customer-action.ts';
+import { EditContactActionApi } from './apis/edit-contact-action.ts';
 import { EditCustomerActionApi } from './apis/edit-customer-action.ts';
 
 export interface CrmMarker {
@@ -80,12 +83,15 @@ export const crmFoundationApi = HttpApi.make('CrmFoundationApi').add(
 export const crmApi = HttpApi.make('CrmApi')
   .addHttpApi(crmFoundationApi)
   .addHttpApi(ContactDetailApi)
+  .addHttpApi(CreateContactActionApi)
   .addHttpApi(CreateCustomerActionApi)
   .addHttpApi(CustomerDetailApi)
   .addHttpApi(CustomerDirectoryApi)
   .addHttpApi(CustomerTimelineApi)
   .addHttpApi(DealDetailApi)
+  .addHttpApi(DeleteContactActionApi)
   .addHttpApi(DeleteCustomerActionApi)
+  .addHttpApi(EditContactActionApi)
   .addHttpApi(EditCustomerActionApi);
 
 export const crmOperationContexts = {

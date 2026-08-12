@@ -4,17 +4,24 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { crmManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { createContactAction } from './src/actions/create-contact.action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
+import { deleteContactAction } from './src/actions/delete-contact.action.ts';
 import { deleteCustomerAction } from './src/actions/delete-customer.action.ts';
+import { editContactAction } from './src/actions/edit-contact.action.ts';
 import { editCustomerAction } from './src/actions/edit-customer.action.ts';
-import './src/customers/customer-actions.runtime.ts';
 // </generated-module-registration-imports>
+import './src/contacts/contact-actions.runtime.ts';
+import './src/customers/customer-actions.runtime.ts';
 
 export const crmRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    createContactAction,
     createCustomerAction,
+    deleteContactAction,
     deleteCustomerAction,
+    editContactAction,
     editCustomerAction,
     // </generated-module-registration-actions>
   ],
@@ -22,12 +29,15 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'contact-detail': () => import('./src/api/contact-detail-client.ts'),
+      'create-contact-action': () => import('./src/api/create-contact-action-client.ts'),
       'create-customer-action': () => import('./src/api/create-customer-action-client.ts'),
       'customer-detail': () => import('./src/api/customer-detail-client.ts'),
       'customer-directory': () => import('./src/api/customer-directory-client.ts'),
       'customer-timeline': () => import('./src/api/customer-timeline-client.ts'),
       'deal-detail': () => import('./src/api/deal-detail-client.ts'),
+      'delete-contact-action': () => import('./src/api/delete-contact-action-client.ts'),
       'delete-customer-action': () => import('./src/api/delete-customer-action-client.ts'),
+      'edit-contact-action': () => import('./src/api/edit-contact-action-client.ts'),
       'edit-customer-action': () => import('./src/api/edit-customer-action-client.ts'),
       // </generated-module-registration-apis>
     },

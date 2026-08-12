@@ -108,6 +108,59 @@ const verifyAdminCatalog = (configuration: CrmDatabaseConfigValue) =>
           reason: 'CRM Customer table is missing forced tenant RLS, policies, or uniqueness',
         });
       }
+      const contactBoundary = yield* Effect.tryPromise({
+        catch: () =>
+          new CrmDatabaseVerificationError({
+            reason: 'Unable to inspect the CRM Contact RLS and constraint boundary',
+          }),
+        try: () =>
+          database.executor.execute<{
+            readonly check_count: string;
+            readonly foreign_key_name: null | string;
+            readonly index_name: null | string;
+            readonly policy_count: string;
+            readonly relforcerowsecurity: boolean;
+            readonly relrowsecurity: boolean;
+          }>(sql`
+            select
+              relation.relrowsecurity,
+              relation.relforcerowsecurity,
+              count(distinct policy.polname)::text as policy_count,
+              count(distinct constraint_entry.conname) filter (
+                where constraint_entry.contype = ${'c'}
+              )::text as check_count,
+              max(constraint_entry.conname) filter (
+                where constraint_entry.conname = ${'crm_contacts_customer_fk'}
+              ) as foreign_key_name,
+              max(index_relation.relname) filter (
+                where index_relation.relname = ${'crm_contacts_active_customer_name_id_idx'}
+              ) as index_name
+            from pg_catalog.pg_class as relation
+            inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+            left join pg_catalog.pg_policy as policy on policy.polrelid = relation.oid
+            left join pg_catalog.pg_constraint as constraint_entry
+              on constraint_entry.conrelid = relation.oid
+            left join pg_catalog.pg_index as index_entry on index_entry.indrelid = relation.oid
+            left join pg_catalog.pg_class as index_relation on index_relation.oid = index_entry.indexrelid
+            where namespace.nspname = ${CRM_SCHEMA_NAME} and relation.relname = ${'contacts'}
+            group by relation.relrowsecurity, relation.relforcerowsecurity
+          `),
+      });
+      const [contact] = contactBoundary.rows;
+      if (
+        contact === undefined ||
+        !contact.relrowsecurity ||
+        !contact.relforcerowsecurity ||
+        contact.policy_count !== '4' ||
+        contact.check_count !== '2' ||
+        contact.foreign_key_name !== 'crm_contacts_customer_fk' ||
+        contact.index_name !== 'crm_contacts_active_customer_name_id_idx'
+      ) {
+        return yield* new CrmDatabaseVerificationError({
+          reason:
+            'CRM Contact table is missing forced tenant RLS, parent FK, checks, or pagination index',
+        });
+      }
       const journal = yield* Effect.tryPromise({
         catch: () =>
           new CrmDatabaseVerificationError({

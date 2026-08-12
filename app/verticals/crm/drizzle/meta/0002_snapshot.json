@@ -1,0 +1,517 @@
+{
+  "id": "32500a1b-cf92-479e-86bd-e1c4c95a36de",
+  "prevId": "dce221ad-37ee-4c7d-95a5-a5aaf2771255",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "crm.contacts": {
+      "name": "contacts",
+      "schema": "crm",
+      "columns": {
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "job_title": {
+          "name": "job_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_primary_contact": {
+          "name": "is_primary_contact",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "crm_contacts_tenant_contact_uk": {
+          "name": "crm_contacts_tenant_contact_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_contacts_tenant_customer_contact_uk": {
+          "name": "crm_contacts_tenant_customer_contact_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_contacts_active_customer_name_id_idx": {
+          "name": "crm_contacts_active_customer_name_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "last_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "first_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"crm\".\"contacts\".\"deleted_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "crm_contacts_customer_fk": {
+          "name": "crm_contacts_customer_fk",
+          "tableFrom": "contacts",
+          "tableTo": "customers",
+          "schemaTo": "crm",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "crm_contacts_tenant_select": {
+          "name": "crm_contacts_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "crm_contacts_tenant_insert": {
+          "name": "crm_contacts_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "crm_contacts_tenant_update": {
+          "name": "crm_contacts_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "crm_contacts_tenant_delete": {
+          "name": "crm_contacts_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "crm_contacts_name_ck": {
+          "name": "crm_contacts_name_ck",
+          "value": "(\"crm\".\"contacts\".\"first_name\" is null or (\"crm\".\"contacts\".\"first_name\" = btrim(\"crm\".\"contacts\".\"first_name\") and not (\"crm\".\"contacts\".\"first_name\" ~ '^[[:space:]]|[[:space:]]$') and char_length(\"crm\".\"contacts\".\"first_name\") between 1 and 200)) and (\"crm\".\"contacts\".\"last_name\" is null or (\"crm\".\"contacts\".\"last_name\" = btrim(\"crm\".\"contacts\".\"last_name\") and not (\"crm\".\"contacts\".\"last_name\" ~ '^[[:space:]]|[[:space:]]$') and char_length(\"crm\".\"contacts\".\"last_name\") between 1 and 200)) and (\"crm\".\"contacts\".\"first_name\" is not null or \"crm\".\"contacts\".\"last_name\" is not null)"
+        },
+        "crm_contacts_version_ck": {
+          "name": "crm_contacts_version_ck",
+          "value": "\"crm\".\"contacts\".\"version\" >= 1"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "crm.customers": {
+      "name": "customers",
+      "schema": "crm",
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "company_registration_number": {
+          "name": "company_registration_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tax_identification_number": {
+          "name": "tax_identification_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "website": {
+          "name": "website",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "address_line_1": {
+          "name": "address_line_1",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "address_line_2": {
+          "name": "address_line_2",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "city": {
+          "name": "city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "region": {
+          "name": "region",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "postal_code": {
+          "name": "postal_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "country_code": {
+          "name": "country_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "crm_customers_tenant_customer_uk": {
+          "name": "crm_customers_tenant_customer_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_customers_active_registration_uk": {
+          "name": "crm_customers_active_registration_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "company_registration_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"crm\".\"customers\".\"company_registration_number\" is not null and \"crm\".\"customers\".\"deleted_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "crm_customers_tenant_name_id_idx": {
+          "name": "crm_customers_tenant_name_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "crm_customers_tenant_select": {
+          "name": "crm_customers_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "crm_customers_tenant_insert": {
+          "name": "crm_customers_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "crm_customers_tenant_update": {
+          "name": "crm_customers_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "crm_customers_tenant_delete": {
+          "name": "crm_customers_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"crm\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "crm_customers_name_ck": {
+          "name": "crm_customers_name_ck",
+          "value": "\"crm\".\"customers\".\"name\" = btrim(\"crm\".\"customers\".\"name\") and char_length(\"crm\".\"customers\".\"name\") between 1 and 300"
+        },
+        "crm_customers_version_ck": {
+          "name": "crm_customers_version_ck",
+          "value": "\"crm\".\"customers\".\"version\" >= 1"
+        },
+        "crm_customers_country_code_ck": {
+          "name": "crm_customers_country_code_ck",
+          "value": "\"crm\".\"customers\".\"country_code\" is null or \"crm\".\"customers\".\"country_code\" ~ '^[A-Z]{2}$'"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "crm": "crm"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

@@ -50,6 +50,14 @@ export interface CustomerRepository {
     tenantId: string,
     customerId: string,
   ) => Effect.Effect<CustomerRow | undefined, CustomerRepositoryUnavailable>;
+  readonly findById: (
+    tenantId: string,
+    customerId: string,
+  ) => Effect.Effect<CustomerRow | undefined, CustomerRepositoryUnavailable>;
+  readonly lockActiveById: (
+    tenantId: string,
+    customerId: string,
+  ) => Effect.Effect<CustomerRow | undefined, CustomerRepositoryUnavailable>;
   readonly findActiveByRegistrationNumber: (
     tenantId: string,
     companyRegistrationNumber: string,
@@ -97,6 +105,19 @@ export const makeCustomerRepository = (
       },
     });
 
+  const findById: CustomerRepository['findById'] = (tenantId, customerId) =>
+    Effect.tryPromise({
+      catch: unavailable,
+      try: async () => {
+        const [row] = await transaction
+          .select()
+          .from(customers)
+          .where(and(eq(customers.tenantId, tenantId), eq(customers.customerId, customerId)))
+          .limit(1);
+        return row;
+      },
+    });
+
   const repository: CustomerRepository = {
     create: (customer) =>
       Effect.tryPromise({
@@ -131,6 +152,7 @@ export const makeCustomerRepository = (
           return row;
         },
       }),
+    findById,
     listActive: (tenantId, limit, cursor) => {
       // Drizzle has no first-class lower(column) cursor operator, so this remains a
       // parameterized tagged-SQL predicate over typed columns.
@@ -151,6 +173,25 @@ export const makeCustomerRepository = (
             .limit(limit + 1),
       });
     },
+    lockActiveById: (tenantId, customerId) =>
+      Effect.tryPromise({
+        catch: unavailable,
+        try: async () => {
+          const [row] = await transaction
+            .select()
+            .from(customers)
+            .where(
+              and(
+                eq(customers.tenantId, tenantId),
+                eq(customers.customerId, customerId),
+                isNull(customers.deletedAt),
+              ),
+            )
+            .limit(1)
+            .for('update');
+          return row;
+        },
+      }),
     softDelete: (tenantId, customerId, expectedVersion, deletedAt) =>
       Effect.tryPromise({
         catch: unavailable,
