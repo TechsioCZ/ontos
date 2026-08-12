@@ -181,12 +181,12 @@ Execute every command to validate the feature with zero regressions.
 - `verticals/crm/src/actions/**`, `src/deals/**`, and Contact lookup support: manual private handlers, registrations, scoped persistence, parent locking/validation, events, and read models.
 - `verticals/crm/tests/**`, schema verification, manifest, and registration: unit/integration coverage and module publication.
 - `specs/feature-crm-09-deal-backend.md`: implementation state and evidence.
-- Final diff stat: 48 files changed, 5,920 insertions(+), 57 deletions(-).
+- Final integrated diff stat: 49 files changed, 5,950 insertions(+), 57 deletions(-).
 
 ### Tests and Validation
 
-- `mise exec -- pnpm --filter @app/crm test:unit` — PASS; Node unit suite 31/31 and Rstest suite 32/32.
-- `mise exec -- pnpm --filter @app/crm test:integration` with the documented local PostgreSQL fixture — PASS, 5/5.
+- `mise exec -- pnpm --filter @app/crm test:unit` — PASS; integrated Node unit suite 39/39 and Rstest suite 32/32.
+- `mise exec -- pnpm --filter @app/crm test:integration` with the documented local PostgreSQL and SpiceDB fixtures — PASS, 8/8.
 - `mise exec -- pnpm db:migrate` — PASS; generated Deal migration applied successfully.
 - `mise exec -- pnpm db:generate` — PASS; all schemas reported no changes after the checked-in migration.
 - `mise exec -- pnpm db:verify` with the documented local PostgreSQL fixture and safe local auth placeholders — PASS; Core 18, Auth 6, CRM 3 typed tables verified.
@@ -194,7 +194,7 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm api:check` — PASS.
 - `mise exec -- pnpm module-entrypoints:check` — PASS.
 - `mise exec -- pnpm check` — PASS, including formatting, lint, type checking, boundary gates, and 60/60 canonical Core Action lifecycle tests.
-- `GIT_DIR=/tmp/codex-ontos-crm09-build-no-git ULTRAMODERN_SOURCE_REVISION=6be91cd14679621dcc2d6572f0aa8b416ec275e6 mise exec -- pnpm --filter @app/crm build` — PASS, including production compilation, module contract/public assets, and deploy packaging.
+- `GIT_DIR=/tmp/codex-ontos-crm09-merge-build-9e31625 ULTRAMODERN_SOURCE_REVISION=9e31625e43d62dc0d905380bdd21e358b30ca4b9 mise exec -- pnpm --filter @app/crm build` — PASS, including production compilation, module contract/public assets, and deploy packaging after integration with `develop`.
 
 ### Review Evidence
 
