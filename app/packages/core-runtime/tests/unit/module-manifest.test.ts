@@ -240,7 +240,11 @@ test('publishes an unbound Action contract but rejects owner runtime registratio
     /must have one owner-local private binding/u,
   );
 
-  bindAction(action, ({ name }) => Effect.succeed({ id: name }));
+  bindAction(
+    action,
+    ({ name }) => Effect.succeed({ id: name }),
+    () => Effect.succeed(Object.freeze({})),
+  );
   const registration = defineVerticalRuntimeRegistration({
     actions: [action],
     manifest,

@@ -4197,6 +4197,9 @@ const assertTsConfigReferenceGraph = () => {
       verticalMfTypesTsConfig,
       {
         extends: '../../tsconfig.base.json',
+        compilerOptions: {
+          rootDir: '.',
+        },
         // A headless (api-only) unit exposes no Module Federation surface, so
         // its DTS boundary only covers the ambient env declarations (G2a).
         include: vertical.emitsUi

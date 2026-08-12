@@ -171,7 +171,12 @@ test('defines an unbound public contract and binds private behavior exactly once
     /already has an owner-local binding/u,
   );
   assert.throws(
-    () => bindAction({ ...contract } as never, privateBindingHandler, privateBindingServiceFactory),
+    () =>
+      Reflect.apply(bindAction, undefined, [
+        { ...contract },
+        privateBindingHandler,
+        privateBindingServiceFactory,
+      ]),
     /requires a real Action contract/u,
   );
   assert.throws(

@@ -89,8 +89,8 @@ export const makeCustomerRepository = (
   const findActiveById: CustomerRepository['findActiveById'] = (tenantId, customerId) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: async () => {
-        const [row] = await transaction
+      try: () =>
+        transaction
           .select()
           .from(customers)
           .where(
@@ -100,42 +100,38 @@ export const makeCustomerRepository = (
               isNull(customers.deletedAt),
             ),
           )
-          .limit(1);
-        return row;
-      },
-    });
+          .limit(1),
+    }).pipe(Effect.map(([row]) => row));
+
+  const create: CustomerRepository['create'] = (customer) =>
+    Effect.tryPromise({
+      catch: persistenceError,
+      try: () => transaction.insert(customers).values(customer).returning(),
+    }).pipe(
+      Effect.flatMap(([created]) =>
+        created === undefined ? Effect.fail(unavailable()) : Effect.succeed(created),
+      ),
+    );
 
   const findById: CustomerRepository['findById'] = (tenantId, customerId) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: async () => {
-        const [row] = await transaction
+      try: () =>
+        transaction
           .select()
           .from(customers)
           .where(and(eq(customers.tenantId, tenantId), eq(customers.customerId, customerId)))
-          .limit(1);
-        return row;
-      },
-    });
+          .limit(1),
+    }).pipe(Effect.map(([row]) => row));
 
   const repository: CustomerRepository = {
-    create: (customer) =>
-      Effect.tryPromise({
-        catch: persistenceError,
-        try: async () => {
-          const [created] = await transaction.insert(customers).values(customer).returning();
-          if (created === undefined) {
-            throw new Error('Customer insert returned no row');
-          }
-          return created;
-        },
-      }),
+    create,
     findActiveById,
     findActiveByRegistrationNumber: (tenantId, companyRegistrationNumber, excludingCustomerId) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [row] = await transaction
+        try: () =>
+          transaction
             .select()
             .from(customers)
             .where(
@@ -148,10 +144,8 @@ export const makeCustomerRepository = (
                   : [ne(customers.customerId, excludingCustomerId)]),
               ),
             )
-            .limit(1);
-          return row;
-        },
-      }),
+            .limit(1),
+      }).pipe(Effect.map(([row]) => row)),
     findById,
     listActive: (tenantId, limit, cursor) => {
       // Drizzle has no first-class lower(column) cursor operator, so this remains a
@@ -176,8 +170,8 @@ export const makeCustomerRepository = (
     lockActiveById: (tenantId, customerId) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [row] = await transaction
+        try: () =>
+          transaction
             .select()
             .from(customers)
             .where(
@@ -188,15 +182,13 @@ export const makeCustomerRepository = (
               ),
             )
             .limit(1)
-            .for('update');
-          return row;
-        },
-      }),
+            .for('update'),
+      }).pipe(Effect.map(([row]) => row)),
     softDelete: (tenantId, customerId, expectedVersion, deletedAt) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [deleted] = await transaction
+        try: () =>
+          transaction
             .update(customers)
             .set({
               deletedAt,
@@ -211,15 +203,13 @@ export const makeCustomerRepository = (
                 isNull(customers.deletedAt),
               ),
             )
-            .returning();
-          return deleted;
-        },
-      }),
+            .returning(),
+      }).pipe(Effect.map(([deleted]) => deleted)),
     update: (tenantId, customerId, expectedVersion, values, updatedAt) =>
       Effect.tryPromise({
         catch: persistenceError,
-        try: async () => {
-          const [updated] = await transaction
+        try: () =>
+          transaction
             .update(customers)
             .set({ ...values, updatedAt, version: sql`${customers.version} + 1` })
             .where(
@@ -230,10 +220,8 @@ export const makeCustomerRepository = (
                 isNull(customers.deletedAt),
               ),
             )
-            .returning();
-          return updated;
-        },
-      }),
+            .returning(),
+      }).pipe(Effect.map(([updated]) => updated)),
   };
   return Object.freeze(repository);
 };

@@ -1,5 +1,4 @@
 import { defineRuntimeConfig } from '@modern-js/runtime';
-import { createInstance } from 'i18next';
 import csResource from '../locales/cs/crm.json';
 import enResource from '../locales/en/crm.json';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
@@ -21,7 +20,6 @@ const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<st
   );
 };
 
-const i18nInstance = createInstance();
 const resources = {
   cs: { [ultramodernRouteNamespace]: flattenLocaleResource(csResource) },
   en: { [ultramodernRouteNamespace]: flattenLocaleResource(enResource) },
@@ -29,7 +27,6 @@ const resources = {
 
 export default defineRuntimeConfig({
   i18n: {
-    i18nInstance,
     initOptions: {
       defaultNS: ultramodernRouteNamespace,
       fallbackLng: 'en',

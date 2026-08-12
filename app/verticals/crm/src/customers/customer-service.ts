@@ -162,15 +162,14 @@ export const normalizeCustomerFields = (
     const websiteInput = normalizeOptional(input.website);
     let website: null | string = null;
     if (websiteInput !== null) {
-      try {
-        const parsed = new URL(websiteInput);
-        if (!['http:', 'https:'].includes(parsed.protocol)) {
-          return yield* invalid('Website must use HTTP or HTTPS');
-        }
-        website = parsed.href;
-      } catch {
-        return yield* invalid('Website URL is invalid');
+      const parsed = yield* Effect.try({
+        catch: () => invalid('Website URL is invalid'),
+        try: () => new URL(websiteInput),
+      });
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return yield* invalid('Website must use HTTP or HTTPS');
       }
+      website = parsed.href;
     }
 
     const addressLine1 = normalizeOptional(input.address?.addressLine1);

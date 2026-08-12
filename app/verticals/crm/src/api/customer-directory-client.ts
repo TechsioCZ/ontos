@@ -18,11 +18,25 @@ export const executeCustomerDirectoryWithAuthorization = (
       HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
     ),
   }).pipe(
-    Effect.flatMap((client) =>
-      payload.operation === 'list'
-        ? client.reads.execute({ payload })
-        : client.reads.execute({ payload }),
-    ),
+    Effect.flatMap((client) => {
+      switch (payload.operation) {
+        case 'contact_detail': {
+          return client.reads.execute({ payload });
+        }
+        case 'contacts': {
+          return client.reads.execute({ payload });
+        }
+        case 'detail': {
+          return client.reads.execute({ payload });
+        }
+        case 'list': {
+          return client.reads.execute({ payload });
+        }
+        default: {
+          return payload satisfies never;
+        }
+      }
+    }),
   );
 
 export const executeCustomerDirectory = (

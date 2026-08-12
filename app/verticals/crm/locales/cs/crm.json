@@ -15,10 +15,84 @@
     "title": "CRM",
     "pages": {
       "customers": {
+        "actions": {
+          "cancel": "Zrušit",
+          "create": "Vytvořit zákazníka",
+          "delete": "Smazat zákazníka",
+          "edit": "Upravit zákazníka",
+          "nextPage": "Další stránka",
+          "retry": "Zkusit znovu",
+          "save": "Uložit změny"
+        },
+        "deleteDialog": {
+          "description": "Smazat společnost {{customerName}} z aktivního adresáře zákazníků? Existující historie zůstane zachována.",
+          "pending": "Mazání…",
+          "title": "Potvrdit smazání zákazníka"
+        },
         "description": "Správa zákaznických společností a kontaktů.",
+        "detail": {
+          "heading": "Detail zákazníka",
+          "notProvided": "Neuvedeno",
+          "selectPrompt": "Výběrem zákazníka zobrazíte jeho detail."
+        },
         "empty": "Zatím zde nejsou žádní zákazníci.",
+        "fields": {
+          "addressLine1": "Adresa – řádek 1",
+          "addressLine2": "Adresa – řádek 2",
+          "city": "Město",
+          "companyRegistrationNumber": "IČO",
+          "countryCode": "Kód země (ISO 3166-1 alpha-2)",
+          "email": "E-mail",
+          "name": "Název společnosti",
+          "phone": "Telefon",
+          "postalCode": "PSČ",
+          "region": "Kraj / region",
+          "taxIdentificationNumber": "DIČ",
+          "website": "Web"
+        },
+        "form": {
+          "createTitle": "Vytvořit zákazníka",
+          "editTitle": "Upravit zákazníka",
+          "pending": "Ukládání…",
+          "summary": "Zkontrolujte zvýrazněná pole."
+        },
+        "issues": {
+          "invalidCountryCode": "Zadejte dvoupísmenný kód země.",
+          "invalidEmail": "Zadejte platnou e-mailovou adresu.",
+          "invalidWebsite": "Zadejte úplnou adresu URL s http nebo https.",
+          "required": "Toto pole je povinné.",
+          "serverValidation": "Zákazníka se nepodařilo uložit. Zkontrolujte zadané hodnoty.",
+          "tooLong": "Tato hodnota je příliš dlouhá."
+        },
+        "list": {
+          "caption": "Zákaznické společnosti",
+          "city": "Město",
+          "companyRegistrationNumber": "IČO",
+          "email": "E-mail",
+          "name": "Společnost",
+          "page": "Stránka {{page}}"
+        },
         "loading": "Načítání zákazníků…",
+        "states": {
+          "conflict": "Zákazník byl od otevření změněn. Načetli jsme aktuální data; zkontrolujte své hodnoty a zkuste to znovu.",
+          "empty": "Zatím zde nejsou žádní zákazníci. Pokud je modul zapisovatelný, vytvořte první společnost.",
+          "forbidden": "K zobrazení nebo změně těchto zákazníků nemáte oprávnění.",
+          "loading": "Načítání zákazníků…",
+          "notFound": "Vybraný zákazník nebyl nalezen. Mohl být smazán.",
+          "readOnly": "Tento modul je pouze pro čtení. Detaily zákazníků jsou dostupné, ale změny jsou vypnuté.",
+          "unavailable": "Data zákazníků jsou dočasně nedostupná. Hodnoty formuláře zůstaly zachovány.",
+          "validation": {
+            "invalidCursor": "Odkaz na stránku zákazníků obsahuje neplatný stránkovací kurzor.",
+            "invalidPage": "Číslo stránky zákazníků je neplatné.",
+            "invalidSelection": "Odkaz na vybraného zákazníka je neplatný."
+          }
+        },
         "title": "Zákazníci",
+        "toast": {
+          "created": "Zákazník byl vytvořen",
+          "deleted": "Zákazník byl smazán",
+          "updated": "Zákazník byl upraven"
+        },
         "unavailable": {
           "description": "Data zákazníků jsou dočasně nedostupná.",
           "retry": "Zkusit znovu",

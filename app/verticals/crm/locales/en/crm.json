@@ -15,10 +15,84 @@
     "title": "CRM",
     "pages": {
       "customers": {
+        "actions": {
+          "cancel": "Cancel",
+          "create": "Create customer",
+          "delete": "Delete customer",
+          "edit": "Edit customer",
+          "nextPage": "Next page",
+          "retry": "Try again",
+          "save": "Save changes"
+        },
+        "deleteDialog": {
+          "description": "Delete {{customerName}} from the active customer directory? Existing history is retained.",
+          "pending": "Deleting…",
+          "title": "Confirm customer deletion"
+        },
         "description": "Manage customer companies and contacts.",
+        "detail": {
+          "heading": "Customer details",
+          "notProvided": "Not provided",
+          "selectPrompt": "Select a customer to view its details."
+        },
         "empty": "No customers yet.",
+        "fields": {
+          "addressLine1": "Address line 1",
+          "addressLine2": "Address line 2",
+          "city": "City",
+          "companyRegistrationNumber": "Company registration number",
+          "countryCode": "Country code (ISO 3166-1 alpha-2)",
+          "email": "Email",
+          "name": "Company name",
+          "phone": "Phone",
+          "postalCode": "Postal code",
+          "region": "Region",
+          "taxIdentificationNumber": "Tax identification number",
+          "website": "Website"
+        },
+        "form": {
+          "createTitle": "Create customer",
+          "editTitle": "Edit customer",
+          "pending": "Saving…",
+          "summary": "Review the highlighted fields."
+        },
+        "issues": {
+          "invalidCountryCode": "Enter a two-letter country code.",
+          "invalidEmail": "Enter a valid email address.",
+          "invalidWebsite": "Enter a complete http or https URL.",
+          "required": "This field is required.",
+          "serverValidation": "The customer could not be saved. Review the submitted values.",
+          "tooLong": "This value is too long."
+        },
+        "list": {
+          "caption": "Customer companies",
+          "city": "City",
+          "companyRegistrationNumber": "Registration number",
+          "email": "Email",
+          "name": "Company",
+          "page": "Page {{page}}"
+        },
         "loading": "Loading customers…",
+        "states": {
+          "conflict": "This customer changed since it was opened. Current data has been reloaded; review your values and try again.",
+          "empty": "No customers yet. Create the first company when this module is writable.",
+          "forbidden": "You do not have permission to view or change these customers.",
+          "loading": "Loading customers…",
+          "notFound": "The selected customer was not found. It may have been deleted.",
+          "readOnly": "This module is read-only. Customer details remain available, but changes are disabled.",
+          "unavailable": "Customer data is temporarily unavailable. Your form values have been preserved.",
+          "validation": {
+            "invalidCursor": "This customer page link contains an invalid pagination cursor.",
+            "invalidPage": "This customer page number is invalid.",
+            "invalidSelection": "This selected customer link is invalid."
+          }
+        },
         "title": "Customers",
+        "toast": {
+          "created": "Customer created",
+          "deleted": "Customer deleted",
+          "updated": "Customer updated"
+        },
         "unavailable": {
           "description": "Customer data is temporarily unavailable.",
           "retry": "Try again",

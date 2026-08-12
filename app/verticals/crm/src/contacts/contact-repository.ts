@@ -66,8 +66,8 @@ export const makeContactRepository = (
   const findById = (tenantId: string, contactId: string, activeOnly: boolean) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: async () => {
-        const [row] = await transaction
+      try: () =>
+        transaction
           .select()
           .from(contacts)
           .where(
@@ -77,23 +77,21 @@ export const makeContactRepository = (
               ...(activeOnly ? [isNull(contacts.deletedAt)] : []),
             ),
           )
-          .limit(1);
-        return row;
-      },
-    });
+          .limit(1),
+    }).pipe(Effect.map(([row]) => row));
+
+  const create: ContactRepository['create'] = (contact) =>
+    Effect.tryPromise({
+      catch: unavailable,
+      try: () => transaction.insert(contacts).values(contact).returning(),
+    }).pipe(
+      Effect.flatMap(([created]) =>
+        created === undefined ? Effect.fail(unavailable()) : Effect.succeed(created),
+      ),
+    );
 
   const repository: ContactRepository = {
-    create: (contact) =>
-      Effect.tryPromise({
-        catch: unavailable,
-        try: async () => {
-          const [created] = await transaction.insert(contacts).values(contact).returning();
-          if (created === undefined) {
-            throw new Error('Contact insert returned no row');
-          }
-          return created;
-        },
-      }),
+    create,
     findActiveById: (tenantId, contactId) => findById(tenantId, contactId, true),
     findById: (tenantId, contactId) => findById(tenantId, contactId, false),
     listActiveForCustomer: (tenantId, customerId, limit, cursor) => {
@@ -128,8 +126,8 @@ export const makeContactRepository = (
     softDelete: (tenantId, contactId, expectedVersion, deletedAt) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [deleted] = await transaction
+        try: () =>
+          transaction
             .update(contacts)
             .set({
               deletedAt,
@@ -144,15 +142,13 @@ export const makeContactRepository = (
                 isNull(contacts.deletedAt),
               ),
             )
-            .returning();
-          return deleted;
-        },
-      }),
+            .returning(),
+      }).pipe(Effect.map(([deleted]) => deleted)),
     update: (tenantId, contactId, expectedVersion, values, updatedAt) =>
       Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [updated] = await transaction
+        try: () =>
+          transaction
             .update(contacts)
             .set({ ...values, updatedAt, version: sql`${contacts.version} + 1` })
             .where(
@@ -163,10 +159,8 @@ export const makeContactRepository = (
                 isNull(contacts.deletedAt),
               ),
             )
-            .returning();
-          return updated;
-        },
-      }),
+            .returning(),
+      }).pipe(Effect.map(([updated]) => updated)),
   };
   return Object.freeze(repository);
 };

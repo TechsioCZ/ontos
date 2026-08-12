@@ -131,12 +131,12 @@ const parseConfiguration = (
 
 const classifyVerificationFailure = (error: unknown): ActionPrincipalError => {
   if (
-    error instanceof ActionPrincipalMissingError ||
-    error instanceof ActionPrincipalInvalidError ||
-    error instanceof ActionPrincipalExpiredError ||
-    error instanceof ActionPrincipalScopeError ||
-    error instanceof ActionPrincipalConfigurationError ||
-    error instanceof ActionPrincipalUnavailableError
+    Schema.is(ActionPrincipalMissingError)(error) ||
+    Schema.is(ActionPrincipalInvalidError)(error) ||
+    Schema.is(ActionPrincipalExpiredError)(error) ||
+    Schema.is(ActionPrincipalScopeError)(error) ||
+    Schema.is(ActionPrincipalConfigurationError)(error) ||
+    Schema.is(ActionPrincipalUnavailableError)(error)
   ) {
     return error;
   }
