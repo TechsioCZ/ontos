@@ -17,6 +17,9 @@ const { createMock, deleteMock, directoryMock, editMock, navigateMock, useLoader
   }));
 
 const labels: Record<string, string> = {
+  'crm.navigation.customers': 'Customers',
+  'crm.navigation.deals': 'Deals',
+  'crm.navigation.label': 'CRM sections',
   'crm.pages.customers.actions.cancel': 'Cancel',
   'crm.pages.customers.actions.create': 'Create customer',
   'crm.pages.customers.actions.delete': 'Delete customer',
@@ -48,6 +51,7 @@ const labels: Record<string, string> = {
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
+    language: 'en',
     t: (key: string, options?: Record<string, unknown>) =>
       key === 'crm.pages.customers.list.page'
         ? `Page ${options?.page}`
@@ -156,6 +160,18 @@ test('create submits through the generated Action client and keeps the returned 
   await waitFor(() => expect(createMock).toHaveBeenCalledTimes(1));
   expect(createMock.mock.calls[0]?.[0]).toEqual({ name: 'New Acme' });
   expect(navigateMock.mock.calls[0]?.[0].to).toContain(`customer=${customerView.customerId}`);
+});
+
+test('links the embedded CRM page to both CRM sections without adding search', () => {
+  render(<CustomersPage target={{ writable: true }} />);
+  expect(screen.getByRole('navigation', { name: 'CRM sections' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Customers' }).getAttribute('href')).toBe(
+    '/modules/crm.core?page=crm.core.page.customers',
+  );
+  expect(screen.getByRole('link', { name: 'Deals' }).getAttribute('href')).toBe(
+    '/modules/crm.core?page=crm.core.page.deals',
+  );
+  expect(screen.queryByRole('search')).toBeNull();
 });
 
 test('hydrates through a stable loading state before showing URL validation', async () => {

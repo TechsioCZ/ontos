@@ -57,6 +57,11 @@ const createFixture = async (): Promise<string> => {
   );
   await write(
     root,
+    'verticals/property-registry/modern.config.ts',
+    `export default {\n  ignoreRedirectRoutes: [\n    '/robots.txt',\n  ],\n};\n`,
+  );
+  await write(
+    root,
     'verticals/documents-center/package.json',
     json({
       dependencies: {},
@@ -84,6 +89,11 @@ const createFixture = async (): Promise<string> => {
     root,
     'verticals/documents-center/module-federation.config.ts',
     'export default {};\n',
+  );
+  await write(
+    root,
+    'verticals/documents-center/modern.config.ts',
+    `export default {\n  ignoreRedirectRoutes: [\n    '/robots.txt',\n  ],\n};\n`,
   );
   await write(
     root,
@@ -158,7 +168,17 @@ test('module-contract help is exact and write-free', async () => {
 test('business generators fail closed before the mandatory module contract exists', async () => {
   await withFixture(async (root) => {
     const commands = [
-      ['action', ['--vertical', 'property-registry', '--action', 'create-property']],
+      [
+        'action',
+        [
+          '--vertical',
+          'property-registry',
+          '--action',
+          'create-property',
+          '--legal-entity-scope',
+          'optional',
+        ],
+      ],
       ['microvertical-action-boundary', ['--vertical', 'property-registry']],
       ['microvertical-page', ['--vertical', 'property-registry', '--page', 'properties']],
       [
@@ -414,6 +434,26 @@ test('maps Cloudflare emission to the Modern output root and validates authored 
       /verticals\/property-registry\/dist-cloudflare\/public\/\.well-known\/ontos-module-manifest\.json$/u,
     );
     await checkOntosModuleContracts(root);
+  });
+});
+
+test('emits the deployment contract into the Modern development public directory', async () => {
+  await withFixture(async (root) => {
+    await scaffold(root);
+    const emitted = await generateOntosModuleContract({
+      target: 'dev',
+      vertical: 'property-registry',
+      workspaceRoot: root,
+    });
+    assert.match(
+      emitted.path,
+      /verticals\/property-registry\/\.well-known\/ontos-module-manifest\.json$/u,
+    );
+    const headers = await readFile(
+      path.join(root, 'verticals/property-registry/.well-known/_headers'),
+      'utf-8',
+    );
+    assert.match(headers, /Cache-Control: no-cache/u);
   });
 });
 

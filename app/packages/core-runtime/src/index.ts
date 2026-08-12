@@ -117,6 +117,7 @@ export {
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from './permissions/context-access.ts';
+export { toSpiceDbActionObjectId } from './permissions/service.ts';
 export type {
   ContextAccessClientFactory,
   ContextAccessDecision,

@@ -1,0 +1,1310 @@
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/plugin-bff/effect-client';
+export interface CrmMarker {
+    readonly appId: string;
+    readonly build: string;
+    readonly buildMarker: string;
+    readonly deployProfile: string;
+    readonly packageName: string;
+    readonly sourceRevision: string;
+    readonly surface: string;
+    readonly unitId: string;
+    readonly version: string;
+}
+export interface CrmReadiness {
+    readonly checks: {
+        readonly api: 'ready';
+        readonly moduleFederation: 'ready';
+        readonly ssr: 'ready';
+        readonly translations: 'ready';
+    };
+    readonly marker: CrmMarker;
+    readonly status: 'ready';
+    readonly versionSkew: 'none';
+}
+export declare const crmMarkerSchema: Schema.Codec<CrmMarker>;
+export declare const crmReadinessSchema: Schema.Codec<CrmReadiness>;
+export interface OperationContext {
+    method: string;
+    operationId: string;
+    routePath: string;
+    source: 'client' | 'server' | 'generated-client' | 'effect-adapter' | 'data-platform' | 'unknown';
+    traceId?: string;
+}
+export declare const crmFoundationApi: HttpApi.HttpApi<"CrmFoundationApi", HttpApiGroup.HttpApiGroup<"foundation", HttpApiEndpoint.HttpApiEndpoint<"readiness", "GET", "/crm/readiness", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Codec<CrmReadiness, CrmReadiness, never, never>>, HttpApiEndpoint.Json<never>, never, never>, false>>;
+export declare const crmApi: HttpApi.HttpApi<"CrmApi", HttpApiGroup.HttpApiGroup<"changeCustomerPrimaryContactActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/change-customer-primary-contact", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly customerId: Schema.String;
+    readonly expectedCurrentPrimaryContactId: Schema.NullOr<Schema.String>;
+    readonly expectedCurrentPrimaryContactVersion: Schema.NullOr<Schema.Finite>;
+    readonly expectedCustomerVersion: Schema.Finite;
+    readonly expectedSelectedContactVersion: Schema.NullOr<Schema.Finite>;
+    readonly selectedContactId: Schema.NullOr<Schema.String>;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly changedAt: Schema.String;
+    readonly customerId: Schema.String;
+    readonly customerVersion: Schema.Finite;
+    readonly previousPrimaryContactId: Schema.NullOr<Schema.String>;
+    readonly previousPrimaryContactVersion: Schema.NullOr<Schema.Finite>;
+    readonly primaryContactId: Schema.NullOr<Schema.String>;
+    readonly primaryContactVersion: Schema.NullOr<Schema.Finite>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ChangeCustomerPrimaryContactUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/change-customer-primary-contact-action.ts").ChangeCustomerPrimaryContactSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"contactDetail", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/reads/contact-detail", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly moduleId: Schema.Literal<"crm.core">;
+    readonly resourceId: Schema.String;
+    readonly resourceType: Schema.Literal<"crm.core.contact">;
+}>>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly fields: Schema.$Array<Schema.Struct<{
+        readonly label: Schema.String;
+        readonly value: Schema.String;
+    }>>;
+    readonly title: Schema.String;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailPolicyConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailPolicyProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"ContactDetailInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, never, never>, false> | HttpApiGroup.HttpApiGroup<"createContactActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/create-contact", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly email: Schema.optionalKey<Schema.String>;
+    readonly firstName: Schema.optionalKey<Schema.String>;
+    readonly jobTitle: Schema.optionalKey<Schema.String>;
+    readonly lastName: Schema.optionalKey<Schema.String>;
+    readonly phone: Schema.optionalKey<Schema.String>;
+    readonly customerId: Schema.String;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.String;
+    readonly createdAt: Schema.String;
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly displayName: Schema.String;
+    readonly email: Schema.NullOr<Schema.String>;
+    readonly firstName: Schema.NullOr<Schema.String>;
+    readonly isPrimaryContact: Schema.Boolean;
+    readonly jobTitle: Schema.NullOr<Schema.String>;
+    readonly lastName: Schema.NullOr<Schema.String>;
+    readonly phone: Schema.NullOr<Schema.String>;
+    readonly updatedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateContactUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/create-contact-action.ts").CreateContactSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"createCustomerActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/create-customer", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly address: Schema.optionalKey<Schema.Struct<{
+        readonly addressLine1: Schema.optionalKey<Schema.String>;
+        readonly addressLine2: Schema.optionalKey<Schema.String>;
+        readonly city: Schema.optionalKey<Schema.String>;
+        readonly countryCode: Schema.optionalKey<Schema.String>;
+        readonly postalCode: Schema.optionalKey<Schema.String>;
+        readonly region: Schema.optionalKey<Schema.String>;
+    }>>;
+    readonly companyRegistrationNumber: Schema.optionalKey<Schema.String>;
+    readonly email: Schema.optionalKey<Schema.String>;
+    readonly name: Schema.String;
+    readonly phone: Schema.optionalKey<Schema.String>;
+    readonly taxIdentificationNumber: Schema.optionalKey<Schema.String>;
+    readonly website: Schema.optionalKey<Schema.String>;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly address: Schema.NullOr<Schema.Struct<{
+        readonly addressLine1: Schema.NullOr<Schema.String>;
+        readonly addressLine2: Schema.NullOr<Schema.String>;
+        readonly city: Schema.NullOr<Schema.String>;
+        readonly countryCode: Schema.NullOr<Schema.String>;
+        readonly postalCode: Schema.NullOr<Schema.String>;
+        readonly region: Schema.NullOr<Schema.String>;
+    }>>;
+    readonly companyRegistrationNumber: Schema.NullOr<Schema.String>;
+    readonly createdAt: Schema.String;
+    readonly customerId: Schema.String;
+    readonly email: Schema.NullOr<Schema.String>;
+    readonly name: Schema.String;
+    readonly phone: Schema.NullOr<Schema.String>;
+    readonly taxIdentificationNumber: Schema.NullOr<Schema.String>;
+    readonly updatedAt: Schema.String;
+    readonly version: Schema.Finite;
+    readonly website: Schema.NullOr<Schema.String>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateCustomerUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/create-customer-action.ts").CreateCustomerSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"createDealActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/create-deal", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.optionalKey<Schema.NullOr<Schema.String>>;
+    readonly currency: Schema.Literals<readonly ["AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XTS", "XUA", "XXX", "YER", "ZAR", "ZMW", "ZWG"]>;
+    readonly customerId: Schema.String;
+    readonly description: Schema.optionalKey<Schema.String>;
+    readonly expectedCloseDate: Schema.optionalKey<Schema.NullOr<Schema.String>>;
+    readonly expectedValue: Schema.Finite;
+    readonly title: Schema.String;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.NullOr<Schema.String>;
+    readonly contactLabel: Schema.NullOr<Schema.String>;
+    readonly createdAt: Schema.String;
+    readonly currency: Schema.Literals<readonly ["AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XTS", "XUA", "XXX", "YER", "ZAR", "ZMW", "ZWG"]>;
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly dealId: Schema.String;
+    readonly description: Schema.NullOr<Schema.String>;
+    readonly expectedCloseDate: Schema.NullOr<Schema.String>;
+    readonly expectedValue: Schema.Finite;
+    readonly status: Schema.Literals<readonly ["New", "Qualified", "Offer sent", "Negotiation", "Won", "Lost"]>;
+    readonly title: Schema.String;
+    readonly updatedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CreateDealUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/create-deal-action.ts").CreateDealSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"customerDetail", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/reads/customer-detail", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly moduleId: Schema.Literal<"crm.core">;
+    readonly resourceId: Schema.String;
+    readonly resourceType: Schema.Literal<"crm.core.customer">;
+}>>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly fields: Schema.$Array<Schema.Struct<{
+        readonly label: Schema.String;
+        readonly value: Schema.String;
+    }>>;
+    readonly title: Schema.String;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailPolicyConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailPolicyProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDetailInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/customer-detail.ts").CustomerDetailSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"customerTimeline", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/reads/customer-timeline", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly moduleId: Schema.Literal<"crm.core">;
+    readonly resourceId: Schema.String;
+    readonly resourceType: Schema.Literal<"crm.core.customer">;
+}>>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly entries: Schema.$Array<Schema.Struct<{
+        readonly occurredAt: Schema.String;
+        readonly summary: Schema.String;
+        readonly timelineEntryId: Schema.String;
+    }>>;
+    readonly projectionLagging: Schema.Boolean;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelineAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelineUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelineForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelineNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelinePolicyProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelinePolicyConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerTimelineInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, never, never>, false> | HttpApiGroup.HttpApiGroup<"dealDetail", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/reads/deal-detail", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly moduleId: Schema.Literal<"crm.core">;
+    readonly resourceId: Schema.String;
+    readonly resourceType: Schema.Literal<"crm.core.deal">;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly fields: Schema.$Array<Schema.Struct<{
+        readonly label: Schema.String;
+        readonly value: Schema.String;
+    }>>;
+    readonly title: Schema.String;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailPolicyConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailPolicyProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealDetailInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/deal-detail.ts").DealDetailSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"dealWorkspaceReads", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/reads/deal-workspace", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Union<readonly [Schema.Struct<{
+    readonly cursor: Schema.optionalKey<Schema.String>;
+    readonly customerId: Schema.optionalKey<Schema.String>;
+    readonly limit: Schema.Finite;
+    readonly operation: Schema.Literal<"list">;
+}>, Schema.Struct<{
+    readonly dealId: Schema.String;
+    readonly operation: Schema.Literal<"detail">;
+}>]>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+}>>, HttpApiEndpoint.Json<Schema.Union<readonly [Schema.Struct<{
+    readonly items: Schema.$Array<Schema.Struct<{
+        readonly contactId: Schema.NullOr<Schema.String>;
+        readonly contactLabel: Schema.NullOr<Schema.String>;
+        readonly createdAt: Schema.String;
+        readonly currency: Schema.Literals<readonly ["AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XTS", "XUA", "XXX", "YER", "ZAR", "ZMW", "ZWG"]>;
+        readonly customerId: Schema.String;
+        readonly customerLabel: Schema.String;
+        readonly dealId: Schema.String;
+        readonly description: Schema.NullOr<Schema.String>;
+        readonly expectedCloseDate: Schema.NullOr<Schema.String>;
+        readonly expectedValue: Schema.Finite;
+        readonly status: Schema.Literals<readonly ["New", "Qualified", "Offer sent", "Negotiation", "Won", "Lost"]>;
+        readonly title: Schema.String;
+        readonly updatedAt: Schema.String;
+        readonly version: Schema.Finite;
+    }>>;
+    readonly nextCursor: Schema.NullOr<Schema.String>;
+    readonly operation: Schema.Literal<"list">;
+}>, Schema.Struct<{
+    readonly deal: Schema.Struct<{
+        readonly contactId: Schema.NullOr<Schema.String>;
+        readonly contactLabel: Schema.NullOr<Schema.String>;
+        readonly createdAt: Schema.String;
+        readonly currency: Schema.Literals<readonly ["AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XTS", "XUA", "XXX", "YER", "ZAR", "ZMW", "ZWG"]>;
+        readonly customerId: Schema.String;
+        readonly customerLabel: Schema.String;
+        readonly dealId: Schema.String;
+        readonly description: Schema.NullOr<Schema.String>;
+        readonly expectedCloseDate: Schema.NullOr<Schema.String>;
+        readonly expectedValue: Schema.Finite;
+        readonly status: Schema.Literals<readonly ["New", "Qualified", "Offer sent", "Negotiation", "Won", "Lost"]>;
+        readonly title: Schema.String;
+        readonly updatedAt: Schema.String;
+        readonly version: Schema.Finite;
+    }>;
+    readonly operation: Schema.Literal<"detail">;
+}>]>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspaceValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspaceAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspaceForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspaceNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspacePolicyConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspacePolicyProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspaceUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DealWorkspaceInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/deal-workspace.ts").DealWorkspaceSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"deleteContactActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/delete-contact", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.String;
+    readonly expectedVersion: Schema.Finite;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.String;
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly deletedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteContactUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/delete-contact-action.ts").DeleteContactSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"deleteCustomerActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/delete-customer", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly customerId: Schema.String;
+    readonly expectedVersion: Schema.Finite;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly customerId: Schema.String;
+    readonly deletedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteCustomerUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/delete-customer-action.ts").DeleteCustomerSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"deleteDealActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/delete-deal", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly dealId: Schema.String;
+    readonly expectedVersion: Schema.Finite;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly dealId: Schema.String;
+    readonly deletedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"DeleteDealUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/delete-deal-action.ts").DeleteDealSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"editContactActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/edit-contact", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly email: Schema.optionalKey<Schema.String>;
+    readonly firstName: Schema.optionalKey<Schema.String>;
+    readonly jobTitle: Schema.optionalKey<Schema.String>;
+    readonly lastName: Schema.optionalKey<Schema.String>;
+    readonly phone: Schema.optionalKey<Schema.String>;
+    readonly contactId: Schema.String;
+    readonly expectedVersion: Schema.Finite;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.String;
+    readonly createdAt: Schema.String;
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly displayName: Schema.String;
+    readonly email: Schema.NullOr<Schema.String>;
+    readonly firstName: Schema.NullOr<Schema.String>;
+    readonly isPrimaryContact: Schema.Boolean;
+    readonly jobTitle: Schema.NullOr<Schema.String>;
+    readonly lastName: Schema.NullOr<Schema.String>;
+    readonly phone: Schema.NullOr<Schema.String>;
+    readonly updatedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditContactUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/edit-contact-action.ts").EditContactSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"editCustomerActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/edit-customer", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly address: Schema.optionalKey<Schema.Struct<{
+        readonly addressLine1: Schema.optionalKey<Schema.String>;
+        readonly addressLine2: Schema.optionalKey<Schema.String>;
+        readonly city: Schema.optionalKey<Schema.String>;
+        readonly countryCode: Schema.optionalKey<Schema.String>;
+        readonly postalCode: Schema.optionalKey<Schema.String>;
+        readonly region: Schema.optionalKey<Schema.String>;
+    }>>;
+    readonly companyRegistrationNumber: Schema.optionalKey<Schema.String>;
+    readonly email: Schema.optionalKey<Schema.String>;
+    readonly name: Schema.String;
+    readonly phone: Schema.optionalKey<Schema.String>;
+    readonly taxIdentificationNumber: Schema.optionalKey<Schema.String>;
+    readonly website: Schema.optionalKey<Schema.String>;
+    readonly customerId: Schema.String;
+    readonly expectedVersion: Schema.Finite;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly address: Schema.NullOr<Schema.Struct<{
+        readonly addressLine1: Schema.NullOr<Schema.String>;
+        readonly addressLine2: Schema.NullOr<Schema.String>;
+        readonly city: Schema.NullOr<Schema.String>;
+        readonly countryCode: Schema.NullOr<Schema.String>;
+        readonly postalCode: Schema.NullOr<Schema.String>;
+        readonly region: Schema.NullOr<Schema.String>;
+    }>>;
+    readonly companyRegistrationNumber: Schema.NullOr<Schema.String>;
+    readonly createdAt: Schema.String;
+    readonly customerId: Schema.String;
+    readonly email: Schema.NullOr<Schema.String>;
+    readonly name: Schema.String;
+    readonly phone: Schema.NullOr<Schema.String>;
+    readonly taxIdentificationNumber: Schema.NullOr<Schema.String>;
+    readonly updatedAt: Schema.String;
+    readonly version: Schema.Finite;
+    readonly website: Schema.NullOr<Schema.String>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditCustomerUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/edit-customer-action.ts").EditCustomerSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"editDealActions", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/actions/edit-deal", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.optionalKey<Schema.NullOr<Schema.String>>;
+    readonly currency: Schema.Literals<readonly ["AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XTS", "XUA", "XXX", "YER", "ZAR", "ZMW", "ZWG"]>;
+    readonly customerId: Schema.String;
+    readonly description: Schema.optionalKey<Schema.String>;
+    readonly expectedCloseDate: Schema.optionalKey<Schema.NullOr<Schema.String>>;
+    readonly expectedValue: Schema.Finite;
+    readonly title: Schema.String;
+    readonly dealId: Schema.String;
+    readonly expectedVersion: Schema.Finite;
+}>>, HttpApiEndpoint.StringTree<Schema.Struct<{
+    readonly authorization: Schema.optionalKey<Schema.String>;
+    readonly 'x-correlation-id': Schema.NonEmptyString;
+    readonly 'x-idempotency-key': Schema.optionalKey<Schema.NonEmptyString>;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly contactId: Schema.NullOr<Schema.String>;
+    readonly contactLabel: Schema.NullOr<Schema.String>;
+    readonly createdAt: Schema.String;
+    readonly currency: Schema.Literals<readonly ["AED", "AFN", "ALL", "AMD", "AOA", "ARS", "AUD", "AWG", "AZN", "BAM", "BBD", "BDT", "BHD", "BIF", "BMD", "BND", "BOB", "BOV", "BRL", "BSD", "BTN", "BWP", "BYN", "BZD", "CAD", "CDF", "CHE", "CHF", "CHW", "CLF", "CLP", "CNY", "COP", "COU", "CRC", "CUP", "CVE", "CZK", "DJF", "DKK", "DOP", "DZD", "EGP", "ERN", "ETB", "EUR", "FJD", "FKP", "GBP", "GEL", "GHS", "GIP", "GMD", "GNF", "GTQ", "GYD", "HKD", "HNL", "HTG", "HUF", "IDR", "ILS", "INR", "IQD", "IRR", "ISK", "JMD", "JOD", "JPY", "KES", "KGS", "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LYD", "MAD", "MDL", "MGA", "MKD", "MMK", "MNT", "MOP", "MRU", "MUR", "MVR", "MWK", "MXN", "MXV", "MYR", "MZN", "NAD", "NGN", "NIO", "NOK", "NPR", "NZD", "OMR", "PAB", "PEN", "PGK", "PHP", "PKR", "PLN", "PYG", "QAR", "RON", "RSD", "RUB", "RWF", "SAR", "SBD", "SCR", "SDG", "SEK", "SGD", "SHP", "SLE", "SOS", "SRD", "SSP", "STN", "SVC", "SYP", "SZL", "THB", "TJS", "TMT", "TND", "TOP", "TRY", "TTD", "TWD", "TZS", "UAH", "UGX", "USD", "USN", "UYI", "UYU", "UYW", "UZS", "VED", "VES", "VND", "VUV", "WST", "XAD", "XAF", "XAG", "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XCG", "XDR", "XOF", "XPD", "XPF", "XPT", "XSU", "XTS", "XUA", "XXX", "YER", "ZAR", "ZMW", "ZWG"]>;
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly dealId: Schema.String;
+    readonly description: Schema.NullOr<Schema.String>;
+    readonly expectedCloseDate: Schema.NullOr<Schema.String>;
+    readonly expectedValue: Schema.Finite;
+    readonly status: Schema.Literals<readonly ["New", "Qualified", "Offer sent", "Negotiation", "Won", "Lost"]>;
+    readonly title: Schema.String;
+    readonly updatedAt: Schema.String;
+    readonly version: Schema.Finite;
+}>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealRejectedProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealPreconditionProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<428>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"EditDealUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/edit-deal-action.ts").EditDealSchemaErrorMiddleware, never>, false> | HttpApiGroup.HttpApiGroup<"foundation", HttpApiEndpoint.HttpApiEndpoint<"readiness", "GET", "/crm/readiness", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Codec<CrmReadiness, CrmReadiness, never, never>>, HttpApiEndpoint.Json<never>, never, never>, false> | HttpApiGroup.HttpApiGroup<"reads", HttpApiEndpoint.HttpApiEndpoint<"execute", "POST", "/reads/customer-directory", HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Union<readonly [Schema.Struct<{
+    readonly cursor: Schema.optionalKey<Schema.String>;
+    readonly limit: Schema.Finite;
+    readonly operation: Schema.Literal<"list">;
+}>, Schema.Struct<{
+    readonly customerId: Schema.String;
+    readonly operation: Schema.Literal<"detail">;
+}>, Schema.Struct<{
+    readonly cursor: Schema.optionalKey<Schema.String>;
+    readonly customerId: Schema.String;
+    readonly limit: Schema.Finite;
+    readonly operation: Schema.Literal<"contacts">;
+}>, Schema.Struct<{
+    readonly contactId: Schema.String;
+    readonly operation: Schema.Literal<"contact_detail">;
+}>]>>, HttpApiEndpoint.StringTree<never>, HttpApiEndpoint.Json<Schema.Union<readonly [Schema.Struct<{
+    readonly items: Schema.$Array<Schema.Struct<{
+        readonly address: Schema.NullOr<Schema.Struct<{
+            readonly addressLine1: Schema.NullOr<Schema.String>;
+            readonly addressLine2: Schema.NullOr<Schema.String>;
+            readonly city: Schema.NullOr<Schema.String>;
+            readonly countryCode: Schema.NullOr<Schema.String>;
+            readonly postalCode: Schema.NullOr<Schema.String>;
+            readonly region: Schema.NullOr<Schema.String>;
+        }>>;
+        readonly companyRegistrationNumber: Schema.NullOr<Schema.String>;
+        readonly createdAt: Schema.String;
+        readonly customerId: Schema.String;
+        readonly email: Schema.NullOr<Schema.String>;
+        readonly name: Schema.String;
+        readonly phone: Schema.NullOr<Schema.String>;
+        readonly taxIdentificationNumber: Schema.NullOr<Schema.String>;
+        readonly updatedAt: Schema.String;
+        readonly version: Schema.Finite;
+        readonly website: Schema.NullOr<Schema.String>;
+    }>>;
+    readonly nextCursor: Schema.NullOr<Schema.String>;
+    readonly operation: Schema.Literal<"list">;
+}>, Schema.Struct<{
+    readonly customer: Schema.Struct<{
+        readonly address: Schema.NullOr<Schema.Struct<{
+            readonly addressLine1: Schema.NullOr<Schema.String>;
+            readonly addressLine2: Schema.NullOr<Schema.String>;
+            readonly city: Schema.NullOr<Schema.String>;
+            readonly countryCode: Schema.NullOr<Schema.String>;
+            readonly postalCode: Schema.NullOr<Schema.String>;
+            readonly region: Schema.NullOr<Schema.String>;
+        }>>;
+        readonly companyRegistrationNumber: Schema.NullOr<Schema.String>;
+        readonly createdAt: Schema.String;
+        readonly customerId: Schema.String;
+        readonly email: Schema.NullOr<Schema.String>;
+        readonly name: Schema.String;
+        readonly phone: Schema.NullOr<Schema.String>;
+        readonly taxIdentificationNumber: Schema.NullOr<Schema.String>;
+        readonly updatedAt: Schema.String;
+        readonly version: Schema.Finite;
+        readonly website: Schema.NullOr<Schema.String>;
+    }>;
+    readonly operation: Schema.Literal<"detail">;
+}>, Schema.Struct<{
+    readonly customerId: Schema.String;
+    readonly customerLabel: Schema.String;
+    readonly items: Schema.$Array<Schema.Struct<{
+        readonly contactId: Schema.String;
+        readonly createdAt: Schema.String;
+        readonly customerId: Schema.String;
+        readonly customerLabel: Schema.String;
+        readonly displayName: Schema.String;
+        readonly email: Schema.NullOr<Schema.String>;
+        readonly firstName: Schema.NullOr<Schema.String>;
+        readonly isPrimaryContact: Schema.Boolean;
+        readonly jobTitle: Schema.NullOr<Schema.String>;
+        readonly lastName: Schema.NullOr<Schema.String>;
+        readonly phone: Schema.NullOr<Schema.String>;
+        readonly updatedAt: Schema.String;
+        readonly version: Schema.Finite;
+    }>>;
+    readonly nextCursor: Schema.NullOr<Schema.String>;
+    readonly operation: Schema.Literal<"contacts">;
+}>, Schema.Struct<{
+    readonly contact: Schema.Struct<{
+        readonly contactId: Schema.String;
+        readonly createdAt: Schema.String;
+        readonly customerId: Schema.String;
+        readonly customerLabel: Schema.String;
+        readonly displayName: Schema.String;
+        readonly email: Schema.NullOr<Schema.String>;
+        readonly firstName: Schema.NullOr<Schema.String>;
+        readonly isPrimaryContact: Schema.Boolean;
+        readonly jobTitle: Schema.NullOr<Schema.String>;
+        readonly lastName: Schema.NullOr<Schema.String>;
+        readonly phone: Schema.NullOr<Schema.String>;
+        readonly updatedAt: Schema.String;
+        readonly version: Schema.Finite;
+    }>;
+    readonly operation: Schema.Literal<"contact_detail">;
+}>]>>, HttpApiEndpoint.Json<Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryValidationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<400>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryAuthenticationProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<401>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryForbiddenProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<403>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryNotFoundProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<404>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryPolicyConflictProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<409>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryPolicyProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<422>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryUnavailableProblem">;
+    readonly detail: Schema.String;
+    readonly retryable: Schema.Literal<true>;
+    readonly status: Schema.Literal<503>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}> | Schema.Struct<{
+    readonly _tag: Schema.tag<"CustomerDirectoryInternalProblem">;
+    readonly detail: Schema.String;
+    readonly status: Schema.Literal<500>;
+    readonly title: Schema.String;
+    readonly type: Schema.String;
+}>>, import("./apis/customer-directory.ts").CustomerDirectorySchemaErrorMiddleware, never>, false>>;
+export declare const crmOperationContexts: {
+    readiness: {
+        method: string;
+        operationId: string;
+        routePath: string;
+        source: "generated-client";
+    };
+};
+export declare const crmApiContract: {
+    readonly apiPrefix: '/crm-api';
+    readonly basePath: '/crm-api/crm';
+    readonly ownerId: 'crm';
+    readonly readinessPath: '/crm-api/crm/readiness';
+};

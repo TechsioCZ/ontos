@@ -56,7 +56,7 @@ export interface ShellGovernedReadsShape {
     input: ShellReadInvocation & { readonly ref: ResourceRef },
   ) => Effect.Effect<ShellResourceResponse, ReadCoreError>;
   readonly moduleTarget: (
-    input: ShellReadInvocation & { readonly moduleId: string },
+    input: ShellReadInvocation & { readonly entrypointKey?: string; readonly moduleId: string },
   ) => Effect.Effect<ResolvedModuleTarget, ReadCoreError>;
   readonly search: (
     input: ShellReadInvocation & { readonly query: string },
@@ -218,52 +218,57 @@ const makeRegistrations = (
       resultSchema: ResolvedModuleTargetSchema,
       schemaVersion: '1',
     },
-    ({ moduleId }, context) =>
-      context.services.composition.resolveModuleTarget(context.scope, { moduleId }).pipe(
-        Effect.flatMap(
-          (
-            resolution,
-          ): Effect.Effect<
-            ReadHandlerResult<ResolvedModuleTarget>,
-            ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
-          > => {
-            if (resolution.outcome === 'not_found') {
-              return Effect.fail(
-                new ReadHandlerNotFound({
-                  code: 'read_handler_not_found',
-                  reason: 'The requested module target was not found',
-                }),
-              );
-            }
-            if (resolution.outcome === 'forbidden') {
-              return Effect.fail(
-                new ReadPermissionDenied({
-                  code: 'read_permission_denied',
-                  reason: 'The requested module target is forbidden',
-                }),
-              );
-            }
-            if (resolution.outcome !== 'resolved') {
-              return Effect.fail(
-                new ReadHandlerUnavailable({
-                  code: 'read_handler_unavailable',
-                  reason: 'The Shell module target is temporarily unavailable',
-                }),
-              );
-            }
-            return Effect.succeed({
-              evidence: { resultCount: 1 },
-              result: {
-                appId: resolution.appId,
-                componentKey: resolution.page.componentKey,
-                entrypointKey: resolution.page.entrypoint.entrypointKey,
-                moduleId: resolution.moduleId,
-                writable: resolution.writable,
-              },
-            });
-          },
+    ({ entrypointKey, moduleId }, context) =>
+      context.services.composition
+        .resolveModuleTarget(context.scope, {
+          ...(entrypointKey === undefined ? {} : { entrypointKey }),
+          moduleId,
+        })
+        .pipe(
+          Effect.flatMap(
+            (
+              resolution,
+            ): Effect.Effect<
+              ReadHandlerResult<ResolvedModuleTarget>,
+              ReadHandlerNotFound | ReadHandlerUnavailable | ReadPermissionDenied
+            > => {
+              if (resolution.outcome === 'not_found') {
+                return Effect.fail(
+                  new ReadHandlerNotFound({
+                    code: 'read_handler_not_found',
+                    reason: 'The requested module target was not found',
+                  }),
+                );
+              }
+              if (resolution.outcome === 'forbidden') {
+                return Effect.fail(
+                  new ReadPermissionDenied({
+                    code: 'read_permission_denied',
+                    reason: 'The requested module target is forbidden',
+                  }),
+                );
+              }
+              if (resolution.outcome !== 'resolved') {
+                return Effect.fail(
+                  new ReadHandlerUnavailable({
+                    code: 'read_handler_unavailable',
+                    reason: 'The Shell module target is temporarily unavailable',
+                  }),
+                );
+              }
+              return Effect.succeed({
+                evidence: { resultCount: 1 },
+                result: {
+                  appId: resolution.appId,
+                  componentKey: resolution.page.componentKey,
+                  entrypointKey: resolution.page.entrypoint.entrypointKey,
+                  moduleId: resolution.moduleId,
+                  writable: resolution.writable,
+                },
+              });
+            },
+          ),
         ),
-      ),
     serviceFactory,
     ({ moduleId }) => ({ kind: 'module', moduleId }),
   );
@@ -373,9 +378,9 @@ export const makeShellGovernedReadsLive = (
             registration: registrations.composition,
             transport: { correlationId },
           }),
-        moduleTarget: ({ correlationId, moduleId, principal }) =>
+        moduleTarget: ({ correlationId, entrypointKey, moduleId, principal }) =>
           runtime.runRead({
-            input: { moduleId },
+            input: { ...(entrypointKey === undefined ? {} : { entrypointKey }), moduleId },
             principal,
             registration: registrations.moduleTarget,
             transport: { correlationId, targetModuleKey: moduleId },

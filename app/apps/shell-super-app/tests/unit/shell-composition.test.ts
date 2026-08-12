@@ -94,6 +94,60 @@ const deployment = (appId: string, moduleId: string, displayName: string, order:
   schemaVersion: '2',
 });
 
+const crmDeployment = () => {
+  const contract = deployment('crm', 'crm.core', 'CRM', 100);
+  return {
+    ...contract,
+    manifest: {
+      ...contract.manifest,
+      publicSurface: {
+        ...contract.manifest.publicSurface,
+        components: [
+          ...contract.manifest.publicSurface.components,
+          {
+            expose: './PageDeals',
+            key: 'crm.core.page-deals',
+            mfBoundaryId: 'verticalcrm',
+          },
+        ],
+        shellContributions: {
+          ...contract.manifest.publicSurface.shellContributions,
+          navigation: [
+            ...contract.manifest.publicSurface.shellContributions.navigation,
+            {
+              contributionKey: 'crm.core.navigation.deals',
+              entrypoint: {
+                access: 'read' as const,
+                entrypointKey: 'crm.core.page.deals',
+                moduleKey: 'crm.core',
+                role: 'page' as const,
+                scope: 'tenant' as const,
+              },
+              groupKey: 'shell.navigation.modules',
+              order: 100,
+              pageKey: 'crm.core.page.deals',
+            },
+          ],
+          pages: [
+            ...contract.manifest.publicSurface.shellContributions.pages,
+            {
+              componentKey: 'crm.core.page-deals',
+              contributionKey: 'crm.core.page.deals',
+              entrypoint: {
+                access: 'read' as const,
+                entrypointKey: 'crm.core.page.deals',
+                moduleKey: 'crm.core',
+                role: 'page' as const,
+                scope: 'tenant' as const,
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
+};
+
 const catalog = (): InstalledModuleCatalog =>
   buildInstalledModuleCatalog([
     {
@@ -299,4 +353,47 @@ test('resolves direct targets independently with exhaustive safe outcomes and hi
       )
     ).outcome,
   ).toBe('not_found');
+});
+
+test('renders one module navigation item and resolves an explicitly selected module page', async () => {
+  const crmCatalog = buildInstalledModuleCatalog([
+    { contract: crmDeployment(), expectedAppId: 'crm' },
+  ]);
+  const composition = makeShellComposition({
+    catalog: Effect.succeed(crmCatalog),
+    contextAccess: contextAccess({ 'crm.core': 'allowed' }),
+    moduleStates: {
+      getTenantModuleStates: (_tenantId, moduleIds) =>
+        Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' as const }))),
+    },
+  });
+
+  const result = await Effect.runPromise(composition.compose(context));
+  expect(result).toEqual({
+    navigation: [
+      {
+        appId: 'crm',
+        enabled: true,
+        groupKey: 'shell.navigation.modules',
+        href: '/modules/crm.core',
+        label: 'CRM',
+        moduleId: 'crm.core',
+        order: 100,
+        state: 'active',
+        unavailable: false,
+        writable: true,
+      },
+    ],
+    state: 'available',
+  });
+  const target = await Effect.runPromise(
+    composition.resolveModuleTarget(context, {
+      entrypointKey: 'crm.core.page.deals',
+      moduleId: 'crm.core',
+    }),
+  );
+  expect(target.outcome).toBe('resolved');
+  if (target.outcome === 'resolved') {
+    expect(target.page.componentKey).toBe('crm.core.page-deals');
+  }
 });

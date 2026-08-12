@@ -105,6 +105,34 @@ test('loads two independent deployment contracts once and preserves both identit
   expect(first.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
 });
 
+test('accepts Modern development responses without a content type only on HTTP loopback', async () => {
+  const body = new TextEncoder().encode(JSON.stringify(contract('crm', 'crm.core')));
+  const local = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'crm',
+        contractUrl: 'http://localhost:4101/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    () => Promise.resolve(new Response(body)),
+  );
+  const catalog = await Effect.runPromise(local);
+  expect(catalog.moduleIds).toEqual(['crm.core']);
+
+  const remote = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'crm',
+        contractUrl: 'https://crm.example.test/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    () => Promise.resolve(new Response(body)),
+  );
+  await expect(Effect.runPromise(remote)).rejects.toMatchObject({
+    _tag: 'InstalledModuleCatalogInvalidError',
+  });
+});
+
 test.each([
   [
     'unavailable',

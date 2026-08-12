@@ -12,6 +12,7 @@
     "dev": "pnpm --parallel --filter @app/shell-super-app --filter './verticals/*' run \"/^dev(?::worker)?$/\"",
     "dev:shell": "pnpm --filter @app/shell-super-app dev",
     "dev:crm": "pnpm --filter @app/crm dev",
+    "dev:provision:crm": "pnpm --filter @app/crm dev:provision",
     "db:generate": "pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/crm db:generate",
     "db:bootstrap-runtime-role": "node ./scripts/postgres/bootstrap-runtime-role.mts",
     "db:migrate": "pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm --filter @app/crm db:migrate && pnpm db:bootstrap-runtime-role",

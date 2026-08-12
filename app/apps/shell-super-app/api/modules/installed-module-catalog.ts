@@ -61,12 +61,30 @@ const invalid = () =>
     reason: 'The installed module catalog is contradictory or malformed',
   });
 
-const readBoundedJson = async (response: Response, maxBytes: number): Promise<unknown> => {
+const isHttpLoopback = (value: string): boolean => {
+  const url = new URL(value);
+  return (
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' ||
+      url.hostname === '127.0.0.1' ||
+      url.hostname === '[::1]' ||
+      url.hostname.endsWith('.localhost'))
+  );
+};
+
+const readBoundedJson = async (
+  response: Response,
+  maxBytes: number,
+  allowMissingContentType: boolean,
+): Promise<unknown> => {
   if (response.status < 200 || response.status >= 300 || response.redirected) {
     throw unavailable();
   }
   const contentType = response.headers.get('content-type')?.trim() ?? '';
-  if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(contentType)) {
+  if (
+    !/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(contentType) &&
+    !(allowMissingContentType && contentType.length === 0)
+  ) {
     throw invalid();
   }
   const declaredLength = response.headers.get('content-length');
@@ -118,7 +136,10 @@ const fetchContract = async (
       redirect: 'manual',
       signal: controller.signal,
     });
-    return { contract: await readBoundedJson(response, options.maxBytes), expectedAppId: appId };
+    return {
+      contract: await readBoundedJson(response, options.maxBytes, isHttpLoopback(contractUrl)),
+      expectedAppId: appId,
+    };
   } catch (error) {
     if (
       error instanceof InstalledModuleCatalogInvalidError ||

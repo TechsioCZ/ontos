@@ -1,6 +1,7 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- mutation handlers preserve generated Effect failures until the page boundary */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
+import { Link } from '@techsio/ui-kit/atoms/link';
 import { Random } from 'effect';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { executeCreateContactAction } from '../../../api/create-contact-action-client.ts';
@@ -222,7 +223,7 @@ const contactCopy = (
 });
 
 export const CustomersPage = ({ target }: CustomersPageProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const loaderValue: unknown = useLoaderData({ strict: false });
   const loaderModel = isCustomerPageModel(loaderValue) ? loaderValue : undefined;
@@ -467,6 +468,27 @@ export const CustomersPage = ({ target }: CustomersPageProps) => {
       <main className="crm:min-h-screen crm:bg-(--color-page-bg) crm:px-4 crm:py-8 crm:text-(--color-page-fg) crm:sm:px-8 crm:lg:px-12">
         <div className="crm:mx-auto crm:grid crm:max-w-7xl crm:gap-8">
           <header className="crm:space-y-3">
+            <nav aria-label={t('crm.navigation.label')} className="crm:flex crm:gap-4">
+              <Link
+                aria-current="page"
+                href={
+                  target === undefined
+                    ? `/${language || 'en'}/customers`
+                    : '/modules/crm.core?page=crm.core.page.customers'
+                }
+              >
+                {t('crm.navigation.customers')}
+              </Link>
+              <Link
+                href={
+                  target === undefined
+                    ? `/${language || 'en'}/deals`
+                    : '/modules/crm.core?page=crm.core.page.deals'
+                }
+              >
+                {t('crm.navigation.deals')}
+              </Link>
+            </nav>
             <h1 className="crm:text-3xl crm:font-bold crm:sm:text-4xl">
               {t('crm.pages.customers.title')}
             </h1>

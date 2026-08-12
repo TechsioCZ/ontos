@@ -235,7 +235,7 @@ export default defineConfig(
       ],
       server: {
         port,
-        publicDir: ['./locales', './assets'],
+        publicDir: ['./locales', './assets', './.well-known'],
         ssr: {
           mode: 'stream',
           moduleFederationAppSSR: true,

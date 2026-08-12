@@ -872,6 +872,9 @@ const compositionGroupLive = HttpApiBuilder.group(
           return yield* governedReads
             .moduleTarget({
               correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              ...(payload.entrypointKey === undefined
+                ? {}
+                : { entrypointKey: payload.entrypointKey }),
               moduleId: payload.moduleId,
               principal: session.principal,
             })

@@ -46,7 +46,7 @@ export interface DeriveOntosModuleContractInput {
   readonly workspaceRoot?: string;
 }
 
-export type OntosModuleContractTarget = 'cloudflare-dist' | 'dist';
+export type OntosModuleContractTarget = 'cloudflare-dist' | 'dev' | 'dist';
 
 interface LoadedOwnerValues {
   readonly manifest: OntosModuleManifest;
@@ -54,10 +54,11 @@ interface LoadedOwnerValues {
 }
 
 const canonicalSlugPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
-const outputRootByTarget: Readonly<Record<OntosModuleContractTarget, string>> = Object.freeze({
-  'cloudflare-dist': 'dist-cloudflare',
-  dist: 'dist',
-});
+const outputRootByTarget: Readonly<Record<Exclude<OntosModuleContractTarget, 'dev'>, string>> =
+  Object.freeze({
+    'cloudflare-dist': 'dist-cloudflare',
+    dist: 'dist',
+  });
 
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -341,8 +342,8 @@ export const generateOntosModuleContract = async (
   const workspaceRoot = path.resolve(input.workspaceRoot ?? path.join(import.meta.dirname, '..'));
   const vertical = assertPlainTarget(input.vertical, 'vertical', canonicalSlugPattern);
   const { target } = input;
-  if (target !== 'dist' && target !== 'cloudflare-dist') {
-    throw new Error('target must be dist or cloudflare-dist');
+  if (target !== 'dist' && target !== 'cloudflare-dist' && target !== 'dev') {
+    throw new Error('target must be dev, dist, or cloudflare-dist');
   }
   const verticalDirectory = path.join(workspaceRoot, 'verticals', vertical);
   const contract = await deriveOntosModuleDeploymentContract({ vertical, workspaceRoot });
@@ -351,23 +352,20 @@ export const generateOntosModuleContract = async (
   if (bytes > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
     throw new Error('generated OntOS module contract exceeds the 1 MiB deployment limit');
   }
-  const outputPath = path.join(
-    verticalDirectory,
-    outputRootByTarget[target],
-    'public',
-    ONTOS_MODULE_CONTRACT_PATH.slice(1),
-  );
+  const publicDirectory =
+    target === 'dev'
+      ? verticalDirectory
+      : path.join(verticalDirectory, outputRootByTarget[target], 'public');
+  const outputPath = path.join(publicDirectory, ONTOS_MODULE_CONTRACT_PATH.slice(1));
   await mkdir(path.dirname(outputPath), { recursive: true });
   const temporaryPath = `${outputPath}.tmp-${process.pid}`;
   await writeFile(temporaryPath, content, 'utf-8');
   await rename(temporaryPath, outputPath);
   const etag = `"${sha256(content)}"`;
-  const headersPath = path.join(
-    verticalDirectory,
-    outputRootByTarget[target],
-    'public',
-    '_headers',
-  );
+  const headersPath =
+    target === 'dev'
+      ? path.join(verticalDirectory, '.well-known', '_headers')
+      : path.join(publicDirectory, '_headers');
   const headers = `${ONTOS_MODULE_CONTRACT_PATH}\n  Cache-Control: no-cache\n  Content-Type: application/json\n  ETag: ${etag}\n`;
   await writeFile(headersPath, headers, 'utf-8');
   return { bytes, etag, path: outputPath };
@@ -391,8 +389,8 @@ const parseArguments = (arguments_: readonly string[]): GenerateInput => {
       'Usage: generate-ontos-module-contract --vertical <vertical> --target <target>',
     );
   }
-  if (target !== 'dist' && target !== 'cloudflare-dist') {
-    throw new Error('target must be dist or cloudflare-dist');
+  if (target !== 'dist' && target !== 'cloudflare-dist' && target !== 'dev') {
+    throw new Error('target must be dev, dist, or cloudflare-dist');
   }
   return { target, vertical };
 };

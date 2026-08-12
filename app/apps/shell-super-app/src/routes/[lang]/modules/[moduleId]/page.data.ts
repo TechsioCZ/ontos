@@ -58,8 +58,12 @@ export const loader = async ({ params, request }: ModuleTargetLoaderArguments) =
     baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
     ...(cookie === null ? {} : { cookie }),
   };
+  const entrypointKey = new URL(request.url).searchParams.get('page') ?? undefined;
   return runEffectRequest(
-    resolveModuleTarget({ moduleId: params.moduleId }, options).pipe(
+    resolveModuleTarget(
+      { ...(entrypointKey === undefined ? {} : { entrypointKey }), moduleId: params.moduleId },
+      options,
+    ).pipe(
       Effect.map((target): ModuleTargetPageModel => ({ shell, state: 'resolved', target })),
       Effect.catch((error) => Effect.succeed(safeState(error, shell))),
     ),

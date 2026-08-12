@@ -5,6 +5,11 @@
       "en": "English",
       "switcher": "Language"
     },
+    "navigation": {
+      "customers": "Customers",
+      "deals": "Deals",
+      "label": "CRM sections"
+    },
     "routes": {
       "home": "Home"
     },

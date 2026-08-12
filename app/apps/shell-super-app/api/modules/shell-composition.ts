@@ -127,24 +127,26 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
         ) {
           return [];
         }
-        return contract.manifest.publicSurface.shellContributions.navigation.map(
-          (contribution): ShellNavigationItem => {
-            const page = pages.get(contribution.pageKey);
-            const unavailable = permission === 'unavailable' || page === undefined;
-            return {
-              appId: contract.deployment.appId,
-              enabled: !unavailable,
-              groupKey: contribution.groupKey,
-              ...(unavailable ? {} : { href: moduleHref(moduleId) }),
-              label: contract.manifest.module.displayName,
-              moduleId,
-              order: contribution.order,
-              state: state as ShellNavigationItem['state'],
-              unavailable,
-              writable: state === 'active',
-            };
+        const contribution = contract.manifest.publicSurface.shellContributions.navigation[0];
+        if (contribution === undefined) {
+          return [];
+        }
+        const page = pages.get(contribution.pageKey);
+        const unavailable = permission === 'unavailable' || page === undefined;
+        return [
+          {
+            appId: contract.deployment.appId,
+            enabled: !unavailable,
+            groupKey: contribution.groupKey,
+            ...(unavailable ? {} : { href: moduleHref(moduleId) }),
+            label: contract.manifest.module.displayName,
+            moduleId,
+            order: contribution.order,
+            state: state as ShellNavigationItem['state'],
+            unavailable,
+            writable: state === 'active',
           },
-        );
+        ];
       });
       return {
         navigation: navigation.toSorted(
@@ -159,7 +161,11 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
 
   const resolveModuleTarget = (
     context: ShellCompositionContext,
-    input: { readonly access?: ModuleEntrypointAccess; readonly moduleId: string },
+    input: {
+      readonly access?: ModuleEntrypointAccess;
+      readonly entrypointKey?: string;
+      readonly moduleId: string;
+    },
   ): Effect.Effect<ShellTargetResolution, ShellCompositionUnavailableError> =>
     Effect.gen(function* resolveModuleTargetEffect() {
       if (context.legalEntityId === undefined) {
@@ -173,10 +179,12 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
       const { pages } = contract.manifest.publicSurface.shellContributions;
       const { navigation } = contract.manifest.publicSurface.shellContributions;
       const landing = navigation[0];
-      const page =
-        landing === undefined
-          ? undefined
-          : pages.find(({ contributionKey }) => contributionKey === landing.pageKey);
+      let page: ShellPageContribution | undefined;
+      if (input.entrypointKey !== undefined) {
+        page = pages.find(({ entrypoint }) => entrypoint.entrypointKey === input.entrypointKey);
+      } else if (landing !== undefined) {
+        page = pages.find(({ contributionKey }) => contributionKey === landing.pageKey);
+      }
       if (landing === undefined || page === undefined) {
         return { outcome: 'not_found' } as const;
       }

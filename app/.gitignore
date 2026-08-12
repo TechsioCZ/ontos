@@ -8,6 +8,8 @@ build/
 **/.modern-js/
 .mf/
 **/.mf/
+verticals/*/.well-known/ontos-module-manifest.json
+verticals/*/.well-known/_headers
 .modernjs/agent-reference-repos-tmp/
 .codex/reports/
 .zerops/runtime/

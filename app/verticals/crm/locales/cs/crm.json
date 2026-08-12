@@ -5,6 +5,11 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
+    "navigation": {
+      "customers": "Zákazníci",
+      "deals": "Obchodní příležitosti",
+      "label": "Sekce CRM"
+    },
     "routes": {
       "home": "Domů"
     },
