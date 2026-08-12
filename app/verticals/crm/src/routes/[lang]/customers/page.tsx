@@ -43,6 +43,7 @@ import {
   mutationFailure,
 } from './page.data.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { crmNavigationHref } from '../../crm-navigation';
 
 interface CustomerPageTarget {
   readonly writable: boolean;
@@ -471,20 +472,18 @@ export const CustomersPage = ({ target }: CustomersPageProps) => {
             <nav aria-label={t('crm.navigation.label')} className="crm:flex crm:gap-4">
               <Link
                 aria-current="page"
-                href={
-                  target === undefined
-                    ? `/${language || 'en'}/customers`
-                    : '/modules/crm.core?page=crm.core.page.customers'
-                }
+                href={crmNavigationHref('customers', {
+                  embedded: target !== undefined,
+                  language,
+                })}
               >
                 {t('crm.navigation.customers')}
               </Link>
               <Link
-                href={
-                  target === undefined
-                    ? `/${language || 'en'}/deals`
-                    : '/modules/crm.core?page=crm.core.page.deals'
-                }
+                href={crmNavigationHref('deals', {
+                  embedded: target !== undefined,
+                  language,
+                })}
               >
                 {t('crm.navigation.deals')}
               </Link>

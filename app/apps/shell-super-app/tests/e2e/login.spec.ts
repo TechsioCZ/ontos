@@ -136,6 +136,12 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
     '/en/resources/not-installed/example/missing',
     'Select a legal entity before opening a resource.',
   );
+  const crmResponse = await page.goto('/cs/crm');
+  expect(crmResponse?.status()).toBe(200);
+  await expect(page.getByText('Před otevřením modulu vyberte právní subjekt.')).toBeVisible();
+
+  const legacyCrmResponse = await page.goto('/cs/modules/crm.core?page=crm.core.page.deals');
+  expect(legacyCrmResponse?.status()).toBe(404);
 });
 
 test('persists an English session, logs out, clears the cookie, and stays anonymous', ({ page }) =>

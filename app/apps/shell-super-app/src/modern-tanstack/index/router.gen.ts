@@ -13,17 +13,19 @@ import {
 
 import { loader as loader_0 } from "../../routes/[lang]/page.data";
 import component_0 from "../../routes/[lang]/page";
-import component_1 from "../../routes/[lang]/login/page";
-import { loader as loader_1 } from "../../routes/[lang]/modules/[moduleId]/page.data";
-import component_2 from "../../routes/[lang]/modules/[moduleId]/page";
-import { loader as loader_2 } from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data";
-import component_3 from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page";
-import { loader as loader_3 } from "../../routes/[lang]/search/page.data";
-import component_4 from "../../routes/[lang]/search/page";
-import component_5 from "../../routes/layout";
+import { loader as loader_1 } from "../../routes/[lang]/crm/page.data";
+import component_1 from "../../routes/[lang]/crm/page";
+import component_2 from "../../routes/[lang]/login/page";
+import { loader as loader_2 } from "../../routes/[lang]/modules/[moduleId]/page.data";
+import component_3 from "../../routes/[lang]/modules/[moduleId]/page";
+import { loader as loader_3 } from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page.data";
+import component_4 from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page";
+import { loader as loader_4 } from "../../routes/[lang]/search/page.data";
+import component_5 from "../../routes/[lang]/search/page";
+import component_6 from "../../routes/layout";
 
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
-  component: component_5,
+  component: component_6,
   staticData: createRouteStaticData({
     modernRouteId: "layout",
   }),
@@ -40,9 +42,20 @@ const route__lang__page = createRoute({
   }),
 });
 
-const route__lang__login_page = createRoute({
+const route__lang__crm_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_1,
+  path: "$lang/crm",
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_1),
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/crm/page",
+    modernRouteLoader: loader_1,
+  }),
+});
+
+const route__lang__login_page = createRoute({
+  getParentRoute: () => rootRoute,
+  component: component_2,
   path: "$lang/login",
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/login/page",
@@ -51,60 +64,60 @@ const route__lang__login_page = createRoute({
 
 const route__lang__modules__moduleId__page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_2,
+  component: component_3,
   path: "$lang/modules/$moduleId",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_1),
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/modules/(moduleId)/page",
-    modernRouteLoader: loader_1,
+    modernRouteLoader: loader_2,
   }),
 });
 
 const route__lang__resources__moduleId___resourceType___resourceId__page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_3,
+  component: component_4,
   path: "$lang/resources/$moduleId/$resourceType/$resourceId",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/resources/(moduleId)/(resourceType)/(resourceId)/page",
-    modernRouteLoader: loader_2,
+    modernRouteLoader: loader_3,
   }),
 });
 
 const route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_3,
+  component: component_4,
   path: "$lang/zdroje/$moduleId/$resourceType/$resourceId",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/resources/(moduleId)/(resourceType)/(resourceId)/page__localised_lang_zdroje_moduleId_resourceType_resourceId",
-    modernRouteLoader: loader_2,
+    modernRouteLoader: loader_3,
   }),
 });
 
 const route__lang__search_page = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_4,
+  component: component_5,
   path: "$lang/search",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/search/page",
-    modernRouteLoader: loader_3,
+    modernRouteLoader: loader_4,
   }),
 });
 
 const route__lang__search_page__localised_lang_hledat = createRoute({
   getParentRoute: () => rootRoute,
-  component: component_4,
+  component: component_5,
   path: "$lang/hledat",
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
+  loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
   staticData: createRouteStaticData({
     modernRouteId: "(lang)/search/page__localised_lang_hledat",
-    modernRouteLoader: loader_3,
+    modernRouteLoader: loader_4,
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId, route__lang__search_page, route__lang__search_page__localised_lang_hledat]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__crm_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId, route__lang__search_page, route__lang__search_page__localised_lang_hledat]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

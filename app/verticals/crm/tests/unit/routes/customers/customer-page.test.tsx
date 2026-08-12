@@ -166,10 +166,10 @@ test('links the embedded CRM page to both CRM sections without adding search', (
   render(<CustomersPage target={{ writable: true }} />);
   expect(screen.getByRole('navigation', { name: 'CRM sections' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Customers' }).getAttribute('href')).toBe(
-    '/modules/crm.core?page=crm.core.page.customers',
+    '?page=crm.core.page.customers',
   );
   expect(screen.getByRole('link', { name: 'Deals' }).getAttribute('href')).toBe(
-    '/modules/crm.core?page=crm.core.page.deals',
+    '?page=crm.core.page.deals',
   );
   expect(screen.queryByRole('search')).toBeNull();
 });

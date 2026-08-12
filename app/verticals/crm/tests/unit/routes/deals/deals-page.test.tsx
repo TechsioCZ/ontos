@@ -27,7 +27,7 @@ test('marks Deals current and links both embedded CRM sections', () => {
   render(<DealsPage target={{ writable: true }} />);
   expect(screen.getByRole('navigation', { name: 'CRM sections' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Customers' }).getAttribute('href')).toBe(
-    '/modules/crm.core?page=crm.core.page.customers',
+    '?page=crm.core.page.customers',
   );
   expect(screen.getByRole('link', { name: 'Deals' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('search')).toBeNull();

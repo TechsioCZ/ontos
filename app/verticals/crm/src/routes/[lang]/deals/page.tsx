@@ -1,6 +1,7 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { crmNavigationHref } from '../../crm-navigation';
 
 interface DealsPageProps {
   readonly target?: { readonly writable: boolean };
@@ -18,21 +19,19 @@ export const DealsPage = ({ target }: DealsPageProps) => {
           <header className="crm:space-y-3">
             <nav aria-label={t('crm.navigation.label')} className="crm:flex crm:gap-4">
               <Link
-                href={
-                  target === undefined
-                    ? `/${language || 'en'}/customers`
-                    : '/modules/crm.core?page=crm.core.page.customers'
-                }
+                href={crmNavigationHref('customers', {
+                  embedded: target !== undefined,
+                  language,
+                })}
               >
                 {t('crm.navigation.customers')}
               </Link>
               <Link
                 aria-current="page"
-                href={
-                  target === undefined
-                    ? `/${language || 'en'}/deals`
-                    : '/modules/crm.core?page=crm.core.page.deals'
-                }
+                href={crmNavigationHref('deals', {
+                  embedded: target !== undefined,
+                  language,
+                })}
               >
                 {t('crm.navigation.deals')}
               </Link>

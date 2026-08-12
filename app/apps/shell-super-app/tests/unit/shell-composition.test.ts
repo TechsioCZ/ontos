@@ -375,7 +375,7 @@ test('renders one module navigation item and resolves an explicitly selected mod
         appId: 'crm',
         enabled: true,
         groupKey: 'shell.navigation.modules',
-        href: '/modules/crm.core',
+        href: '/crm',
         label: 'CRM',
         moduleId: 'crm.core',
         order: 100,

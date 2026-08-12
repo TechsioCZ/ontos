@@ -4,6 +4,7 @@ import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget, runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { shellAuthenticationApiContract } from '../../../../../shared/api.ts';
+import { hasDedicatedShellRoute } from '../../../../../shared/module-routes.ts';
 import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
 
@@ -45,7 +46,10 @@ const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleT
   }
 };
 
-export const loader = async ({ params, request }: ModuleTargetLoaderArguments) => {
+export const loadModuleTargetPageModel = async ({
+  params,
+  request,
+}: ModuleTargetLoaderArguments) => {
   const shell = await loadHomePageModel(request);
   if (shell.state !== 'authenticated') {
     return {
@@ -69,3 +73,8 @@ export const loader = async ({ params, request }: ModuleTargetLoaderArguments) =
     ),
   );
 };
+
+export const loader = (arguments_: ModuleTargetLoaderArguments) =>
+  hasDedicatedShellRoute(arguments_.params.moduleId)
+    ? new Response(null, { status: 404 })
+    : loadModuleTargetPageModel(arguments_);

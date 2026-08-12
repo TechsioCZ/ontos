@@ -10,6 +10,7 @@ import type {
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
+import { shellModuleHref } from '../../shared/module-routes.ts';
 
 type ShellPageContribution = OntosShellContributions['pages'][number];
 
@@ -61,8 +62,6 @@ export interface ShellCompositionDependencies {
 }
 
 const visibleStates = new Set<TenantModuleState>(['active', 'deprecated', 'read_only']);
-
-const moduleHref = (moduleId: string): string => `/modules/${encodeURIComponent(moduleId)}`;
 
 const loadCatalog = (
   dependencies: ShellCompositionDependencies,
@@ -138,7 +137,7 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
             appId: contract.deployment.appId,
             enabled: !unavailable,
             groupKey: contribution.groupKey,
-            ...(unavailable ? {} : { href: moduleHref(moduleId) }),
+            ...(unavailable ? {} : { href: shellModuleHref(moduleId) }),
             label: contract.manifest.module.displayName,
             moduleId,
             order: contribution.order,
