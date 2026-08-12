@@ -27,7 +27,7 @@ test('keeps CRM schema ownership administrative and runtime access least-privile
       group by owner.rolname
     `);
     assert.equal(ownership.rows[0]?.owner_name, configuration.admin.user);
-    assert.equal(ownership.rows[0]?.table_count, '2');
+    assert.equal(ownership.rows[0]?.table_count, '3');
 
     const customerBoundary = await admin.query<{
       readonly policy_count: string;
@@ -60,6 +60,23 @@ test('keeps CRM schema ownership administrative and runtime access least-privile
       group by relation.relrowsecurity, relation.relforcerowsecurity
     `);
     assert.deepEqual(contactBoundary.rows, [
+      { policy_count: '4', relforcerowsecurity: true, relrowsecurity: true },
+    ]);
+
+    const dealBoundary = await admin.query<{
+      readonly policy_count: string;
+      readonly relforcerowsecurity: boolean;
+      readonly relrowsecurity: boolean;
+    }>(`
+      select relation.relrowsecurity, relation.relforcerowsecurity,
+        count(policy.polname)::text as policy_count
+      from pg_catalog.pg_class as relation
+      inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+      left join pg_catalog.pg_policy as policy on policy.polrelid = relation.oid
+      where namespace.nspname = 'crm' and relation.relname = 'deals'
+      group by relation.relrowsecurity, relation.relforcerowsecurity
+    `);
+    assert.deepEqual(dealBoundary.rows, [
       { policy_count: '4', relforcerowsecurity: true, relrowsecurity: true },
     ]);
 

@@ -6,23 +6,30 @@ import { crmManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
 import { createContactAction } from './src/actions/create-contact.action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
+import { createDealAction } from './src/actions/create-deal.action.ts';
 import { deleteContactAction } from './src/actions/delete-contact.action.ts';
 import { deleteCustomerAction } from './src/actions/delete-customer.action.ts';
+import { deleteDealAction } from './src/actions/delete-deal.action.ts';
 import { editContactAction } from './src/actions/edit-contact.action.ts';
 import { editCustomerAction } from './src/actions/edit-customer.action.ts';
+import { editDealAction } from './src/actions/edit-deal.action.ts';
 // </generated-module-registration-imports>
 import './src/contacts/contact-actions.runtime.ts';
 import './src/customers/customer-actions.runtime.ts';
+import './src/deals/deal-actions.runtime.ts';
 
 export const crmRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
     createContactAction,
     createCustomerAction,
+    createDealAction,
     deleteContactAction,
     deleteCustomerAction,
+    deleteDealAction,
     editContactAction,
     editCustomerAction,
+    editDealAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
@@ -31,14 +38,18 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
       'contact-detail': () => import('./src/api/contact-detail-client.ts'),
       'create-contact-action': () => import('./src/api/create-contact-action-client.ts'),
       'create-customer-action': () => import('./src/api/create-customer-action-client.ts'),
+      'create-deal-action': () => import('./src/api/create-deal-action-client.ts'),
       'customer-detail': () => import('./src/api/customer-detail-client.ts'),
       'customer-directory': () => import('./src/api/customer-directory-client.ts'),
       'customer-timeline': () => import('./src/api/customer-timeline-client.ts'),
       'deal-detail': () => import('./src/api/deal-detail-client.ts'),
+      'deal-workspace': () => import('./src/api/deal-workspace-client.ts'),
       'delete-contact-action': () => import('./src/api/delete-contact-action-client.ts'),
       'delete-customer-action': () => import('./src/api/delete-customer-action-client.ts'),
+      'delete-deal-action': () => import('./src/api/delete-deal-action-client.ts'),
       'edit-contact-action': () => import('./src/api/edit-contact-action-client.ts'),
       'edit-customer-action': () => import('./src/api/edit-customer-action-client.ts'),
+      'edit-deal-action': () => import('./src/api/edit-deal-action-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

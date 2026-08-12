@@ -7,14 +7,18 @@ import {
 import { ContactDetailApi } from './apis/contact-detail.ts';
 import { CreateContactActionApi } from './apis/create-contact-action.ts';
 import { CreateCustomerActionApi } from './apis/create-customer-action.ts';
+import { CreateDealActionApi } from './apis/create-deal-action.ts';
 import { CustomerDetailApi } from './apis/customer-detail.ts';
 import { CustomerDirectoryApi } from './apis/customer-directory.ts';
 import { CustomerTimelineApi } from './apis/customer-timeline.ts';
 import { DealDetailApi } from './apis/deal-detail.ts';
+import { DealWorkspaceApi } from './apis/deal-workspace.ts';
 import { DeleteContactActionApi } from './apis/delete-contact-action.ts';
 import { DeleteCustomerActionApi } from './apis/delete-customer-action.ts';
+import { DeleteDealActionApi } from './apis/delete-deal-action.ts';
 import { EditContactActionApi } from './apis/edit-contact-action.ts';
 import { EditCustomerActionApi } from './apis/edit-customer-action.ts';
+import { EditDealActionApi } from './apis/edit-deal-action.ts';
 
 export interface CrmMarker {
   readonly appId: string;
@@ -85,14 +89,18 @@ export const crmApi = HttpApi.make('CrmApi')
   .addHttpApi(ContactDetailApi)
   .addHttpApi(CreateContactActionApi)
   .addHttpApi(CreateCustomerActionApi)
+  .addHttpApi(CreateDealActionApi)
   .addHttpApi(CustomerDetailApi)
   .addHttpApi(CustomerDirectoryApi)
   .addHttpApi(CustomerTimelineApi)
   .addHttpApi(DealDetailApi)
+  .addHttpApi(DealWorkspaceApi)
   .addHttpApi(DeleteContactActionApi)
   .addHttpApi(DeleteCustomerActionApi)
+  .addHttpApi(DeleteDealActionApi)
   .addHttpApi(EditContactActionApi)
-  .addHttpApi(EditCustomerActionApi);
+  .addHttpApi(EditCustomerActionApi)
+  .addHttpApi(EditDealActionApi);
 
 export const crmOperationContexts = {
   readiness: {

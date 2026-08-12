@@ -8,20 +8,27 @@ import { createContactAction } from './src/actions/create-contact.action.ts';
 import { CreateContactActionApi } from './shared/apis/create-contact-action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { CreateCustomerActionApi } from './shared/apis/create-customer-action.ts';
+import { createDealAction } from './src/actions/create-deal.action.ts';
+import { CreateDealActionApi } from './shared/apis/create-deal-action.ts';
 import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
 import { CustomerDirectoryApi } from './shared/apis/customer-directory.ts';
 import { CustomersPage } from './src/routes/[lang]/customers/page.tsx';
 import { CustomerTimelineApi } from './shared/apis/customer-timeline.ts';
 import { DealDetailApi } from './shared/apis/deal-detail.ts';
 import { DealsPage } from './src/routes/[lang]/deals/page.tsx';
+import { DealWorkspaceApi } from './shared/apis/deal-workspace.ts';
 import { deleteContactAction } from './src/actions/delete-contact.action.ts';
 import { DeleteContactActionApi } from './shared/apis/delete-contact-action.ts';
 import { deleteCustomerAction } from './src/actions/delete-customer.action.ts';
 import { DeleteCustomerActionApi } from './shared/apis/delete-customer-action.ts';
+import { deleteDealAction } from './src/actions/delete-deal.action.ts';
+import { DeleteDealActionApi } from './shared/apis/delete-deal-action.ts';
 import { editContactAction } from './src/actions/edit-contact.action.ts';
 import { EditContactActionApi } from './shared/apis/edit-contact-action.ts';
 import { editCustomerAction } from './src/actions/edit-customer.action.ts';
 import { EditCustomerActionApi } from './shared/apis/edit-customer-action.ts';
+import { editDealAction } from './src/actions/edit-deal.action.ts';
+import { EditDealActionApi } from './shared/apis/edit-deal-action.ts';
 // </generated-module-manifest-imports>
 
 export const crmManifest = defineOntosModuleManifest({
@@ -51,10 +58,13 @@ export const crmManifest = defineOntosModuleManifest({
       // <generated-module-manifest-actions>
       createContactAction,
       createCustomerAction,
+      createDealAction,
       deleteContactAction,
       deleteCustomerAction,
+      deleteDealAction,
       editContactAction,
       editCustomerAction,
+      editDealAction,
       // </generated-module-manifest-actions>
     ],
     api: {
@@ -62,14 +72,18 @@ export const crmManifest = defineOntosModuleManifest({
       'contact-detail': ContactDetailApi,
       'create-contact-action': CreateContactActionApi,
       'create-customer-action': CreateCustomerActionApi,
+      'create-deal-action': CreateDealActionApi,
       'customer-detail': CustomerDetailApi,
       'customer-directory': CustomerDirectoryApi,
       'customer-timeline': CustomerTimelineApi,
       'deal-detail': DealDetailApi,
+      'deal-workspace': DealWorkspaceApi,
       'delete-contact-action': DeleteContactActionApi,
       'delete-customer-action': DeleteCustomerActionApi,
+      'delete-deal-action': DeleteDealActionApi,
       'edit-contact-action': EditContactActionApi,
       'edit-customer-action': EditCustomerActionApi,
+      'edit-deal-action': EditDealActionApi,
       // </generated-module-manifest-apis>
     },
     components: {

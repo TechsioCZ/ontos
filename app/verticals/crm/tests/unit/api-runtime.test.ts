@@ -13,14 +13,18 @@ test('composes readiness and every declared governed resource-provider API', () 
     'contactDetail',
     'createContactActions',
     'createCustomerActions',
+    'createDealActions',
     'customerDetail',
     'reads',
     'customerTimeline',
     'dealDetail',
+    'dealWorkspaceReads',
     'deleteContactActions',
     'deleteCustomerActions',
+    'deleteDealActions',
     'editContactActions',
     'editCustomerActions',
+    'editDealActions',
   ]);
   const endpoints = Object.values(crmApi.groups).flatMap((group) =>
     Object.values(group.endpoints).map(({ method, path: endpointPath }) => ({
@@ -33,14 +37,18 @@ test('composes readiness and every declared governed resource-provider API', () 
     { method: 'POST', path: '/reads/contact-detail' },
     { method: 'POST', path: '/actions/create-contact' },
     { method: 'POST', path: '/actions/create-customer' },
+    { method: 'POST', path: '/actions/create-deal' },
     { method: 'POST', path: '/reads/customer-detail' },
     { method: 'POST', path: '/reads/customer-directory' },
     { method: 'POST', path: '/reads/customer-timeline' },
     { method: 'POST', path: '/reads/deal-detail' },
+    { method: 'POST', path: '/reads/deal-workspace' },
     { method: 'POST', path: '/actions/delete-contact' },
     { method: 'POST', path: '/actions/delete-customer' },
+    { method: 'POST', path: '/actions/delete-deal' },
     { method: 'POST', path: '/actions/edit-contact' },
     { method: 'POST', path: '/actions/edit-customer' },
+    { method: 'POST', path: '/actions/edit-deal' },
   ]);
   assert.equal(
     endpoints.some(({ path: endpointPath }) => endpointPath === '/crm'),

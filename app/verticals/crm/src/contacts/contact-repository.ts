@@ -39,6 +39,10 @@ export interface ContactRepository {
     limit: number,
     cursor?: ContactListCursor,
   ) => Effect.Effect<readonly ContactRow[], ContactRepositoryUnavailable>;
+  readonly lockActiveById: (
+    tenantId: string,
+    contactId: string,
+  ) => Effect.Effect<ContactRow | undefined, ContactRepositoryUnavailable>;
   readonly softDelete: (
     tenantId: string,
     contactId: string,
@@ -123,6 +127,23 @@ export const makeContactRepository = (
             .limit(limit + 1),
       });
     },
+    lockActiveById: (tenantId, contactId) =>
+      Effect.tryPromise({
+        catch: unavailable,
+        try: () =>
+          transaction
+            .select()
+            .from(contacts)
+            .where(
+              and(
+                eq(contacts.tenantId, tenantId),
+                eq(contacts.contactId, contactId),
+                isNull(contacts.deletedAt),
+              ),
+            )
+            .limit(1)
+            .for('update'),
+      }).pipe(Effect.map(([row]) => row)),
     softDelete: (tenantId, contactId, expectedVersion, deletedAt) =>
       Effect.tryPromise({
         catch: unavailable,
