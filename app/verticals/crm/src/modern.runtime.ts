@@ -1,29 +1,10 @@
 import { defineRuntimeConfig } from '@modern-js/runtime';
 import csResource from '../locales/cs/crm.json';
 import enResource from '../locales/en/crm.json';
+import { createCrmI18nResources, crmSupportedLanguages } from './i18n/crm-i18n-resources';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
 
-type LocaleResource = string | { readonly [key: string]: LocaleResource };
-
-const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<string, string> => {
-  if (typeof resource === 'string') {
-    return prefix.length > 0 ? { [prefix]: resource } : {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(resource).flatMap(([key, value]) => {
-      const nextKey = prefix.length > 0 ? `${prefix}.${key}` : key;
-      return typeof value === 'string'
-        ? [[nextKey, value]]
-        : Object.entries(flattenLocaleResource(value, nextKey));
-    }),
-  );
-};
-
-const resources = {
-  cs: { [ultramodernRouteNamespace]: flattenLocaleResource(csResource) },
-  en: { [ultramodernRouteNamespace]: flattenLocaleResource(enResource) },
-} as const;
+const resources = createCrmI18nResources({ cs: csResource, en: enResource });
 
 export default defineRuntimeConfig({
   i18n: {
@@ -35,7 +16,7 @@ export default defineRuntimeConfig({
       },
       ns: [ultramodernRouteNamespace, 'translation'],
       resources,
-      supportedLngs: ['en', 'cs'],
+      supportedLngs: crmSupportedLanguages,
     },
   },
 

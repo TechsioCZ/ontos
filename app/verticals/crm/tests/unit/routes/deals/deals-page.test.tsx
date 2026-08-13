@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, rstest, test } from '@rstest/core';
 import type { ReactNode } from 'react';
-import { PageDeals } from '../../../../src/federation-entry.tsx';
+import PageDeals from '../../../../src/federation/page-deals.tsx';
 import { DealsPage } from '../../../../src/routes/[lang]/deals/page.tsx';
 
 const federatedI18nState = rstest.hoisted(() => ({

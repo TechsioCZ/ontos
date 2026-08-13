@@ -77,19 +77,28 @@ test('keeps complete English and Czech CRM catalogs owner-local', async () => {
 test('publishes only the generated CRM page components and no starter CRUD surface', async () => {
   const [customersEntry, dealsEntry, federationConfig, federationEntry, sharedApi] =
     await Promise.all([
-      readFile(path.join(crmRoot, 'src/federation/page-customers.ts'), 'utf-8'),
-      readFile(path.join(crmRoot, 'src/federation/page-deals.ts'), 'utf-8'),
+      readFile(path.join(crmRoot, 'src/federation/page-customers.tsx'), 'utf-8'),
+      readFile(path.join(crmRoot, 'src/federation/page-deals.tsx'), 'utf-8'),
       readFile(path.join(crmRoot, 'module-federation.config.ts'), 'utf-8'),
       readFile(path.join(crmRoot, 'src/federation-entry.tsx'), 'utf-8'),
       readFile(path.join(crmRoot, 'shared/api.ts'), 'utf-8'),
     ]);
 
-  assert.match(federationConfig, /'\.\/PageCustomers': '\.\/src\/federation\/page-customers\.ts'/u);
-  assert.match(federationConfig, /'\.\/PageDeals': '\.\/src\/federation\/page-deals\.ts'/u);
-  assert.match(federationEntry, /import '\.\/routes\/index\.css';/u);
-  assert.match(federationEntry, /CrmFederatedI18nBoundary/u);
-  assert.match(customersEntry, /PageCustomers as default/u);
-  assert.match(dealsEntry, /PageDeals as default/u);
+  assert.match(
+    federationConfig,
+    /'\.\/PageCustomers': '\.\/src\/federation\/page-customers\.tsx'/u,
+  );
+  assert.match(federationConfig, /'\.\/PageDeals': '\.\/src\/federation\/page-deals\.tsx'/u);
+  assert.match(federationEntry, /page-customers\.tsx/u);
+  assert.match(federationEntry, /page-deals\.tsx/u);
+  assert.match(customersEntry, /import '\.\.\/routes\/index\.css';/u);
+  assert.match(customersEntry, /CrmFederatedI18nBoundary/u);
+  assert.match(customersEntry, /CustomersPage/u);
+  assert.doesNotMatch(customersEntry, /DealsPage/u);
+  assert.match(dealsEntry, /import '\.\.\/routes\/index\.css';/u);
+  assert.match(dealsEntry, /CrmFederatedI18nBoundary/u);
+  assert.match(dealsEntry, /DealsPage/u);
+  assert.doesNotMatch(dealsEntry, /CustomersPage/u);
   assert.doesNotMatch(federationConfig, /'\.\/PageCustomers': '[^']*routes\/\[lang\]/u);
   assert.doesNotMatch(federationConfig, /'\.\/PageDeals': '[^']*routes\/\[lang\]/u);
   assert.doesNotMatch(federationConfig, /'\.\/(?:Route|Widget)'/u);

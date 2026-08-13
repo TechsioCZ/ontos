@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { ReactNode } from 'react';
-import { PageCustomers } from '../../../../src/federation-entry.tsx';
+import PageCustomers from '../../../../src/federation/page-customers.tsx';
 import { CustomersPage } from '../../../../src/routes/[lang]/customers/page.tsx';
 import type { CustomerPageModel } from '../../../../src/customers/customer-view-model.ts';
 
@@ -209,7 +209,11 @@ test('renders Czech CRM copy from the federated page entry hosted by the Shell r
 
   render(<PageCustomers target={{ writable: true }} />);
 
+  expect(screen.getByRole('navigation', { name: 'Sekce CRM' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Zákazníci' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Obchodní příležitosti' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Zákazníci' })).toBeTruthy();
+  expect(screen.getByText('Správa zákaznických společností a kontaktů.')).toBeTruthy();
   expect(
     screen.getByText(
       'Data zákazníků jsou dočasně nedostupná. Hodnoty formuláře zůstaly zachovány.',
