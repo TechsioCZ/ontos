@@ -47,12 +47,48 @@ interface PageVerticalMetadata extends OntosVerticalMetadata {
   readonly tailwindPrefix: string;
 }
 
+interface PageRoute {
+  readonly canonicalPath: string;
+  readonly relativePath: string;
+  readonly segments: readonly string[];
+}
+
 const namespacePattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 const moduleFederationNamePattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const localePattern = /^[a-z]{2}(?:-[A-Z]{2})?$/u;
+const pageRoutePattern = /^\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*)*$/u;
 const pageStarterLocales = new Set(['cs', 'en']);
 const SHELL_PAGE_CLIENT_SLOT_START = '// @ontos-codegen-start shell-page-clients';
 const SHELL_PAGE_CLIENT_SLOT_END = '// @ontos-codegen-end shell-page-clients';
+
+const resolvePageRoute = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  requestedUrl: string | undefined,
+): PageRoute => {
+  const canonicalPath = requestedUrl ?? `/${vertical.slug}/${page}`;
+  if (
+    canonicalPath.length < 2 ||
+    canonicalPath.length > 200 ||
+    !pageRoutePattern.test(canonicalPath)
+  ) {
+    throw new Error(
+      '--url must be a root-relative path of lowercase kebab-case segments with no locale, query, fragment, parameters, or trailing slash',
+    );
+  }
+  const segments = canonicalPath.slice(1).split('/');
+  if (vertical.locales.includes(segments[0] ?? '')) {
+    throw new Error('--url must not include a locale prefix; the localized router adds it');
+  }
+  return {
+    canonicalPath,
+    relativePath: segments.join('/'),
+    segments,
+  };
+};
+
+const relativeFromRoute = (route: PageRoute, target: string, extraLevels = 0): string =>
+  `${'../'.repeat(route.segments.length + extraLevels)}${target}`;
 
 const discoverPageVertical = async (
   workspaceRoot: string,
@@ -143,12 +179,49 @@ const discoverPageVertical = async (
   };
 };
 
-const renderPage = (vertical: PageVerticalMetadata, page: string): string => {
+const renderPage = (vertical: PageVerticalMetadata, page: string, route: PageRoute): string => {
   const componentName = `${toPascalCase(page)}Page`;
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const prefix = vertical.tailwindPrefix;
   return `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
+
+export const ${componentName} = () => {
+  const { t } = useModernI18n();
+  const headingId = '${page}-heading';
+
+  return (
+    <>
+      <UltramodernRouteHead />
+      <section
+        aria-labelledby={headingId}
+        className="${prefix}:mx-auto ${prefix}:w-full ${prefix}:max-w-5xl ${prefix}:px-4 ${prefix}:py-8 ${prefix}:sm:px-8 ${prefix}:lg:px-12"
+      >
+        <h1
+          className="${prefix}:text-3xl ${prefix}:font-bold ${prefix}:text-(--color-page-fg) ${prefix}:sm:text-4xl"
+          id={headingId}
+        >
+          {t('${keyRoot}.title')}
+        </h1>
+      </section>
+    </>
+  );
+};
+
+export default ${componentName};
+`;
+};
+
+const renderLegacyPage = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): string => {
+  const componentName = `${toPascalCase(page)}Page`;
+  const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
+  const prefix = vertical.tailwindPrefix;
+  return `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
 
 export const ${componentName} = () => {
   const { t } = useModernI18n();
@@ -186,20 +259,33 @@ export default ${componentName};
 `;
 };
 
-const pageWiring = (vertical: PageVerticalMetadata, page: string) => {
+const renderFormattedLegacyPage = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): string =>
+  renderLegacyPage(vertical, page, route).replace(
+    `            <h1
+              className="${vertical.tailwindPrefix}:text-3xl ${vertical.tailwindPrefix}:font-bold ${vertical.tailwindPrefix}:sm:text-4xl"
+              id={headingId}
+            >`,
+    `            <h1 className="${vertical.tailwindPrefix}:text-3xl ${vertical.tailwindPrefix}:font-bold ${vertical.tailwindPrefix}:sm:text-4xl" id={headingId}>`,
+  );
+
+const pageWiring = (vertical: PageVerticalMetadata, page: string, route: PageRoute) => {
   const componentName = `${toPascalCase(page)}Page`;
   const componentKey = `${vertical.moduleId}.page-${page}`;
   const contributionKey = `${vertical.moduleId}.page.${page}`;
   const entrypoint = `{ access: 'read', entrypointKey: '${contributionKey}', moduleKey: '${vertical.moduleId}', role: 'page', scope: 'tenant' }`;
   return {
-    componentName,
     componentKey,
+    componentName,
     contributionKey,
-    manifestImport: `import { ${componentName} } from './src/routes/[lang]/${page}/page.tsx';`,
     manifestComponent: `'page-${page}': ${componentName},`,
+    manifestImport: `import { ${componentName} } from './src/routes/[lang]/${route.relativePath}/page.tsx';`,
     manifestNavigation: `{ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' },`,
-    manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, routePath: '/${page}' },`,
-    registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${page}/page.tsx'),`,
+    manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, routePath: '${route.canonicalPath}' },`,
+    registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
     shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${toCamelCase(vertical.appId)}/Page${toPascalCase(page)}') },`,
   } as const;
 };
@@ -207,8 +293,9 @@ const pageWiring = (vertical: PageVerticalMetadata, page: string) => {
 const patchPageWiring = (
   vertical: PageVerticalMetadata,
   page: string,
+  route: PageRoute,
 ): { readonly manifest: string; readonly registration: string } => {
-  const wiring = pageWiring(vertical, page);
+  const wiring = pageWiring(vertical, page, route);
   let manifest = insertSortedSlot(
     vertical.manifestContent,
     MODULE_MANIFEST_IMPORT_SLOT_START,
@@ -247,13 +334,19 @@ const patchPageWiring = (
   return { manifest, registration };
 };
 
-const renderRouteMetadata = (vertical: PageVerticalMetadata, page: string): string => {
+const renderRouteMetadata = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
-  const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '/${page}',`).join('\n');
+  const localisedPaths = vertical.locales
+    .map((locale) => `    ${locale}: '${route.canonicalPath}',`)
+    .join('\n');
   return `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 const routeMeta = {
-  canonicalPath: '/${page}',
+  canonicalPath: '${route.canonicalPath}',
   descriptionKey: '${keyRoot}.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
@@ -280,12 +373,36 @@ export { routeMeta };
 `;
 };
 
-const renderShellConnectorPage = (): string =>
-  `export { default } from '../modules/[moduleId]/page.tsx';
+const renderShellConnectorPage = (route: PageRoute): string =>
+  `export { default } from '${relativeFromRoute(route, 'modules/[moduleId]/page.tsx')}';
 `;
 
-const renderShellConnectorLoader = (vertical: PageVerticalMetadata): string =>
-  `import { loader as loadModuleTarget } from '../modules/[moduleId]/page.data.ts';
+const renderShellConnectorLoader = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): string =>
+  `import { loader as loadModuleTarget } from '${relativeFromRoute(route, 'modules/[moduleId]/page.data.ts')}';
+
+interface ShellPageLoaderArguments {
+  readonly request: Request;
+}
+
+export const loader = ({ request }: ShellPageLoaderArguments) =>
+  loadModuleTarget({
+    params: {
+      entrypointKey: '${vertical.moduleId}.page.${page}',
+      moduleId: '${vertical.moduleId}',
+    },
+    request,
+  });
+`;
+
+const renderLegacyShellConnectorLoader = (
+  vertical: PageVerticalMetadata,
+  route: PageRoute,
+): string =>
+  `import { loader as loadModuleTarget } from '${relativeFromRoute(route, 'modules/[moduleId]/page.data.ts')}';
 
 interface ShellPageLoaderArguments {
   readonly request: Request;
@@ -295,12 +412,18 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
   loadModuleTarget({ params: { moduleId: '${vertical.moduleId}' }, request });
 `;
 
-const renderShellConnectorMetadata = (vertical: PageVerticalMetadata, page: string): string => {
-  const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '/${page}',`).join('\n');
+const renderShellConnectorMetadata = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): string => {
+  const localisedPaths = vertical.locales
+    .map((locale) => `    ${locale}: '${route.canonicalPath}',`)
+    .join('\n');
   return `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
 
 const routeMeta = {
-  canonicalPath: '/${page}',
+  canonicalPath: '${route.canonicalPath}',
   descriptionKey: 'shell.moduleTarget.seoDescription',
   entrypoint: defineSystemModuleEntrypoint({
     access: 'read',
@@ -330,16 +453,27 @@ const localizedPageCopy = (locale: string): JsonObject => {
   if (locale === 'cs') {
     return {
       description: 'Tato stránka je připravena k implementaci.',
-      empty: 'Zatím zde není žádný obsah.',
       title: 'Nová stránka',
     };
   }
   return {
     description: 'This page is ready for implementation.',
-    empty: 'No content has been added yet.',
     title: 'New Page',
   };
 };
+
+const localizedLegacyPageCopy = (locale: string): JsonObject =>
+  locale === 'cs'
+    ? {
+        description: 'Tato stránka je připravena k implementaci.',
+        empty: 'Zatím zde není žádný obsah.',
+        title: 'Nová stránka',
+      }
+    : {
+        description: 'This page is ready for implementation.',
+        empty: 'No content has been added yet.',
+        title: 'New Page',
+      };
 
 const patchLocale = async (
   workspaceRoot: string,
@@ -381,14 +515,131 @@ const patchLocale = async (
   return mutation;
 };
 
-const isExactGeneratedPage = async (
+const migrateLegacyLocale = async (
+  workspaceRoot: string,
+  vertical: PageVerticalMetadata,
+  locale: string,
+  page: string,
+): Promise<Mutation> => {
+  const localePath = resolveContainedPath(
+    workspaceRoot,
+    'verticals',
+    vertical.slug,
+    'locales',
+    locale,
+    `${vertical.namespace}.json`,
+  );
+  const { content, value } = await readJson(localePath, `${locale} locale catalog`);
+  const namespace = asJsonObject(value[vertical.namespace], `${locale} namespace`);
+  const pages = { ...asJsonObject(namespace['pages'], `${locale} pages catalog`) };
+  const pageKey = toCamelCase(page);
+  if (JSON.stringify(pages[pageKey]) !== JSON.stringify(localizedLegacyPageCopy(locale))) {
+    throw new Error(`legacy locale key ${vertical.namespace}.pages.${pageKey} was modified`);
+  }
+  pages[pageKey] = localizedPageCopy(locale);
+  const sortedPages = Object.fromEntries(
+    Object.entries(pages).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+  const patched = patchJsonObjectProperty(content, [vertical.namespace], 'pages', sortedPages);
+  const mutation = updateMutation(localePath, content, patched);
+  if (mutation === undefined) {
+    throw new Error(`legacy locale migration unexpectedly made no change for ${locale}`);
+  }
+  return mutation;
+};
+
+type GeneratedPageState = 'current' | 'legacy' | 'invalid';
+
+const resolveGeneratedPageContentState = (
+  pageContent: string,
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): GeneratedPageState => {
+  if (pageContent === renderPage(vertical, page, route)) {
+    return 'current';
+  }
+  if (
+    pageContent === renderLegacyPage(vertical, page, route) ||
+    pageContent === renderFormattedLegacyPage(vertical, page, route)
+  ) {
+    return 'legacy';
+  }
+  return 'invalid';
+};
+
+const generatedWiringMatches = async (
   workspaceRoot: string,
   vertical: PageVerticalMetadata,
   page: string,
+  route: PageRoute,
+  pageState: Exclude<GeneratedPageState, 'invalid'>,
+): Promise<boolean> => {
+  const wiring = pageWiring(vertical, page, route);
+  const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
+  const federation = await readFile(federationPath, 'utf-8');
+  const shellClients = await readFile(
+    resolveContainedPath(
+      workspaceRoot,
+      'apps',
+      'shell-super-app',
+      'src',
+      'api',
+      'vertical-clients.ts',
+    ),
+    'utf-8',
+  );
+  const shellRouteDirectory = resolveContainedPath(
+    workspaceRoot,
+    'apps',
+    'shell-super-app',
+    'src',
+    'routes',
+    '[lang]',
+    ...route.segments,
+  );
+  const expectedShellFiles = [
+    ['page.tsx', renderShellConnectorPage(route)],
+    [
+      'page.data.ts',
+      pageState === 'current'
+        ? renderShellConnectorLoader(vertical, page, route)
+        : renderLegacyShellConnectorLoader(vertical, route),
+    ],
+    ['route.meta.ts', renderShellConnectorMetadata(vertical, page, route)],
+  ] as const;
+  const shellRouteMatches = await Promise.all(
+    expectedShellFiles.map(async ([fileName, expected]) => {
+      const filePath = path.join(shellRouteDirectory, fileName);
+      return (await pathExists(filePath)) && (await readFile(filePath, 'utf-8')) === expected;
+    }),
+  );
+  return (
+    vertical.manifestContent.includes(wiring.manifestImport) &&
+    vertical.manifestContent.includes(wiring.manifestComponent) &&
+    vertical.manifestContent.includes(
+      `contributionKey: '${vertical.moduleId}.navigation.${page}'`,
+    ) &&
+    vertical.manifestContent.includes(`pageKey: '${wiring.contributionKey}'`) &&
+    vertical.manifestContent.includes(`componentKey: '${wiring.componentKey}'`) &&
+    vertical.manifestContent.includes(`contributionKey: '${wiring.contributionKey}'`) &&
+    vertical.manifestContent.includes(`routePath: '${route.canonicalPath}'`) &&
+    vertical.registrationContent.includes(wiring.registrationPage) &&
+    federation.includes(`'./Page${toPascalCase(page)}'`) &&
+    shellClients.includes(wiring.shellClient) &&
+    shellRouteMatches.every(Boolean)
+  );
+};
+
+const generatedPageState = async (
+  workspaceRoot: string,
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
   routeDirectory: string,
   pagePath: string,
   routeMetadataPath: string,
-): Promise<boolean> => {
+): Promise<GeneratedPageState> => {
   const entries = await readdir(routeDirectory, { withFileTypes: true });
   if (
     entries.length !== 2 ||
@@ -396,20 +647,22 @@ const isExactGeneratedPage = async (
     !entries.some((entry) => entry.name === 'page.tsx') ||
     !entries.some((entry) => entry.name === 'route.meta.ts')
   ) {
-    return false;
+    return 'invalid';
   }
   const [pageContent, routeMetadataContent] = await Promise.all([
     readFile(pagePath, 'utf-8'),
     readFile(routeMetadataPath, 'utf-8'),
   ]);
-  if (
-    pageContent !== renderPage(vertical, page) ||
-    routeMetadataContent !== renderRouteMetadata(vertical, page)
-  ) {
-    return false;
+  const expectedMetadata = renderRouteMetadata(vertical, page, route);
+  if (routeMetadataContent !== expectedMetadata) {
+    return 'invalid';
+  }
+  const pageState = resolveGeneratedPageContentState(pageContent, vertical, page, route);
+  if (pageState === 'invalid') {
+    return 'invalid';
   }
   const pageKey = toCamelCase(page);
-  const localeMatches = await Promise.all(
+  const localeStates = await Promise.all(
     vertical.locales.map(async (locale) => {
       const localePath = resolveContainedPath(
         workspaceRoot,
@@ -422,55 +675,22 @@ const isExactGeneratedPage = async (
       const { value } = await readJson(localePath, `${locale} locale catalog`);
       const namespace = asJsonObject(value[vertical.namespace], `${locale} namespace`);
       const pages = asJsonObject(namespace['pages'], `${locale} pages catalog`);
-      return JSON.stringify(pages[pageKey]) === JSON.stringify(localizedPageCopy(locale));
+      const copy = JSON.stringify(pages[pageKey]);
+      if (copy === JSON.stringify(localizedPageCopy(locale))) {
+        return 'current' as const;
+      }
+      if (copy === JSON.stringify(localizedLegacyPageCopy(locale))) {
+        return 'legacy' as const;
+      }
+      return 'invalid' as const;
     }),
   );
-  if (!localeMatches.every(Boolean)) {
-    return false;
+  if (!localeStates.every((state) => state === pageState)) {
+    return 'invalid';
   }
-  const wiring = pageWiring(vertical, page);
-  const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
-  const federation = await readFile(federationPath, 'utf8');
-  const shellClients = await readFile(
-    resolveContainedPath(
-      workspaceRoot,
-      'apps',
-      'shell-super-app',
-      'src',
-      'api',
-      'vertical-clients.ts',
-    ),
-    'utf8',
-  );
-  const shellRouteDirectory = resolveContainedPath(
-    workspaceRoot,
-    'apps',
-    'shell-super-app',
-    'src',
-    'routes',
-    '[lang]',
-    page,
-  );
-  const shellRouteMatches = await Promise.all(
-    [
-      ['page.tsx', renderShellConnectorPage()],
-      ['page.data.ts', renderShellConnectorLoader(vertical)],
-      ['route.meta.ts', renderShellConnectorMetadata(vertical, page)],
-    ].map(async ([fileName, expected]) => {
-      const filePath = path.join(shellRouteDirectory, fileName);
-      return (await pathExists(filePath)) && (await readFile(filePath, 'utf8')) === expected;
-    }),
-  );
-  return (
-    vertical.manifestContent.includes(wiring.manifestImport) &&
-    vertical.manifestContent.includes(wiring.manifestComponent) &&
-    vertical.manifestContent.includes(wiring.manifestPage) &&
-    vertical.manifestContent.includes(wiring.manifestNavigation) &&
-    vertical.registrationContent.includes(wiring.registrationPage) &&
-    federation.includes(`'./Page${toPascalCase(page)}'`) &&
-    shellClients.includes(wiring.shellClient) &&
-    shellRouteMatches.every(Boolean)
-  );
+  return (await generatedWiringMatches(workspaceRoot, vertical, page, route, pageState))
+    ? pageState
+    : 'invalid';
 };
 
 export const planPageScaffold = async (
@@ -479,6 +699,7 @@ export const planPageScaffold = async (
 ): Promise<ScaffoldPlan<PageScaffoldResult>> => {
   const page = requireCanonicalSlug(config.page, 'page');
   const vertical = await discoverPageVertical(workspaceRoot, config.vertical);
+  const route = resolvePageRoute(vertical, page, config.url);
   const routeDirectory = resolveContainedPath(
     workspaceRoot,
     'verticals',
@@ -486,7 +707,7 @@ export const planPageScaffold = async (
     'src',
     'routes',
     '[lang]',
-    page,
+    ...route.segments,
   );
   const pagePath = path.join(routeDirectory, 'page.tsx');
   const routeMetadataPath = path.join(routeDirectory, 'route.meta.ts');
@@ -497,40 +718,73 @@ export const planPageScaffold = async (
     'src',
     'routes',
     '[lang]',
-    page,
+    ...route.segments,
   );
   if (await pathExists(routeDirectory)) {
-    if (
-      await isExactGeneratedPage(
-        workspaceRoot,
-        vertical,
-        page,
-        routeDirectory,
-        pagePath,
-        routeMetadataPath,
-      )
-    ) {
+    const state = await generatedPageState(
+      workspaceRoot,
+      vertical,
+      page,
+      route,
+      routeDirectory,
+      pagePath,
+      routeMetadataPath,
+    );
+    if (state === 'current') {
       return {
         mutations: [],
         result: { appId: vertical.appId, pagePath, routeMetadataPath },
       };
     }
+    if (state === 'legacy') {
+      const pageContent = await readFile(pagePath, 'utf-8');
+      const shellLoaderPath = path.join(shellRouteDirectory, 'page.data.ts');
+      const shellLoaderContent = await readFile(shellLoaderPath, 'utf-8');
+      const mutations = [
+        updateMutation(pagePath, pageContent, renderPage(vertical, page, route)),
+        ...(await Promise.all(
+          vertical.locales.map((locale) =>
+            migrateLegacyLocale(workspaceRoot, vertical, locale, page),
+          ),
+        )),
+        updateMutation(
+          shellLoaderPath,
+          shellLoaderContent,
+          renderShellConnectorLoader(vertical, page, route),
+        ),
+      ].filter((mutation) => mutation !== undefined);
+      ensureUniqueMutationPaths(mutations);
+      return {
+        mutations,
+        result: { appId: vertical.appId, pagePath, routeMetadataPath },
+      };
+    }
     throw new Error(`page route already exists or collides with nested content: ${routeDirectory}`);
+  }
+  const identity = `${vertical.moduleId}.page.${page}`;
+  if (
+    vertical.manifestContent.includes(`'page-${page}'`) ||
+    vertical.manifestContent.includes(identity)
+  ) {
+    throw new Error(`page identity ${identity} already exists at another URL`);
+  }
+  if (vertical.manifestContent.includes(`routePath: '${route.canonicalPath}'`)) {
+    throw new Error(`page URL ${route.canonicalPath} is already registered`);
   }
   if (await pathExists(shellRouteDirectory)) {
     throw new Error(
       `Shell route already exists or collides with generated page: ${shellRouteDirectory}`,
     );
   }
-  const pageMutation = await createMutation(pagePath, renderPage(vertical, page));
+  const pageMutation = await createMutation(pagePath, renderPage(vertical, page, route));
   const routeMutation = await createMutation(
     routeMetadataPath,
-    renderRouteMetadata(vertical, page),
+    renderRouteMetadata(vertical, page, route),
   );
   const localeMutations = await Promise.all(
     vertical.locales.map((locale) => patchLocale(workspaceRoot, vertical, locale, page)),
   );
-  const wiring = patchPageWiring(vertical, page);
+  const wiring = patchPageWiring(vertical, page, route);
   const manifestMutation = updateMutation(
     vertical.manifestPath,
     vertical.manifestContent,
@@ -542,14 +796,14 @@ export const planPageScaffold = async (
     wiring.registration,
   );
   const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
-  const federationContent = await readFile(federationPath, 'utf8');
+  const federationContent = await readFile(federationPath, 'utf-8');
   const federationMutation = updateMutation(
     federationPath,
     federationContent,
     insertModuleFederationExposure(
       federationContent,
       `./Page${toPascalCase(page)}`,
-      `./src/routes/[lang]/${page}/page.tsx`,
+      `./src/routes/[lang]/${route.relativePath}/page.tsx`,
     ),
   );
   const shellClientsPath = resolveContainedPath(
@@ -560,7 +814,7 @@ export const planPageScaffold = async (
     'api',
     'vertical-clients.ts',
   );
-  const shellClientsContent = await readFile(shellClientsPath, 'utf8');
+  const shellClientsContent = await readFile(shellClientsPath, 'utf-8');
   const shellClientsMutation = updateMutation(
     shellClientsPath,
     shellClientsContent,
@@ -568,21 +822,21 @@ export const planPageScaffold = async (
       shellClientsContent,
       SHELL_PAGE_CLIENT_SLOT_START,
       SHELL_PAGE_CLIENT_SLOT_END,
-      [pageWiring(vertical, page).shellClient],
+      [pageWiring(vertical, page, route).shellClient],
       (candidate) => candidate.endsWith(','),
     ),
   );
   const shellPageMutation = await createMutation(
     path.join(shellRouteDirectory, 'page.tsx'),
-    renderShellConnectorPage(),
+    renderShellConnectorPage(route),
   );
   const shellLoaderMutation = await createMutation(
     path.join(shellRouteDirectory, 'page.data.ts'),
-    renderShellConnectorLoader(vertical),
+    renderShellConnectorLoader(vertical, page, route),
   );
   const shellRouteMetadataMutation = await createMutation(
     path.join(shellRouteDirectory, 'route.meta.ts'),
-    renderShellConnectorMetadata(vertical, page),
+    renderShellConnectorMetadata(vertical, page, route),
   );
   const mutations = [
     pageMutation,

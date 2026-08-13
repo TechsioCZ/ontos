@@ -20,7 +20,6 @@
     "pages": {
       "crm": {
         "description": "Tato stránka je připravena k implementaci.",
-        "empty": "Zatím zde není žádný obsah.",
         "title": "Nová stránka"
       }
     }

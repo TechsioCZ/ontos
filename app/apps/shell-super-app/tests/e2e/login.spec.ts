@@ -113,6 +113,9 @@ test('logs a user in without any server-error response', async ({ page }, testIn
 });
 
 test('loads CRM at its public Shell URL after login', async ({ page }) => {
+  await page.goto('/cs/crm');
+  await expect(page.getByRole('heading', { name: 'Nová stránka' })).toHaveCount(0);
+
   await page.goto('/cs/login');
   await page
     .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
@@ -127,7 +130,8 @@ test('loads CRM at its public Shell URL after login', async ({ page }) => {
 
   await expect(page).toHaveURL(/\/cs\/crm\/?$/u);
   await expect(page.getByRole('heading', { name: 'Nová stránka' })).toBeVisible();
-  await expect(page.getByText('Zatím zde není žádný obsah.')).toBeVisible();
+  await expect(page.getByText('Tato stránka je připravena k implementaci.')).toHaveCount(0);
+  await expect(page.getByText('Zatím zde není žádný obsah.')).toHaveCount(0);
   await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toBeVisible();
 });
 

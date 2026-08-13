@@ -114,6 +114,7 @@ export type ShellComposition =
   | { readonly navigation: readonly ShellNavigationItem[]; readonly state: 'available' };
 
 export interface ResolveModuleTargetPayload {
+  readonly entrypointKey?: string;
   readonly moduleId: string;
 }
 
@@ -579,6 +580,13 @@ export const ShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Uni
 
 export const ResolveModuleTargetPayloadSchema: Schema.Codec<ResolveModuleTargetPayload> =
   Schema.Struct({
+    entrypointKey: Schema.optionalKey(
+      Schema.String.check(
+        Schema.isMinLength(3),
+        Schema.isMaxLength(200),
+        Schema.isPattern(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u),
+      ),
+    ),
     moduleId: Schema.String.check(Schema.isMinLength(3)),
   });
 

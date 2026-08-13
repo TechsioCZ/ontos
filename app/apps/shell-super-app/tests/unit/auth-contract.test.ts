@@ -8,6 +8,7 @@ import {
   ChangePrincipalStatusPayloadSchema,
   IdentityRequestHeadersSchema,
   SignInPayloadSchema,
+  ResolveModuleTargetPayloadSchema,
   ShellAuthenticationApi,
   SwitchTenantPayloadSchema,
   SwitchTenantResponseSchema,
@@ -144,6 +145,34 @@ test('publishes exact legal-entity endpoints with an ID-only switch payload', as
     selectedLegalEntityId: legalEntityId,
     state: 'authenticated',
   });
+});
+
+test('decodes an optional exact page entrypoint without accepting private routing fields', async () => {
+  expect(
+    await Effect.runPromise(
+      Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        entrypointKey: 'crm.core.page.customers',
+        importPath: 'must-not-pass',
+        moduleId: 'crm.core',
+        routePath: '/crm/customers',
+      }),
+    ),
+  ).toEqual({ entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' });
+  expect(
+    await Effect.runPromise(
+      Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({ moduleId: 'crm.core' }),
+    ),
+  ).toEqual({ moduleId: 'crm.core' });
+  await expect(
+    Effect.runPromise(
+      Effect.flip(
+        Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+          entrypointKey: '../private-page',
+          moduleId: 'crm.core',
+        }),
+      ),
+    ),
+  ).resolves.toBeDefined();
 });
 
 test('publishes exact tenant methods, paths, and declared failure statuses', () => {

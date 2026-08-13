@@ -91,12 +91,21 @@ registration.
 Use the category generator before authoring each supported public artifact:
 
 ```bash
-mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview
+mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview [--url /custom/path]
 mise exec -- pnpm scaffold:public-component -- --vertical property-registry --component unit-card
 mise exec -- pnpm scaffold:module-api -- --vertical property-registry --api resource-api
 mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --provider unit-search
 mise exec -- pnpm scaffold:report -- --vertical property-registry --report unit-inventory
 ```
+
+The page name is a stable lower-kebab identity, while `--url` is an optional complete
+root-relative canonical-path override. When `--url` is omitted, Codesmith derives
+`/<microvertical>/<page>` from the validated MicroVertical slug. For example,
+`--vertical crm --page customers` produces canonical `/crm/customers`; the locale-aware Shell
+router exposes it as `/cs/crm/customers` or `/en/crm/customers`. Never include a locale prefix in
+`--url`. A generated page is private and non-indexable, contains only its localized title, and is
+loaded only after the authenticated Shell/Core gateway resolves that exact governed page
+entrypoint. Private metadata alone is not an authentication mechanism.
 
 ## Repository documentation follow-up
 

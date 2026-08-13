@@ -8,24 +8,17 @@ export const CrmPage = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <main className="crm:min-h-screen crm:bg-(--color-page-bg) crm:px-4 crm:py-8 crm:text-(--color-page-fg) crm:sm:px-8 crm:lg:px-12">
-        <div className="crm:mx-auto crm:flex crm:max-w-5xl crm:flex-col crm:gap-8">
-          <header className="crm:space-y-3">
-            <h1 className="crm:text-3xl crm:font-bold crm:sm:text-4xl" id={headingId}>
-              {t('crm.pages.crm.title')}
-            </h1>
-            <p className="crm:max-w-2xl crm:text-base crm:sm:text-lg">
-              {t('crm.pages.crm.description')}
-            </p>
-          </header>
-          <section
-            aria-labelledby={headingId}
-            className="crm:bg-(--color-surface) crm:p-6 crm:sm:p-8"
-          >
-            <p>{t('crm.pages.crm.empty')}</p>
-          </section>
-        </div>
-      </main>
+      <section
+        aria-labelledby={headingId}
+        className="crm:mx-auto crm:w-full crm:max-w-5xl crm:px-4 crm:py-8 crm:sm:px-8 crm:lg:px-12"
+      >
+        <h1
+          className="crm:text-3xl crm:font-bold crm:text-(--color-page-fg) crm:sm:text-4xl"
+          id={headingId}
+        >
+          {t('crm.pages.crm.title')}
+        </h1>
+      </section>
     </>
   );
 };

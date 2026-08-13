@@ -8,7 +8,7 @@ import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
 
 interface ModuleTargetLoaderArguments {
-  readonly params: { readonly moduleId: string };
+  readonly params: { readonly entrypointKey?: string; readonly moduleId: string };
   readonly request: Request;
 }
 
@@ -59,7 +59,13 @@ export const loader = async ({ params, request }: ModuleTargetLoaderArguments) =
     ...(cookie === null ? {} : { cookie }),
   };
   return runEffectRequest(
-    resolveModuleTarget({ moduleId: params.moduleId }, options).pipe(
+    resolveModuleTarget(
+      {
+        ...(params.entrypointKey === undefined ? {} : { entrypointKey: params.entrypointKey }),
+        moduleId: params.moduleId,
+      },
+      options,
+    ).pipe(
       Effect.map((target): ModuleTargetPageModel => ({ shell, state: 'resolved', target })),
       Effect.catch((error) => Effect.succeed(safeState(error, shell))),
     ),

@@ -190,21 +190,26 @@ Options:
       await refresh({ appId: pageResult.appId, workspaceRoot });
       await refresh({ appId: 'shell-super-app', workspaceRoot });
     },
-    flags: ['page', 'vertical'],
+    flags: ['page', 'url', 'vertical'],
     generator: microverticalPageGenerator,
-    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
+    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> [--url <url>]
 
 Generate one localized, private-first page with a governed tenant page/read entrypoint.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
-  --page <page>          Page route segment (lower-kebab-case)
+  --page <page>          Stable page name (lower-kebab-case)
 
 Options:
+  --url <url>            Root-relative canonical path; defaults to /<vertical>/<page>
   --help                 Show this help without writing
 `,
     requiredFlags: ['page', 'vertical'],
-    toConfig: (flags) => ({ page: flags['page'] ?? '', vertical: flags['vertical'] ?? '' }),
+    toConfig: (flags) => ({
+      page: flags['page'] ?? '',
+      ...(flags['url'] === undefined ? {} : { url: flags['url'] }),
+      vertical: flags['vertical'] ?? '',
+    }),
   },
   'module-contract': {
     flags: ['module', 'vertical'],

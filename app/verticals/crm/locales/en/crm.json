@@ -20,7 +20,6 @@
     "pages": {
       "crm": {
         "description": "This page is ready for implementation.",
-        "empty": "No content has been added yet.",
         "title": "New Page"
       }
     }

@@ -157,7 +157,11 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
 
   const resolveModuleTarget = (
     context: ShellCompositionContext,
-    input: { readonly access?: ModuleEntrypointAccess; readonly moduleId: string },
+    input: {
+      readonly access?: ModuleEntrypointAccess;
+      readonly entrypointKey?: string;
+      readonly moduleId: string;
+    },
   ): Effect.Effect<ShellTargetResolution, ShellCompositionUnavailableError> =>
     Effect.gen(function* resolveModuleTargetEffect() {
       if (context.legalEntityId === undefined) {
@@ -171,11 +175,20 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
       const { pages } = contract.manifest.publicSurface.shellContributions;
       const { navigation } = contract.manifest.publicSurface.shellContributions;
       const landing = navigation[0];
-      const page =
+      const exactPage =
+        input.entrypointKey === undefined
+          ? undefined
+          : pages.find(
+              ({ entrypoint }) =>
+                entrypoint.entrypointKey === input.entrypointKey &&
+                entrypoint.moduleKey === input.moduleId,
+            );
+      const landingPage =
         landing === undefined
           ? undefined
           : pages.find(({ contributionKey }) => contributionKey === landing.pageKey);
-      if (landing === undefined || page === undefined) {
+      const page = input.entrypointKey === undefined ? landingPage : exactPage;
+      if (page === undefined) {
         return { outcome: 'not_found' } as const;
       }
       const records = yield* loadStates(dependencies, context, [input.moduleId]);

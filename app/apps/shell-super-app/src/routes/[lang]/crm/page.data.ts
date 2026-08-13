@@ -5,4 +5,10 @@ interface ShellPageLoaderArguments {
 }
 
 export const loader = ({ request }: ShellPageLoaderArguments) =>
-  loadModuleTarget({ params: { moduleId: 'crm.core' }, request });
+  loadModuleTarget({
+    params: {
+      entrypointKey: 'crm.core.page.crm',
+      moduleId: 'crm.core',
+    },
+    request,
+  });

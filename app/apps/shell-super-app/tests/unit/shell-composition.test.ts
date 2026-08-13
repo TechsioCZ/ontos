@@ -107,6 +107,34 @@ const catalog = (): InstalledModuleCatalog =>
     },
   ]);
 
+const catalogWithSecondPropertyPage = (): InstalledModuleCatalog => {
+  const property = deployment('property-registry', 'property.registry', 'Property', 20);
+  property.manifest.publicSurface.components.push({
+    expose: './PageCustomers',
+    key: 'property.registry.page-customers',
+    mfBoundaryId: 'verticalpropertyregistry',
+  });
+  property.manifest.publicSurface.shellContributions.pages.push({
+    componentKey: 'property.registry.page-customers',
+    contributionKey: 'property.registry.page.customers',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'property.registry.page.customers',
+      moduleKey: 'property.registry',
+      role: 'page',
+      scope: 'tenant',
+    },
+    routePath: '/property-registry/customers',
+  });
+  return buildInstalledModuleCatalog([
+    { contract: property, expectedAppId: 'property-registry' },
+    {
+      contract: deployment('documents-center', 'documents.center', 'Documents', 10),
+      expectedAppId: 'documents-center',
+    },
+  ]);
+};
+
 const contextAccess = (
   decisions: Readonly<Record<string, ContextAccessDecision>>,
   onBatch?: (moduleIds: readonly string[]) => void,
@@ -301,3 +329,58 @@ test('resolves direct targets independently with exhaustive safe outcomes and hi
     ).outcome,
   ).toBe('not_found');
 });
+
+test.each(['active', 'read_only', 'deprecated'] as const)(
+  'resolves the exact page entrypoint in the %s lifecycle without changing module landing',
+  async (state) => {
+    const composition = makeShellComposition({
+      catalog: Effect.succeed(catalogWithSecondPropertyPage()),
+      contextAccess: contextAccess({
+        'documents.center': 'allowed',
+        'property.registry': 'allowed',
+      }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
+      },
+    });
+    const landing = await Effect.runPromise(
+      composition.resolveModuleTarget(context, { moduleId: 'property.registry' }),
+    );
+    const customers = await Effect.runPromise(
+      composition.resolveModuleTarget(context, {
+        entrypointKey: 'property.registry.page.customers',
+        moduleId: 'property.registry',
+      }),
+    );
+    expect(landing).toMatchObject({
+      outcome: 'resolved',
+      page: { componentKey: 'property.registry.page-home' },
+    });
+    expect(customers).toMatchObject({
+      outcome: 'resolved',
+      page: { componentKey: 'property.registry.page-customers' },
+      writable: state === 'active',
+    });
+    expect(
+      (
+        await Effect.runPromise(
+          composition.resolveModuleTarget(context, {
+            entrypointKey: 'property.registry.page.missing',
+            moduleId: 'property.registry',
+          }),
+        )
+      ).outcome,
+    ).toBe('not_found');
+    expect(
+      (
+        await Effect.runPromise(
+          composition.resolveModuleTarget(context, {
+            entrypointKey: 'documents.center.page.home',
+            moduleId: 'property.registry',
+          }),
+        )
+      ).outcome,
+    ).toBe('not_found');
+  },
+);

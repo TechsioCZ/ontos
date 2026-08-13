@@ -336,6 +336,8 @@ test('documents every command and treats --help as a write-free operation', asyn
   );
   assert.match(getHelpText('action'), /--vertical <vertical>/u);
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
+  assert.match(getHelpText('microvertical-page'), /--url <url>/u);
+  assert.match(getHelpText('microvertical-page'), /defaults to \/<vertical>\/<page>/u);
 });
 
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
@@ -1927,7 +1929,7 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
   });
 });
 
-test('generates an accessible translated private page, patches every locale, and refreshes its route owner', async () => {
+test('generates a title-only authenticated page at the default MicroVertical URL', async () => {
   await withFixture(async (fixture) => {
     const shellBefore = await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts');
     const englishLocalePath = path.join(
@@ -1949,12 +1951,12 @@ test('generates an accessible translated private page, patches every locale, and
     assert.deepEqual(refreshes, ['inventory-stock', 'shell-super-app']);
     const page = await readFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/routes/[lang]/purchase-orders/page.tsx',
+      'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
     );
     assert.equal(
       page,
       `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 
 export const PurchaseOrdersPage = () => {
   const { t } = useModernI18n();
@@ -1963,27 +1965,17 @@ export const PurchaseOrdersPage = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <main className="inventory:min-h-screen inventory:bg-(--color-page-bg) inventory:px-4 inventory:py-8 inventory:text-(--color-page-fg) inventory:sm:px-8 inventory:lg:px-12">
-        <div className="inventory:mx-auto inventory:flex inventory:max-w-5xl inventory:flex-col inventory:gap-8">
-          <header className="inventory:space-y-3">
-            <h1
-              className="inventory:text-3xl inventory:font-bold inventory:sm:text-4xl"
-              id={headingId}
-            >
-              {t('inventory.pages.purchaseOrders.title')}
-            </h1>
-            <p className="inventory:max-w-2xl inventory:text-base inventory:sm:text-lg">
-              {t('inventory.pages.purchaseOrders.description')}
-            </p>
-          </header>
-          <section
-            aria-labelledby={headingId}
-            className="inventory:bg-(--color-surface) inventory:p-6 inventory:sm:p-8"
-          >
-            <p>{t('inventory.pages.purchaseOrders.empty')}</p>
-          </section>
-        </div>
-      </main>
+      <section
+        aria-labelledby={headingId}
+        className="inventory:mx-auto inventory:w-full inventory:max-w-5xl inventory:px-4 inventory:py-8 inventory:sm:px-8 inventory:lg:px-12"
+      >
+        <h1
+          className="inventory:text-3xl inventory:font-bold inventory:text-(--color-page-fg) inventory:sm:text-4xl"
+          id={headingId}
+        >
+          {t('inventory.pages.purchaseOrders.title')}
+        </h1>
+      </section>
     </>
   );
 };
@@ -2009,7 +2001,7 @@ export default PurchaseOrdersPage;
     );
     assert.match(manifest, /inventory\.stock\.navigation\.purchase-orders/u);
     assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
-    assert.match(manifest, /routePath: '\/purchase-orders'/u);
+    assert.match(manifest, /routePath: '\/inventory-stock\/purchase-orders'/u);
     assert.match(registration, /page-purchase-orders/u);
     assert.match(federation, /\.\/PagePurchaseOrders/u);
     assert.match(
@@ -2019,34 +2011,34 @@ export default PurchaseOrdersPage;
     assert.equal(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/purchase-orders/page.tsx',
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
       ),
-      `export { default } from '../modules/[moduleId]/page.tsx';
+      `export { default } from '../../modules/[moduleId]/page.tsx';
 `,
     );
     assert.match(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/purchase-orders/page.data.ts',
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.data.ts',
       ),
-      /moduleId: 'inventory\.stock'/u,
+      /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u,
     );
     assert.match(
       await readFixtureFile(
         fixture.root,
-        'apps/shell-super-app/src/routes/[lang]/purchase-orders/route.meta.ts',
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
       ),
-      /canonicalPath: '\/purchase-orders'/u,
+      /canonicalPath: '\/inventory-stock\/purchase-orders'/u,
     );
     assert.equal(
       await readFixtureFile(
         fixture.root,
-        'verticals/inventory-stock/src/routes/[lang]/purchase-orders/route.meta.ts',
+        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
       ),
       `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 const routeMeta = {
-  canonicalPath: '/purchase-orders',
+  canonicalPath: '/inventory-stock/purchase-orders',
   descriptionKey: 'inventory.pages.purchaseOrders.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
@@ -2057,8 +2049,8 @@ const routeMeta = {
   id: 'inventory-stock-purchase-orders',
   indexable: false,
   localisedPaths: {
-    cs: '/purchase-orders',
-    en: '/purchase-orders',
+    cs: '/inventory-stock/purchase-orders',
+    en: '/inventory-stock/purchase-orders',
   },
   mfBoundaryId: 'verticalInventoryStock',
   moduleId: 'inventory.stock',
@@ -2089,19 +2081,218 @@ export { routeMeta };
     assert.equal(englishContent.endsWith('\r\n'), false);
     assert.deepEqual(english.inventory.pages['purchaseOrders'], {
       description: 'This page is ready for implementation.',
-      empty: 'No content has been added yet.',
       title: 'New Page',
     });
     assert.deepEqual(czech.inventory.pages['purchaseOrders'], {
       description: 'Tato stránka je připravena k implementaci.',
-      empty: 'Zatím zde není žádný obsah.',
       title: 'Nová stránka',
     });
     assert.equal(
       await readFixtureFile(fixture.root, 'apps/shell-super-app/src/sentinel.ts'),
       shellBefore,
     );
-    assert.doesNotMatch(page, /fetch\(|useState|useEffect|<style|\.css'/u);
+    assert.doesNotMatch(page, /fetch\(|useState|useEffect|<style|\.css'|\.description|\.empty/u);
+  });
+});
+
+test('supports an explicit nested page URL and rejects unsafe URL inputs atomically', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'purchase-orders',
+      '--url',
+      '/purchasing/orders',
+    ]);
+    const page = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/routes/[lang]/purchasing/orders/page.tsx',
+    );
+    assert.match(page, /from '\.\.\/\.\.\/\.\.\/ultramodern-route-head'/u);
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+    assert.match(manifest, /routePath: '\/purchasing\/orders'/u);
+    assert.match(
+      await readFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/purchasing/orders/page.data.ts',
+      ),
+      /entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u,
+    );
+    const beforeRerun = await snapshotTree(fixture.root);
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'purchase-orders',
+      '--url',
+      '/purchasing/orders',
+    ]);
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
+    await assert.rejects(
+      run(fixture, 'microvertical-page', [
+        '--vertical',
+        'inventory-stock',
+        '--page',
+        'purchase-orders',
+        '--url',
+        '/different/orders',
+      ]),
+      /already exists at another URL/u,
+    );
+    await assert.rejects(
+      run(fixture, 'microvertical-page', [
+        '--vertical',
+        'inventory-stock',
+        '--page',
+        'different-page',
+        '--url',
+        '/purchasing/orders',
+      ]),
+      /already exists|collides/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
+  });
+
+  await Promise.all(
+    [
+      '/cs/orders',
+      '/orders/',
+      '/Orders',
+      '/orders/:id',
+      '/orders?state=open',
+      '/orders#open',
+      '/%2e%2e/orders',
+      'https://example.test/orders',
+    ].map((url) =>
+      withFixture(async (fixture) => {
+        const before = await snapshotTree(fixture.root);
+        await assert.rejects(
+          run(fixture, 'microvertical-page', [
+            '--vertical',
+            'inventory-stock',
+            '--page',
+            'orders',
+            '--url',
+            url,
+          ]),
+          /--url/u,
+        );
+        assert.deepEqual(await snapshotTree(fixture.root), before);
+      }),
+    ),
+  );
+});
+
+test('migrates only exact legacy generated page output and then reruns as a no-op', async () => {
+  await withFixture(async (fixture) => {
+    const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders', '--url', '/orders'];
+    await run(fixture, 'microvertical-page', arguments_);
+    await writeFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
+      `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { UltramodernRouteHead } from '../../ultramodern-route-head';
+
+export const OrdersPage = () => {
+  const { t } = useModernI18n();
+  const headingId = 'orders-heading';
+
+  return (
+    <>
+      <UltramodernRouteHead />
+      <main className="inventory:min-h-screen inventory:bg-(--color-page-bg) inventory:px-4 inventory:py-8 inventory:text-(--color-page-fg) inventory:sm:px-8 inventory:lg:px-12">
+        <div className="inventory:mx-auto inventory:flex inventory:max-w-5xl inventory:flex-col inventory:gap-8">
+          <header className="inventory:space-y-3">
+            <h1
+              className="inventory:text-3xl inventory:font-bold inventory:sm:text-4xl"
+              id={headingId}
+            >
+              {t('inventory.pages.orders.title')}
+            </h1>
+            <p className="inventory:max-w-2xl inventory:text-base inventory:sm:text-lg">
+              {t('inventory.pages.orders.description')}
+            </p>
+          </header>
+          <section
+            aria-labelledby={headingId}
+            className="inventory:bg-(--color-surface) inventory:p-6 inventory:sm:p-8"
+          >
+            <p>{t('inventory.pages.orders.empty')}</p>
+          </section>
+        </div>
+      </main>
+    </>
+  );
+};
+
+export default OrdersPage;
+`,
+    );
+    await writeFixtureFile(
+      fixture.root,
+      'apps/shell-super-app/src/routes/[lang]/orders/page.data.ts',
+      `import { loader as loadModuleTarget } from '../modules/[moduleId]/page.data.ts';
+
+interface ShellPageLoaderArguments {
+  readonly request: Request;
+}
+
+export const loader = ({ request }: ShellPageLoaderArguments) =>
+  loadModuleTarget({ params: { moduleId: 'inventory.stock' }, request });
+`,
+    );
+    await Promise.all(
+      ['cs', 'en'].map(async (locale) => {
+        const localePath = path.join(
+          fixture.root,
+          `verticals/inventory-stock/locales/${locale}/inventory.json`,
+        );
+        const catalog = JSON.parse(await readFile(localePath, 'utf-8')) as {
+          inventory: { pages: Record<string, Record<string, string>> };
+        };
+        catalog.inventory.pages['orders'] =
+          locale === 'cs'
+            ? {
+                description: 'Tato stránka je připravena k implementaci.',
+                empty: 'Zatím zde není žádný obsah.',
+                title: 'Nová stránka',
+              }
+            : {
+                description: 'This page is ready for implementation.',
+                empty: 'No content has been added yet.',
+                title: 'New Page',
+              };
+        await writeFile(localePath, json(catalog), 'utf-8');
+      }),
+    );
+
+    await run(fixture, 'microvertical-page', arguments_);
+    const migratedPage = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
+    );
+    assert.doesNotMatch(migratedPage, /\.description|\.empty|<main/u);
+    assert.match(
+      await readFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/orders/page.data.ts',
+      ),
+      /entrypointKey: 'inventory\.stock\.page\.orders'/u,
+    );
+    const migratedEnglish = JSON.parse(
+      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/en/inventory.json'),
+    ) as { inventory: { pages: Record<string, Record<string, string>> } };
+    assert.deepEqual(migratedEnglish.inventory.pages['orders'], {
+      description: 'This page is ready for implementation.',
+      title: 'New Page',
+    });
+    const afterMigration = await snapshotTree(fixture.root);
+    await run(fixture, 'microvertical-page', arguments_);
+    assert.deepEqual(await snapshotTree(fixture.root), afterMigration);
   });
 });
 
@@ -2149,7 +2340,7 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
   await withFixture(async (fixture) => {
     await writeFixtureFile(
       fixture.root,
-      'verticals/inventory-stock/src/routes/[lang]/orders/nested.ts',
+      'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/nested.ts',
       'export {};\n',
     );
     const beforeCollision = await snapshotTree(fixture.root);
@@ -2171,7 +2362,10 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
       /route refresh fixture failure/u,
     );
     await stat(
-      path.join(fixture.root, 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx'),
+      path.join(
+        fixture.root,
+        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
+      ),
     );
     const afterRefreshFailure = await snapshotTree(fixture.root);
     const refreshes: string[] = [];
@@ -2299,8 +2493,8 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/billing/src/worker-host/layer.ts',
       'verticals/billing/src/worker-host/main.ts',
       'verticals/inventory-stock/src/policies/stock-available.policy.ts',
-      'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx',
-      'verticals/inventory-stock/src/routes/[lang]/orders/route.meta.ts',
+      'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
+      'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/route.meta.ts',
       'verticals/inventory-stock/api/auth/action-principal.ts',
       'verticals/inventory-stock/src/api/action-gateway.ts',
       'verticals/inventory-stock/shared/apis/resource-detail.ts',

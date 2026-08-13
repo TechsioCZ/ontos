@@ -105,6 +105,7 @@ export interface OutboxWorkerScaffoldConfig {
 
 export interface PageScaffoldConfig {
   readonly page: string;
+  readonly url?: string;
   readonly vertical: string;
 }
 

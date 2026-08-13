@@ -15,6 +15,7 @@ import {
   ContextAccess,
   TenantModuleStateReadUnavailableError,
   TenantModuleStateService,
+  buildInstalledModuleCatalog,
   makePrincipalResolver,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
@@ -78,6 +79,102 @@ const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog 
     moduleIds: Object.freeze([...moduleIds]),
     outboxSubscriptions: Object.freeze([]),
   });
+
+const installedPageCatalog = (): InstalledModuleCatalog =>
+  buildInstalledModuleCatalog([
+    {
+      contract: {
+        deployment: { appId: 'inventory-stock', buildMarker: 'integration-build' },
+        manifest: {
+          activation: {
+            defaultState: 'inactive',
+            preservesHistoryWhenInactive: true,
+            scope: 'tenant',
+            supportedStates: ['inactive', 'active', 'read_only'],
+          },
+          module: {
+            description: 'Integration module.',
+            displayName: 'Integration module',
+            id: 'testing.pages',
+            implementedAs: 'ultramodern_microvertical',
+            kind: 'business_module',
+          },
+          publicSurface: {
+            actions: [],
+            api: [],
+            components: [
+              {
+                expose: './PageHome',
+                key: 'testing.pages.page-home',
+                mfBoundaryId: 'verticalInventoryStock',
+              },
+              {
+                expose: './PageCustomers',
+                key: 'testing.pages.page-customers',
+                mfBoundaryId: 'verticalInventoryStock',
+              },
+            ],
+            events: [],
+            reports: [],
+            resourceTypes: [],
+            search: [],
+            shellContributions: {
+              mediaAttachments: [],
+              navigation: [
+                {
+                  contributionKey: 'testing.pages.navigation.home',
+                  entrypoint: {
+                    access: 'read',
+                    entrypointKey: 'testing.pages.page.home',
+                    moduleKey: 'testing.pages',
+                    role: 'page',
+                    scope: 'tenant',
+                  },
+                  groupKey: 'shell.navigation.modules',
+                  order: 100,
+                  pageKey: 'testing.pages.page.home',
+                },
+              ],
+              pages: [
+                {
+                  componentKey: 'testing.pages.page-home',
+                  contributionKey: 'testing.pages.page.home',
+                  entrypoint: {
+                    access: 'read',
+                    entrypointKey: 'testing.pages.page.home',
+                    moduleKey: 'testing.pages',
+                    role: 'page',
+                    scope: 'tenant',
+                  },
+                  routePath: '/inventory-stock',
+                },
+                {
+                  componentKey: 'testing.pages.page-customers',
+                  contributionKey: 'testing.pages.page.customers',
+                  entrypoint: {
+                    access: 'read',
+                    entrypointKey: 'testing.pages.page.customers',
+                    moduleKey: 'testing.pages',
+                    role: 'page',
+                    scope: 'tenant',
+                  },
+                  routePath: '/inventory-stock/customers',
+                },
+              ],
+              publicComponents: [],
+              reports: [],
+              resourceDetails: [],
+              search: [],
+              timelines: [],
+            },
+          },
+        },
+        runtime: { outboxSubscriptions: [] },
+        schemaVersion: '2',
+      },
+      expectedAppId: 'inventory-stock',
+    },
+  ]);
 
 test('creates, resolves, persists, revokes, and signs out a Better Auth session', async () => {
   const configuration = await Effect.runPromise(loadAuthConfig());
@@ -178,6 +275,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     });
     await coreDatabase.insert(tenantModuleStates).values([
       { moduleKey: 'testing1', state: 'active', tenantId },
+      { moduleKey: 'testing.pages', state: 'active', tenantId },
       { moduleKey: 'stale-non-installed', state: 'active', tenantId },
       { moduleKey: 'inactive-installed', state: 'suspended', tenantId },
       { moduleKey: 'testing1', state: 'active', tenantId: foreignTenantId },
@@ -223,6 +321,18 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(anonymousModulesResponse.status, 401);
     assert.match(anonymousModulesResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
+    const anonymousPageResponse = await unavailableHandler.handler(
+      new Request(`${configuration.baseUrl}/shell/module-target`, {
+        body: JSON.stringify({
+          entrypointKey: 'testing.pages.page.customers',
+          moduleId: 'testing.pages',
+        }),
+        headers: { 'content-type': 'application/json', origin: configuration.baseUrl },
+        method: 'POST',
+      }),
+    );
+    assert.equal(anonymousPageResponse.status, 401);
+    assert.match(anonymousPageResponse.headers.get('www-authenticate') ?? '', /^Bearer/u);
 
     const signInResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/sign-in`, {
@@ -247,6 +357,58 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const current = await Effect.runPromise(authentication.currentSession(authenticatedHeaders));
     assert.equal(current.identity?.tenantId, tenantId);
     assert.ok(current.identity);
+
+    const pageRuntime = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000009'),
+        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+      Effect.succeed(installedPageCatalog()),
+      false,
+      contextAccessLayer,
+    ).createHandler();
+    handlers.push(pageRuntime);
+    const exactPageResponse = await pageRuntime.handler(
+      new Request(`${configuration.baseUrl}/shell/module-target`, {
+        body: JSON.stringify({
+          entrypointKey: 'testing.pages.page.customers',
+          moduleId: 'testing.pages',
+        }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedHeaders.get('cookie') ?? '',
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    assert.equal(exactPageResponse.status, 200);
+    assert.deepEqual(await exactPageResponse.json(), {
+      appId: 'inventory-stock',
+      componentKey: 'testing.pages.page-customers',
+      entrypointKey: 'testing.pages.page.customers',
+      moduleId: 'testing.pages',
+      writable: true,
+    });
+    const missingPageResponse = await pageRuntime.handler(
+      new Request(`${configuration.baseUrl}/shell/module-target`, {
+        body: JSON.stringify({
+          entrypointKey: 'testing.pages.page.missing',
+          moduleId: 'testing.pages',
+        }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedHeaders.get('cookie') ?? '',
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      }),
+    );
+    assert.equal(missingPageResponse.status, 404);
 
     const currentSessionResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/session`, {

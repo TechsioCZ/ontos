@@ -49,7 +49,7 @@ Codesmith governs every Shell-visible artifact and patches safe descriptors plus
 runtime registration atomically:
 
 ```bash
-pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
+pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> [--url <url>]
 pnpm scaffold:public-component -- --vertical <vertical> --component <component>
 pnpm scaffold:module-api -- --vertical <vertical> --api <api>
 pnpm scaffold:search-provider -- --vertical <vertical> --provider <provider>
@@ -57,6 +57,15 @@ pnpm scaffold:report -- --vertical <vertical> --report <report>
 pnpm check:module-contracts
 pnpm module-entrypoints:check
 ```
+
+`scaffold:microvertical-page` keeps the lower-kebab `--page` value as the stable component,
+entrypoint, locale, and Module Federation identity. Its optional `--url` is a complete
+root-relative canonical-path override. Without it, Codesmith uses
+`/<microvertical>/<page>`: `--vertical crm --page customers` produces canonical
+`/crm/customers`, which the localized Shell router exposes as `/cs/crm/customers` and
+`/en/crm/customers`. Do not include a locale in `--url`; the router owns that prefix. The generated
+private, non-indexable starter contains only a localized title, and the authenticated Shell/Core
+gateway must resolve its exact page entrypoint before the private remote loads.
 
 ## Private-First Public Surfaces
 
