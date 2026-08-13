@@ -27,4 +27,5 @@ export const createCrmI18nResources = (
   en: { [ultramodernRouteNamespace]: flattenLocaleResource(resources.en) },
 });
 
-export const crmSupportedLanguages = ['en', 'cs'];
+export const crmFallbackLanguage = 'en';
+export const crmSupportedLanguages = [crmFallbackLanguage, 'cs'];

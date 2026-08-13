@@ -3,14 +3,18 @@ import type { ReactNode } from 'react';
 import csResource from '../../locales/cs/crm.json';
 import enResource from '../../locales/en/crm.json';
 import { ultramodernRouteNamespace } from '../routes/ultramodern-route-metadata';
-import { createCrmI18nResources, crmSupportedLanguages } from './crm-i18n-resources';
+import {
+  createCrmI18nResources,
+  crmFallbackLanguage,
+  crmSupportedLanguages,
+} from './crm-i18n-resources';
 
 const resources = createCrmI18nResources({ cs: csResource, en: enResource });
 
 export const CrmFederatedI18nBoundary = ({ children }: { readonly children: ReactNode }) => (
   <FederatedI18nBoundary
     defaultNamespace={ultramodernRouteNamespace}
-    fallbackLanguage="en"
+    fallbackLanguage={crmFallbackLanguage}
     resources={resources}
     supportedLanguages={crmSupportedLanguages}
   >
