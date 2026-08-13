@@ -25,8 +25,8 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       tsConfigPath: './tsconfig.mf-types.json',
     },
     exposes: {
-      './PageCustomers': './src/routes/[lang]/customers/page.tsx',
-      './PageDeals': './src/routes/[lang]/deals/page.tsx',
+      './PageCustomers': './src/federation/page-customers.ts',
+      './PageDeals': './src/federation/page-deals.ts',
     },
     filename: 'remoteEntry.js',
     name: 'verticalCrm',

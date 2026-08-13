@@ -3,18 +3,31 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, rstest, test } from '@rstest/core';
 import { toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
+import type { ReactNode } from 'react';
+import { PageCustomers } from '../../../../src/federation-entry.tsx';
 import { CustomersPage } from '../../../../src/routes/[lang]/customers/page.tsx';
 import type { CustomerPageModel } from '../../../../src/customers/customer-view-model.ts';
 
-const { createMock, deleteMock, directoryMock, editMock, navigateMock, useLoaderDataMock } =
-  rstest.hoisted(() => ({
-    createMock: rstest.fn(),
-    deleteMock: rstest.fn(),
-    directoryMock: rstest.fn(),
-    editMock: rstest.fn(),
-    navigateMock: rstest.fn(),
-    useLoaderDataMock: rstest.fn(),
-  }));
+const {
+  createMock,
+  deleteMock,
+  directoryMock,
+  editMock,
+  federatedI18nState,
+  navigateMock,
+  useLoaderDataMock,
+} = rstest.hoisted(() => ({
+  createMock: rstest.fn(),
+  deleteMock: rstest.fn(),
+  directoryMock: rstest.fn(),
+  editMock: rstest.fn(),
+  federatedI18nState: {
+    resources: undefined as Record<string, Record<string, Record<string, string>>> | undefined,
+    shellOnly: false,
+  },
+  navigateMock: rstest.fn(),
+  useLoaderDataMock: rstest.fn(),
+}));
 
 const labels: Record<string, string> = {
   'crm.navigation.customers': 'Customers',
@@ -50,12 +63,26 @@ const labels: Record<string, string> = {
 };
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  FederatedI18nBoundary: ({
+    children,
+    resources,
+  }: {
+    readonly children: ReactNode;
+    readonly resources: Record<string, Record<string, Record<string, string>>>;
+  }) => {
+    federatedI18nState.resources = resources;
+    return children;
+  },
   useModernI18n: () => ({
-    language: 'en',
-    t: (key: string, options?: Record<string, unknown>) =>
-      key === 'crm.pages.customers.list.page'
+    language: federatedI18nState.shellOnly ? 'cs' : 'en',
+    t: (key: string, options?: Record<string, unknown>) => {
+      if (federatedI18nState.shellOnly) {
+        return federatedI18nState.resources?.cs?.crm?.[key] ?? key;
+      }
+      return key === 'crm.pages.customers.list.page'
         ? `Page ${options?.page}`
-        : (labels[key] ?? key.split('.').at(-1) ?? key),
+        : (labels[key] ?? key.split('.').at(-1) ?? key);
+    },
   }),
 }));
 
@@ -130,6 +157,8 @@ const getNameInput = () => {
 };
 
 beforeEach(() => {
+  federatedI18nState.resources = undefined;
+  federatedI18nState.shellOnly = false;
   useLoaderDataMock.mockReturnValue(model);
   createMock.mockReturnValue(Effect.succeed(customerView));
   editMock.mockReturnValue(Effect.succeed({ ...customerView, version: 2 }));
@@ -172,6 +201,22 @@ test('links the embedded CRM page to both CRM sections without adding search', (
     '?page=crm.core.page.deals',
   );
   expect(screen.queryByRole('search')).toBeNull();
+});
+
+test('renders Czech CRM copy from the federated page entry hosted by the Shell runtime', () => {
+  federatedI18nState.shellOnly = true;
+  useLoaderDataMock.mockReturnValue({ retryHref: '/cs/crm', state: 'unavailable' });
+
+  render(<PageCustomers target={{ writable: true }} />);
+
+  expect(screen.getByRole('heading', { name: 'Zákazníci' })).toBeTruthy();
+  expect(
+    screen.getByText(
+      'Data zákazníků jsou dočasně nedostupná. Hodnoty formuláře zůstaly zachovány.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Zkusit znovu' })).toBeTruthy();
+  expect(screen.queryByText('crm.pages.customers.title')).toBeNull();
 });
 
 test('ignores the Shell resolved loader model when rendered as an embedded page', async () => {

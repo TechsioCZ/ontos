@@ -75,13 +75,23 @@ test('keeps complete English and Czech CRM catalogs owner-local', async () => {
 });
 
 test('publishes only the generated CRM page components and no starter CRUD surface', async () => {
-  const [federationConfig, sharedApi] = await Promise.all([
-    readFile(path.join(crmRoot, 'module-federation.config.ts'), 'utf-8'),
-    readFile(path.join(crmRoot, 'shared/api.ts'), 'utf-8'),
-  ]);
+  const [customersEntry, dealsEntry, federationConfig, federationEntry, sharedApi] =
+    await Promise.all([
+      readFile(path.join(crmRoot, 'src/federation/page-customers.ts'), 'utf-8'),
+      readFile(path.join(crmRoot, 'src/federation/page-deals.ts'), 'utf-8'),
+      readFile(path.join(crmRoot, 'module-federation.config.ts'), 'utf-8'),
+      readFile(path.join(crmRoot, 'src/federation-entry.tsx'), 'utf-8'),
+      readFile(path.join(crmRoot, 'shared/api.ts'), 'utf-8'),
+    ]);
 
-  assert.match(federationConfig, /'\.\/PageCustomers'/u);
-  assert.match(federationConfig, /'\.\/PageDeals'/u);
+  assert.match(federationConfig, /'\.\/PageCustomers': '\.\/src\/federation\/page-customers\.ts'/u);
+  assert.match(federationConfig, /'\.\/PageDeals': '\.\/src\/federation\/page-deals\.ts'/u);
+  assert.match(federationEntry, /import '\.\/routes\/index\.css';/u);
+  assert.match(federationEntry, /CrmFederatedI18nBoundary/u);
+  assert.match(customersEntry, /PageCustomers as default/u);
+  assert.match(dealsEntry, /PageDeals as default/u);
+  assert.doesNotMatch(federationConfig, /'\.\/PageCustomers': '[^']*routes\/\[lang\]/u);
+  assert.doesNotMatch(federationConfig, /'\.\/PageDeals': '[^']*routes\/\[lang\]/u);
   assert.doesNotMatch(federationConfig, /'\.\/(?:Route|Widget)'/u);
   assert.doesNotMatch(sharedApi, /HttpApiEndpoint\.post\([^)]*'\/crm'/u);
   assert.doesNotMatch(sharedApi, /listCrm|getCrm|createCrm/u);
