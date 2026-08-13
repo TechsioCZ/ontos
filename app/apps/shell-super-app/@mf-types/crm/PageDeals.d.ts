@@ -1,2 +1,2 @@
-export * from './compiled-types/src/routes/[lang]/deals/page';
-export { default } from './compiled-types/src/routes/[lang]/deals/page';
+export * from './compiled-types/src/federation/page-deals';
+export { default } from './compiled-types/src/federation/page-deals';

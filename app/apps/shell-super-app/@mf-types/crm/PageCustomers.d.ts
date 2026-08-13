@@ -1,2 +1,2 @@
-export * from './compiled-types/src/routes/[lang]/customers/page';
-export { default } from './compiled-types/src/routes/[lang]/customers/page';
+export * from './compiled-types/src/federation/page-customers';
+export { default } from './compiled-types/src/federation/page-customers';
