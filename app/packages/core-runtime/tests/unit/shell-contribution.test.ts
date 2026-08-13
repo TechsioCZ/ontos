@@ -45,6 +45,7 @@ const full = () => ({
       componentKey: `${moduleId}.dashboard`,
       contributionKey: `${moduleId}.page.dashboard`,
       entrypoint: entrypoint('page'),
+      routePath: '/property-dashboard',
     },
   ],
   publicComponents: [
@@ -147,4 +148,7 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
   const withRemote = full();
   withRemote.pages[0] = { ...withRemote.pages[0]!, remote: 'private/remote' } as never;
   assert.throws(() => validateShellContributions(withRemote, references));
+  const withUnsafeRoute = full();
+  withUnsafeRoute.pages[0] = { ...withUnsafeRoute.pages[0]!, routePath: '/modules/:moduleId' };
+  assert.throws(() => validateShellContributions(withUnsafeRoute, references));
 });

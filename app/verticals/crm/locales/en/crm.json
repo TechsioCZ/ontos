@@ -1,0 +1,28 @@
+{
+  "crm": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "crm",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Crm Vertical",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "crm": {
+        "description": "This page is ready for implementation.",
+        "empty": "No content has been added yet.",
+        "title": "New Page"
+      }
+    }
+  }
+}

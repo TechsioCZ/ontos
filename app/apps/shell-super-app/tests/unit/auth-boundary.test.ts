@@ -20,7 +20,7 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
 
   expect(authentication['kind']).toBe('shell-core-capability');
   expect(authentication['owners']).toEqual(['shell-super-app', 'core-runtime']);
-  expect(installedVerticalIds).toEqual([]);
+  expect(installedVerticalIds).toEqual(['crm']);
   expect(shell['verticalRefs']).toEqual(installedVerticalIds);
   expect(
     (

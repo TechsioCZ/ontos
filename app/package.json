@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @app/shell-super-app --filter './verticals/*' run \"/^dev(?::worker)?$/\"",
     "dev:shell": "pnpm --filter @app/shell-super-app dev",
+    "env:local:ensure": "node ./scripts/ensure-local-environment.mts",
     "db:generate": "pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate",
     "db:bootstrap-runtime-role": "node ./scripts/postgres/bootstrap-runtime-role.mts",
     "db:migrate": "pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role",

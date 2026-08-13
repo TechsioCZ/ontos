@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off
 /* eslint-disable max-classes-per-file -- The validated service and its configuration error form one boundary. */
-import path from 'node:path';
+import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { config as loadDotenv } from 'dotenv';
 import { Context, Effect, Layer, Schema } from 'effect';
 
@@ -8,15 +8,7 @@ export class AuthConfigError extends Schema.TaggedErrorClass<AuthConfigError>()(
   reason: Schema.String,
 }) {}
 
-const invocationRoot =
-  process.env['ULTRAMODERN_WORKSPACE_ROOT'] ?? process.env['INIT_CWD'] ?? process.cwd();
-const workspaceRoot = ['apps', 'packages', 'verticals'].includes(
-  path.basename(path.dirname(invocationRoot)),
-)
-  ? path.resolve(invocationRoot, '../..')
-  : invocationRoot;
-
-export const ROOT_ENV_PATH = path.resolve(workspaceRoot, '.env');
+export const ROOT_ENV_PATH = APP_ENV_PATH;
 
 type Environment = Readonly<Record<string, string | undefined>>;
 

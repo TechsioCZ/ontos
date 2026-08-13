@@ -14,7 +14,9 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-0-core-infrastructure",
-          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
+          "references": [
+            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
+          ]
         }
       }
     },
@@ -49,7 +51,9 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-1-shared-contract",
-          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
+          "references": [
+            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
+          ]
         }
       }
     },
@@ -65,7 +69,25 @@
         "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
         "blastRadius": {
           "tier": "tier-1-shared-contract",
-          "references": ["docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"]
+          "references": [
+            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
+          ]
+        }
+      }
+    },
+    {
+      "id": "crm",
+      "package": "@app/crm",
+      "path": "verticals/crm",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/crm.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#crm"]
         }
       }
     }

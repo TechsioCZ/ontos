@@ -1946,7 +1946,7 @@ test('generates an accessible translated private page, patches every locale, and
       ['--vertical', 'inventory-stock', '--page', 'purchase-orders'],
       (appId) => refreshes.push(appId),
     );
-    assert.deepEqual(refreshes, ['inventory-stock']);
+    assert.deepEqual(refreshes, ['inventory-stock', 'shell-super-app']);
     const page = await readFixtureFile(
       fixture.root,
       'verticals/inventory-stock/src/routes/[lang]/purchase-orders/page.tsx',
@@ -2009,11 +2009,34 @@ export default PurchaseOrdersPage;
     );
     assert.match(manifest, /inventory\.stock\.navigation\.purchase-orders/u);
     assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
+    assert.match(manifest, /routePath: '\/purchase-orders'/u);
     assert.match(registration, /page-purchase-orders/u);
     assert.match(federation, /\.\/PagePurchaseOrders/u);
     assert.match(
       shellClients,
-      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('verticalInventoryStock\/PagePurchaseOrders'\)/u,
+      /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('inventoryStock\/PagePurchaseOrders'\)/u,
+    );
+    assert.equal(
+      await readFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/purchase-orders/page.tsx',
+      ),
+      `export { default } from '../modules/[moduleId]/page.tsx';
+`,
+    );
+    assert.match(
+      await readFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/purchase-orders/page.data.ts',
+      ),
+      /moduleId: 'inventory\.stock'/u,
+    );
+    assert.match(
+      await readFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/purchase-orders/route.meta.ts',
+      ),
+      /canonicalPath: '\/purchase-orders'/u,
     );
     assert.equal(
       await readFixtureFile(
@@ -2158,7 +2181,7 @@ test('page prerequisite and nested-route failures are preflighted, while refresh
       ['--vertical', 'inventory-stock', '--page', 'orders'],
       (appId) => refreshes.push(appId),
     );
-    assert.deepEqual(refreshes, ['inventory-stock']);
+    assert.deepEqual(refreshes, ['inventory-stock', 'shell-super-app']);
     assert.deepEqual(await snapshotTree(fixture.root), afterRefreshFailure);
   });
 });
@@ -2213,7 +2236,7 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
     fixture,
     'microvertical-page',
     ['--vertical', 'inventory-stock', '--page', 'orders'],
-    (appId) => assert.equal(appId, 'inventory-stock'),
+    (appId) => assert.ok(['inventory-stock', 'shell-super-app'].includes(appId)),
   );
   return snapshotTree(fixture.root);
 };

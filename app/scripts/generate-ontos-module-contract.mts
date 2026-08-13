@@ -32,6 +32,7 @@ import {
   MODULE_REGISTRATION_WORKER_SLOT_END,
   MODULE_REGISTRATION_WORKER_SLOT_START,
   ONTOS_MODULE_CONTRACT_PACKAGE_SCHEMA_VERSION,
+  toPascalCase,
 } from './scaffolding/shared.mts';
 
 interface GenerateInput {
@@ -259,7 +260,7 @@ const deriveContract = async (
   const exposes = await componentExposes(verticalDirectory);
   const componentKeys = Object.keys(owner.manifest.publicSurface.components);
   for (const key of componentKeys) {
-    if (!exposes.has(`./${key}`)) {
+    if (!exposes.has(`./${toPascalCase(key)}`)) {
       throw new Error(`public component ${key} has no matching Module Federation exposure`);
     }
   }
@@ -293,7 +294,7 @@ const deriveContract = async (
           .toSorted((left, right) => left.key.localeCompare(right.key)),
         components: componentKeys
           .map((key) => ({
-            expose: `./${key}`,
+            expose: `./${toPascalCase(key)}`,
             key: `${owner.manifest.module.id}.${toKebab(key)}`,
             mfBoundaryId: topologyEntry.moduleFederation?.name ?? '',
           }))

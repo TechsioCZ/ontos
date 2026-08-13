@@ -186,10 +186,9 @@ Options:
   'microvertical-page': {
     afterGenerate: async (result, options, workspaceRoot) => {
       const pageResult = result as PageScaffoldResult;
-      await (options.routeRefresh ?? defaultRouteRefresh)({
-        appId: pageResult.appId,
-        workspaceRoot,
-      });
+      const refresh = options.routeRefresh ?? defaultRouteRefresh;
+      await refresh({ appId: pageResult.appId, workspaceRoot });
+      await refresh({ appId: 'shell-super-app', workspaceRoot });
     },
     flags: ['page', 'vertical'],
     generator: microverticalPageGenerator,

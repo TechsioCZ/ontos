@@ -112,6 +112,25 @@ test('logs a user in without any server-error response', async ({ page }, testIn
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
+test('loads CRM at its public Shell URL after login', async ({ page }) => {
+  await page.goto('/cs/login');
+  await page
+    .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
+    .fill(e2eCredentials.email);
+  await page.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
+  await page.getByRole('button', { name: 'Přihlásit se' }).click();
+  await expect(page).toHaveURL(/\/cs\/?$/u);
+
+  const crmLink = page.getByRole('link', { name: 'CRM' });
+  await expect(crmLink).toHaveAttribute('href', '/cs/crm');
+  await crmLink.click();
+
+  await expect(page).toHaveURL(/\/cs\/crm\/?$/u);
+  await expect(page.getByRole('heading', { name: 'Nová stránka' })).toBeVisible();
+  await expect(page.getByText('Zatím zde není žádný obsah.')).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toBeVisible();
+});
+
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({
   page,
 }) => {

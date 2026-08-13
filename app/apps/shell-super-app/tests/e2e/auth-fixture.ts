@@ -1,12 +1,14 @@
-import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { config as loadDotenv } from 'dotenv';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import {
   coreDatabaseSchema,
+  dataAccessEvents,
   legalEntities,
   principalAuthBindings,
   principals,
@@ -37,7 +39,7 @@ export const e2eTenants = {
 
 export const createAuthenticationFixture = async () => {
   loadDotenv({
-    path: path.resolve(process.cwd(), '../../.env'),
+    path: APP_ENV_PATH,
     quiet: true,
   });
   const connectionString = process.env['DATABASE_URL'];
@@ -67,6 +69,17 @@ export const createAuthenticationFixture = async () => {
   });
 
   const cleanup = async () => {
+    // Authenticated shell reads write evidence asynchronously. Let those writes
+    // settle, then remove their E2E-owned rows before the referenced identities.
+    await delay(250);
+    await coreDatabase
+      .delete(dataAccessEvents)
+      .where(
+        inArray(dataAccessEvents.principalId, [
+          e2eTenants.first.principalId,
+          e2eTenants.second.principalId,
+        ]),
+      );
     const existingUsers = await authDatabase
       .select({ id: user.id })
       .from(user)
@@ -189,6 +202,8 @@ export const createAuthenticationFixture = async () => {
     },
   ]);
   await coreDatabase.insert(tenantModuleStates).values([
+    { moduleKey: 'crm.core', state: 'active', tenantId: e2eTenants.first.tenantId },
+    { moduleKey: 'crm.core', state: 'active', tenantId: e2eTenants.second.tenantId },
     { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
     { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
   ]);

@@ -5,9 +5,12 @@ dist-cloudflare/
 build/
 .modernjs/cache/
 .modern-js/
+.dev-public/
 **/.modern-js/
 .mf/
 **/.mf/
+**/@mf-types/
+**/test-results/
 .modernjs/agent-reference-repos-tmp/
 .codex/reports/
 .zerops/runtime/

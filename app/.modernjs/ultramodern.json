@@ -3,16 +3,16 @@
   "profile": "cloudflare-ssr-mf-effect-v1",
   "generator": {
     "package": "@modern-js/create",
-    "version": "3.5.0-ultramodern.96"
+    "version": "3.8.1-ultramodern.2"
   },
   "workspace": {
     "packageScope": "app",
     "packageManager": {
       "name": "pnpm",
-      "version": "11.17.0"
+      "version": "11.21.0"
     },
     "node": {
-      "version": "26.5.0",
+      "version": "26.7.0",
       "engineRange": ">=26"
     }
   },
@@ -41,8 +41,16 @@
           "role": "host",
           "name": "shellSuperApp",
           "exposes": [],
-          "verticalRefs": [],
-          "remotes": [],
+          "verticalRefs": ["crm"],
+          "remotes": [
+            {
+              "id": "crm",
+              "alias": "crm",
+              "name": "verticalCrm",
+              "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4101/mf-manifest.json"
+            }
+          ],
           "ssr": true,
           "dts": {
             "compilerInstance": "effect-tsgo",
@@ -57,6 +65,341 @@
           "version": "0.1.0",
           "buildMarker": "090dd0a19fdd0853",
           "sourceRevision": "workspace"
+        },
+        "deploy": {
+          "cloudflare": {
+            "target": "cloudflare",
+            "workerName": "app-shell-super-app",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
+            "compatibilityDate": "2026-06-02",
+            "compatibilityFlags": [
+              "nodejs_compat",
+              "global_fetch_strictly_public"
+            ],
+            "assetsBinding": "ASSETS",
+            "routes": {
+              "ssr": "/en",
+              "mfManifest": "/mf-manifest.json",
+              "locale": "/locales/en/shell.json"
+            },
+            "security": {
+              "enabled": true,
+              "headers": {
+                "referrerPolicy": "strict-origin-when-cross-origin",
+                "contentTypeOptions": "nosniff",
+                "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+              },
+              "contentSecurityPolicy": {
+                "mode": "report-only",
+                "directives": {
+                  "base-uri": ["'self'"],
+                  "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+                  "default-src": ["'self'"],
+                  "font-src": ["'self'", "data:", "https:", "http:"],
+                  "form-action": ["'self'"],
+                  "frame-ancestors": ["'self'"],
+                  "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+                  "manifest-src": ["'self'", "https:", "http:"],
+                  "object-src": ["'none'"],
+                  "script-src": [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "'unsafe-eval'",
+                    "https:",
+                    "http:",
+                    "blob:"
+                  ],
+                  "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+                  "worker-src": ["'self'", "blob:"]
+                },
+                "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+              },
+              "noindex": {
+                "workersDev": true,
+                "localhost": true,
+                "previewHostnames": []
+              }
+            },
+            "qualityGates": {
+              "publicRoutes": {
+                "requireSitemapWhenPresent": true,
+                "requireRobotsSitemapConsistency": true,
+                "requireWebManifestWhenPresent": true
+              },
+              "statusCodes": {
+                "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+                "unknownRouteStatus": 404
+              },
+              "indexing": {
+                "previewNoindex": true,
+                "productionPublicRoutesIndexable": true
+              },
+              "assets": {
+                "cssPreloadRequired": true,
+                "cssResponseRequired": true,
+                "cacheControlRequiredForCss": true,
+                "sourcemapsPubliclyReferenced": false
+              },
+              "budgets": {
+                "ssrHtmlMaxBytes": 250000,
+                "mfManifestMaxBytes": 500000,
+                "localeJsonMaxBytes": 100000,
+                "sitemapXmlMaxBytes": 500000,
+                "cssAssetMaxBytes": 750000
+              },
+              "csp": {
+                "finalMode": "report-only-dogfood",
+                "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+              }
+            },
+            "evidence": {
+              "proofScript": "scripts/proof-cloudflare-version.mts",
+              "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+            }
+          }
+        }
+      },
+      {
+        "id": "crm",
+        "kind": "vertical",
+        "package": "@app/crm",
+        "packageSuffix": "crm",
+        "displayName": "Crm Vertical",
+        "path": "verticals/crm",
+        "domain": "crm",
+        "port": 4101,
+        "portEnv": "VERTICAL_CRM_PORT",
+        "moduleFederation": {
+          "role": "remote",
+          "name": "verticalCrm",
+          "exposes": ["./PageCrm"],
+          "ssr": true,
+          "dts": {
+            "compilerInstance": "effect-tsgo",
+            "tsConfigPath": "./tsconfig.mf-types.json"
+          }
+        },
+        "backendFederation": {
+          "role": "microvertical-server",
+          "name": "verticalCrmBackend",
+          "runtimeFramework": "effect",
+          "strictEffectApproach": true,
+          "deliveryUnit": {
+            "schemaVersion": 1,
+            "kind": "microvertical-delivery-unit",
+            "unitId": "app/crm",
+            "packageName": "@app/crm",
+            "version": "0.1.0",
+            "buildMarker": "b08ddded31ae2315",
+            "sourceRevision": "workspace"
+          },
+          "exposes": {
+            "./effect-api": {
+              "contract": "verticals/crm/shared/api.ts",
+              "runtime": "verticals/crm/api/index.ts",
+              "client": "verticals/crm/src/api/crm-client.ts",
+              "openapi": "/crm-api/openapi.json",
+              "readiness": "/crm-api/crm/readiness"
+            }
+          },
+          "versionBoundary": {
+            "invariant": "web-and-api-same-build",
+            "identityRoot": "deliveryUnit",
+            "packageName": "@app/crm",
+            "ui": {
+              "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4101/mf-manifest.json",
+              "buildMarker": "verticals/crm/src/routes/ultramodern-route-metadata.ts"
+            },
+            "api": {
+              "readiness": "/crm-api/crm/readiness",
+              "buildMarker": "verticals/crm/shared/ultramodern-build.ts",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM"
+            }
+          },
+          "executionSurfaces": {
+            "cloudflare": {
+              "kind": "cloudflare-worker-snapshot",
+              "workerName": "app-crm",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+              "ssr": {
+                "workerEntry": ".output/server/index.mjs",
+                "workerManifest": ".output/server/modern-worker-manifest.json",
+                "routeManifest": ".output/server/route.json",
+                "ssrBundle": ".output/worker/index.js",
+                "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+                "assetsBinding": "ASSETS"
+              },
+              "zephyr": {
+                "runtime": "ssr-worker",
+                "integration": "managed-cloudflare",
+                "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
+                "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
+                "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+              },
+              "workerDispatch": {
+                "preferred": "service-binding",
+                "serviceBinding": "VERTICAL_CRM_WORKER",
+                "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
+                "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
+                "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+                "requestInterface": "fetch"
+              }
+            },
+            "node": {
+              "kind": "node-mf-runtime",
+              "adapterVersion": "backend-mf-effect-v1",
+              "remoteName": "verticalCrmBackend",
+              "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+              "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
+              "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+              "remoteType": "commonjs-module",
+              "expose": "./effect-api",
+              "runtimePackage": "@modern-js/plugin-bff/effect",
+              "expected": {
+                "unitId": "app/crm",
+                "buildMarker": "b08ddded31ae2315"
+              }
+            }
+          },
+          "compatibility": {
+            "contractVersion": "microvertical-server-effect-v1",
+            "packageName": "@app/crm",
+            "effectVersion": "4.0.0-beta.97",
+            "moduleFederationVersion": "2.8.0"
+          },
+          "cache": {
+            "cloudflareSnapshot": "immutable",
+            "nodeManifest": "no-store",
+            "nodeVersionedContainer": "immutable",
+            "nodeUnpinnedContainer": "revalidate"
+          },
+          "fallback": {
+            "timeoutMs": 1500,
+            "failureEvent": "modernjs:microvertical-server-fallback",
+            "strategy": "typed-effect-error"
+          }
+        },
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/crm",
+          "packageName": "@app/crm",
+          "version": "0.1.0",
+          "buildMarker": "b08ddded31ae2315",
+          "sourceRevision": "workspace"
+        },
+        "api": {
+          "runtime": "effect",
+          "stem": "crm",
+          "prefix": "/crm-api",
+          "consumedBy": ["shell-super-app", "crm"],
+          "serverEntry": "verticals/crm/api/index.ts"
+        },
+        "deploy": {
+          "cloudflare": {
+            "target": "cloudflare",
+            "workerName": "app-crm",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+            "compatibilityDate": "2026-06-02",
+            "compatibilityFlags": [
+              "nodejs_compat",
+              "global_fetch_strictly_public"
+            ],
+            "assetsBinding": "ASSETS",
+            "routes": {
+              "ssr": "/en",
+              "mfManifest": "/mf-manifest.json",
+              "locale": "/locales/en/crm.json",
+              "apiReadiness": "/crm-api/crm/readiness"
+            },
+            "security": {
+              "enabled": true,
+              "headers": {
+                "referrerPolicy": "strict-origin-when-cross-origin",
+                "contentTypeOptions": "nosniff",
+                "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+              },
+              "contentSecurityPolicy": {
+                "mode": "report-only",
+                "directives": {
+                  "base-uri": ["'self'"],
+                  "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
+                  "default-src": ["'self'"],
+                  "font-src": ["'self'", "data:", "https:", "http:"],
+                  "form-action": ["'self'"],
+                  "frame-ancestors": ["'self'"],
+                  "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
+                  "manifest-src": ["'self'", "https:", "http:"],
+                  "object-src": ["'none'"],
+                  "script-src": [
+                    "'self'",
+                    "'unsafe-inline'",
+                    "'unsafe-eval'",
+                    "https:",
+                    "http:",
+                    "blob:"
+                  ],
+                  "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
+                  "worker-src": ["'self'", "blob:"]
+                },
+                "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+              },
+              "noindex": {
+                "workersDev": true,
+                "localhost": true,
+                "previewHostnames": []
+              }
+            },
+            "qualityGates": {
+              "publicRoutes": {
+                "requireSitemapWhenPresent": true,
+                "requireRobotsSitemapConsistency": true,
+                "requireWebManifestWhenPresent": true
+              },
+              "statusCodes": {
+                "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+                "unknownRouteStatus": 404
+              },
+              "indexing": {
+                "previewNoindex": true,
+                "productionPublicRoutesIndexable": true
+              },
+              "assets": {
+                "cssPreloadRequired": true,
+                "cssResponseRequired": true,
+                "cacheControlRequiredForCss": true,
+                "sourcemapsPubliclyReferenced": false
+              },
+              "budgets": {
+                "ssrHtmlMaxBytes": 250000,
+                "mfManifestMaxBytes": 500000,
+                "localeJsonMaxBytes": 100000,
+                "sitemapXmlMaxBytes": 500000,
+                "cssAssetMaxBytes": 750000
+              },
+              "csp": {
+                "finalMode": "report-only-dogfood",
+                "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+              }
+            },
+            "evidence": {
+              "proofScript": "scripts/proof-cloudflare-version.mts",
+              "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
+            },
+            "jsonSmokeChecks": [
+              {
+                "id": "crm-readiness-smoke",
+                "route": "/crm-api/crm/readiness",
+                "expect": {
+                  "status": "ready",
+                  "checks.api": "ready",
+                  "checks.moduleFederation": "ready",
+                  "checks.ssr": "ready"
+                }
+              }
+            ]
+          }
         }
       }
     ]
@@ -67,19 +410,13 @@
     "dependencies": [],
     "lockfilePolicy": "nested",
     "gates": [],
-    "reactSingletons": [
-      "react",
-      "react-dom"
-    ]
+    "reactSingletons": ["react", "react-dom"]
   },
   "deploy": {
     "worker": {
       "wrangler": {
         "compatibility_date": "2026-06-02",
-        "compatibility_flags": [
-          "nodejs_compat",
-          "global_fetch_strictly_public"
-        ]
+        "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"]
       },
       "artifacts": [],
       "publicAssetExcludes": []
@@ -94,11 +431,83 @@
         "name": "shellSuperApp",
         "exposes": [],
         "hostOnly": true
+      },
+      {
+        "id": "crm",
+        "path": "verticals/crm",
+        "role": "remote",
+        "name": "verticalCrm",
+        "exposes": ["./PageCrm"],
+        "hostOnly": false
       }
     ]
   },
   "backendFederation": {
-    "apps": []
+    "apps": [
+      {
+        "id": "crm",
+        "path": "verticals/crm",
+        "role": "microvertical-server",
+        "name": "verticalCrmBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "contractVersion": "microvertical-server-effect-v1",
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/crm",
+          "packageName": "@app/crm",
+          "version": "0.1.0",
+          "buildMarker": "b08ddded31ae2315",
+          "sourceRevision": "workspace"
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-crm",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+            "ssr": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "routeManifest": ".output/server/route.json",
+              "ssrBundle": ".output/worker/index.js",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+              "assetsBinding": "ASSETS"
+            },
+            "zephyr": {
+              "runtime": "ssr-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_CRM_WORKER",
+              "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v1",
+            "remoteName": "verticalCrmBackend",
+            "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff/effect",
+            "expected": {
+              "unitId": "app/crm",
+              "buildMarker": "b08ddded31ae2315"
+            }
+          }
+        }
+      }
+    ]
   },
   "agentSkills": {
     "target": "codex",

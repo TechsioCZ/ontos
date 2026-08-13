@@ -198,9 +198,9 @@ const pageWiring = (vertical: PageVerticalMetadata, page: string) => {
     manifestImport: `import { ${componentName} } from './src/routes/[lang]/${page}/page.tsx';`,
     manifestComponent: `'page-${page}': ${componentName},`,
     manifestNavigation: `{ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' },`,
-    manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint} },`,
+    manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, routePath: '/${page}' },`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${page}/page.tsx'),`,
-    shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${vertical.mfBoundaryId}/Page${toPascalCase(page)}') },`,
+    shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${toCamelCase(vertical.appId)}/Page${toPascalCase(page)}') },`,
   } as const;
 };
 
@@ -273,6 +273,52 @@ ${localisedPaths}
   public: false,
   publicSurface: 'private-app-screen',
   titleKey: '${keyRoot}.title',
+} as const;
+
+export default routeMeta;
+export { routeMeta };
+`;
+};
+
+const renderShellConnectorPage = (): string =>
+  `export { default } from '../modules/[moduleId]/page.tsx';
+`;
+
+const renderShellConnectorLoader = (vertical: PageVerticalMetadata): string =>
+  `import { loader as loadModuleTarget } from '../modules/[moduleId]/page.data.ts';
+
+interface ShellPageLoaderArguments {
+  readonly request: Request;
+}
+
+export const loader = ({ request }: ShellPageLoaderArguments) =>
+  loadModuleTarget({ params: { moduleId: '${vertical.moduleId}' }, request });
+`;
+
+const renderShellConnectorMetadata = (vertical: PageVerticalMetadata, page: string): string => {
+  const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '/${page}',`).join('\n');
+  return `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
+
+const routeMeta = {
+  canonicalPath: '/${page}',
+  descriptionKey: 'shell.moduleTarget.seoDescription',
+  entrypoint: defineSystemModuleEntrypoint({
+    access: 'read',
+    entrypointKey: 'shell-super-app.page.${vertical.appId}-${page}',
+    moduleKey: 'shell-super-app',
+    role: 'page',
+  }),
+  id: 'shell-${vertical.appId}-${page}',
+  indexable: false,
+  localisedPaths: {
+${localisedPaths}
+  },
+  mfBoundaryId: 'shellSuperApp',
+  namespace: 'shell',
+  ownerAppId: 'shell-super-app',
+  public: false,
+  publicSurface: 'private-app-screen',
+  titleKey: 'shell.moduleTarget.title',
 } as const;
 
 export default routeMeta;
@@ -396,6 +442,25 @@ const isExactGeneratedPage = async (
     ),
     'utf8',
   );
+  const shellRouteDirectory = resolveContainedPath(
+    workspaceRoot,
+    'apps',
+    'shell-super-app',
+    'src',
+    'routes',
+    '[lang]',
+    page,
+  );
+  const shellRouteMatches = await Promise.all(
+    [
+      ['page.tsx', renderShellConnectorPage()],
+      ['page.data.ts', renderShellConnectorLoader(vertical)],
+      ['route.meta.ts', renderShellConnectorMetadata(vertical, page)],
+    ].map(async ([fileName, expected]) => {
+      const filePath = path.join(shellRouteDirectory, fileName);
+      return (await pathExists(filePath)) && (await readFile(filePath, 'utf8')) === expected;
+    }),
+  );
   return (
     vertical.manifestContent.includes(wiring.manifestImport) &&
     vertical.manifestContent.includes(wiring.manifestComponent) &&
@@ -403,7 +468,8 @@ const isExactGeneratedPage = async (
     vertical.manifestContent.includes(wiring.manifestNavigation) &&
     vertical.registrationContent.includes(wiring.registrationPage) &&
     federation.includes(`'./Page${toPascalCase(page)}'`) &&
-    shellClients.includes(wiring.shellClient)
+    shellClients.includes(wiring.shellClient) &&
+    shellRouteMatches.every(Boolean)
   );
 };
 
@@ -424,6 +490,15 @@ export const planPageScaffold = async (
   );
   const pagePath = path.join(routeDirectory, 'page.tsx');
   const routeMetadataPath = path.join(routeDirectory, 'route.meta.ts');
+  const shellRouteDirectory = resolveContainedPath(
+    workspaceRoot,
+    'apps',
+    'shell-super-app',
+    'src',
+    'routes',
+    '[lang]',
+    page,
+  );
   if (await pathExists(routeDirectory)) {
     if (
       await isExactGeneratedPage(
@@ -441,6 +516,11 @@ export const planPageScaffold = async (
       };
     }
     throw new Error(`page route already exists or collides with nested content: ${routeDirectory}`);
+  }
+  if (await pathExists(shellRouteDirectory)) {
+    throw new Error(
+      `Shell route already exists or collides with generated page: ${shellRouteDirectory}`,
+    );
   }
   const pageMutation = await createMutation(pagePath, renderPage(vertical, page));
   const routeMutation = await createMutation(
@@ -492,6 +572,18 @@ export const planPageScaffold = async (
       (candidate) => candidate.endsWith(','),
     ),
   );
+  const shellPageMutation = await createMutation(
+    path.join(shellRouteDirectory, 'page.tsx'),
+    renderShellConnectorPage(),
+  );
+  const shellLoaderMutation = await createMutation(
+    path.join(shellRouteDirectory, 'page.data.ts'),
+    renderShellConnectorLoader(vertical),
+  );
+  const shellRouteMetadataMutation = await createMutation(
+    path.join(shellRouteDirectory, 'route.meta.ts'),
+    renderShellConnectorMetadata(vertical, page),
+  );
   const mutations = [
     pageMutation,
     routeMutation,
@@ -500,6 +592,9 @@ export const planPageScaffold = async (
     registrationMutation,
     federationMutation,
     shellClientsMutation,
+    shellPageMutation,
+    shellLoaderMutation,
+    shellRouteMetadataMutation,
   ].filter((mutation) => mutation !== undefined);
   ensureUniqueMutationPaths(mutations);
   return {

@@ -10,6 +10,11 @@ const order = Schema.Finite.check(
   Schema.isInt(),
   Schema.isBetween({ maximum: 10_000, minimum: 0 }),
 );
+const routePath = Schema.String.check(
+  Schema.isMinLength(2),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*)*$/u),
+);
 
 const allowsRead = (access: string): boolean => access === 'read' || access === 'historical_read';
 
@@ -84,6 +89,7 @@ export const ShellPageContributionSchema = Schema.Struct({
   componentKey: stableKey,
   contributionKey: stableKey,
   entrypoint: pageEntrypoint,
+  routePath,
 });
 
 export const ShellPublicComponentContributionSchema = Schema.Struct({

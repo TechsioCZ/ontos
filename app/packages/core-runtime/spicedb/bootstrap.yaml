@@ -63,14 +63,26 @@ relationships: |-
   resource:test-tenant--entity-one--property-registry--unit--unit-one#module@module_access:test-tenant--entity-one--property-registry
   resource:test-tenant--entity-one--property-registry--unit--unit-one#reader@principal:allowed-principal
   resource:test-tenant--entity-one--property-registry--unit--unit-one#writer@principal:allowed-principal
+  tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#member@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+  tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#member@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#tenant@tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76
+  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#member@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#member@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#legal_entity@legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ
+  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#accessor@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#accessor@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
   tenant:50000000-0000-4000-8000-000000000001#member@principal:60000000-0000-4000-8000-000000000001
   tenant:50000000-0000-4000-8000-000000000001#identity_admin@principal:60000000-0000-4000-8000-000000000001
   tenant:50000000-0000-4000-8000-000000000001#support@principal:60000000-0000-4000-8000-000000000001
   legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#tenant@tenant:50000000-0000-4000-8000-000000000001
   legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#member@principal:60000000-0000-4000-8000-000000000001
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjcm0uY29yZSJd#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjcm0uY29yZSJd#accessor@principal:60000000-0000-4000-8000-000000000001
   tenant:50000000-0000-4000-8000-000000000002#member@principal:60000000-0000-4000-8000-000000000002
   legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#tenant@tenant:50000000-0000-4000-8000-000000000002
   legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:60000000-0000-4000-8000-000000000002
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjcm0uY29yZSJd#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjcm0uY29yZSJd#accessor@principal:60000000-0000-4000-8000-000000000002
 
 assertions:
   assertTrue:
@@ -90,8 +102,16 @@ assertions:
     - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
     - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
     - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:allowed-principal
+    - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+    - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+    - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+    - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+    - module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+    - module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
     - tenant:50000000-0000-4000-8000-000000000001#manage_identity@principal:60000000-0000-4000-8000-000000000001
     - tenant:50000000-0000-4000-8000-000000000001#impersonate@principal:60000000-0000-4000-8000-000000000001
+    - module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjcm0uY29yZSJd#access@principal:60000000-0000-4000-8000-000000000001
+    - module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjcm0uY29yZSJd#access@principal:60000000-0000-4000-8000-000000000002
     - legal_entity:test-tenant--entity-one#access@principal:allowed-principal
     - module_access:test-tenant--entity-one--property-registry#access@principal:allowed-principal
     - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:allowed-principal

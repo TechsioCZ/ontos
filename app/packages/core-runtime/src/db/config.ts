@@ -1,20 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off
-import path from 'node:path';
 import { config as loadDotenv } from 'dotenv';
 import { Context, Effect, Layer } from 'effect';
+import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
 import { DatabaseConfigError } from './config-error.ts';
 
 export { DatabaseConfigError } from './config-error.ts';
 
-const invocationRoot =
-  process.env['ULTRAMODERN_WORKSPACE_ROOT'] ?? process.env['INIT_CWD'] ?? process.cwd();
-const workspaceRoot = ['apps', 'packages', 'verticals'].includes(
-  path.basename(path.dirname(invocationRoot)),
-)
-  ? path.resolve(invocationRoot, '../..')
-  : invocationRoot;
-
-export const ROOT_ENV_PATH = path.resolve(workspaceRoot, '.env');
+export const ROOT_ENV_PATH = APP_ENV_PATH;
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
