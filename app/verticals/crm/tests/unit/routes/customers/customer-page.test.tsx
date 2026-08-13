@@ -174,6 +174,20 @@ test('links the embedded CRM page to both CRM sections without adding search', (
   expect(screen.queryByRole('search')).toBeNull();
 });
 
+test('ignores the Shell resolved loader model when rendered as an embedded page', async () => {
+  useLoaderDataMock.mockReturnValue({
+    shell: { state: 'authenticated' },
+    state: 'resolved',
+    target: { moduleId: 'crm.core' },
+  });
+
+  render(<CustomersPage target={{ writable: true }} />);
+
+  expect(screen.getByText('Loading customers')).toBeTruthy();
+  await waitFor(() => expect(directoryMock).toHaveBeenCalledTimes(1));
+  expect(await screen.findAllByText('Acme')).not.toHaveLength(0);
+});
+
 test('hydrates through a stable loading state before showing URL validation', async () => {
   useLoaderDataMock.mockReturnValue({
     reason: 'invalid_page',

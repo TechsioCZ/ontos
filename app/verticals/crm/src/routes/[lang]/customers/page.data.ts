@@ -735,15 +735,38 @@ export const isCustomerPageModel = (value: unknown): value is CustomerPageModel 
   if (typeof value !== 'object' || value === null || !('state' in value)) {
     return false;
   }
-  return [
-    'empty',
-    'forbidden',
-    'loading',
-    'not_found',
-    'resolved',
-    'unavailable',
-    'validation',
-  ].includes(`${value.state}`);
+  const candidate = value as Record<string, unknown>;
+  const hasPagination = () => {
+    const { pagination } = candidate;
+    return (
+      typeof pagination === 'object' &&
+      pagination !== null &&
+      'page' in pagination &&
+      typeof pagination.page === 'number'
+    );
+  };
+  switch (candidate['state']) {
+    case 'empty': {
+      return hasPagination();
+    }
+    case 'forbidden':
+    case 'loading':
+    case 'not_found': {
+      return true;
+    }
+    case 'resolved': {
+      return hasPagination() && Array.isArray(candidate['rows']);
+    }
+    case 'unavailable': {
+      return typeof candidate['retryHref'] === 'string';
+    }
+    case 'validation': {
+      return typeof candidate['reason'] === 'string' && typeof candidate['resetHref'] === 'string';
+    }
+    default: {
+      return false;
+    }
+  }
 };
 
 interface CustomerLoaderArguments {
