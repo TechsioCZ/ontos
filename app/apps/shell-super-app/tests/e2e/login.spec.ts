@@ -112,7 +112,9 @@ test('logs a user in without any server-error response', async ({ page }, testIn
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
-test('loads CRM at its public Shell URL after login', async ({ page }) => {
+test('loads localized English and Czech CRM pages only after login', async ({ page }) => {
+  await page.goto('/en/crm');
+  await expect(page.getByRole('heading', { name: 'New Page' })).toHaveCount(0);
   await page.goto('/cs/crm');
   await expect(page.getByRole('heading', { name: 'Nová stránka' })).toHaveCount(0);
 
@@ -133,6 +135,13 @@ test('loads CRM at its public Shell URL after login', async ({ page }) => {
   await expect(page.getByText('Tato stránka je připravena k implementaci.')).toHaveCount(0);
   await expect(page.getByText('Zatím zde není žádný obsah.')).toHaveCount(0);
   await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toBeVisible();
+
+  await page.goto('/en/crm');
+  await expect(page).toHaveURL(/\/en\/crm\/?$/u);
+  await expect(page.getByRole('heading', { name: 'New Page' })).toBeVisible();
+  await expect(page.getByText('This page is ready for implementation.')).toHaveCount(0);
+  await expect(page.getByText('No content has been added yet.')).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
 });
 
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({

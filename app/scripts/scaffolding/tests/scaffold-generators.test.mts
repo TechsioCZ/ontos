@@ -71,6 +71,14 @@ const billingVertical: FixtureVertical = {
   slug: 'billing',
 };
 
+const hrVertical: FixtureVertical = {
+  appId: 'hr',
+  mfBoundaryId: 'verticalHr',
+  moduleId: 'hr.core',
+  namespace: 'hr',
+  slug: 'hr',
+};
+
 const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
@@ -172,6 +180,41 @@ const createVertical = async (root: string, vertical: FixtureVertical): Promise<
       ),
     ),
   );
+  const resourcesName = `${vertical.slug
+    .split('-')
+    .map((segment, index) =>
+      index === 0 ? segment : `${segment[0]?.toUpperCase() ?? ''}${segment.slice(1)}`,
+    )
+    .join('')}I18nResources`;
+  await writeFixtureFile(
+    root,
+    `verticals/${vertical.slug}/src/i18n/resources.ts`,
+    `import csResource from '../../locales/cs/${vertical.namespace}.json';
+import enResource from '../../locales/en/${vertical.namespace}.json';
+
+type LocaleResource = string | { readonly [key: string]: LocaleResource };
+
+const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<string, string> => {
+  if (typeof resource === 'string') {
+    return prefix.length > 0 ? { [prefix]: resource } : {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(resource).flatMap(([key, value]) => {
+      const nextKey = prefix.length > 0 ? \`\${prefix}.\${key}\` : key;
+      return typeof value === 'string'
+        ? [[nextKey, value]]
+        : Object.entries(flattenLocaleResource(value, nextKey));
+    }),
+  );
+};
+
+export const ${resourcesName} = {
+  cs: { ${vertical.namespace}: flattenLocaleResource(csResource) },
+  en: { ${vertical.namespace}: flattenLocaleResource(enResource) },
+} as const;
+`,
+  );
   await writeFixtureFile(
     root,
     `verticals/${vertical.slug}/src/routes/ultramodern-route-head.tsx`,
@@ -203,12 +246,13 @@ const createFixture = async (): Promise<Fixture> => {
   );
   await createVertical(root, inventoryVertical);
   await createVertical(root, billingVertical);
+  await createVertical(root, hrVertical);
   await writeFixtureFile(
     root,
     'topology/reference-topology.json',
     json({
       schemaVersion: 1,
-      verticals: [inventoryVertical, billingVertical].map((vertical) => ({
+      verticals: [inventoryVertical, billingVertical, hrVertical].map((vertical) => ({
         domain: vertical.namespace,
         id: vertical.appId,
         kind: 'vertical',
@@ -222,7 +266,7 @@ const createFixture = async (): Promise<Fixture> => {
     }),
   );
   await Promise.all(
-    [inventoryVertical, billingVertical].map((vertical) =>
+    [inventoryVertical, billingVertical, hrVertical].map((vertical) =>
       runScaffold('module-contract', ['--vertical', vertical.slug, '--module', vertical.moduleId], {
         workspaceRoot: root,
       }),
@@ -501,10 +545,23 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       fixture.root,
       'verticals/billing/module-federation.config.ts',
     );
-    await writeFile(billingFederationPath, 'export default {};\n', 'utf8');
+    await writeFile(
+      billingFederationPath,
+      `const ignored = /exposes: \\{\\}/u;
+// exposes: {}
+export default { exposes: {} };
+void ignored;
+`,
+      'utf-8',
+    );
+    await run(fixture, 'public-component', ['--vertical', 'billing', '--name', 'billing-summary']);
+    const commentSafeFederation = await readFile(billingFederationPath, 'utf-8');
+    assert.match(commentSafeFederation, /\/exposes: \\\{\\\}\/u/u);
+    assert.match(commentSafeFederation, /\.\/BillingSummary/u);
+    await writeFile(billingFederationPath, 'export default {};\n', 'utf-8');
     const beforeUnpatchable = await snapshotTree(fixture.root);
     await assert.rejects(
-      run(fixture, 'public-component', ['--vertical', 'billing', '--name', 'billing-summary']),
+      run(fixture, 'public-component', ['--vertical', 'billing', '--name', 'billing-details']),
       /exposes object is missing/u,
     );
     assert.deepEqual(await snapshotTree(fixture.root), beforeUnpatchable);
@@ -1995,6 +2052,10 @@ export default PurchaseOrdersPage;
       fixture.root,
       'verticals/inventory-stock/module-federation.config.ts',
     );
+    const federatedPage = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/federation/page-purchase-orders.tsx',
+    );
     const shellClients = await readFixtureFile(
       fixture.root,
       'apps/shell-super-app/src/api/vertical-clients.ts',
@@ -2003,7 +2064,12 @@ export default PurchaseOrdersPage;
     assert.match(manifest, /inventory\.stock\.page\.purchase-orders/u);
     assert.match(manifest, /routePath: '\/inventory-stock\/purchase-orders'/u);
     assert.match(registration, /page-purchase-orders/u);
-    assert.match(federation, /\.\/PagePurchaseOrders/u);
+    assert.match(
+      federation,
+      /'\.\/PagePurchaseOrders': '\.\/src\/federation\/page-purchase-orders\.tsx'/u,
+    );
+    assert.match(federatedPage, /<FederatedI18nBoundary/u);
+    assert.match(federatedPage, /resources=\{inventoryStockI18nResources\}/u);
     assert.match(
       shellClients,
       /appId: 'inventory-stock', componentKey: 'inventory\.stock\.page-purchase-orders', load: \(\) => import\('inventoryStock\/PagePurchaseOrders'\)/u,
@@ -2095,6 +2161,189 @@ export { routeMeta };
   });
 });
 
+test('allows a two-letter MicroVertical slug in a derived default page URL', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-page', ['--vertical', 'hr', '--page', 'people']);
+    await stat(path.join(fixture.root, 'verticals/hr/src/routes/[lang]/hr/people/page.tsx'));
+    assert.match(
+      await readFixtureFile(fixture.root, 'verticals/hr/vertical.manifest.ts'),
+      /routePath: '\/hr\/people'/u,
+    );
+  });
+});
+
+test('renders a newly generated federated page with English and Czech owner resources', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'customers',
+    ]);
+    await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
+    await Promise.all(
+      ['react', 'react-dom'].map((packageName) =>
+        symlink(
+          path.join(appRoot, 'apps', 'shell-super-app', 'node_modules', packageName),
+          path.join(fixture.root, 'node_modules', packageName),
+          'dir',
+        ),
+      ),
+    );
+    await writeFixtureFile(
+      fixture.root,
+      'node_modules/@modern-js/plugin-i18n/package.json',
+      json({
+        exports: { './runtime': './runtime.tsx' },
+        name: '@modern-js/plugin-i18n',
+        type: 'module',
+      }),
+    );
+    await writeFixtureFile(
+      fixture.root,
+      'node_modules/@modern-js/plugin-i18n/runtime.tsx',
+      `import { createContext, useContext } from 'react';
+import type { ReactNode } from 'react';
+
+interface BoundaryValue {
+  readonly defaultNamespace: string;
+  readonly resources: Readonly<Record<string, Readonly<Record<string, Readonly<Record<string, string>>>>>>;
+}
+
+const BoundaryContext = createContext<BoundaryValue>({ defaultNamespace: '', resources: {} });
+
+export const FederatedI18nBoundary = ({
+  children,
+  defaultNamespace,
+  resources,
+}: BoundaryValue & { readonly children: ReactNode }) => (
+  <BoundaryContext.Provider value={{ defaultNamespace, resources }}>
+    {children}
+  </BoundaryContext.Provider>
+);
+
+export const useModernI18n = () => {
+  const boundary = useContext(BoundaryContext);
+  return {
+    t: (key: string) =>
+      boundary.resources[process.env['PAGE_LANGUAGE'] ?? 'en']?.[boundary.defaultNamespace]?.[key] ??
+      key,
+  };
+};
+`,
+    );
+    const runnerPath = path.join(fixture.root, 'render-generated-page.tsx');
+    await writeFile(
+      runnerPath,
+      `import { renderToStaticMarkup } from 'react-dom/server';
+import Page from './verticals/inventory-stock/src/federation/page-customers.tsx';
+
+process.stdout.write(renderToStaticMarkup(<Page />));
+`,
+      'utf-8',
+    );
+    const bundlePath = path.join(fixture.root, 'render-generated-page.cjs');
+    const bundle = spawnSync(
+      esbuildPath,
+      [
+        runnerPath,
+        '--bundle',
+        '--format=cjs',
+        '--jsx=automatic',
+        '--platform=node',
+        `--outfile=${bundlePath}`,
+      ],
+      { cwd: fixture.root, encoding: 'utf-8' },
+    );
+    assert.equal(bundle.status, 0, bundle.stderr || bundle.error?.message);
+    const renderLanguage = (language: 'cs' | 'en') =>
+      spawnSync(process.execPath, [bundlePath], {
+        cwd: fixture.root,
+        encoding: 'utf-8',
+        env: { ...process.env, PAGE_LANGUAGE: language },
+      });
+    const english = renderLanguage('en');
+    const czech = renderLanguage('cs');
+    assert.equal(english.status, 0, english.stderr);
+    assert.equal(czech.status, 0, czech.stderr);
+    assert.match(english.stdout, />New Page<\/h1>/u);
+    assert.match(czech.stdout, />Nová stránka<\/h1>/u);
+  });
+});
+
+test('adds further pages after generated owner files have been formatted', async () => {
+  await withFixture(async (fixture) => {
+    const formattedOwnerPaths = [
+      'verticals/inventory-stock/vertical.manifest.ts',
+      'verticals/inventory-stock/vertical.registration.ts',
+      'apps/shell-super-app/src/api/vertical-clients.ts',
+    ] as const;
+    const formatOwners = async (): Promise<void> => {
+      await Promise.all(
+        formattedOwnerPaths.map(async (relativePath) => {
+          const filePath = path.join(fixture.root, relativePath);
+          const formatted = spawnSync(oxfmtPath, [`--stdin-filepath=${relativePath}`], {
+            cwd: appRoot,
+            encoding: 'utf-8',
+            input: await readFile(filePath, 'utf-8'),
+          });
+          assert.equal(formatted.status, 0, formatted.stderr);
+          await writeFile(filePath, formatted.stdout, 'utf-8');
+        }),
+      );
+    };
+
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'purchase-orders',
+    ]);
+    await formatOwners();
+
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'customers',
+    ]);
+    await formatOwners();
+
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'customer-notes',
+    ]);
+
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+    const registration = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+    const shellClients = await readFixtureFile(
+      fixture.root,
+      'apps/shell-super-app/src/api/vertical-clients.ts',
+    );
+    await Promise.all(
+      ['customer-notes', 'customers', 'purchase-orders'].map(async (page) => {
+        assert.match(manifest, new RegExp(`inventory\\.stock\\.page\\.${page}`, 'u'));
+        assert.match(registration, new RegExp(`'page-${page}'`, 'u'));
+        assert.match(shellClients, new RegExp(`inventory\\.stock\\.page-${page}`, 'u'));
+        await stat(
+          path.join(
+            fixture.root,
+            `verticals/inventory-stock/src/routes/[lang]/inventory-stock/${page}/page.tsx`,
+          ),
+        );
+      }),
+    );
+  });
+});
+
 test('supports an explicit nested page URL and rejects unsafe URL inputs atomically', async () => {
   await withFixture(async (fixture) => {
     await run(fixture, 'microvertical-page', [
@@ -2157,9 +2406,29 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
     assert.deepEqual(await snapshotTree(fixture.root), beforeRerun);
   });
 
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'orders',
+      '--url',
+      '/orders',
+    ]);
+    await stat(
+      path.join(fixture.root, 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx'),
+    );
+    assert.match(
+      await readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts'),
+      /routePath: '\/orders'/u,
+    );
+  });
+
   await Promise.all(
     [
       '/cs/orders',
+      '/de/orders',
+      '/en-us/orders',
       '/orders/',
       '/Orders',
       '/orders/:id',
@@ -2185,6 +2454,211 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
       }),
     ),
   );
+});
+
+test('rejects reserved, dynamic, and cross-owner page URLs before writing', async () => {
+  await Promise.all([
+    withFixture(async (fixture) => {
+      await writeFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx',
+        'export default function ModulePage() { return null; }\n',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customers',
+          '--url',
+          '/modules/customers',
+        ]),
+        /collides with dynamic route segment \[moduleId\]/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      await writeFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/login/page.tsx',
+        'export default function LoginPage() { return null; }\n',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customers',
+          '--url',
+          '/login/customers',
+        ]),
+        /reserved route prefix \/login/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      await run(fixture, 'microvertical-page', [
+        '--vertical',
+        'billing',
+        '--page',
+        'customers',
+        '--url',
+        '/shared/customers',
+      ]);
+      await rm(path.join(fixture.root, 'apps/shell-super-app/src/routes/[lang]/shared/customers'), {
+        recursive: true,
+      });
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customer-list',
+          '--url',
+          '/shared/customers',
+        ]),
+        /already registered by billing/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+  ]);
+});
+
+test('uses exact page identities and rejects edited generated wiring', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'order-lines',
+    ]);
+    await run(fixture, 'microvertical-page', ['--vertical', 'inventory-stock', '--page', 'order']);
+    await stat(
+      path.join(
+        fixture.root,
+        'verticals/inventory-stock/src/routes/[lang]/inventory-stock/order/page.tsx',
+      ),
+    );
+  });
+
+  await Promise.all([
+    withFixture(async (fixture) => {
+      await run(fixture, 'microvertical-page', [
+        '--vertical',
+        'inventory-stock',
+        '--page',
+        'orders',
+        '--url',
+        '/first/orders',
+      ]);
+      const manifestPath = path.join(
+        fixture.root,
+        'verticals/inventory-stock/vertical.manifest.ts',
+      );
+      const manifest = await readFile(manifestPath, 'utf-8');
+      await writeFile(
+        manifestPath,
+        manifest
+          .replaceAll("'page-orders'", '"page-orders"')
+          .replaceAll("'inventory.stock.page.orders'", '"inventory.stock.page.orders"'),
+        'utf-8',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'orders',
+          '--url',
+          '/second/orders',
+        ]),
+        /page identity inventory\.stock\.page\.orders already exists/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
+      await run(fixture, 'microvertical-page', arguments_);
+      const manifestPath = path.join(
+        fixture.root,
+        'verticals/inventory-stock/vertical.manifest.ts',
+      );
+      const manifest = await readFile(manifestPath, 'utf-8');
+      await writeFile(manifestPath, manifest.replace('order: 100', 'order: 101'), 'utf-8');
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', arguments_),
+        /already exists|collides/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
+      await run(fixture, 'microvertical-page', arguments_);
+      const manifestPath = path.join(
+        fixture.root,
+        'verticals/inventory-stock/vertical.manifest.ts',
+      );
+      const manifest = await readFile(manifestPath, 'utf-8');
+      await writeFile(
+        manifestPath,
+        manifest.replace(
+          '// </generated-module-shell-navigation>',
+          `{ contributionKey : "inventory.stock.navigation.orders", entrypoint: { access: 'read', entrypointKey: 'inventory.stock.page.orders', moduleKey: 'inventory.stock', role: 'page', scope: 'tenant' }, groupKey: 'shell.navigation.modules', order: 101, pageKey: 'inventory.stock.page.orders' },
+        // </generated-module-shell-navigation>`,
+        ),
+        'utf-8',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', arguments_),
+        /already exists|collides/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
+      await run(fixture, 'microvertical-page', arguments_);
+      const federationPath = path.join(
+        fixture.root,
+        'verticals/inventory-stock/module-federation.config.ts',
+      );
+      const federation = await readFile(federationPath, 'utf-8');
+      await writeFile(
+        federationPath,
+        federation.replace(
+          "'./src/federation/page-orders.tsx'",
+          "'./src/federation/page-other.tsx'",
+        ),
+        'utf-8',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', arguments_),
+        /already exists|collides/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      const arguments_ = ['--vertical', 'inventory-stock', '--page', 'orders'];
+      await run(fixture, 'microvertical-page', arguments_);
+      await writeFixtureFile(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/inventory-stock/orders/developer-note.ts',
+        'export const developerNote = true;\n',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', arguments_),
+        /already exists|collides/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+  ]);
 });
 
 test('migrates only exact legacy generated page output and then reruns as a no-op', async () => {
@@ -2495,6 +2969,7 @@ test('every generated TypeScript file is already formatter-stable', async () => 
       'verticals/inventory-stock/src/policies/stock-available.policy.ts',
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
       'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/route.meta.ts',
+      'verticals/inventory-stock/src/federation/page-orders.tsx',
       'verticals/inventory-stock/api/auth/action-principal.ts',
       'verticals/inventory-stock/src/api/action-gateway.ts',
       'verticals/inventory-stock/shared/apis/resource-detail.ts',
@@ -2629,6 +3104,7 @@ test('all generated files typecheck against the real workspace contracts', async
             '@app/inventory-stock/outbox/*': ['./verticals/inventory-stock/shared/outbox/*.ts'],
             '@app/shared-contracts': [path.join(appRoot, 'packages/shared-contracts/src/index.ts')],
           },
+          resolveJsonModule: true,
           skipLibCheck: true,
           strict: true,
           target: 'ESNext',
@@ -2644,6 +3120,8 @@ test('all generated files typecheck against the real workspace contracts', async
           'verticals/inventory-stock/src/policies/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.ts',
           'verticals/inventory-stock/src/routes/**/*.tsx',
+          'verticals/inventory-stock/src/federation/**/*.tsx',
+          'verticals/inventory-stock/src/i18n/**/*.ts',
           'verticals/inventory-stock/api/**/*.ts',
           'verticals/inventory-stock/src/api/**/*.ts',
           'verticals/inventory-stock/shared/apis/**/*.ts',

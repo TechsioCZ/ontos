@@ -256,38 +256,168 @@ export const pathExists = async (targetPath: string): Promise<boolean> => {
   }
 };
 
-export const insertModuleFederationExposure = (
+const regexMayStartAt = (content: string, index: number): boolean => {
+  const prefix = content.slice(0, index).trimEnd();
+  if (prefix.length === 0) {
+    return true;
+  }
+  if (/[([{=,:;!?&|+\-*%^~<>]$/u.test(prefix)) {
+    return true;
+  }
+  return /(?:\bcase|\bdefault|\bdelete|\bdo|\belse|\bin|\binstanceof|\bnew|\breturn|\bthrow|\btypeof|\bvoid|\byield|=>)$/u.test(
+    prefix,
+  );
+};
+
+type NonCodeState =
+  | 'block-comment'
+  | 'double-quote'
+  | 'line-comment'
+  | 'regex'
+  | 'single-quote'
+  | 'template';
+
+const nonCodeStateAt = (
   content: string,
-  exposureKey: string,
-  sourcePath: string,
-): string => {
-  const propertyIndex = content.search(/\bexposes\s*:/u);
-  if (propertyIndex < 0) {
-    throw new Error('generated Module Federation exposes object is missing');
+  index: number,
+  character: string,
+  next: string | undefined,
+): NonCodeState | undefined => {
+  if (character === '/' && next === '/') {
+    return 'line-comment';
   }
-  const openIndex = content.indexOf('{', propertyIndex);
-  if (openIndex < 0) {
-    throw new Error('generated Module Federation exposes object is malformed');
+  if (character === '/' && next === '*') {
+    return 'block-comment';
   }
-  let quote: "'" | '"' | '`' | undefined;
+  if (character === "'") {
+    return 'single-quote';
+  }
+  if (character === '"') {
+    return 'double-quote';
+  }
+  if (character === '`') {
+    return 'template';
+  }
+  return character === '/' && regexMayStartAt(content, index) ? 'regex' : undefined;
+};
+
+interface NonCodeTransition {
+  readonly escaped: boolean;
+  readonly regexCharacterClass: boolean;
+  readonly state: NonCodeState | undefined;
+}
+
+const advanceNonCodeState = (
+  state: NonCodeState,
+  character: string,
+  next: string | undefined,
+  escaped: boolean,
+  regexCharacterClass: boolean,
+): NonCodeTransition => {
+  if (state === 'line-comment') {
+    return {
+      escaped: false,
+      regexCharacterClass: false,
+      state: character === '\n' || character === '\r' ? undefined : state,
+    };
+  }
+  if (state === 'block-comment') {
+    return {
+      escaped: false,
+      regexCharacterClass: false,
+      state: character === '*' && next === '/' ? undefined : state,
+    };
+  }
+  if (escaped) {
+    return { escaped: false, regexCharacterClass, state };
+  }
+  if (character === '\\') {
+    return { escaped: true, regexCharacterClass, state };
+  }
+  if (
+    (state === 'single-quote' && character === "'") ||
+    (state === 'double-quote' && character === '"') ||
+    (state === 'template' && character === '`')
+  ) {
+    return { escaped: false, regexCharacterClass: false, state: undefined };
+  }
+  if (state !== 'regex') {
+    return { escaped: false, regexCharacterClass, state };
+  }
+  if (character === '[') {
+    return { escaped: false, regexCharacterClass: true, state };
+  }
+  if (character === ']') {
+    return { escaped: false, regexCharacterClass: false, state };
+  }
+  return {
+    escaped: false,
+    regexCharacterClass,
+    state: character === '/' && !regexCharacterClass ? undefined : state,
+  };
+};
+
+const maskNonCode = (content: string, preserveStrings = false): string => {
+  const masked = [...content];
+  let state: NonCodeState | undefined;
   let escaped = false;
-  let depth = 0;
-  let closeIndex = -1;
-  for (let index = openIndex; index < content.length; index += 1) {
-    const character = content[index];
-    if (quote !== undefined) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === '\\') {
-        escaped = true;
-      } else if (character === quote) {
-        quote = undefined;
+  let regexCharacterClass = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const character = content[index] ?? '';
+    const next = content[index + 1];
+    if (state === undefined) {
+      state = nonCodeStateAt(content, index, character, next);
+      if (state !== undefined) {
+        if (
+          !preserveStrings ||
+          state === 'block-comment' ||
+          state === 'line-comment' ||
+          state === 'regex'
+        ) {
+          masked[index] = ' ';
+        }
+        if (state === 'line-comment' || state === 'block-comment') {
+          masked[index + 1] = ' ';
+          index += 1;
+        }
       }
       continue;
     }
-    if (character === "'" || character === '"' || character === '`') {
-      quote = character;
-    } else if (character === '{') {
+    const isString = state === 'double-quote' || state === 'single-quote' || state === 'template';
+    if (!preserveStrings || !isString) {
+      masked[index] = character === '\n' || character === '\r' ? character : ' ';
+    }
+    const transition = advanceNonCodeState(state, character, next, escaped, regexCharacterClass);
+    if (state === 'block-comment' && transition.state === undefined) {
+      masked[index + 1] = ' ';
+      index += 1;
+    }
+    ({ escaped, regexCharacterClass, state } = transition);
+  }
+  return masked.join('');
+};
+
+const moduleFederationExposesRange = (
+  content: string,
+): { readonly closeIndex: number; readonly openIndex: number; readonly propertyIndex: number } => {
+  const code = maskNonCode(content);
+  const propertyMatches = [...code.matchAll(/\bexposes\s*:/gu)];
+  if (propertyMatches.length === 0) {
+    throw new Error('generated Module Federation exposes object is missing');
+  }
+  if (propertyMatches.length > 1) {
+    throw new Error('generated Module Federation exposes object is duplicated');
+  }
+  const propertyIndex = propertyMatches[0]?.index ?? -1;
+  const openIndex = code.indexOf('{', propertyIndex);
+  if (openIndex === -1) {
+    throw new Error('generated Module Federation exposes object is malformed');
+  }
+  let depth = 0;
+  let closeIndex = -1;
+  for (let index = openIndex; index < code.length; index += 1) {
+    const character = code[index];
+    if (character === '{') {
       depth += 1;
     } else if (character === '}') {
       depth -= 1;
@@ -297,15 +427,51 @@ export const insertModuleFederationExposure = (
       }
     }
   }
-  if (closeIndex < 0) {
+  if (closeIndex === -1) {
     throw new Error('generated Module Federation exposes object is malformed');
   }
+  return { closeIndex, openIndex, propertyIndex };
+};
+
+export const moduleFederationExposureSource = (
+  content: string,
+  exposureKey: string,
+): string | undefined => {
+  const { closeIndex, openIndex } = moduleFederationExposesRange(content);
   const body = content.slice(openIndex + 1, closeIndex);
-  if (
-    body.includes(`'${exposureKey}'`) ||
-    body.includes(`"${exposureKey}"`) ||
-    body.includes(`\`${exposureKey}\``)
-  ) {
+  const searchableBody = maskNonCode(body, true);
+  const escapedKey = exposureKey.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const keyMatches = [
+    ...searchableBody.matchAll(
+      new RegExp(`(?:'${escapedKey}'|"${escapedKey}"|\`${escapedKey}\`)\\s*:`, 'gu'),
+    ),
+  ];
+  if (keyMatches.length > 1) {
+    throw new Error(`Module Federation exposure ${exposureKey} is duplicated`);
+  }
+  const matches = [
+    ...searchableBody.matchAll(
+      new RegExp(
+        `(?:'${escapedKey}'|"${escapedKey}"|\`${escapedKey}\`)\\s*:\\s*(?:'(?<single>[^']+)'|"(?<double>[^"]+)"|\`(?<template>[^\`]+)\`)`,
+        'gu',
+      ),
+    ),
+  ];
+  if (keyMatches.length === 1 && matches.length !== 1) {
+    throw new Error(`Module Federation exposure ${exposureKey} is malformed`);
+  }
+  const [match] = matches;
+  return match?.groups?.['single'] ?? match?.groups?.['double'] ?? match?.groups?.['template'];
+};
+
+export const insertModuleFederationExposure = (
+  content: string,
+  exposureKey: string,
+  sourcePath: string,
+): string => {
+  const { closeIndex, openIndex, propertyIndex } = moduleFederationExposesRange(content);
+  const body = content.slice(openIndex + 1, closeIndex);
+  if (moduleFederationExposureSource(content, exposureKey) !== undefined) {
     throw new Error(`Module Federation exposure ${exposureKey} already exists`);
   }
   const lineStart = content.lastIndexOf('\n', propertyIndex) + 1;
@@ -890,6 +1056,188 @@ export const applyMutationPlan = async <Result,>(
   return plan.result;
 };
 
+const dedentGeneratedSlotBody = (slotBody: string): string => {
+  const lines = slotBody.split('\n');
+  while (lines[0]?.trim().length === 0) {
+    lines.shift();
+  }
+  while (lines.at(-1)?.trim().length === 0) {
+    lines.pop();
+  }
+  if (lines.length === 0) {
+    return '';
+  }
+  const indentation = Math.min(
+    ...lines
+      .filter((line) => line.trim().length > 0)
+      .map((line) => line.match(/^[ \t]*/u)?.[0].length ?? 0),
+  );
+  return lines.map((line) => line.slice(indentation)).join('\n');
+};
+
+interface GeneratedSlotScanState {
+  blockComment: boolean;
+  braces: number;
+  brackets: number;
+  escaped: boolean;
+  lineComment: boolean;
+  parentheses: number;
+  quote: '"' | "'" | '`' | undefined;
+}
+
+const consumeGeneratedSlotProtectedCharacter = (
+  state: GeneratedSlotScanState,
+  character: string,
+  previousCharacter: string,
+  nextCharacter: string,
+): boolean => {
+  if (state.lineComment) {
+    if (character === '\n') {
+      state.lineComment = false;
+    }
+    return true;
+  }
+  if (state.blockComment) {
+    if (previousCharacter === '*' && character === '/') {
+      state.blockComment = false;
+    }
+    return true;
+  }
+  if (state.quote !== undefined) {
+    if (state.escaped) {
+      state.escaped = false;
+    } else if (character === '\\') {
+      state.escaped = true;
+    } else if (character === state.quote) {
+      state.quote = undefined;
+    }
+    return true;
+  }
+  if (character === '/' && nextCharacter === '/') {
+    state.lineComment = true;
+    return true;
+  }
+  if (character === '/' && nextCharacter === '*') {
+    state.blockComment = true;
+    return true;
+  }
+  if (character === '"' || character === "'" || character === '`') {
+    state.quote = character;
+    return true;
+  }
+  return false;
+};
+
+const updateGeneratedSlotDepth = (state: GeneratedSlotScanState, character: string): void => {
+  if (character === '{') {
+    state.braces += 1;
+  } else if (character === '}') {
+    state.braces -= 1;
+  } else if (character === '[') {
+    state.brackets += 1;
+  } else if (character === ']') {
+    state.brackets -= 1;
+  } else if (character === '(') {
+    state.parentheses += 1;
+  } else if (character === ')') {
+    state.parentheses -= 1;
+  }
+};
+
+const generatedSlotDepthIsZero = (state: GeneratedSlotScanState): boolean =>
+  state.braces === 0 && state.brackets === 0 && state.parentheses === 0;
+
+const splitGeneratedSlotEntries = (slotBody: string): readonly string[] => {
+  const body = dedentGeneratedSlotBody(slotBody);
+  if (body.length === 0) {
+    return [];
+  }
+  const entries: string[] = [];
+  let current = '';
+  const state: GeneratedSlotScanState = {
+    blockComment: false,
+    braces: 0,
+    brackets: 0,
+    escaped: false,
+    lineComment: false,
+    parentheses: 0,
+    quote: undefined,
+  };
+  for (let index = 0; index < body.length; index += 1) {
+    const character = body[index] ?? '';
+    const previousCharacter = body[index - 1] ?? '';
+    const nextCharacter = body[index + 1] ?? '';
+    current += character;
+    if (
+      consumeGeneratedSlotProtectedCharacter(state, character, previousCharacter, nextCharacter)
+    ) {
+      continue;
+    }
+    updateGeneratedSlotDepth(state, character);
+    if (state.braces < 0 || state.brackets < 0 || state.parentheses < 0) {
+      throw new Error('generated owner slot contains unbalanced syntax');
+    }
+    if (generatedSlotDepthIsZero(state) && (character === ',' || character === ';')) {
+      entries.push(current.trim());
+      current = '';
+    }
+  }
+  if (
+    current.trim().length > 0 ||
+    state.quote !== undefined ||
+    state.lineComment ||
+    state.blockComment ||
+    !generatedSlotDepthIsZero(state)
+  ) {
+    throw new Error('generated owner slot contains incomplete syntax');
+  }
+  return entries;
+};
+
+const normalizeGeneratedSlotEntry = (entry: string): string =>
+  entry
+    .replaceAll(/,\s*(?<closing>[}\]])/gu, '$<closing>')
+    .replaceAll(/\s+/gu, ' ')
+    .replaceAll(/\s+(?<closing>[}\]])/gu, '$<closing>')
+    .trim();
+
+export const readGeneratedSlotEntries = (
+  content: string,
+  startMarker: string,
+  endMarker: string,
+): readonly string[] => {
+  const start = content.indexOf(startMarker);
+  const end = content.indexOf(endMarker);
+  if (
+    start === -1 ||
+    end === -1 ||
+    start >= end ||
+    content.includes(startMarker, start + startMarker.length) ||
+    content.includes(endMarker, end + endMarker.length)
+  ) {
+    throw new Error(`generated owner file does not contain one valid ${startMarker} slot`);
+  }
+  try {
+    return splitGeneratedSlotEntries(content.slice(start + startMarker.length, end));
+  } catch {
+    throw new Error(`generated owner slot contains unsupported developer content: ${startMarker}`);
+  }
+};
+
+export const generatedSlotContainsExactEntry = (
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  expected: string,
+): boolean => {
+  const normalizedExpected = normalizeGeneratedSlotEntry(expected);
+  return (
+    readGeneratedSlotEntries(content, startMarker, endMarker).filter(
+      (entry) => normalizeGeneratedSlotEntry(entry) === normalizedExpected,
+    ).length === 1
+  );
+};
+
 export const insertSortedSlot = (
   content: string,
   startMarker: string,
@@ -909,21 +1257,28 @@ export const insertSortedSlot = (
     throw new Error(`generated owner file does not contain one valid ${startMarker} slot`);
   }
   const bodyStart = start + startMarker.length;
-  const slotBody = content.slice(bodyStart, end);
-  const existing = slotBody
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+  const existing = readGeneratedSlotEntries(content, startMarker, endMarker);
   if (existing.some((line) => !validateEntry(line))) {
     throw new Error(`generated owner slot contains unsupported developer content: ${startMarker}`);
   }
+  const existingNormalized = new Set(existing.map(normalizeGeneratedSlotEntry));
   for (const entry of additions) {
-    if (existing.includes(entry)) {
+    if (existingNormalized.has(normalizeGeneratedSlotEntry(entry))) {
       throw new Error(`generated export already exists: ${entry}`);
     }
   }
-  const entries = [...existing, ...additions].toSorted((left, right) => left.localeCompare(right));
+  const entries = [...existing, ...additions].toSorted((left, right) =>
+    normalizeGeneratedSlotEntry(left).localeCompare(normalizeGeneratedSlotEntry(right)),
+  );
   const endLineStart = Math.max(content.lastIndexOf('\n', end - 1) + 1, 0);
   const indentation = content.slice(endLineStart, end).match(/^[ \t]*/u)?.[0] ?? '';
-  return `${content.slice(0, bodyStart)}\n${entries.map((entry) => `${indentation}${entry}`).join('\n')}\n${content.slice(end)}`;
+  const renderedEntries = entries
+    .map((entry) =>
+      entry
+        .split('\n')
+        .map((line) => `${indentation}${line}`)
+        .join('\n'),
+    )
+    .join('\n');
+  return `${content.slice(0, bodyStart)}\n${renderedEntries}\n${content.slice(end)}`;
 };

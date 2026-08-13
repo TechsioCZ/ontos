@@ -154,32 +154,33 @@ Execute every command to validate the chore with zero regressions.
 ## Implementation Evidence
 
 - `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` passed.
-- Focused page-generator coverage passed 5/5 tests. The full scaffolding suite passed 30/33;
-  its three failures are unrelated existing baselines: a stale Action fixture missing
+- Focused page-generator coverage now proves formatted multi-page owner slots, exact current/legacy
+  wiring (including conflicting duplicates), one- and multi-segment URLs, two-letter owner slugs,
+  exact page identities, general explicit locale-prefix rejection, and reserved, dynamic, and
+  cross-owner collision preflight. It also executes a newly generated federated page with the
+  owner's English and Czech resources. The full scaffolding suite passed 35/38; its three failures
+  are unrelated existing baselines: a stale Action fixture missing
   `--legal-entity-scope`, unavailable generated gateway-issuer keys, and a disposable typecheck
   fixture missing `system-principal-context-provenance.ts`. The formatter-stability generator test
   passed.
 - `mise exec -- pnpm scaffold:microvertical-page -- --help` passed and documented the optional URL
-  plus `/<vertical>/<page>` default. The CRM migration command was run repeatedly and reran without
-  source changes.
-- `mise exec -- pnpm --filter @app/shell-super-app test:unit` passed 141/141 tests.
-- The focused live integration path reached the new endpoint and proved anonymous `401`, exact
-  authenticated second-page `200`, and unknown-page `404`. It then stopped later in the pre-existing
-  suite on local SpiceDB authorization; other full-suite failures were local admin database
-  credentials and identity fixture state.
-- The focused Playwright command was attempted both against the configured shared ports and isolated
-  fresh Shell/CRM ports. Shared ports belonged to another stale worktree; the isolated run was
-  blocked after sign-in by the local authorization dataset returning `503` from `/auth/session`.
-  The generated source/fixture assertions still prove the title-only page and anonymous lazy-load
-  guard.
+  plus `/<vertical>/<page>` default. A read-only real-workspace plan reports zero mutations for the
+  migrated CRM page and twelve mutations for a new CRM `customers` page; `/modules/bad` is rejected
+  against the existing `[moduleId]` route.
+- `mise exec -- pnpm --filter @app/shell-super-app test:unit` passed 146/146 tests. Exact-page UI
+  coverage proves that private registries and loaders remain untouched for selection-required,
+  forbidden, not-found, and unavailable outcomes and run once only after resolution.
+- `mise exec -- pnpm --filter @app/shell-super-app test:integration` was attempted. The suite parsed
+  the added exact-page `401`/`409`/`200`/`403`/`404`/`503` assertions but the live auth tests stopped
+  at the existing root configuration prerequisite (`AuthConfigError`/missing `DATABASE_URL`).
+- The focused Playwright command was attempted and stopped at the existing root development
+  environment prerequisite before browser execution. Checked-in coverage now asserts anonymous and
+  authenticated English/Czech CRM behavior.
 - `mise exec -- pnpm check` passed formatting, application lint, 58/58 Core Action tests,
   typechecking, and skills checks before stopping on the unchanged CRM `modern.runtime.ts` i18n
-  boundary baseline. API, database-access, module-entrypoint, module-contract, and performance checks
-  passed individually. The workspace contract aggregate remains blocked by unchanged generated
-  topology cohort metadata.
-- CRM production compilation and TypeScript checking succeeded, but the build command stopped in the
-  existing release-envelope gate because the generated source revision is `workspace` rather than a
-  promotable revision.
+  boundary baseline.
+- `mise exec -- pnpm build` completed the Shell production and TypeScript build, then stopped at the
+  existing missing CRM Module Federation DTS archive prerequisite.
 
 ## Notes
 

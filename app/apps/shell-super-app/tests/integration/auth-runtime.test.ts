@@ -354,6 +354,16 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
+    const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
+      new Request(`${configuration.baseUrl}/shell/module-target`, {
+        body: JSON.stringify({ entrypointKey, moduleId: 'testing.pages' }),
+        headers: new Headers({
+          'content-type': 'application/json',
+          cookie: authenticatedHeaders.get('cookie') ?? '',
+          origin: configuration.baseUrl,
+        }),
+        method: 'POST',
+      });
     const current = await Effect.runPromise(authentication.currentSession(authenticatedHeaders));
     assert.equal(current.identity?.tenantId, tenantId);
     assert.ok(current.identity);
@@ -372,20 +382,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       contextAccessLayer,
     ).createHandler();
     handlers.push(pageRuntime);
-    const exactPageResponse = await pageRuntime.handler(
-      new Request(`${configuration.baseUrl}/shell/module-target`, {
-        body: JSON.stringify({
-          entrypointKey: 'testing.pages.page.customers',
-          moduleId: 'testing.pages',
-        }),
-        headers: new Headers({
-          'content-type': 'application/json',
-          cookie: authenticatedHeaders.get('cookie') ?? '',
-          origin: configuration.baseUrl,
-        }),
-        method: 'POST',
-      }),
-    );
+    const exactPageResponse = await pageRuntime.handler(exactPageRequest());
     assert.equal(exactPageResponse.status, 200);
     assert.deepEqual(await exactPageResponse.json(), {
       appId: 'inventory-stock',
@@ -395,20 +392,80 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       writable: true,
     });
     const missingPageResponse = await pageRuntime.handler(
-      new Request(`${configuration.baseUrl}/shell/module-target`, {
-        body: JSON.stringify({
-          entrypointKey: 'testing.pages.page.missing',
-          moduleId: 'testing.pages',
-        }),
-        headers: new Headers({
-          'content-type': 'application/json',
-          cookie: authenticatedHeaders.get('cookie') ?? '',
-          origin: configuration.baseUrl,
-        }),
-        method: 'POST',
-      }),
+      exactPageRequest('testing.pages.page.missing'),
     );
     assert.equal(missingPageResponse.status, 404);
+
+    const authenticatedContext = await Effect.runPromise(
+      authentication.resolveShellContext(authenticatedHeaders),
+    );
+    assert.equal(authenticatedContext.state, 'authenticated');
+    if (authenticatedContext.state !== 'authenticated') {
+      throw new Error('The exact-page boundary fixture must resolve an authenticated context');
+    }
+    const selectionRequiredRuntime = makeShellAuthenticationApiRuntime(
+      Layer.succeed(AuthenticationService, {
+        ...authentication,
+        resolveShellContext: () =>
+          Effect.succeed({
+            availableLegalEntities: authenticatedContext.availableLegalEntities,
+            identity: {
+              displayName: authenticatedContext.identity.displayName,
+              email: authenticatedContext.identity.email,
+              principalId: authenticatedContext.identity.principalId,
+              tenantId: authenticatedContext.identity.tenantId,
+            },
+            principal: {
+              authBindingId: authenticatedContext.principal.authBindingId,
+              authMethod: authenticatedContext.principal.authMethod,
+              principalId: authenticatedContext.principal.principalId,
+              tenantId: authenticatedContext.principal.tenantId,
+            },
+            setCookieHeaders: [],
+            state: 'selection_required' as const,
+          }),
+      }),
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000010'),
+        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+      Effect.succeed(installedPageCatalog()),
+      false,
+      contextAccessLayer,
+    ).createHandler();
+    handlers.push(selectionRequiredRuntime);
+    const selectionRequiredPageResponse =
+      await selectionRequiredRuntime.handler(exactPageRequest());
+    assert.equal(selectionRequiredPageResponse.status, 409);
+    assert.equal(
+      ((await selectionRequiredPageResponse.json()) as { readonly status: number }).status,
+      409,
+    );
+
+    const deniedPageRuntime = makeShellAuthenticationApiRuntime(
+      authenticationLayer,
+      {
+        currentTimeSeconds: Effect.succeed(1_700_000_000),
+        generateJti: Effect.succeed('60000000-0000-4000-8000-000000000011'),
+        loadAudiences: Effect.succeed(new Set(['inventory-stock'])),
+        loadConfig: parseGatewayIssuerConfig({}),
+      },
+      moduleStateLayer,
+      Effect.succeed(installedPageCatalog()),
+      false,
+      Layer.succeed(ContextAccess, {
+        ...legalEntitySelectionOptions.contextAccess,
+        modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
+          Effect.succeed(moduleIds.map((key) => ({ decision: 'denied' as const, key }))),
+      }),
+    ).createHandler();
+    handlers.push(deniedPageRuntime);
+    const deniedPageResponse = await deniedPageRuntime.handler(exactPageRequest());
+    assert.equal(deniedPageResponse.status, 403);
+    assert.equal(((await deniedPageResponse.json()) as { readonly status: number }).status, 403);
 
     const currentSessionResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/session`, {
@@ -626,7 +683,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
         loadConfig: parseGatewayIssuerConfig({}),
       },
       Layer.succeed(TenantModuleStateService, unavailableModuleStates),
-      Effect.succeed(installedCatalog(['testing1'])),
+      Effect.succeed(installedPageCatalog()),
       false,
       contextAccessLayer,
       undefined,
@@ -641,6 +698,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.equal(unavailableModulesResponse.status, 503);
     const unavailableModulesProblem = await unavailableModulesResponse.text();
     assert.doesNotMatch(unavailableModulesProblem, /SQL|30000000|40000000/u);
+    const unavailablePageResponse = await unavailableModulesHandler.handler(exactPageRequest());
+    assert.equal(unavailablePageResponse.status, 503);
+    assert.equal(
+      ((await unavailablePageResponse.json()) as { readonly status: number }).status,
+      503,
+    );
 
     const unavailableGatewayResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/gateway-context`, {

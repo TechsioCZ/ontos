@@ -17,12 +17,15 @@ import {
   createMutation,
   discoverOntosModule,
   ensureUniqueMutationPaths,
+  generatedSlotContainsExactEntry,
   insertModuleFederationExposure,
   insertSortedSlot,
   isMissingFileError,
+  moduleFederationExposureSource,
   patchJsonObjectProperty,
   pathExists,
   readJson,
+  readGeneratedSlotEntries,
   requireCanonicalSlug,
   requiredString,
   resolveContainedPath,
@@ -56,6 +59,7 @@ interface PageRoute {
 const namespacePattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 const moduleFederationNamePattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const localePattern = /^[a-z]{2}(?:-[A-Z]{2})?$/u;
+const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const pageRoutePattern = /^\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*)*$/u;
 const pageStarterLocales = new Set(['cs', 'en']);
 const SHELL_PAGE_CLIENT_SLOT_START = '// @ontos-codegen-start shell-page-clients';
@@ -77,7 +81,7 @@ const resolvePageRoute = (
     );
   }
   const segments = canonicalPath.slice(1).split('/');
-  if (vertical.locales.includes(segments[0] ?? '')) {
+  if (requestedUrl !== undefined && routeLocalePrefixPattern.test(segments[0] ?? '')) {
     throw new Error('--url must not include a locale prefix; the localized router adds it');
   }
   return {
@@ -169,6 +173,24 @@ const discoverPageVertical = async (
   );
   if (!(await pathExists(routeHeadPath))) {
     throw new Error(`vertical ${vertical.slug} generated UltramodernRouteHead is missing`);
+  }
+  const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
+  const resourcesPath = resolveContainedPath(
+    workspaceRoot,
+    'verticals',
+    vertical.slug,
+    'src',
+    'i18n',
+    'resources.ts',
+  );
+  if (!(await pathExists(resourcesPath))) {
+    throw new Error(`vertical ${vertical.slug} generated i18n resources are missing`);
+  }
+  const resourcesContent = await readFile(resourcesPath, 'utf-8');
+  if (!resourcesContent.includes(`export const ${resourcesName} =`)) {
+    throw new Error(
+      `vertical ${vertical.slug} generated i18n resources must export ${resourcesName}`,
+    );
   }
   return {
     ...vertical,
@@ -288,6 +310,33 @@ const pageWiring = (vertical: PageVerticalMetadata, page: string, route: PageRou
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
     shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${toCamelCase(vertical.appId)}/Page${toPascalCase(page)}') },`,
   } as const;
+};
+
+const renderFederatedPage = (
+  vertical: PageVerticalMetadata,
+  page: string,
+  route: PageRoute,
+): string => {
+  const componentName = `${toPascalCase(page)}Page`;
+  const federatedComponentName = `${toPascalCase(page)}FederatedPage`;
+  const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
+  return `import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
+import { ${resourcesName} } from '../i18n/resources';
+import { ${componentName} } from '../routes/[lang]/${route.relativePath}/page';
+
+const ${federatedComponentName} = () => (
+  <FederatedI18nBoundary
+    defaultNamespace="${vertical.namespace}"
+    fallbackLanguage="en"
+    resources={${resourcesName}}
+    supportedLanguages={['en', 'cs']}
+  >
+    <${componentName} />
+  </FederatedI18nBoundary>
+);
+
+export default ${federatedComponentName};
+`;
 };
 
 const patchPageWiring = (
@@ -550,6 +599,102 @@ const migrateLegacyLocale = async (
 
 type GeneratedPageState = 'current' | 'legacy' | 'invalid';
 
+interface OwnedPageRoute {
+  readonly owner: string;
+  readonly routePath: string;
+}
+
+const ownedPageRoutes = async (workspaceRoot: string): Promise<readonly OwnedPageRoute[]> => {
+  const verticalRoot = resolveContainedPath(workspaceRoot, 'verticals');
+  const verticals = await readdir(verticalRoot, { withFileTypes: true });
+  const ownedRoutes = await Promise.all(
+    verticals
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry): Promise<readonly OwnedPageRoute[]> => {
+        const manifestPath = resolveContainedPath(verticalRoot, entry.name, 'vertical.manifest.ts');
+        if (!(await pathExists(manifestPath))) {
+          return [];
+        }
+        const manifest = await readFile(manifestPath, 'utf-8');
+        return readGeneratedSlotEntries(
+          manifest,
+          MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
+          MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
+        ).map((candidate) => {
+          const matches = [...candidate.matchAll(/\broutePath:\s*'(?<routePath>\/[^']+)'/gu)];
+          const routePath = matches[0]?.groups?.['routePath'];
+          if (matches.length !== 1 || routePath === undefined) {
+            throw new Error(
+              `generated owner slot contains unsupported developer content: ${MODULE_MANIFEST_SHELL_PAGE_SLOT_START}`,
+            );
+          }
+          return { owner: entry.name, routePath };
+        });
+      }),
+  );
+  return ownedRoutes.flat();
+};
+
+const isDynamicShellRouteSegment = (segment: string): boolean =>
+  /^\[.+\]$/u.test(segment) || segment.startsWith('$') || segment.startsWith('*');
+
+const assertShellRouteIsAvailable = async (
+  workspaceRoot: string,
+  route: PageRoute,
+  registeredRoutes: ReadonlySet<string>,
+): Promise<void> => {
+  let parent = resolveContainedPath(
+    workspaceRoot,
+    'apps',
+    'shell-super-app',
+    'src',
+    'routes',
+    '[lang]',
+  );
+  for (const [index, segment] of route.segments.entries()) {
+    let entries;
+    try {
+      // eslint-disable-next-line no-await-in-loop -- Each segment depends on the resolved parent.
+      entries = await readdir(parent, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return;
+      }
+      throw error;
+    }
+    const dynamicCollision = entries.find(
+      (entry) => entry.name !== segment && isDynamicShellRouteSegment(entry.name),
+    );
+    if (dynamicCollision !== undefined) {
+      throw new Error(
+        `Shell route ${route.canonicalPath} collides with dynamic route segment ${dynamicCollision.name}`,
+      );
+    }
+    const childEntry = entries.find((entry) => entry.name === segment);
+    if (childEntry === undefined) {
+      return;
+    }
+    const child = path.join(parent, segment);
+    if (index === route.segments.length - 1) {
+      throw new Error(`Shell route already exists or collides with generated page: ${child}`);
+    }
+    if (!childEntry.isDirectory()) {
+      throw new Error(`Shell route ${route.canonicalPath} collides with reserved route content`);
+    }
+    const prefix = `/${route.segments.slice(0, index + 1).join('/')}`;
+    const ownsPrefix = registeredRoutes.has(prefix);
+    // eslint-disable-next-line no-await-in-loop -- Reserved-prefix checks follow the route hierarchy.
+    const pageRouteExists = await pathExists(path.join(child, 'page.tsx'));
+    // eslint-disable-next-line no-await-in-loop -- Reserved-prefix checks follow the route hierarchy.
+    const routeMetadataExists = await pathExists(path.join(child, 'route.meta.ts'));
+    const prefixIsRoute = pageRouteExists || routeMetadataExists;
+    if (prefixIsRoute && !ownsPrefix) {
+      throw new Error(`Shell route ${route.canonicalPath} uses reserved route prefix ${prefix}`);
+    }
+    parent = child;
+  }
+};
+
 const resolveGeneratedPageContentState = (
   pageContent: string,
   vertical: PageVerticalMetadata,
@@ -567,6 +712,19 @@ const resolveGeneratedPageContentState = (
   }
   return 'invalid';
 };
+
+const generatedWiringEntryMatches = (
+  content: string,
+  startMarker: string,
+  endMarker: string,
+  expectedEntry: string,
+  identityPattern: RegExp,
+): boolean =>
+  generatedSlotContainsExactEntry(content, startMarker, endMarker, expectedEntry) &&
+  readGeneratedSlotEntries(content, startMarker, endMarker).filter((entry) => {
+    identityPattern.lastIndex = 0;
+    return identityPattern.test(entry);
+  }).length === 1;
 
 const generatedWiringMatches = async (
   workspaceRoot: string,
@@ -614,20 +772,70 @@ const generatedWiringMatches = async (
       return (await pathExists(filePath)) && (await readFile(filePath, 'utf-8')) === expected;
     }),
   );
+  const shellRouteEntries = await readdir(shellRouteDirectory, { withFileTypes: true });
+  const shellRouteShapeMatches =
+    shellRouteEntries.length === expectedShellFiles.length &&
+    shellRouteEntries.every(
+      (entry) =>
+        entry.isFile() && expectedShellFiles.some(([expectedName]) => expectedName === entry.name),
+    );
+  const exposureKey = `./Page${toPascalCase(page)}`;
+  const expectedExposureSource = `./src/federation/page-${page}.tsx`;
+  const exposureSource = moduleFederationExposureSource(federation, exposureKey);
+  const federatedPagePath = resolveContainedPath(vertical.directory, expectedExposureSource);
+  const federationMatches =
+    exposureSource === expectedExposureSource &&
+    (await pathExists(federatedPagePath)) &&
+    (await readFile(federatedPagePath, 'utf-8')) === renderFederatedPage(vertical, page, route);
   return (
-    vertical.manifestContent.includes(wiring.manifestImport) &&
-    vertical.manifestContent.includes(wiring.manifestComponent) &&
-    vertical.manifestContent.includes(
-      `contributionKey: '${vertical.moduleId}.navigation.${page}'`,
+    generatedWiringEntryMatches(
+      vertical.manifestContent,
+      MODULE_MANIFEST_IMPORT_SLOT_START,
+      MODULE_MANIFEST_IMPORT_SLOT_END,
+      wiring.manifestImport,
+      new RegExp(`\\b${wiring.componentName}\\b`, 'u'),
     ) &&
-    vertical.manifestContent.includes(`pageKey: '${wiring.contributionKey}'`) &&
-    vertical.manifestContent.includes(`componentKey: '${wiring.componentKey}'`) &&
-    vertical.manifestContent.includes(`contributionKey: '${wiring.contributionKey}'`) &&
-    vertical.manifestContent.includes(`routePath: '${route.canonicalPath}'`) &&
-    vertical.registrationContent.includes(wiring.registrationPage) &&
-    federation.includes(`'./Page${toPascalCase(page)}'`) &&
-    shellClients.includes(wiring.shellClient) &&
-    shellRouteMatches.every(Boolean)
+    generatedWiringEntryMatches(
+      vertical.manifestContent,
+      MODULE_MANIFEST_COMPONENT_SLOT_START,
+      MODULE_MANIFEST_COMPONENT_SLOT_END,
+      wiring.manifestComponent,
+      new RegExp(`["']page-${page}["']\\s*:`, 'u'),
+    ) &&
+    generatedWiringEntryMatches(
+      vertical.manifestContent,
+      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+      wiring.manifestNavigation,
+      new RegExp(
+        `\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.navigation\\.${page}["']`,
+        'u',
+      ),
+    ) &&
+    generatedWiringEntryMatches(
+      vertical.manifestContent,
+      MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
+      MODULE_MANIFEST_SHELL_PAGE_SLOT_END,
+      wiring.manifestPage,
+      new RegExp(`\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.page\\.${page}["']`, 'u'),
+    ) &&
+    generatedWiringEntryMatches(
+      vertical.registrationContent,
+      MODULE_REGISTRATION_PAGE_SLOT_START,
+      MODULE_REGISTRATION_PAGE_SLOT_END,
+      wiring.registrationPage,
+      new RegExp(`["']page-${page}["']\\s*:`, 'u'),
+    ) &&
+    federationMatches &&
+    generatedWiringEntryMatches(
+      shellClients,
+      SHELL_PAGE_CLIENT_SLOT_START,
+      SHELL_PAGE_CLIENT_SLOT_END,
+      wiring.shellClient,
+      new RegExp(`\\bcomponentKey\\s*:\\s*["']${vertical.moduleId}\\.page-${page}["']`, 'u'),
+    ) &&
+    shellRouteMatches.every(Boolean) &&
+    shellRouteShapeMatches
   );
 };
 
@@ -762,20 +970,31 @@ export const planPageScaffold = async (
     throw new Error(`page route already exists or collides with nested content: ${routeDirectory}`);
   }
   const identity = `${vertical.moduleId}.page.${page}`;
+  const pageComponentIdentity = new RegExp(`["']page-${page}["']\\s*:`, 'u');
+  const pageContributionIdentity = new RegExp(
+    `["']${vertical.moduleId.replaceAll('.', '\\.')}\\.page\\.${page}["']`,
+    'u',
+  );
   if (
-    vertical.manifestContent.includes(`'page-${page}'`) ||
-    vertical.manifestContent.includes(identity)
+    pageComponentIdentity.test(vertical.manifestContent) ||
+    pageContributionIdentity.test(vertical.manifestContent)
   ) {
     throw new Error(`page identity ${identity} already exists at another URL`);
   }
-  if (vertical.manifestContent.includes(`routePath: '${route.canonicalPath}'`)) {
-    throw new Error(`page URL ${route.canonicalPath} is already registered`);
-  }
-  if (await pathExists(shellRouteDirectory)) {
+  const registeredRoutes = await ownedPageRoutes(workspaceRoot);
+  const existingRouteOwner = registeredRoutes.find(
+    (registered) => registered.routePath === route.canonicalPath,
+  );
+  if (existingRouteOwner !== undefined) {
     throw new Error(
-      `Shell route already exists or collides with generated page: ${shellRouteDirectory}`,
+      `page URL ${route.canonicalPath} is already registered by ${existingRouteOwner.owner}`,
     );
   }
+  await assertShellRouteIsAvailable(
+    workspaceRoot,
+    route,
+    new Set(registeredRoutes.map((registered) => registered.routePath)),
+  );
   const pageMutation = await createMutation(pagePath, renderPage(vertical, page, route));
   const routeMutation = await createMutation(
     routeMetadataPath,
@@ -797,13 +1016,23 @@ export const planPageScaffold = async (
   );
   const federationPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
   const federationContent = await readFile(federationPath, 'utf-8');
+  const federatedPagePath = resolveContainedPath(
+    vertical.directory,
+    'src',
+    'federation',
+    `page-${page}.tsx`,
+  );
+  const federatedPageMutation = await createMutation(
+    federatedPagePath,
+    renderFederatedPage(vertical, page, route),
+  );
   const federationMutation = updateMutation(
     federationPath,
     federationContent,
     insertModuleFederationExposure(
       federationContent,
       `./Page${toPascalCase(page)}`,
-      `./src/routes/[lang]/${route.relativePath}/page.tsx`,
+      `./src/federation/page-${page}.tsx`,
     ),
   );
   const shellClientsPath = resolveContainedPath(
@@ -844,6 +1073,7 @@ export const planPageScaffold = async (
     ...localeMutations,
     manifestMutation,
     registrationMutation,
+    federatedPageMutation,
     federationMutation,
     shellClientsMutation,
     shellPageMutation,

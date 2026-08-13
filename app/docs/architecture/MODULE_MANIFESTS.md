@@ -43,16 +43,18 @@ fragments, unsafe schemes, and duplicate normalized URLs are forbidden.
 
 The document may describe identity, activation, public Actions/API/components,
 resources, public events, search, reports, and schema-free Outbox subscriptions. It must never
-contain a function, Effect program, React component, handler, Policy, migration, route, repository,
-database metadata, source path, import/export specifier, fixture, test, secret, or arbitrary private
-runtime value.
+contain a function, Effect program, React component, handler, Policy, migration, executable route
+definition, repository, database metadata, source path, import/export specifier, fixture, test,
+secret, or arbitrary private runtime value. The sole routing exception is the normalized
+root-relative `routePath` on a governed Shell page contribution. It identifies that contribution's
+canonical authenticated Shell location; it is not an owner route definition or remote source.
 
 Shell contributions bind stable navigation/page, public-component, API-backed resource detail and
 timeline, search, report, and media targets to descriptors already owned by the same manifest.
-They may contain semantic keys, ordering, and grouping metadata, but never URLs, import specifiers,
-remote strings, functions, schemas, routes, or source paths. The Installed Module Catalog rejects
-the entire snapshot when one binding is missing, duplicated, cross-owned, or role/access
-incompatible.
+They may contain semantic keys, ordering, grouping metadata, and the page contribution's canonical
+root-relative `routePath`, but never absolute URLs, import specifiers, remote strings, functions,
+schemas, executable routes, or source paths. The Installed Module Catalog rejects the entire
+snapshot when one binding is missing, duplicated, cross-owned, or role/access incompatible.
 
 ## Import and execution boundaries
 
