@@ -322,6 +322,9 @@ importers:
       i18next:
         specifier: 26.3.6
         version: 26.3.6(typescript@7.0.2)
+      jose:
+        specifier: 6.2.5
+        version: 6.2.5
       node-fetch:
         specifier: ^3.3.2
         version: 3.3.2

@@ -99,6 +99,18 @@ export const ${type}AuthenticationProblemSchema = Schema.TaggedStruct(
   HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
   HttpApiSchema.status(401),
 );
+export const ${type}InvalidProblemSchema = Schema.TaggedStruct(
+  '${type}InvalidProblem',
+  {
+    detail: Schema.String,
+    status: Schema.Literal(400),
+    title: Schema.String,
+    type: Schema.String,
+  },
+).pipe(
+  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
+  HttpApiSchema.status(400),
+);
 export const ${type}UnavailableProblemSchema = Schema.TaggedStruct(
   '${type}UnavailableProblem',
   {
@@ -177,6 +189,7 @@ export const ${value} = HttpApi.make('${value}').add(
   HttpApiGroup.make('reads').add(
     HttpApiEndpoint.post('execute', '/reads/${name}', {
       error: [
+        ${type}InvalidProblemSchema,
         ${type}AuthenticationProblemSchema,
         ${type}ForbiddenProblemSchema,
         ${type}NotFoundProblemSchema,
@@ -408,6 +421,18 @@ export const ${type}ProviderAuthenticationProblemSchema = Schema.TaggedStruct(
   HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
   HttpApiSchema.status(401),
 );
+export const ${type}ProviderInvalidProblemSchema = Schema.TaggedStruct(
+  '${type}ProviderInvalidProblem',
+  {
+    detail: Schema.String,
+    status: Schema.Literal(400),
+    title: Schema.String,
+    type: Schema.String,
+  },
+).pipe(
+  HttpApiSchema.asJson({ contentType: 'application/problem+json' }),
+  HttpApiSchema.status(400),
+);
 export const ${type}ProviderForbiddenProblemSchema = Schema.TaggedStruct(
   '${type}ProviderForbiddenProblem',
   {
@@ -473,6 +498,7 @@ export const ${apiValue} = HttpApi.make('${apiValue}').add(
   HttpApiGroup.make('${group}').add(
     HttpApiEndpoint.post('execute', '/${vertical.moduleId}/${group}/${name}', {
       error: [
+        ${type}ProviderInvalidProblemSchema,
         ${type}ProviderAuthenticationProblemSchema,
         ${type}ProviderForbiddenProblemSchema,
         ${type}ProviderNotFoundProblemSchema,
@@ -535,6 +561,13 @@ const unavailableProblem = () => ({
   title: 'Read unavailable',
   type: 'https://ontos.dev/problems/read-unavailable',
 });
+const invalidProblem = () => ({
+  _tag: '${problemStem}InvalidProblem' as const,
+  detail: 'The governed read request is invalid.',
+  status: 400 as const,
+  title: 'Invalid read request',
+  type: 'https://ontos.dev/problems/read-invalid',
+});
 const forbiddenProblem = () => ({
   _tag: '${problemStem}ForbiddenProblem' as const,
   detail: 'The principal is not permitted to perform this read.',
@@ -580,6 +613,9 @@ type VerificationProblem =
   | ReturnType<typeof unavailableProblem>;
 const readProblem = (error: ReadCoreError) => {
   switch (error._tag) {
+    case 'ReadInputValidationError': {
+      return invalidProblem();
+    }
     case 'OperationAuthenticationRequired': {
       return authenticationProblem();
     }
@@ -604,8 +640,14 @@ const readProblem = (error: ReadCoreError) => {
     case 'ReadPolicyEvaluationError': {
       return unavailableProblem();
     }
-    default: {
+    case 'ReadEvidenceValidationError':
+    case 'ReadHandlerExecutionError':
+    case 'ReadResultValidationError': {
       return internalProblem();
+    }
+    default: {
+      const exhaustive: never = error;
+      return exhaustive;
     }
   }
 };
@@ -616,6 +658,10 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
   (handlers) =>
     handlers.handle('execute', ({ payload, request }) =>
       Effect.gen(function* governedProviderRead() {
+        const correlationId = request.headers['x-correlation-id'];
+        if (correlationId === undefined || correlationId.trim().length === 0) {
+          return yield* Effect.fail(invalidProblem());
+        }
         const environment = yield* Config.all({
           ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
           ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
@@ -641,7 +687,7 @@ export const ${toCamelCase(name)}ReadApiLive = HttpApiBuilder.group(
             input: payload,
             principal,
             registration: ${readValue},
-            transport: { correlationId: request.headers['x-correlation-id'] ?? 'missing' },
+            transport: { correlationId },
           })
           .pipe(
             Effect.catch((error) => {

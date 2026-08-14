@@ -3,7 +3,19 @@
 // @ontos-module-id crm.core
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { archiveContactAction } from './src/actions/archive-contact.action.ts';
+import { archiveCustomerAction } from './src/actions/archive-customer.action.ts';
+import { ContactDetailApi } from './shared/apis/contact-detail.ts';
+import { ContactListApi } from './shared/apis/contact-list.ts';
+import { createContactAction } from './src/actions/create-contact.action.ts';
+import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { CrmPage } from './src/routes/[lang]/crm/page.tsx';
+import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
+import { CustomerListApi } from './shared/apis/customer-list.ts';
+import { editContactAction } from './src/actions/edit-contact.action.ts';
+import { editCustomerAction } from './src/actions/edit-customer.action.ts';
+import { unarchiveContactAction } from './src/actions/unarchive-contact.action.ts';
+import { unarchiveCustomerAction } from './src/actions/unarchive-customer.action.ts';
 // </generated-module-manifest-imports>
 
 export const crmManifest = defineOntosModuleManifest({
@@ -31,10 +43,22 @@ export const crmManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      archiveContactAction,
+      archiveCustomerAction,
+      createContactAction,
+      createCustomerAction,
+      editContactAction,
+      editCustomerAction,
+      unarchiveContactAction,
+      unarchiveCustomerAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'contact-detail': ContactDetailApi,
+      'contact-list': ContactListApi,
+      'customer-detail': CustomerDetailApi,
+      'customer-list': CustomerListApi,
       // </generated-module-manifest-apis>
     },
     components: {

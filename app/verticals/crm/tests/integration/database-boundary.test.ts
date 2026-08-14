@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off globalDate:off
 /* eslint-disable unicorn/no-await-expression-member -- Live database assertions keep each typed query beside its expected result. */
 import assert from 'node:assert/strict';
 import test from 'node:test';

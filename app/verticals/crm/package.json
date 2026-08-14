@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./api": "./shared/api.ts",
+    "./api/client": "./src/api/crm-client.ts",
     "./locales/cs": "./locales/cs/crm.json",
     "./locales/en": "./locales/en/crm.json"
   },
@@ -40,6 +42,7 @@
     "drizzle-orm": "0.45.2",
     "effect": "4.0.0-beta.97",
     "i18next": "26.3.6",
+    "jose": "6.2.5",
     "node-fetch": "^3.3.2",
     "pg": "8.22.0",
     "react": "19.2.7",

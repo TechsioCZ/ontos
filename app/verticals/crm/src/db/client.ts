@@ -13,7 +13,7 @@ export class CrmDatabase extends Context.Service<
   {
     readonly executor: CrmDatabaseExecutor;
   }
->()('@app/crm/src/db/client/CrmDatabase') {}
+>()('@app/crm/db/client/CrmDatabase') {}
 
 export interface PoolResource {
   readonly end: () => Promise<void>;

@@ -32,10 +32,15 @@ Actions support exactly one of these ownership forms:
 ```bash
 mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>
 mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --action <action>
+mise exec -- pnpm scaffold:action-service -- --vertical <vertical> --service <service>
 ```
 
 The Core form accepts only stable `core.*` module keys and writes only to the generated Core
 Action owner slot. Do not combine Core and MicroVertical ownership flags.
+
+Use `scaffold:action-service` before adding an owner-local persistence service consumed by one or
+more generated MicroVertical Actions. Adapt the generated Effect service without exposing a
+database executor to an Action handler.
 
 Before any business generator targets a newly created MicroVertical, generate its paired manifest
 and private registration exactly once:

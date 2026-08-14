@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
 import actionGenerator from './action/scaffold.mts';
+import actionServiceGenerator from './action-service/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import moduleContractGenerator from './module-contract/scaffold.mts';
@@ -18,6 +19,8 @@ import searchProviderGenerator from './search-provider/scaffold.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
+  ActionServiceScaffoldConfig,
+  ActionServiceScaffoldResult,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
   ActionBoundaryScaffoldConfig,
@@ -36,6 +39,7 @@ import type {
 
 export type ScaffoldCommand =
   | 'action'
+  | 'action-service'
   | 'microvertical-action-boundary'
   | 'microvertical-page'
   | 'module-contract'
@@ -50,6 +54,7 @@ export type ScaffoldCommand =
 type GeneratorResult =
   | ActionBoundaryScaffoldResult
   | ActionScaffoldResult
+  | ActionServiceScaffoldResult
   | ModuleContractScaffoldResult
   | GovernedContributionScaffoldResult
   | OutboxScaffoldResult
@@ -60,6 +65,7 @@ type GeneratorResult =
 type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
   | ActionScaffoldConfig
+  | ActionServiceScaffoldConfig
   | ModuleContractScaffoldConfig
   | GovernedContributionScaffoldConfig
   | OutboxScaffoldConfig
@@ -166,6 +172,26 @@ Options:
         scope,
       };
     },
+  },
+  'action-service': {
+    flags: ['service', 'vertical'],
+    generator: actionServiceGenerator,
+    help: `Usage: pnpm scaffold:action-service -- --vertical <vertical> --service <service>
+
+Generate one owner-local Effect service used by generated Actions to access scoped persistence.
+
+Required flags:
+  --service <service>    Service name (lower-kebab-case)
+  --vertical <vertical> Existing generated vertical folder (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['service', 'vertical'],
+    toConfig: (flags) => ({
+      service: flags['service'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
   },
   'microvertical-action-boundary': {
     flags: ['vertical'],

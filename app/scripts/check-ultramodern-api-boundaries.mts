@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasCompleteGeneratedModuleApiSeam } from './generated-module-api-boundary.mts';
 import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
@@ -376,9 +377,13 @@ for (const verticalPath of verticalDirectories) {
   assertApiSurface(verticalPath);
   const sharedApi = `${verticalPath}/shared/api.ts`;
   const sharedApiContent = exists(sharedApi) ? readText(sharedApi) : '';
+  const verticalSources = new Map(
+    listFiles(verticalPath).map((file) => [file, readText(file)] as const),
+  );
   if (
     /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
-    !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent)
+    !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent) &&
+    !hasCompleteGeneratedModuleApiSeam(verticalSources, sharedApi)
   ) {
     fail(
       `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,

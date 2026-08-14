@@ -29,7 +29,7 @@ const resources = {
 
 export default defineRuntimeConfig({
   i18n: {
-    i18nInstance,
+    i18nInstance: i18nInstance as never,
     initOptions: {
       defaultNS: ultramodernRouteNamespace,
       fallbackLng: 'en',

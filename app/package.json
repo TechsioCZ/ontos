@@ -32,6 +32,7 @@
     "migrate:strict-effect": "node ./scripts/migrate-strict-effect.mts",
     "zerops:materialize": "node ./scripts/materialize-zerops-runtime.mjs",
     "scaffold:action": "node ./scripts/scaffolding/cli.mts action",
+    "scaffold:action-service": "node ./scripts/scaffolding/cli.mts action-service",
     "scaffold:microvertical-page": "node ./scripts/scaffolding/cli.mts microvertical-page",
     "scaffold:module-contract": "node ./scripts/scaffolding/cli.mts module-contract",
     "scaffold:module-api": "node ./scripts/scaffolding/cli.mts module-api",

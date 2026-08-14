@@ -4,16 +4,36 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { crmManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { archiveContactAction } from './src/actions/archive-contact.action.ts';
+import { archiveCustomerAction } from './src/actions/archive-customer.action.ts';
+import { createContactAction } from './src/actions/create-contact.action.ts';
+import { createCustomerAction } from './src/actions/create-customer.action.ts';
+import { editContactAction } from './src/actions/edit-contact.action.ts';
+import { editCustomerAction } from './src/actions/edit-customer.action.ts';
+import { unarchiveContactAction } from './src/actions/unarchive-contact.action.ts';
+import { unarchiveCustomerAction } from './src/actions/unarchive-customer.action.ts';
 // </generated-module-registration-imports>
 
 export const crmRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    archiveContactAction,
+    archiveCustomerAction,
+    createContactAction,
+    createCustomerAction,
+    editContactAction,
+    editCustomerAction,
+    unarchiveContactAction,
+    unarchiveCustomerAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'contact-detail': () => import('./src/api/contact-detail-client.ts'),
+      'contact-list': () => import('./src/api/contact-list-client.ts'),
+      'customer-detail': () => import('./src/api/customer-detail-client.ts'),
+      'customer-list': () => import('./src/api/customer-list-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

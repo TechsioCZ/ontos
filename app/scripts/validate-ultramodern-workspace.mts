@@ -1867,6 +1867,8 @@ const workspaceValidationContract = {
       group: 'crm',
       apiPrefix: '/crm-api',
       apiProtocol: 'rest',
+      apiContractExport: './api',
+      apiClientExport: './api/client',
       apiContractPath: 'shared/api.ts',
       apiClientPath: 'src/api/crm-client.ts',
       backendFederation: {
