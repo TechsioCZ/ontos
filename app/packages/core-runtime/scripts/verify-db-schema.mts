@@ -35,7 +35,7 @@ class DatabaseVerificationError extends Schema.TaggedErrorClass<DatabaseVerifica
 ) {}
 
 type CatalogRow = Record<string, unknown> & {
-  readonly kind: 'migration' | 'schema' | 'table';
+  readonly kind: 'migration' | 'table';
   readonly schema_name: string;
   readonly table_name: null | string;
 };
@@ -192,50 +192,30 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       }),
     try: () =>
       database.executor.execute<CatalogRow>(sql`
-        with user_schemas as (
-          select namespace.oid, namespace.nspname
-          from pg_catalog.pg_namespace as namespace
-          where namespace.nspname <> ${'information_schema'}
-            and namespace.nspname not like ${'pg\\_%'}
-        ),
-        application_tables as (
+        with application_tables as (
           select
             ${'table'}::text as kind,
-            user_schemas.nspname as schema_name,
+            namespace.nspname as schema_name,
             relation.relname as table_name
-          from user_schemas
+          from pg_catalog.pg_namespace as namespace
           inner join pg_catalog.pg_class as relation
-            on relation.relnamespace = user_schemas.oid
+            on relation.relnamespace = namespace.oid
           where relation.relkind in (${'r'}, ${'p'})
-            and user_schemas.nspname = ${CORE_SCHEMA_NAME}
-        ),
-        unexpected_schemas as (
-          select
-            ${'schema'}::text as kind,
-            user_schemas.nspname as schema_name,
-            null::text as table_name
-          from user_schemas
-          where user_schemas.nspname not in (
-            ${'auth'},
-            ${CORE_SCHEMA_NAME},
-            ${'drizzle'},
-            ${'public'}
-          )
+            and namespace.nspname = ${CORE_SCHEMA_NAME}
         ),
         migration_bookkeeping as (
           select
             ${'migration'}::text as kind,
-            user_schemas.nspname as schema_name,
+            namespace.nspname as schema_name,
             relation.relname as table_name
-          from user_schemas
+          from pg_catalog.pg_namespace as namespace
           inner join pg_catalog.pg_class as relation
-            on relation.relnamespace = user_schemas.oid
+            on relation.relnamespace = namespace.oid
           where relation.relkind = ${'r'}
-            and user_schemas.nspname = ${'drizzle'}
+            and namespace.nspname = ${'drizzle'}
+            and relation.relname = ${'__drizzle_migrations_core'}
         )
         select kind, schema_name, table_name from application_tables
-        union all
-        select kind, schema_name, table_name from unexpected_schemas
         union all
         select kind, schema_name, table_name from migration_bookkeeping
         order by kind, schema_name, table_name
@@ -253,15 +233,6 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
       continue;
     }
 
-    if (row.kind === 'schema') {
-      entries.push({
-        kind: 'schema',
-        schemaName: row.schema_name,
-        tableName: null,
-      });
-      continue;
-    }
-
     if (row.table_name === null) {
       return yield* new DatabaseVerificationError({
         reason: `Catalog table ${row.schema_name} is missing its table name`,
@@ -275,10 +246,7 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     });
   }
 
-  const expectedMigrationBookkeepingTables = [
-    '__drizzle_migrations_auth',
-    '__drizzle_migrations_core',
-  ];
+  const expectedMigrationBookkeepingTables = ['__drizzle_migrations_core'];
   migrationBookkeepingTables.sort();
 
   if (

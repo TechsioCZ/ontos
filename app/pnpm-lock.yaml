@@ -310,6 +310,12 @@ importers:
       '@tanstack/react-router':
         specifier: 1.170.17
         version: 1.170.17(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(kysely@0.29.4)(pg@8.22.0)
       effect:
         specifier: 4.0.0-beta.97
         version: 4.0.0-beta.97(patch_hash=dc7e8088e600beb20185eb877754d749c4a93909fb79f49465e8319e40d6596a)
@@ -319,6 +325,9 @@ importers:
       node-fetch:
         specifier: ^3.3.2
         version: 3.3.2
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
       react:
         specifier: 19.2.7
         version: 19.2.7
@@ -341,6 +350,9 @@ importers:
       '@types/node':
         specifier: ^20
         version: 20.19.43
+      '@types/pg':
+        specifier: 8.20.0
+        version: 8.20.0
       '@types/react':
         specifier: ^19.2.17
         version: 19.2.17
@@ -350,6 +362,9 @@ importers:
       '@typescript/native':
         specifier: npm:typescript@7.0.2
         version: typescript@7.0.2
+      drizzle-kit:
+        specifier: 0.31.10
+        version: 0.31.10
       tailwindcss:
         specifier: ^4.3.2
         version: 4.3.3

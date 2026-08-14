@@ -106,8 +106,10 @@ pnpm build
 
 Local PostgreSQL uses the Compose-created `ontos_admin` identity for migrations and the
 non-superuser `ontos_runtime` identity for application pools. Fresh volumes provision the runtime
-login automatically, and `pnpm db:migrate` refreshes its schema/table/sequence grants after both
-migration owners finish. For an existing persistent volume, set both database URLs and run
+login automatically, and `pnpm db:migrate` refreshes its schema/table/sequence grants after the
+Core, Auth, and CRM migration owners finish. CRM owns its `crm` schema and independent
+`drizzle.__drizzle_migrations_crm` history, preserving the rule that every MicroVertical owns a
+separate schema and migration history. For an existing persistent volume, set both database URLs and run
 `mise exec -- pnpm db:bootstrap-runtime-role` before migrations.
 
 The generated toolchain baseline is Node `>=26` with pnpm `11.10.0`.

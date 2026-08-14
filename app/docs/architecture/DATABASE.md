@@ -74,8 +74,8 @@ The Core schema inventory is an exact set. Migration generation, application
 registration, tests, and verification all use
 `packages/core-runtime/src/db/schema.ts` as their only schema source.
 
-Core verification must reach every table through its typed Drizzle reference
-and compare the final PostgreSQL application-table catalog with the exact Core
-inventory. PostgreSQL system catalogs and Drizzle's migration bookkeeping are
-infrastructure metadata; no Auth or MicroVertical schema may be excluded from
-that comparison.
+Each owner verifier must reach every owned table through its typed Drizzle reference and
+exact-match only that owner's schema inventory and migration journal. The root application
+verifier separately exact-matches the complete set of application schemas and owner-specific
+Drizzle journals before invoking every owner verifier. PostgreSQL system catalogs and Drizzle's
+migration bookkeeping remain infrastructure metadata rather than a shared business schema.

@@ -12,6 +12,9 @@
   },
   "include": [
     "src",
+    "scripts",
+    "tests",
+    "drizzle.config.ts",
     "locales/**/*.json",
     "package.json",
     "shared",

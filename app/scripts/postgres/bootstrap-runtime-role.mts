@@ -36,7 +36,14 @@ try {
   await client.query(
     `grant connect on database "${admin.pathname.slice(1).replaceAll('"', '""')}" to ontos_runtime`,
   );
-  for (const schema of ['core', 'auth']) {
+  for (const schema of ['core', 'auth', 'crm']) {
+    const schemaExists = await client.query<{ exists: boolean }>(
+      'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
+      [schema],
+    );
+    if (schemaExists.rows[0]?.exists !== true) {
+      continue;
+    }
     await client.query(`grant usage on schema ${schema} to ontos_runtime`);
     await client.query(
       `grant select, insert, update, delete on all tables in schema ${schema} to ontos_runtime`,
