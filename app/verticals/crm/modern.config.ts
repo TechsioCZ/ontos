@@ -10,6 +10,7 @@ import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
+import { crmCorsAllowedHeaders, crmCorsAllowedMethods, crmCorsAllowedOrigins } from './shared/cors';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
@@ -153,6 +154,13 @@ export default defineConfig(
                     reason:
                       'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
                   },
+                  cors: {
+                    allowedHeaders: [...crmCorsAllowedHeaders],
+                    allowedMethods: [...crmCorsAllowedMethods],
+                    allowedOrigins: crmCorsAllowedOrigins(moduleFederationDevServerOrigin),
+                    assets: true,
+                    reason: 'Allow the configured Shell to load CRM assets and invoke its BFF.',
+                  },
                   enabled: true,
                   headers: {
                     contentTypeOptions: 'nosniff',
@@ -266,6 +274,8 @@ export default defineConfig(
           '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
         },
         globalVars: {
+          ULTRAMODERN_CRM_API_BASE_URL: `${remoteAssetOrigin.replace(/\/+$/u, '')}/crm-api`,
+          ULTRAMODERN_SHELL_ORIGIN: moduleFederationDevServerOrigin,
           ULTRAMODERN_SITE_URL: siteUrl,
         },
         mainEntryName: 'index',

@@ -1,6 +1,35 @@
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { crmApiContract } from '../../../../verticals/crm/shared/api.ts';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
-import { createAuthenticationFixture, e2eCredentials, e2eTenants } from './auth-fixture.ts';
+import {
+  createAuthenticationFixture,
+  e2eCredentials,
+  e2eCustomers,
+  e2eTenants,
+} from './auth-fixture.ts';
+
+const customerListPath = `${crmApiContract.basePath}/customers/list`;
+
+const login = async (page: Page) => {
+  await page.goto('/en/login');
+  await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
+  await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
+  await page.getByRole('button', { name: 'Login' }).click();
+  await expect(page).toHaveURL(/\/en\/?$/u);
+  const sessionResponse = await page.request.get(shellAuthenticationApiContract.currentSessionPath);
+  const sessionBody = await sessionResponse.text();
+  expect(sessionResponse.status(), sessionBody).toBe(200);
+  expect(sessionBody).toContain(e2eCredentials.email);
+};
+
+const customerResponse = (customer: typeof e2eCustomers.active | typeof e2eCustomers.archived) => ({
+  archivedAt: 'archivedAt' in customer ? customer.archivedAt.toISOString() : null,
+  createdAt: customer.createdAt.toISOString(),
+  customerId: customer.customerId,
+  name: customer.name,
+  updatedAt: customer.updatedAt.toISOString(),
+});
 
 let cleanupFixture: (() => Promise<void>) | undefined;
 
@@ -126,7 +155,7 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
   await page.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
 
-  const crmLink = page.getByRole('link', { name: 'CRM' });
+  const crmLink = page.locator('a[href="/cs/crm"]');
   await expect(crmLink).toHaveAttribute('href', '/cs/crm');
   await crmLink.click();
 
@@ -159,14 +188,14 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
     await expect(page.locator('header[aria-label="Dashboard header"]')).toBeVisible();
     await expect(page.getByText(status)).toBeVisible();
   };
-  await expectPersistentShell('/en/search', 'Select a legal entity before searching.');
+  await expectPersistentShell('/en/search', 'No authorized results found.');
   await expectPersistentShell(
     '/en/modules/not-installed',
-    'Select a legal entity before opening a module.',
+    'You do not have permission to open this module.',
   );
   await expectPersistentShell(
     '/en/resources/not-installed/example/missing',
-    'Select a legal entity before opening a resource.',
+    'You do not have permission to view this resource.',
   );
 });
 
@@ -331,19 +360,24 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
     .then(() => expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible());
 });
 
-test('keeps the login form keyboard- and mobile-usable', ({ page }) =>
-  page
-    .setViewportSize({ height: 667, width: 375 })
-    .then(() => page.goto('/cs/login'))
-    .then(() => page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u }).focus())
-    .then(() => page.keyboard.press('Enter'))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })).toBeFocused(),
-        expect(page.getByText('Zadejte přihlašovací jméno.')).toBeInViewport(),
-        expect(page.getByText('Zadejte heslo.')).toBeInViewport(),
-      ]),
-    ));
+test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
+  await page.setViewportSize({ height: 667, width: 375 });
+  await page.goto('/cs/login');
+  const loginInput = page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u });
+  await expect(async () => {
+    await loginInput.fill('hydration-probe');
+    await page.getByRole('button', { name: 'Přihlásit se' }).click();
+    await expect(page.getByText('Zadejte heslo.')).toBeInViewport({ timeout: 1000 });
+  }).toPass({ timeout: 5000 });
+  await loginInput.clear();
+  await loginInput.focus();
+  await page.keyboard.press('Enter');
+  await Promise.all([
+    expect(loginInput).toBeFocused(),
+    expect(page.getByText('Zadejte přihlašovací jméno.')).toBeInViewport(),
+    expect(page.getByText('Zadejte heslo.')).toBeInViewport(),
+  ]);
+});
 
 test('keeps the authenticated dashboard reachable without horizontal overflow at 375px', async ({
   page,
@@ -371,6 +405,179 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
   await expect(tenant).toContainText(e2eTenants.first.name);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+});
+
+test('customers stay private anonymously and load real localized BFF data after login', async ({
+  page,
+}) => {
+  let customerRequests = 0;
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === customerListPath) {
+      customerRequests += 1;
+    }
+  });
+
+  await page.goto('/en/crm/customers');
+  await expect(page.getByRole('heading', { name: 'Customers' })).toHaveCount(0);
+  await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
+  expect(customerRequests).toBe(0);
+
+  await login(page);
+  const englishResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === customerListPath &&
+      response.request().method() === 'POST',
+  );
+  await page.goto('/en/crm/customers');
+  const englishResponse = await englishResponsePromise;
+  expect(englishResponse.status(), await englishResponse.text()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Customers' })).toBeVisible();
+  await expect(page.getByText(e2eCustomers.active.name)).toBeVisible();
+  await expect(page.getByText(e2eCustomers.archived.name)).toHaveCount(0);
+  const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
+  const main = page.getByRole('main');
+  await expect(sidebar).toHaveCount(1);
+  await expect(sidebar.getByRole('link', { name: 'Crm' })).toHaveCount(1);
+  await expect(sidebar.getByRole('link', { name: 'Crm' })).toHaveAttribute('href', '/en/crm');
+  await expect(page.locator('header[aria-label="Dashboard header"]')).toHaveCount(1);
+  const [sidebarBox, mainBox] = await Promise.all([sidebar.boundingBox(), main.boundingBox()]);
+  if (sidebarBox === null || mainBox === null) {
+    throw new Error('The authenticated dashboard layout must be measurable');
+  }
+  expect(sidebarBox.y).toBe(mainBox.y);
+  expect(sidebarBox.x + sidebarBox.width).toBeLessThanOrEqual(mainBox.x);
+  expect(sidebarBox.width).toBeLessThan(mainBox.width);
+  const reviewScreenshotPath = process.env['ULTRAMODERN_REVIEW_SCREENSHOT_PATH'];
+  if (reviewScreenshotPath !== undefined) {
+    await page.screenshot({ fullPage: true, path: reviewScreenshotPath });
+  }
+  const czechResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === customerListPath &&
+      response.request().method() === 'POST',
+  );
+  await page.goto('/cs/crm/customers');
+  const czechResponse = await czechResponsePromise;
+  expect(czechResponse.status(), await czechResponse.text()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'Zákazníci' })).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Zákazníci' })).toBeVisible();
+  await expect(page.getByText(e2eCustomers.active.name)).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toHaveCount(
+    1,
+  );
+});
+
+test('customers empty state omits the table and pager', async ({ page }) => {
+  await login(page);
+  await page.route(`**${customerListPath}`, (route) =>
+    route.fulfill({
+      body: JSON.stringify({ items: [], nextOffset: null }),
+      contentType: 'application/json',
+      status: 200,
+    }),
+  );
+
+  await page.goto('/en/crm/customers');
+  await expect(page.getByText('No Customers match this filter.')).toBeVisible();
+  await expect(page.getByRole('table', { name: 'Customers' })).toHaveCount(0);
+  await expect(page.getByRole('navigation', { name: 'Customer list pages' })).toHaveCount(0);
+});
+
+test('customers retry a temporary BFF failure from the keyboard and restore results focus', async ({
+  page,
+}) => {
+  await login(page);
+  let attempts = 0;
+  await page.route(`**${customerListPath}`, (route) => {
+    attempts += 1;
+    if (attempts === 1) {
+      return route.fulfill({
+        body: JSON.stringify({
+          _tag: 'CustomerListUnavailableProblem',
+          detail: 'The E2E customer list is temporarily unavailable.',
+          retryable: true,
+          status: 503,
+          title: 'Customer list unavailable',
+          type: 'https://ontos.dev/problems/crm/customer-list-unavailable',
+        }),
+        contentType: 'application/problem+json',
+        status: 503,
+      });
+    }
+    return route.fulfill({
+      body: JSON.stringify({ items: [customerResponse(e2eCustomers.active)], nextOffset: null }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+
+  await page.goto('/en/crm/customers');
+  const retry = page.getByRole('button', { name: 'Try again' });
+  await expect(retry).toBeVisible();
+  await retry.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByText(e2eCustomers.active.name)).toBeVisible();
+  await expect(page.getByTestId('customers-results')).toBeFocused();
+  expect(attempts).toBe(2);
+});
+
+test('customers keep filter and pagination in the URL without page overflow at 375px', async ({
+  page,
+}) => {
+  await page.setViewportSize({ height: 667, width: 375 });
+  await login(page);
+  const payloads: unknown[] = [];
+  const longCustomer = {
+    ...customerResponse(e2eCustomers.archived),
+    name: `${e2eCustomers.archived.name} with a deliberately long business name`,
+  };
+  await page.route(`**${customerListPath}`, (route) => {
+    const payload = route.request().postDataJSON();
+    payloads.push(payload);
+    return route.fulfill({
+      body: JSON.stringify({
+        items: [longCustomer],
+        nextOffset: payload.offset === 0 ? 25 : null,
+      }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+
+  await page.goto('/en/crm/customers?view=compact');
+  await expect(page.getByText(longCustomer.name)).toBeVisible();
+  const status = page.getByRole('combobox', { name: 'Customer status' });
+  await status.focus();
+  await page.keyboard.press('Enter');
+  const archived = page.getByRole('option', { name: 'Archived' });
+  await expect(archived).toBeVisible();
+  if ((await archived.getAttribute('data-highlighted')) === null) {
+    await page.keyboard.press('ArrowDown');
+  }
+  await expect(archived).toHaveAttribute('data-highlighted', '');
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/en\/crm\/customers\?view=compact&status=archived$/u);
+  await expect(page.getByText(longCustomer.name)).toBeVisible();
+
+  await page.getByRole('link', { name: 'Next' }).click();
+  await expect(page).toHaveURL(/\/en\/crm\/customers\?view=compact&status=archived&offset=25$/u);
+  await expect(page.getByText(longCustomer.name)).toBeVisible();
+  expect(payloads).toContainEqual({ filter: 'active', limit: 25, offset: 0 });
+  expect(payloads).toContainEqual({ filter: 'archived', limit: 25, offset: 0 });
+  expect(payloads).toContainEqual({ filter: 'archived', limit: 25, offset: 25 });
+
+  const overflow = page.getByTestId('customers-table-overflow');
+  const dimensions = await overflow.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(dimensions.scrollWidth).toBeGreaterThan(dimensions.clientWidth);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,

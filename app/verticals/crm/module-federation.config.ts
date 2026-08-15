@@ -18,7 +18,6 @@ const reactDomVersion = (require('react-dom/package.json') as { version: string 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({
   from: import.meta.url,
 });
-
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
   createModuleFederationConfig({
     dts: {
@@ -30,8 +29,24 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     exposes: {
       './PageCrm': './src/federation-entry.tsx',
+      './PageCustomersList': './src/federation/page-customers-list.tsx',
     },
     filename: 'remoteEntry.js',
+    manifest: {
+      additionalData: ({ stats }) => ({
+        ...stats,
+        exposes: stats.exposes.map((expose) => ({
+          ...expose,
+          assets: {
+            ...expose.assets,
+            css: {
+              ...expose.assets.css,
+              async: expose.assets.css.async.filter((asset) => !asset.includes('/async-index.')),
+            },
+          },
+        })),
+      }),
+    },
     name: 'verticalCrm',
     shared: {
       '@modern-js/plugin-i18n/runtime/no-react-i18next': {

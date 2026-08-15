@@ -16,6 +16,11 @@ export interface ApprovedVerticalPageClient {
 export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
   // @ontos-codegen-start shell-page-clients
   { appId: 'crm', componentKey: 'crm.core.page-crm', load: () => import('crm/PageCrm') },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-customers-list',
+    load: () => import('crm/PageCustomersList'),
+  },
   // @ontos-codegen-end shell-page-clients
 ];
 

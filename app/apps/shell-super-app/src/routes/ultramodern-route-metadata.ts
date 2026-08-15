@@ -52,6 +52,29 @@ export const ultramodernRouteMetadata = [
     titleKey: 'shell.moduleTarget.title',
   },
   {
+    canonicalPath: '/crm/customers',
+    descriptionKey: 'shell.moduleTarget.seoDescription',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.crm-customers-list',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
+    id: 'shell-crm-customers-list',
+    indexable: false,
+    localisedPaths: {
+      cs: '/crm/customers',
+      en: '/crm/customers',
+    },
+    mfBoundaryId: 'shellSuperApp',
+    namespace: 'shell',
+    ownerAppId: 'shell-super-app',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'shell.moduleTarget.title',
+  },
+  {
     canonicalPath: '/login',
     descriptionKey: 'shell.login.seo.description',
     entrypoint: {
@@ -149,6 +172,10 @@ export const ultramodernLocalisedUrls = {
   '/crm': {
     cs: '/crm',
     en: '/crm',
+  },
+  '/crm/customers': {
+    cs: '/crm/customers',
+    en: '/crm/customers',
   },
   '/hledat': {
     cs: '/hledat',

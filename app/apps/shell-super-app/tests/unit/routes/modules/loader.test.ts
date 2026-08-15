@@ -7,6 +7,7 @@ import {
   loader,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -76,17 +77,21 @@ test('selects only declared safe route parameters and omits overlong values', ()
 });
 
 test('forwards an exact generated page entrypoint through the authenticated client', async () => {
-  await expect(
-    loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
-      request: request(),
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-customers-list',
+      entrypointKey: 'crm.core.page.customers-list',
+      moduleId: 'crm.core',
+      writable: true,
     }),
-  ).resolves.toMatchObject({
+  );
+  await expect(customersListLoader({ request: request() })).resolves.toMatchObject({
     state: 'resolved',
-    target: { componentKey: 'crm.core.page-customers' },
+    target: { componentKey: 'crm.core.page-customers-list' },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+    { entrypointKey: 'crm.core.page.customers-list', moduleId: 'crm.core' },
     {
       baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
       cookie: 'session=test-session',

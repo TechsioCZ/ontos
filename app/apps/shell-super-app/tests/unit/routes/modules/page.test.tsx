@@ -125,3 +125,20 @@ test('passes an empty route-parameter record to a resolved static page', async (
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
   expect(await screen.findByText('crm.core.page-customers:static')).toBeTruthy();
 });
+
+test('loads the generated Customers list page as a static exact target', async () => {
+  const customersListModel: ModuleTargetPageModel = {
+    ...resolvedModel,
+    routeParams: {},
+    target: {
+      ...resolvedModel.target,
+      componentKey: 'crm.core.page-customers-list',
+      entrypointKey: 'crm.core.page.customers-list',
+    },
+  };
+  useLoaderDataMock.mockReturnValue(customersListModel);
+  render(<ModuleTargetPage />);
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customersListModel.target);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText('crm.core.page-customers-list:static')).toBeTruthy();
+});

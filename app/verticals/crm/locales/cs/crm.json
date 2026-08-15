@@ -21,6 +21,46 @@
       "crm": {
         "description": "Tato stránka je připravena k implementaci.",
         "title": "Nová stránka"
+      },
+      "customersList": {
+        "description": "Zobrazení a filtrování aktivních a archivovaných zákazníků.",
+        "filter": {
+          "active": "Aktivní",
+          "all": "Všichni",
+          "archived": "Archivovaní",
+          "label": "Stav zákazníka",
+          "placeholder": "Vyberte stav"
+        },
+        "pagination": {
+          "label": "Stránky seznamu zákazníků",
+          "next": "Další",
+          "previous": "Předchozí"
+        },
+        "states": {
+          "authenticationExpired": "Vaše relace vypršela. Po přihlášení to zkuste znovu.",
+          "decode": "Odpověď se seznamem zákazníků se nepodařilo přečíst. Zkuste to znovu.",
+          "empty": "Tomuto filtru neodpovídají žádní zákazníci.",
+          "forbidden": "Nemáte oprávnění zobrazit zákazníky.",
+          "internal": "Seznam zákazníků se nepodařilo bezpečně načíst. Zkuste to znovu.",
+          "loading": "Načítání zákazníků…",
+          "retry": "Zkusit znovu",
+          "retrying": "Opakování…",
+          "transport": "Seznam zákazníků není dostupný. Zkontrolujte připojení a zkuste to znovu.",
+          "unavailable": "Seznam zákazníků je dočasně nedostupný. Zkuste to znovu."
+        },
+        "status": {
+          "active": "Aktivní",
+          "archived": "Archivovaný"
+        },
+        "table": {
+          "caption": "Zákazníci",
+          "createdAt": "Vytvořeno",
+          "customerId": "ID zákazníka",
+          "name": "Jméno zákazníka",
+          "status": "Stav",
+          "updatedAt": "Aktualizováno"
+        },
+        "title": "Zákazníci"
       }
     }
   }

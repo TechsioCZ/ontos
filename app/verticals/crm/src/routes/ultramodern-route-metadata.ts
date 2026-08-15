@@ -53,12 +53,40 @@ export const ultramodernRouteMetadata = [
     publicSurface: 'private-app-screen',
     titleKey: 'crm.pages.crm.title',
   },
+  {
+    canonicalPath: '/crm/customers',
+    descriptionKey: 'crm.pages.customersList.description',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'crm.core.page.customers-list',
+      moduleKey: 'crm.core',
+      role: 'page',
+      scope: 'tenant',
+    },
+    id: 'crm-customers-list',
+    indexable: false,
+    localisedPaths: {
+      cs: '/crm/customers',
+      en: '/crm/customers',
+    },
+    mfBoundaryId: 'verticalCrm',
+    moduleId: 'crm.core',
+    namespace: 'crm',
+    ownerAppId: 'crm',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'crm.pages.customersList.title',
+  },
 ] as const;
 
 export const ultramodernLocalisedUrls = {
   '/crm': {
     cs: '/crm',
     en: '/crm',
+  },
+  '/crm/customers': {
+    cs: '/crm/customers',
+    en: '/crm/customers',
   },
 } as const;
 

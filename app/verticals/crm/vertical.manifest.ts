@@ -12,6 +12,7 @@ import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { CrmPage } from './src/routes/[lang]/crm/page.tsx';
 import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
 import { CustomerListApi } from './shared/apis/customer-list.ts';
+import { CustomersListPage } from './src/routes/[lang]/crm/customers/page.tsx';
 import { editContactAction } from './src/actions/edit-contact.action.ts';
 import { editCustomerAction } from './src/actions/edit-customer.action.ts';
 import { unarchiveContactAction } from './src/actions/unarchive-contact.action.ts';
@@ -64,6 +65,7 @@ export const crmManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-crm': CrmPage,
+      'page-customers-list': CustomersListPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -108,6 +110,18 @@ export const crmManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           routePath: '/crm',
+        },
+        {
+          componentKey: 'crm.core.page-customers-list',
+          contributionKey: 'crm.core.page.customers-list',
+          entrypoint: {
+            access: 'read',
+            entrypointKey: 'crm.core.page.customers-list',
+            moduleKey: 'crm.core',
+            role: 'page',
+            scope: 'tenant',
+          },
+          routePath: '/crm/customers',
         },
         // </generated-module-shell-pages>
       ],
