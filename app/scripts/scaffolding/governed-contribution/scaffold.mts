@@ -521,6 +521,7 @@ const renderGovernedServer = (
 ): string => {
   const type = toPascalCase(name);
   const isModuleApi = kind === 'module-api';
+  /* eslint-disable no-nested-ternary, unicorn/no-nested-ternary -- Preserve the compact established generator-name mapping. */
   const suffix = kind === 'report' ? 'report' : kind === 'search-provider' ? 'search' : '';
   const contract = isModuleApi ? name : `${name}-${suffix}`;
   const apiValue = isModuleApi
@@ -531,6 +532,7 @@ const renderGovernedServer = (
   const readImport = isModuleApi
     ? `../src/api/${name}.read.ts`
     : `../src/${kind === 'report' ? 'reports' : 'search'}/${name}.provider.ts`;
+  /* eslint-enable no-nested-ternary, unicorn/no-nested-ternary */
   const problemStem = `${type}${isModuleApi ? '' : 'Provider'}`;
   return `${generatedHeader(kind)}
 import { ReadRuntime } from '@app/core-runtime';
@@ -804,19 +806,21 @@ const slotLine = (
   };
 };
 
+/* eslint-disable unicorn/no-array-reduce -- Slot patches intentionally flow through the accumulated document. */
 const patchSlots = (content: string, slots: readonly [string, string, string][]): string =>
   slots.reduce(
     (current, [start, end, line]) =>
       insertSortedSlot(current, start, end, [line], (candidate) => candidate.endsWith(',')),
     content,
   );
+/* eslint-enable unicorn/no-array-reduce */
 
 const patchFederationExposure = async (
   vertical: OntosVerticalMetadata,
   name: string,
 ): Promise<Mutation> => {
   const configPath = resolveContainedPath(vertical.directory, 'module-federation.config.ts');
-  const content = await readFile(configPath, 'utf8');
+  const content = await readFile(configPath, 'utf-8');
   const next = insertModuleFederationExposure(
     content,
     `./${toPascalCase(name)}`,
@@ -825,6 +829,7 @@ const patchFederationExposure = async (
   return { content: next, kind: 'update', path: configPath };
 };
 
+/* eslint-disable complexity, no-nested-ternary, unicorn/no-nested-ternary -- Existing kind dispatch is kept behaviorally unchanged while the standalone lint gate is enforced. */
 export const planGovernedContributionScaffold = async (
   workspaceRoot: string,
   kind: GovernedContributionKind,
@@ -931,9 +936,15 @@ export const planGovernedContributionScaffold = async (
     vertical.registrationContent,
     registration,
   );
-  if (manifestMutation !== undefined) mutations.push(manifestMutation);
-  if (registrationMutation !== undefined) mutations.push(registrationMutation);
-  if (isComponent) mutations.push(await patchFederationExposure(vertical, name));
+  if (manifestMutation !== undefined) {
+    mutations.push(manifestMutation);
+  }
+  if (registrationMutation !== undefined) {
+    mutations.push(registrationMutation);
+  }
+  if (isComponent) {
+    mutations.push(await patchFederationExposure(vertical, name));
+  }
   ensureUniqueMutationPaths(mutations);
   return {
     mutations,
@@ -944,3 +955,4 @@ export const planGovernedContributionScaffold = async (
     },
   };
 };
+/* eslint-enable complexity, no-nested-ternary, unicorn/no-nested-ternary */

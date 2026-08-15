@@ -3,7 +3,10 @@ import { Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loader } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import {
+  loader,
+  selectRouteParams,
+} from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -58,6 +61,20 @@ beforeEach(() => {
   );
 });
 
+test('selects only declared safe route parameters and omits overlong values', () => {
+  expect(
+    selectRouteParams(
+      {
+        appId: 'attacker-app',
+        id: 'customer-1',
+        moduleId: 'attacker.module',
+        overlong: 'x'.repeat(201),
+      },
+      ['id', 'overlong'],
+    ),
+  ).toEqual({ id: 'customer-1' });
+});
+
 test('forwards an exact generated page entrypoint through the authenticated client', async () => {
   await expect(
     loader({
@@ -77,8 +94,33 @@ test('forwards an exact generated page entrypoint through the authenticated clie
   );
 });
 
+test('retains only declared bounded route parameters outside the resolved target identity', async () => {
+  await expect(
+    loader({
+      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+      request: request(),
+      routeParams: { id: 'customer-1' },
+    }),
+  ).resolves.toMatchObject({
+    routeParams: { id: 'customer-1' },
+    state: 'resolved',
+    target: {
+      appId: 'crm',
+      componentKey: 'crm.core.page-customers',
+      entrypointKey: 'crm.core.page.customers',
+      moduleId: 'crm.core',
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+    expect.any(Object),
+  );
+});
+
 test('retains module landing behavior when no exact page entrypoint is supplied', async () => {
-  await loader({ params: { moduleId: 'crm.core' }, request: request() });
+  await expect(
+    loader({ params: { moduleId: 'crm.core' }, request: request() }),
+  ).resolves.toMatchObject({ routeParams: {} });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
     { moduleId: 'crm.core' },
     expect.any(Object),

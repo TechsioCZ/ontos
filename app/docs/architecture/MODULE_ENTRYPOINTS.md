@@ -103,6 +103,17 @@ uses one tenant-state batch and one module-permission batch. Every direct target
 rechecks installation/reference, selected context, lifecycle, and permission before a generated
 lazy registry is consulted. Only a `resolved` outcome may execute a remote thunk.
 
+Generated exact page routes may use safe canonical named-parameter templates such as
+`/crm/customers/:id/edit`; their owner and Shell filesystem routes use `[id]`. Dynamic templates are
+not normal navigation items. The generated connector selects only its declared parameter names and
+bounds each string value before calling the generic page loader. The generic loader keeps that plain
+record separate from the resolved target and never adds it to the module contract, target-resolution
+BFF input, trusted principal context, tenant/legal-entity context, module-state gate, or permission
+decision. Only after authentication, legal-entity selection, exact page resolution, lifecycle and
+permission success, approved lazy-client lookup, and successful remote loading may the Shell pass
+the record to the owner component. The owner treats every value as untrusted business input and
+validates it again before any domain read or Action.
+
 Search filters safe providers through the same context/state/module checks, then bulk-filters
 ResourceRefs by resource permission. Core repeats result-level resource authorization before a
 generated provider response can leave the receiving BFF. Zero providers/results is successful,

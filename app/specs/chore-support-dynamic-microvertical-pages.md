@@ -1,6 +1,6 @@
 ---
 type: chore
-status: planned
+status: done
 created: 2026-08-14
 ---
 
@@ -52,39 +52,39 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### 1. Define the safe dynamic route contract
 
-- [ ] Update `packages/core-runtime/src/modules/shell-contribution.ts` so a page `routePath` accepts static lowercase kebab segments and safe named `:parameter` segments, while retaining the 200-character bound and rejecting locale prefixes, empty/dot segments, trailing slashes, queries, fragments, origins, encoded traversal, wildcards, optional/catch-all syntax, invalid parameter names, and repeated parameter names.
-- [ ] Extend `packages/core-runtime/tests/unit/shell-contribution.test.ts` with accepted mixed templates such as `/crm/customers/:id/edit` and rejected unsafe/ambiguous templates; keep the serialized contract plain data with no functions, loaders, imports, or private implementation metadata.
+- [x] Update `packages/core-runtime/src/modules/shell-contribution.ts` so a page `routePath` accepts static lowercase kebab segments and safe named `:parameter` segments, while retaining the 200-character bound and rejecting locale prefixes, empty/dot segments, trailing slashes, queries, fragments, origins, encoded traversal, wildcards, optional/catch-all syntax, invalid parameter names, and repeated parameter names.
+- [x] Extend `packages/core-runtime/tests/unit/shell-contribution.test.ts` with accepted mixed templates such as `/crm/customers/:id/edit` and rejected unsafe/ambiguous templates; keep the serialized contract plain data with no functions, loaders, imports, or private implementation metadata.
 
 ### 2. Extend Codesmith URL parsing and filesystem mapping
 
-- [ ] Refactor the page route model in `scripts/scaffolding/microvertical-page/scaffold.mts` to retain the canonical template segments separately from router filesystem segments, mapping `:id` deterministically to `[id]` while continuing to use the canonical `:id` spelling in manifest `routePath`, route metadata, localized-path metadata, route ownership, and collision identities.
-- [ ] Accept named parameters only through explicit `--url`; keep the omitted-URL compatibility path `/<vertical>/<page>` static. Update `scripts/scaffolding/cli.mts` help and `README.md` to document the grammar and show `mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit`.
-- [ ] Preserve containment and atomic preflight. Treat two templates that differ only in parameter name at the same segment as a routing collision, detect static-versus-dynamic sibling collisions, reject reserved Shell prefixes, and make a successful exact rerun a no-op without weakening developer-edited-output checks.
+- [x] Refactor the page route model in `scripts/scaffolding/microvertical-page/scaffold.mts` to retain the canonical template segments separately from router filesystem segments, mapping `:id` deterministically to `[id]` while continuing to use the canonical `:id` spelling in manifest `routePath`, route metadata, localized-path metadata, route ownership, and collision identities.
+- [x] Accept named parameters only through explicit `--url`; keep the omitted-URL compatibility path `/<vertical>/<page>` static. Update `scripts/scaffolding/cli.mts` help and `README.md` to document the grammar and show `mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit`.
+- [x] Preserve containment and atomic preflight. Treat two templates that differ only in parameter name at the same segment as a routing collision, detect static-versus-dynamic sibling collisions, reject reserved Shell prefixes, and make a successful exact rerun a no-op without weakening developer-edited-output checks.
 
 ### 3. Generate non-navigational dynamic page contributions
 
-- [ ] Keep a dynamic page in the manifest `pages`, public component, private page registration, Module Federation exposure, and exact Shell lazy-client slots, but do not emit a `navigation` contribution for it because `/crm/customers/:id/edit` is a route template rather than a valid destination. Preserve ordinary navigation generation for static pages.
-- [ ] Update owned-route discovery, generated-wiring comparison, collision detection, locale patching, route metadata rendering, relative imports, formatter stability, and current/legacy rerun handling to use the correct canonical versus filesystem segment representation at arbitrary supported nesting depth.
+- [x] Keep a dynamic page in the manifest `pages`, public component, private page registration, Module Federation exposure, and exact Shell lazy-client slots, but do not emit a `navigation` contribution for it because `/crm/customers/:id/edit` is a route template rather than a valid destination. Preserve ordinary navigation generation for static pages.
+- [x] Update owned-route discovery, generated-wiring comparison, collision detection, locale patching, route metadata rendering, relative imports, formatter stability, and current/legacy rerun handling to use the correct canonical versus filesystem segment representation at arbitrary supported nesting depth.
 
 ### 4. Carry route parameters through the authenticated Shell page gateway
 
-- [ ] Extend the generated dynamic Shell connector loader to receive the router's exact declared parameters, select only the generated parameter names, and pass a bounded readonly string record into the generic module-target loader. Static connectors continue to supply an empty record.
-- [ ] Extend `ModuleTargetPageModel` and `ApprovedVerticalPageComponent` so the Shell keeps `routeParams` separate from `ResolvedModuleTarget`, and passes them to the remote component only after authentication, legal-entity selection, exact page resolution, module-state/permission success, approved-client lookup, and successful lazy load. Do not add route parameters to the module contract, target-resolution BFF input, trusted principal context, or authorization decisions.
-- [ ] Update the generated federated wrapper and owner page starter contract so a dynamic page receives its declared route parameters as plain props without importing Shell implementation types or changing static page behavior.
+- [x] Extend the generated dynamic Shell connector loader to receive the router's exact declared parameters, select only the generated parameter names, and pass a bounded readonly string record into the generic module-target loader. Static connectors continue to supply an empty record.
+- [x] Extend `ModuleTargetPageModel` and `ApprovedVerticalPageComponent` so the Shell keeps `routeParams` separate from `ResolvedModuleTarget`, and passes them to the remote component only after authentication, legal-entity selection, exact page resolution, module-state/permission success, approved-client lookup, and successful lazy load. Do not add route parameters to the module contract, target-resolution BFF input, trusted principal context, or authorization decisions.
+- [x] Update the generated federated wrapper and owner page starter contract so a dynamic page receives its declared route parameters as plain props without importing Shell implementation types or changing static page behavior.
 
 ### 5. Add generator and Shell regression coverage
 
-- [ ] Extend `scripts/scaffolding/tests/scaffold-generators.test.mts` to generate `customer-edit` at `/crm/customers/:id/edit` and prove `[lang]/crm/customers/[id]/edit` owner/Shell directories, canonical `:id` metadata, no navigation entry, exact page/registration/federation/client wiring, typed props, English/Czech locale entries, compilation, deterministic formatting, and an idempotent rerun.
-- [ ] Add table-driven no-write failures for invalid/repeated parameters, wildcard/catch-all/optional syntax, encoded traversal, locale-prefixed URLs, collisions between `[id]` and another dynamic name, static/dynamic sibling conflicts, another owner claiming the same template, modified generated output, and partial pre-existing output.
-- [ ] Update Shell loader/page unit tests to prove only declared route parameters reach the approved remote, static pages receive an empty record, denied/unavailable/not-found targets never consult or load the private registry, and parameter input cannot alter the resolved app/module/component/entrypoint identity.
+- [x] Extend `scripts/scaffolding/tests/scaffold-generators.test.mts` to generate `customer-edit` at `/crm/customers/:id/edit` and prove `[lang]/crm/customers/[id]/edit` owner/Shell directories, canonical `:id` metadata, no navigation entry, exact page/registration/federation/client wiring, typed props, English/Czech locale entries, compilation, deterministic formatting, and an idempotent rerun.
+- [x] Add table-driven no-write failures for invalid/repeated parameters, wildcard/catch-all/optional syntax, encoded traversal, locale-prefixed URLs, collisions between `[id]` and another dynamic name, static/dynamic sibling conflicts, another owner claiming the same template, modified generated output, and partial pre-existing output.
+- [x] Update Shell loader/page unit tests to prove only declared route parameters reach the approved remote, static pages receive an empty record, denied/unavailable/not-found targets never consult or load the private registry, and parameter input cannot alter the resolved app/module/component/entrypoint identity.
 
 ### 6. Update authoritative guidance
 
-- [ ] Update `docs/architecture/MODULE_MANIFESTS.md` and `docs/architecture/MODULE_ENTRYPOINTS.md` with the safe route-template grammar, `[parameter]` filesystem mapping, non-navigation rule, untrusted parameter boundary, and exact gateway ordering. Reconcile any README examples without changing public-route or sitemap behavior for private generated pages.
+- [x] Update `docs/architecture/MODULE_MANIFESTS.md` and `docs/architecture/MODULE_ENTRYPOINTS.md` with the safe route-template grammar, `[parameter]` filesystem mapping, non-navigation rule, untrusted parameter boundary, and exact gateway ordering. Reconcile any README examples without changing public-route or sitemap behavior for private generated pages.
 
 ### 7. Run all validation commands
 
-- [ ] Execute every command in `Validation Commands` and resolve failures without generating the CRM `customer-edit` business page, weakening Shell target checks, exposing a remote implementation, or changing unrelated generated routes.
+- [x] Execute every command in `Validation Commands` and resolve failures without generating the CRM `customer-edit` business page, weakening Shell target checks, exposing a remote implementation, or changing unrelated generated routes.
 
 ## Testing Strategy
 
@@ -96,13 +96,13 @@ byte-for-byte unchanged.
 
 ## Acceptance Criteria
 
-- [ ] `scaffold:microvertical-page` accepts `/crm/customers/:id/edit` and generates owner/Shell files under `[lang]/crm/customers/[id]/edit`.
-- [ ] Canonical/localized route metadata and the serialized page contribution retain `/crm/customers/:id/edit`; parameter syntax never becomes an import, loader, function, or trusted context value.
-- [ ] A dynamic page is exact-target resolvable and lazy-loadable but is absent from normal module navigation.
-- [ ] Only declared, bounded string route parameters reach the approved remote component, after all existing authenticated Shell/Core target gates succeed.
-- [ ] Unsafe, ambiguous, colliding, cross-owner, partial, or developer-edited inputs fail atomically with no filesystem mutation.
-- [ ] Existing static generated pages, omitted-URL defaults, route metadata, navigation, localization, Module Federation wiring, and exact reruns retain their behavior.
-- [ ] Documentation and command help describe the dynamic URL grammar and trust boundary accurately.
+- [x] `scaffold:microvertical-page` accepts `/crm/customers/:id/edit` and generates owner/Shell files under `[lang]/crm/customers/[id]/edit`.
+- [x] Canonical/localized route metadata and the serialized page contribution retain `/crm/customers/:id/edit`; parameter syntax never becomes an import, loader, function, or trusted context value.
+- [x] A dynamic page is exact-target resolvable and lazy-loadable but is absent from normal module navigation.
+- [x] Only declared, bounded string route parameters reach the approved remote component, after all existing authenticated Shell/Core target gates succeed.
+- [x] Unsafe, ambiguous, colliding, cross-owner, partial, or developer-edited inputs fail atomically with no filesystem mutation.
+- [x] Existing static generated pages, omitted-URL defaults, route metadata, navigation, localization, Module Federation wiring, and exact reruns retain their behavior.
+- [x] Documentation and command help describe the dynamic URL grammar and trust boundary accurately.
 
 ## Validation Commands
 
@@ -120,10 +120,10 @@ Execute every command to validate the chore with zero regressions.
 
 ## Review Checklist
 
-- [ ] Every acceptance criterion is satisfied.
-- [ ] The diff complies with `../AGENTS.md`, `AGENTS.md`, and all relevant referenced guidance.
-- [ ] Behavioral changes have tests.
-- [ ] No unrelated changes, dead code, or accidental API expansion remain.
+- [x] Every acceptance criterion is satisfied.
+- [x] The diff complies with `../AGENTS.md`, `AGENTS.md`, and all relevant referenced guidance.
+- [x] Behavioral changes have tests.
+- [x] No unrelated changes, dead code, or accidental API expansion remain.
 
 ## Notes
 
@@ -135,3 +135,72 @@ Execute every command to validate the chore with zero regressions.
 - Dynamic pages intentionally have no generated module navigation item. Contextual links from a
   Customer list/detail flow must supply a concrete Customer ID.
 - This chore adds no CRM page, Customer behavior, BFF operation, database change, or UI.
+
+## Implementation Evidence
+
+### Summary
+
+- Added safe dynamic page-template validation, canonical-to-filesystem mapping, collision preflight,
+  non-navigation generation, and bounded untrusted route-parameter propagation through the existing
+  exact Shell gateway.
+- Updated command help, public documentation, and authoritative module guidance without generating
+  the CRM `customer-edit` business page.
+
+### Changed Files
+
+17 files changed, 730 insertions(+), 96 deletions(-), including the dynamic-page implementation,
+its tests and documentation, plus the narrow scaffolding validation fixes required to make every
+listed command pass.
+
+### Tests Written or Updated
+
+- `packages/core-runtime/tests/unit/shell-contribution.test.ts` — accepted mixed templates, plain
+  serialization, and unsafe/ambiguous/repeated parameter rejection.
+- `scripts/scaffolding/tests/scaffold-generators.test.mts` — exact dynamic output, compilation,
+  formatting, reruns, static compatibility, collisions, developer edits, and atomic no-write paths.
+- `apps/shell-super-app/tests/unit/routes/modules/loader.test.ts` — declared/bounded parameter
+  selection, empty static parameters, and target-identity separation.
+- `apps/shell-super-app/tests/unit/routes/modules/page.test.tsx` — post-resolution lazy-load ordering
+  and approved remote props for dynamic and static pages.
+- `scripts/scaffolding/tests/module-contract-generator.test.mts` — supplies the Action generator's
+  mandatory legal-entity scope so the fixture reaches the intended missing-contract assertion.
+
+### Validation
+
+- `mise exec -- pnpm exec tsc -p scripts/scaffolding/tsconfig.json` — passed.
+- `mise exec -- pnpm exec oxlint scripts/scaffolding` — passed after resolving all reported
+  scaffolding findings.
+- `mise exec -- node --test scripts/scaffolding/tests/*.test.mts` — 42/42 passed, including
+  formatter stability and generated-file typechecking.
+- `mise exec -- pnpm scaffold:microvertical-page -- --help` — passed.
+- `mise exec -- node --test packages/core-runtime/tests/unit/shell-contribution.test.ts` — 20/20
+  passed, including non-configured locale-prefix regressions.
+- `mise exec -- pnpm --filter @app/shell-super-app test:unit` — 149/149 passed.
+- `mise exec -- pnpm module-entrypoints:check` — passed.
+- `mise exec -- pnpm check:module-contracts` — passed.
+- `mise exec -- pnpm check` — passed twice, including after the review fix.
+- `mise exec -- pnpm build` — CRM server/client compilation and Module Federation DTS generation
+  passed, then the existing release-envelope precondition rejected source revision `workspace`.
+- Browser validation — not run: this infrastructure chore intentionally does not generate the CRM
+  business page, so there is no changed user-visible runtime path to exercise.
+
+### Review
+
+- Re-read `../AGENTS.md`, `AGENTS.md`, `MICROVERTICALS.md`, `ACTIONS.md`, `ERRORS.md`,
+  `ULTRAMODERN.md`, `FRONTEND.md`, `MODULE_ENTRYPOINTS.md`, and `MODULE_MANIFESTS.md`; the final diff
+  preserves independent deployment seams, exact target gating, typed errors, private lazy loading,
+  and the `appId`/`moduleId` split.
+- The review found and fixed one evidence mismatch: the disposable dynamic fixture now uses the
+  specification's exact `/crm/customers/:id/edit` canonical template. A second specification review
+  and standards/AGENTS review found no release blockers after generic locale-prefix coverage was
+  added and an initially broad lint cleanup was narrowed to behavior-preserving changes. No
+  screenshots apply.
+
+### Deviations and Follow-ups
+
+- No validation-command deviations remain.
+- The build requires a promotable source revision instead of the worktree value `workspace`; no
+  product or generator failure occurred before that environment precondition.
+- Core and Codesmith retain separate implementations of the same route grammar. The review judged
+  this non-blocking because sharing the validator would widen a dependency boundary and both suites
+  now cover matching locale and parameter cases.

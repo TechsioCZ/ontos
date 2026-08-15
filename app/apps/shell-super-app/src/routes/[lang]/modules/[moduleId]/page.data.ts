@@ -10,7 +10,31 @@ import type { HomePageModel } from '../../page.data.ts';
 interface ModuleTargetLoaderArguments {
   readonly params: { readonly entrypointKey?: string; readonly moduleId: string };
   readonly request: Request;
+  readonly routeParams?: Readonly<Record<string, string>>;
 }
+
+export type ModulePageRouteParams = Readonly<Record<string, string>>;
+
+const routeParameterNamePattern = /^[a-z][A-Za-z0-9]*$/u;
+const routeParameterLimit = 64;
+const routeParameterValueLengthLimit = 200;
+
+export const selectRouteParams = (
+  params: Readonly<Record<string, string | undefined>>,
+  declaredNames: readonly string[],
+): ModulePageRouteParams =>
+  Object.freeze(
+    Object.fromEntries(
+      declaredNames.slice(0, routeParameterLimit).flatMap((name) => {
+        const value = params[name];
+        return routeParameterNamePattern.test(name) &&
+          typeof value === 'string' &&
+          value.length <= routeParameterValueLengthLimit
+          ? [[name, value] as const]
+          : [];
+      }),
+    ),
+  );
 
 export type ModuleTargetPageModel =
   | {
@@ -20,6 +44,7 @@ export type ModuleTargetPageModel =
   | {
       readonly shell: HomePageModel;
       readonly state: 'resolved';
+      readonly routeParams: ModulePageRouteParams;
       readonly target: ResolvedModuleTarget;
     };
 
@@ -45,7 +70,11 @@ const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleT
   }
 };
 
-export const loader = async ({ params, request }: ModuleTargetLoaderArguments) => {
+export const loader = async ({
+  params,
+  request,
+  routeParams = {},
+}: ModuleTargetLoaderArguments) => {
   const shell = await loadHomePageModel(request);
   if (shell.state !== 'authenticated') {
     return {
@@ -58,6 +87,7 @@ export const loader = async ({ params, request }: ModuleTargetLoaderArguments) =
     baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
     ...(cookie === null ? {} : { cookie }),
   };
+  const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
   return runEffectRequest(
     resolveModuleTarget(
       {
@@ -66,7 +96,14 @@ export const loader = async ({ params, request }: ModuleTargetLoaderArguments) =
       },
       options,
     ).pipe(
-      Effect.map((target): ModuleTargetPageModel => ({ shell, state: 'resolved', target })),
+      Effect.map(
+        (target): ModuleTargetPageModel => ({
+          routeParams: boundedRouteParams,
+          shell,
+          state: 'resolved',
+          target,
+        }),
+      ),
       Effect.catch((error) => Effect.succeed(safeState(error, shell))),
     ),
   );

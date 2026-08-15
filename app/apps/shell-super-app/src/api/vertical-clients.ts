@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
 
 export type ApprovedVerticalPageComponent = ComponentType<{
+  readonly routeParams: Readonly<Record<string, string>>;
   readonly target: ResolvedModuleTarget;
 }>;
 

@@ -109,6 +109,19 @@ router exposes it as `/cs/crm/customers` or `/en/crm/customers`. Never include a
 loaded only after the authenticated Shell/Core gateway resolves that exact governed page
 entrypoint. Private metadata alone is not an authentication mechanism.
 
+An explicit page URL may mix lowercase kebab-case static segments with unique named parameter
+segments such as `/crm/customers/:id/edit`. A parameter name starts with a lowercase letter and
+continues with letters or digits. Optional, repeated, wildcard, catch-all, encoded, query, fragment,
+origin, empty, dot, trailing-slash, and locale-prefixed forms are invalid. The serialized `routePath`
+retains the canonical `:id` spelling as bounded plain data; Codesmith maps it deterministically to
+the `[id]` filesystem segment used by both owner and Shell routers. Templates that differ only by a
+parameter name at one position, and static/dynamic siblings, are routing collisions.
+
+Dynamic page contributions remain in `pages`, component ownership, private registration, Module
+Federation exposure, and the generated Shell lazy-client allowlist. They do not create ordinary
+`navigation` contributions because a route template is not a usable destination. The manifest never
+contains route values, loader functions, imports, private source paths, or executable matching code.
+
 ## Repository documentation follow-up
 
 The repository-level `../docs/03_ARCHITECTURE_OVERVIEW.md`, `../docs/04_C4_MODEL.md`,

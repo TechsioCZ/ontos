@@ -71,6 +71,7 @@ const shell = {
 };
 
 const resolvedModel: ModuleTargetPageModel = {
+  routeParams: { id: 'customer-1' },
   shell,
   state: 'resolved',
   target: {
@@ -84,9 +85,13 @@ const resolvedModel: ModuleTargetPageModel = {
 
 beforeEach(() => {
   loadRemotePageMock.mockResolvedValue({
-    default: ({ target }: { readonly target: { readonly componentKey: string } }) => (
-      <div>{target.componentKey}</div>
-    ),
+    default: ({
+      routeParams,
+      target,
+    }: {
+      readonly routeParams: Readonly<Record<string, string>>;
+      readonly target: { readonly componentKey: string };
+    }) => <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>,
   });
   findApprovedVerticalPageClientMock.mockReturnValue({ load: loadRemotePageMock });
 });
@@ -111,5 +116,12 @@ test('invokes the exact private page loader only after a resolved authenticated 
   render(<ModuleTargetPage />);
   expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('crm.core.page-customers')).toBeTruthy();
+  expect(await screen.findByText('crm.core.page-customers:customer-1')).toBeTruthy();
+});
+
+test('passes an empty route-parameter record to a resolved static page', async () => {
+  useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
+  render(<ModuleTargetPage />);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(await screen.findByText('crm.core.page-customers:static')).toBeTruthy();
 });

@@ -120,6 +120,7 @@ const defaultRouteRefresh: RouteRefreshExecutor = ({ appId, workspaceRoot }) => 
   }
 };
 
+// eslint-disable-next-line sort-keys -- Preserve the established user-facing command order.
 const commandDefinitions: Readonly<Record<ScaffoldCommand, CommandDefinition>> = {
   action: {
     flags: ['action', 'legal-entity-scope', 'module', 'scope', 'vertical'],
@@ -227,8 +228,11 @@ Required flags:
   --page <page>          Stable page name (lower-kebab-case)
 
 Options:
-  --url <url>            Root-relative canonical path; defaults to /<vertical>/<page>
+  --url <url>            Root-relative canonical template of lowercase kebab segments and unique named :parameters; defaults to /<vertical>/<page>
   --help                 Show this help without writing
+
+Example:
+  mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit
 `,
     requiredFlags: ['page', 'vertical'],
     toConfig: (flags) => ({

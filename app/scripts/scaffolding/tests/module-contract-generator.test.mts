@@ -158,7 +158,17 @@ test('module-contract help is exact and write-free', async () => {
 test('business generators fail closed before the mandatory module contract exists', async () => {
   await withFixture(async (root) => {
     const commands = [
-      ['action', ['--vertical', 'property-registry', '--action', 'create-property']],
+      [
+        'action',
+        [
+          '--vertical',
+          'property-registry',
+          '--action',
+          'create-property',
+          '--legal-entity-scope',
+          'optional',
+        ],
+      ],
       ['microvertical-action-boundary', ['--vertical', 'property-registry']],
       ['microvertical-page', ['--vertical', 'property-registry', '--page', 'properties']],
       [

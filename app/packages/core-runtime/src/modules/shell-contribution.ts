@@ -10,10 +10,30 @@ const order = Schema.Finite.check(
   Schema.isInt(),
   Schema.isBetween({ maximum: 10_000, minimum: 0 }),
 );
+const routeParameterPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
+const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const routePath = Schema.String.check(
   Schema.isMinLength(2),
   Schema.isMaxLength(200),
-  Schema.isPattern(/^\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*)*$/u),
+  Schema.isPattern(
+    /^\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*)(?:\/(?:[a-z][a-z0-9]*(?:-[a-z0-9]+)*|:[a-z][A-Za-z0-9]*))*$/u,
+  ),
+).pipe(
+  Schema.check(
+    Schema.makeFilter((value) => {
+      const segments = value.slice(1).split('/');
+      if (routeLocalePrefixPattern.test(segments[0] ?? '')) {
+        return 'page contribution routePath must not include a locale prefix';
+      }
+      const parameterNames = segments.flatMap((segment) => {
+        const name = routeParameterPattern.exec(segment)?.groups?.['name'];
+        return name === undefined ? [] : [name];
+      });
+      return new Set(parameterNames).size === parameterNames.length
+        ? undefined
+        : 'page contribution routePath must not repeat a parameter name';
+    }),
+  ),
 );
 
 const allowsRead = (access: string): boolean => access === 'read' || access === 'historical_read';

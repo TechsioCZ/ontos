@@ -51,16 +51,20 @@ interface PageVerticalMetadata extends OntosVerticalMetadata {
 }
 
 interface PageRoute {
+  readonly canonicalSegments: readonly string[];
   readonly canonicalPath: string;
+  readonly filesystemSegments: readonly string[];
+  readonly isDynamic: boolean;
+  readonly parameterNames: readonly string[];
   readonly relativePath: string;
-  readonly segments: readonly string[];
 }
 
 const namespacePattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 const moduleFederationNamePattern = /^[A-Za-z][A-Za-z0-9]*$/u;
 const localePattern = /^[a-z]{2}(?:-[A-Z]{2})?$/u;
 const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
-const pageRoutePattern = /^\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*)*$/u;
+const staticRouteSegmentPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
+const parameterRouteSegmentPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
 const pageStarterLocales = new Set(['cs', 'en']);
 const SHELL_PAGE_CLIENT_SLOT_START = '// @ontos-codegen-start shell-page-clients';
 const SHELL_PAGE_CLIENT_SLOT_END = '// @ontos-codegen-end shell-page-clients';
@@ -71,28 +75,48 @@ const resolvePageRoute = (
   requestedUrl: string | undefined,
 ): PageRoute => {
   const canonicalPath = requestedUrl ?? `/${vertical.slug}/${page}`;
+  const canonicalSegments = canonicalPath.startsWith('/') ? canonicalPath.slice(1).split('/') : [];
+  const parameterNames = canonicalSegments.flatMap((segment) => {
+    const name = parameterRouteSegmentPattern.exec(segment)?.groups?.['name'];
+    return name === undefined ? [] : [name];
+  });
   if (
     canonicalPath.length < 2 ||
     canonicalPath.length > 200 ||
-    !pageRoutePattern.test(canonicalPath)
+    canonicalSegments.length === 0 ||
+    canonicalSegments.some(
+      (segment) =>
+        !staticRouteSegmentPattern.test(segment) && !parameterRouteSegmentPattern.test(segment),
+    ) ||
+    new Set(parameterNames).size !== parameterNames.length ||
+    (requestedUrl === undefined && parameterNames.length > 0)
   ) {
     throw new Error(
-      '--url must be a root-relative path of lowercase kebab-case segments with no locale, query, fragment, parameters, or trailing slash',
+      '--url must be a root-relative path of lowercase kebab-case segments and unique named :parameters, with no locale, query, fragment, wildcard, optional/catch-all syntax, or trailing slash',
     );
   }
-  const segments = canonicalPath.slice(1).split('/');
-  if (requestedUrl !== undefined && routeLocalePrefixPattern.test(segments[0] ?? '')) {
+  if (requestedUrl !== undefined && routeLocalePrefixPattern.test(canonicalSegments[0] ?? '')) {
     throw new Error('--url must not include a locale prefix; the localized router adds it');
   }
+  const filesystemSegments = canonicalSegments.map((segment) => {
+    const parameterName = parameterRouteSegmentPattern.exec(segment)?.groups?.['name'];
+    return parameterName === undefined ? segment : `[${parameterName}]`;
+  });
   return {
     canonicalPath,
-    relativePath: segments.join('/'),
-    segments,
+    canonicalSegments,
+    filesystemSegments,
+    isDynamic: parameterNames.length > 0,
+    parameterNames,
+    relativePath: filesystemSegments.join('/'),
   };
 };
 
 const relativeFromRoute = (route: PageRoute, target: string, extraLevels = 0): string =>
-  `${'../'.repeat(route.segments.length + extraLevels)}${target}`;
+  `${'../'.repeat(route.filesystemSegments.length + extraLevels)}${target}`;
+
+const renderRouteParameterType = (route: PageRoute): string =>
+  route.parameterNames.map((name) => `'${name}'`).join(' | ');
 
 const discoverPageVertical = async (
   workspaceRoot: string,
@@ -205,10 +229,24 @@ const renderPage = (vertical: PageVerticalMetadata, page: string, route: PageRou
   const componentName = `${toPascalCase(page)}Page`;
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const prefix = vertical.tailwindPrefix;
+  const routeParameterType = renderRouteParameterType(route);
+  const props = route.isDynamic
+    ? `type ${componentName}RouteParams = Readonly<Partial<Record<${routeParameterType}, string>>>;
+
+interface ${componentName}Props {
+  readonly routeParams: ${componentName}RouteParams;
+}
+
+`
+    : '';
+  const declaration = route.isDynamic
+    ? `export const ${componentName} = ({ routeParams }: ${componentName}Props) => {
+  void routeParams;`
+    : `export const ${componentName} = () => {`;
   return `import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '${relativeFromRoute(route, 'ultramodern-route-head', 1)}';
 
-export const ${componentName} = () => {
+${props}${declaration}
   const { t } = useModernI18n();
   const headingId = '${page}-heading';
 
@@ -305,7 +343,9 @@ const pageWiring = (vertical: PageVerticalMetadata, page: string, route: PageRou
     contributionKey,
     manifestComponent: `'page-${page}': ${componentName},`,
     manifestImport: `import { ${componentName} } from './src/routes/[lang]/${route.relativePath}/page.tsx';`,
-    manifestNavigation: `{ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' },`,
+    manifestNavigation: route.isDynamic
+      ? undefined
+      : `{ contributionKey: '${vertical.moduleId}.navigation.${page}', entrypoint: ${entrypoint}, groupKey: 'shell.navigation.modules', order: 100, pageKey: '${contributionKey}' },`,
     manifestPage: `{ componentKey: '${componentKey}', contributionKey: '${contributionKey}', entrypoint: ${entrypoint}, routePath: '${route.canonicalPath}' },`,
     registrationPage: `'page-${page}': () => import('./src/routes/[lang]/${route.relativePath}/page.tsx'),`,
     shellClient: `{ appId: '${vertical.appId}', componentKey: '${componentKey}', load: () => import('${toCamelCase(vertical.appId)}/Page${toPascalCase(page)}') },`,
@@ -320,18 +360,34 @@ const renderFederatedPage = (
   const componentName = `${toPascalCase(page)}Page`;
   const federatedComponentName = `${toPascalCase(page)}FederatedPage`;
   const resourcesName = `${toCamelCase(vertical.slug)}I18nResources`;
+  const routeParameterType = renderRouteParameterType(route);
+  const props = route.isDynamic
+    ? `type ${federatedComponentName}RouteParams = Readonly<Partial<Record<${routeParameterType}, string>>>;
+
+interface ${federatedComponentName}Props {
+  readonly routeParams: ${federatedComponentName}RouteParams;
+}
+
+`
+    : '';
+  const declaration = route.isDynamic
+    ? `const ${federatedComponentName} = ({ routeParams }: ${federatedComponentName}Props) => (`
+    : `const ${federatedComponentName} = () => (`;
+  const ownerPage = route.isDynamic
+    ? `<${componentName} routeParams={routeParams} />`
+    : `<${componentName} />`;
   return `import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { ${resourcesName} } from '../i18n/resources';
 import { ${componentName} } from '../routes/[lang]/${route.relativePath}/page';
 
-const ${federatedComponentName} = () => (
+${props}${declaration}
   <FederatedI18nBoundary
     defaultNamespace="${vertical.namespace}"
     fallbackLanguage="en"
     resources={${resourcesName}}
     supportedLanguages={['en', 'cs']}
   >
-    <${componentName} />
+    ${ownerPage}
   </FederatedI18nBoundary>
 );
 
@@ -366,13 +422,15 @@ const patchPageWiring = (
     [wiring.manifestPage],
     (candidate) => candidate.endsWith(','),
   );
-  manifest = insertSortedSlot(
-    manifest,
-    MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
-    MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
-    [wiring.manifestNavigation],
-    (candidate) => candidate.endsWith(','),
-  );
+  if (wiring.manifestNavigation !== undefined) {
+    manifest = insertSortedSlot(
+      manifest,
+      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+      [wiring.manifestNavigation],
+      (candidate) => candidate.endsWith(','),
+    );
+  }
   const registration = insertSortedSlot(
     vertical.registrationContent,
     MODULE_REGISTRATION_PAGE_SLOT_START,
@@ -430,10 +488,32 @@ const renderShellConnectorLoader = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-): string =>
-  `import { loader as loadModuleTarget } from '${relativeFromRoute(route, 'modules/[moduleId]/page.data.ts')}';
+): string => {
+  const loaderImport = route.isDynamic
+    ? `{
+  loader as loadModuleTarget,
+  selectRouteParams,
+}`
+    : '{ loader as loadModuleTarget }';
+  const parameterNames = route.parameterNames.map((name) => `'${name}'`).join(', ');
+  const loaderArguments = route.isDynamic
+    ? `interface ShellPageLoaderArguments {
+  readonly params: Readonly<Record<string, string | undefined>>;
+  readonly request: Request;
+}
 
-interface ShellPageLoaderArguments {
+const routeParameterNames = [${parameterNames}] as const;
+
+export const loader = ({ params, request }: ShellPageLoaderArguments) =>
+  loadModuleTarget({
+    params: {
+      entrypointKey: '${vertical.moduleId}.page.${page}',
+      moduleId: '${vertical.moduleId}',
+    },
+    request,
+    routeParams: selectRouteParams(params, routeParameterNames),
+  });`
+    : `interface ShellPageLoaderArguments {
   readonly request: Request;
 }
 
@@ -444,8 +524,12 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
       moduleId: '${vertical.moduleId}',
     },
     request,
-  });
+  });`;
+  return `import ${loaderImport} from '${relativeFromRoute(route, 'modules/[moduleId]/page.data.ts')}';
+
+${loaderArguments}
 `;
+};
 
 const renderLegacyShellConnectorLoader = (
   vertical: PageVerticalMetadata,
@@ -638,6 +722,12 @@ const ownedPageRoutes = async (workspaceRoot: string): Promise<readonly OwnedPag
 const isDynamicShellRouteSegment = (segment: string): boolean =>
   /^\[.+\]$/u.test(segment) || segment.startsWith('$') || segment.startsWith('*');
 
+const routeCollisionIdentity = (routePath: string): string =>
+  routePath
+    .split('/')
+    .map((segment) => (parameterRouteSegmentPattern.test(segment) ? ':parameter' : segment))
+    .join('/');
+
 const assertShellRouteIsAvailable = async (
   workspaceRoot: string,
   route: PageRoute,
@@ -651,7 +741,7 @@ const assertShellRouteIsAvailable = async (
     'routes',
     '[lang]',
   );
-  for (const [index, segment] of route.segments.entries()) {
+  for (const [index, segment] of route.filesystemSegments.entries()) {
     let entries;
     try {
       // eslint-disable-next-line no-await-in-loop -- Each segment depends on the resolved parent.
@@ -662,12 +752,19 @@ const assertShellRouteIsAvailable = async (
       }
       throw error;
     }
-    const dynamicCollision = entries.find(
-      (entry) => entry.name !== segment && isDynamicShellRouteSegment(entry.name),
+    const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
+    const siblingCollision = entries.find(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name !== segment &&
+        (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
     );
-    if (dynamicCollision !== undefined) {
+    if (siblingCollision !== undefined) {
+      const collisionKind = isDynamicShellRouteSegment(siblingCollision.name)
+        ? 'dynamic'
+        : 'static';
       throw new Error(
-        `Shell route ${route.canonicalPath} collides with dynamic route segment ${dynamicCollision.name}`,
+        `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
       );
     }
     const childEntry = entries.find((entry) => entry.name === segment);
@@ -675,13 +772,13 @@ const assertShellRouteIsAvailable = async (
       return;
     }
     const child = path.join(parent, segment);
-    if (index === route.segments.length - 1) {
+    if (index === route.filesystemSegments.length - 1) {
       throw new Error(`Shell route already exists or collides with generated page: ${child}`);
     }
     if (!childEntry.isDirectory()) {
       throw new Error(`Shell route ${route.canonicalPath} collides with reserved route content`);
     }
-    const prefix = `/${route.segments.slice(0, index + 1).join('/')}`;
+    const prefix = `/${route.canonicalSegments.slice(0, index + 1).join('/')}`;
     const ownsPrefix = registeredRoutes.has(prefix);
     // eslint-disable-next-line no-await-in-loop -- Reserved-prefix checks follow the route hierarchy.
     const pageRouteExists = await pathExists(path.join(child, 'page.tsx'));
@@ -754,7 +851,7 @@ const generatedWiringMatches = async (
     'src',
     'routes',
     '[lang]',
-    ...route.segments,
+    ...route.filesystemSegments,
   );
   const expectedShellFiles = [
     ['page.tsx', renderShellConnectorPage(route)],
@@ -787,6 +884,29 @@ const generatedWiringMatches = async (
     exposureSource === expectedExposureSource &&
     (await pathExists(federatedPagePath)) &&
     (await readFile(federatedPagePath, 'utf-8')) === renderFederatedPage(vertical, page, route);
+  const navigationMatches =
+    wiring.manifestNavigation === undefined
+      ? readGeneratedSlotEntries(
+          vertical.manifestContent,
+          MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+          MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+        ).every(
+          (entry) =>
+            !new RegExp(
+              `\\bcontributionKey\\s*:\\s*["']${vertical.moduleId.replaceAll('.', '\\.')}\\.navigation\\.${page}["']`,
+              'u',
+            ).test(entry),
+        )
+      : generatedWiringEntryMatches(
+          vertical.manifestContent,
+          MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
+          MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
+          wiring.manifestNavigation,
+          new RegExp(
+            `\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.navigation\\.${page}["']`,
+            'u',
+          ),
+        );
   return (
     generatedWiringEntryMatches(
       vertical.manifestContent,
@@ -802,16 +922,7 @@ const generatedWiringMatches = async (
       wiring.manifestComponent,
       new RegExp(`["']page-${page}["']\\s*:`, 'u'),
     ) &&
-    generatedWiringEntryMatches(
-      vertical.manifestContent,
-      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_START,
-      MODULE_MANIFEST_SHELL_NAVIGATION_SLOT_END,
-      wiring.manifestNavigation,
-      new RegExp(
-        `\\bcontributionKey\\s*:\\s*["']${vertical.moduleId}\\.navigation\\.${page}["']`,
-        'u',
-      ),
-    ) &&
+    navigationMatches &&
     generatedWiringEntryMatches(
       vertical.manifestContent,
       MODULE_MANIFEST_SHELL_PAGE_SLOT_START,
@@ -915,7 +1026,7 @@ export const planPageScaffold = async (
     'src',
     'routes',
     '[lang]',
-    ...route.segments,
+    ...route.filesystemSegments,
   );
   const pagePath = path.join(routeDirectory, 'page.tsx');
   const routeMetadataPath = path.join(routeDirectory, 'route.meta.ts');
@@ -926,7 +1037,7 @@ export const planPageScaffold = async (
     'src',
     'routes',
     '[lang]',
-    ...route.segments,
+    ...route.filesystemSegments,
   );
   if (await pathExists(routeDirectory)) {
     const state = await generatedPageState(
@@ -983,12 +1094,15 @@ export const planPageScaffold = async (
   }
   const registeredRoutes = await ownedPageRoutes(workspaceRoot);
   const existingRouteOwner = registeredRoutes.find(
-    (registered) => registered.routePath === route.canonicalPath,
+    (registered) =>
+      routeCollisionIdentity(registered.routePath) === routeCollisionIdentity(route.canonicalPath),
   );
   if (existingRouteOwner !== undefined) {
-    throw new Error(
-      `page URL ${route.canonicalPath} is already registered by ${existingRouteOwner.owner}`,
-    );
+    const reason =
+      existingRouteOwner.routePath === route.canonicalPath
+        ? `is already registered by ${existingRouteOwner.owner}`
+        : `has a routing collision with ${existingRouteOwner.routePath} registered by ${existingRouteOwner.owner}`;
+    throw new Error(`page URL ${route.canonicalPath} ${reason}`);
   }
   await assertShellRouteIsAvailable(
     workspaceRoot,

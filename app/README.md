@@ -67,6 +67,22 @@ root-relative canonical-path override. Without it, Codesmith uses
 private, non-indexable starter contains only a localized title, and the authenticated Shell/Core
 gateway must resolve its exact page entrypoint before the private remote loads.
 
+An explicit `--url` may contain unique named parameters using `:parameter` segments whose names
+start with a lowercase letter and continue with letters or digits. Codesmith maps those segments to
+TanStack filesystem directories such as `[parameter]`, while the manifest and route metadata retain
+the canonical `:parameter` spelling:
+
+```bash
+mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit
+```
+
+Dynamic page templates are exact, private page contributions, but are omitted from ordinary module
+navigation because a template is not a usable href. After the authenticated Shell/Core gateway has
+resolved and approved the exact page and loaded its allowlisted remote, the remote receives only the
+declared route parameters as a bounded plain string record. Route parameters remain untrusted
+business input and never alter tenant, principal, legal-entity, permission, module-state, or target
+identity context.
+
 ## Private-First Public Surfaces
 
 Generated app routes are private and non-indexable by default. Author route

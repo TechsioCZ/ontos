@@ -329,7 +329,7 @@ const run = (
 
 const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => {
   const manifestPath = path.join(fixture.root, 'verticals/inventory-stock/vertical.manifest.ts');
-  const manifest = await readFile(manifestPath, 'utf8');
+  const manifest = await readFile(manifestPath, 'utf-8');
   await writeFile(
     manifestPath,
     manifest.replace(
@@ -350,7 +350,7 @@ const addInventoryItemResourceType = async (fixture: Fixture): Promise<void> => 
       },
     ],`,
     ),
-    'utf8',
+    'utf-8',
   );
 };
 
@@ -382,6 +382,8 @@ test('documents every command and treats --help as a write-free operation', asyn
   assert.match(getHelpText('action'), /--scope core --module <core\.module>/u);
   assert.match(getHelpText('microvertical-page'), /--url <url>/u);
   assert.match(getHelpText('microvertical-page'), /defaults to \/<vertical>\/<page>/u);
+  assert.match(getHelpText('microvertical-page'), /:parameter/u);
+  assert.match(getHelpText('microvertical-page'), /\/crm\/customers\/:id\/edit/u);
 });
 
 test('governed contribution generators patch owner contracts and lazy adapters atomically', async () => {
@@ -425,7 +427,7 @@ test('governed contribution generators patch owner contracts and lazy adapters a
     ]);
 
     const [nextManifest, registration, federation] = await Promise.all([
-      readFile(manifestPath, 'utf8'),
+      readFile(manifestPath, 'utf-8'),
       readFixtureFile(fixture.root, 'verticals/inventory-stock/vertical.registration.ts'),
       readFixtureFile(fixture.root, 'verticals/inventory-stock/module-federation.config.ts'),
     ]);
@@ -2489,7 +2491,6 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
       '/en-us/orders',
       '/orders/',
       '/Orders',
-      '/orders/:id',
       '/orders?state=open',
       '/orders#open',
       '/%2e%2e/orders',
@@ -2512,6 +2513,231 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
       }),
     ),
   );
+});
+
+test('generates a non-navigational dynamic page with canonical parameters and router directories', async () => {
+  await withFixture(async (fixture) => {
+    const arguments_ = [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'customer-edit',
+      '--url',
+      '/crm/customers/:id/edit',
+    ];
+    await run(fixture, 'microvertical-page', arguments_);
+
+    const ownerRoute = 'verticals/inventory-stock/src/routes/[lang]/crm/customers/[id]/edit';
+    const shellRoute = 'apps/shell-super-app/src/routes/[lang]/crm/customers/[id]/edit';
+    const page = await readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
+    const ownerMetadata = await readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
+    const shellLoader = await readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
+    const shellMetadata = await readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+    const registration = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.registration.ts',
+    );
+    const federation = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/module-federation.config.ts',
+    );
+    const federatedPage = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/src/federation/page-customer-edit.tsx',
+    );
+    const shellClients = await readFixtureFile(
+      fixture.root,
+      'apps/shell-super-app/src/api/vertical-clients.ts',
+    );
+
+    assert.match(page, /Readonly<Partial<Record<'id', string>>>/u);
+    assert.match(page, /CustomerEditPage = \(\{ routeParams \}/u);
+    assert.match(page, /void routeParams;/u);
+    assert.match(ownerMetadata, /canonicalPath: '\/crm\/customers\/:id\/edit'/u);
+    assert.match(ownerMetadata, /en: '\/crm\/customers\/:id\/edit'/u);
+    assert.match(shellMetadata, /canonicalPath: '\/crm\/customers\/:id\/edit'/u);
+    assert.match(manifest, /routePath: '\/crm\/customers\/:id\/edit'/u);
+    assert.match(manifest, /inventory\.stock\.page\.customer-edit/u);
+    assert.doesNotMatch(manifest, /inventory\.stock\.navigation\.customer-edit/u);
+    assert.match(registration, /'page-customer-edit'/u);
+    assert.match(federation, /'\.\/PageCustomerEdit'/u);
+    assert.match(federatedPage, /Readonly<Partial<Record<'id', string>>>/u);
+    assert.match(federatedPage, /<CustomerEditPage routeParams=\{routeParams\} \/>/u);
+    assert.match(shellClients, /inventory\.stock\.page-customer-edit/u);
+    assert.match(shellLoader, /selectRouteParams/u);
+    assert.match(shellLoader, /const routeParameterNames = \['id'\] as const;/u);
+    assert.match(shellLoader, /routeParams: selectRouteParams\(params, routeParameterNames\)/u);
+    assert.match(
+      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/en/inventory.json'),
+      /"customerEdit"/u,
+    );
+    assert.match(
+      await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/cs/inventory.json'),
+      /"customerEdit"/u,
+    );
+
+    const afterFirstRun = await snapshotTree(fixture.root);
+    await run(fixture, 'microvertical-page', arguments_);
+    assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
+  });
+});
+
+test('rejects unsafe dynamic parameters and dynamic route collisions without writing', async () => {
+  await Promise.all(
+    [
+      '/inventory/customers/:1id/edit',
+      '/inventory/customers/:customer-id/edit',
+      '/inventory/customers/:id?/edit',
+      '/inventory/customers/:id*/edit',
+      '/inventory/customers/*id/edit',
+      '/inventory/customers/[id]/edit',
+      '/inventory/customers/:id/edit/:id',
+      '/inventory/customers/%2e%2e/:id',
+      '/cs/inventory/customers/:id',
+    ].map((url) =>
+      withFixture(async (fixture) => {
+        const before = await snapshotTree(fixture.root);
+        await assert.rejects(
+          run(fixture, 'microvertical-page', [
+            '--vertical',
+            'inventory-stock',
+            '--page',
+            'customer-edit',
+            '--url',
+            url,
+          ]),
+          /--url/u,
+        );
+        assert.deepEqual(await snapshotTree(fixture.root), before);
+      }),
+    ),
+  );
+
+  await Promise.all([
+    withFixture(async (fixture) => {
+      await run(fixture, 'microvertical-page', [
+        '--vertical',
+        'inventory-stock',
+        '--page',
+        'customer-detail',
+        '--url',
+        '/inventory/customers/:id',
+      ]);
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customer-edit',
+          '--url',
+          '/inventory/customers/:customerId',
+        ]),
+        /routing collision|already registered|collides/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      const arguments_ = [
+        '--vertical',
+        'inventory-stock',
+        '--page',
+        'customer-edit',
+        '--url',
+        '/inventory/customers/:id/edit',
+      ];
+      await run(fixture, 'microvertical-page', arguments_);
+      const pagePath = path.join(
+        fixture.root,
+        'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
+      );
+      await writeFile(
+        pagePath,
+        `${await readFile(pagePath, 'utf-8')}\n// developer edit\n`,
+        'utf-8',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(run(fixture, 'microvertical-page', arguments_), /collides/u);
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      await writeFixtureFile(
+        fixture.root,
+        'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
+        'export default function PartialPage() { return null; }\n',
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customer-edit',
+          '--url',
+          '/inventory/customers/:id/edit',
+        ]),
+        /collides with nested content/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      await run(fixture, 'microvertical-page', [
+        '--vertical',
+        'inventory-stock',
+        '--page',
+        'customer-new',
+        '--url',
+        '/inventory/customers/new',
+      ]);
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customer-edit',
+          '--url',
+          '/inventory/customers/:id',
+        ]),
+        /static route segment|collides/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+    withFixture(async (fixture) => {
+      await run(fixture, 'microvertical-page', [
+        '--vertical',
+        'billing',
+        '--page',
+        'customer-edit',
+        '--url',
+        '/shared/customers/:id/edit',
+      ]);
+      await rm(
+        path.join(
+          fixture.root,
+          'apps/shell-super-app/src/routes/[lang]/shared/customers/[id]/edit',
+        ),
+        { recursive: true },
+      );
+      const before = await snapshotTree(fixture.root);
+      await assert.rejects(
+        run(fixture, 'microvertical-page', [
+          '--vertical',
+          'inventory-stock',
+          '--page',
+          'customer-edit',
+          '--url',
+          '/shared/customers/:id/edit',
+        ]),
+        /already registered by billing/u,
+      );
+      assert.deepEqual(await snapshotTree(fixture.root), before);
+    }),
+  ]);
 });
 
 test('rejects reserved, dynamic, and cross-owner page URLs before writing', async () => {
@@ -2964,6 +3190,14 @@ const runCombinedScenario = async (fixture: Fixture): Promise<Readonly<Record<st
     ['--vertical', 'inventory-stock', '--page', 'orders'],
     (appId) => assert.ok(['inventory-stock', 'shell-super-app'].includes(appId)),
   );
+  await run(fixture, 'microvertical-page', [
+    '--vertical',
+    'inventory-stock',
+    '--page',
+    'customer-edit',
+    '--url',
+    '/crm/customers/:id/edit',
+  ]);
   return snapshotTree(fixture.root);
 };
 

@@ -104,6 +104,18 @@ test('accepts exact empty and full Shell contribution contracts with determinist
   assert.doesNotMatch(JSON.stringify(decoded), /handler|sourcePath|remote|import/iu);
 });
 
+test('accepts safe dynamic page templates as plain serialized data', () => {
+  const dynamic = full();
+  dynamic.pages[0] = {
+    ...dynamic.pages[0]!,
+    routePath: '/crm/customers/:id/edit',
+  };
+  const decoded = validateShellContributions(dynamic, references);
+  assert.equal(decoded.pages[0]?.routePath, '/crm/customers/:id/edit');
+  assert.deepEqual(JSON.parse(JSON.stringify(decoded)), decoded);
+  assert.doesNotMatch(JSON.stringify(decoded), /handler|loader|sourcePath|remote|import/iu);
+});
+
 test('rejects extra keys, duplicates, cross-owner entrypoints, and missing references', () => {
   assert.throws(() => validateShellContributions({ ...full(), route: '/private' }, references));
   const duplicate = full();
@@ -149,6 +161,31 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
   withRemote.pages[0] = { ...withRemote.pages[0]!, remote: 'private/remote' } as never;
   assert.throws(() => validateShellContributions(withRemote, references));
   const withUnsafeRoute = full();
-  withUnsafeRoute.pages[0] = { ...withUnsafeRoute.pages[0]!, routePath: '/modules/:moduleId' };
+  withUnsafeRoute.pages[0] = { ...withUnsafeRoute.pages[0]!, routePath: '/modules/:module-id' };
   assert.throws(() => validateShellContributions(withUnsafeRoute, references));
 });
+
+for (const routePath of [
+  '/cs/crm/customers/:id',
+  '/en/crm/customers/:id',
+  '/de/crm/customers/:id',
+  '/pt-br/crm/customers/:id',
+  '/crm/customers/:id/',
+  '/crm//customers/:id',
+  '/crm/customers/:id?mode=edit',
+  '/crm/customers/:id#edit',
+  '/crm/customers/%2e%2e/:id',
+  '/crm/customers/*',
+  '/crm/customers/:id?',
+  '/crm/customers/:id*',
+  '/crm/customers/:id+',
+  '/crm/customers/:customer-id',
+  '/crm/customers/:1id',
+  '/crm/customers/:id/edit/:id',
+] as const) {
+  test(`rejects unsafe or ambiguous page route template ${routePath}`, () => {
+    const candidate = full();
+    candidate.pages[0] = { ...candidate.pages[0]!, routePath };
+    assert.throws(() => validateShellContributions(candidate, references));
+  });
+}

@@ -54,7 +54,7 @@ const ResolvedTarget = ({
   }, [client, model.target]);
 
   if (remote.state === 'ready') {
-    return <remote.Component target={model.target} />;
+    return <remote.Component routeParams={model.routeParams} target={model.target} />;
   }
   return (
     <StatusText
