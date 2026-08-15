@@ -4,6 +4,7 @@ import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
 import { loader } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -50,8 +51,8 @@ beforeEach(() => {
   resolveModuleTargetMock.mockReturnValue(
     Effect.succeed({
       appId: 'crm',
-      componentKey: 'crm.core.page-customers',
-      entrypointKey: 'crm.core.page.customers',
+      componentKey: 'crm.core.page-customers-list',
+      entrypointKey: 'crm.core.page.customers-list',
       moduleId: 'crm.core',
       writable: true,
     }),
@@ -59,17 +60,12 @@ beforeEach(() => {
 });
 
 test('forwards an exact generated page entrypoint through the authenticated client', async () => {
-  await expect(
-    loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
-      request: request(),
-    }),
-  ).resolves.toMatchObject({
+  await expect(customersListLoader({ request: request() })).resolves.toMatchObject({
     state: 'resolved',
-    target: { componentKey: 'crm.core.page-customers' },
+    target: { componentKey: 'crm.core.page-customers-list' },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+    { entrypointKey: 'crm.core.page.customers-list', moduleId: 'crm.core' },
     {
       baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
       cookie: 'session=test-session',
@@ -89,7 +85,7 @@ test('does not request or load a private target before authentication', async ()
   loadHomePageModelMock.mockResolvedValueOnce({ state: 'anonymous' });
   await expect(
     loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+      params: { entrypointKey: 'crm.core.page.customers-list', moduleId: 'crm.core' },
       request: request(),
     }),
   ).resolves.toMatchObject({ state: 'selection_required' });
@@ -105,7 +101,7 @@ test.each([
   resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag }));
   await expect(
     loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+      params: { entrypointKey: 'crm.core.page.customers-list', moduleId: 'crm.core' },
       request: request(),
     }),
   ).resolves.toMatchObject({ state });

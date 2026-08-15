@@ -75,8 +75,8 @@ const resolvedModel: ModuleTargetPageModel = {
   state: 'resolved',
   target: {
     appId: 'crm',
-    componentKey: 'crm.core.page-customers',
-    entrypointKey: 'crm.core.page.customers',
+    componentKey: 'crm.core.page-customers-list',
+    entrypointKey: 'crm.core.page.customers-list',
     moduleId: 'crm.core',
     writable: true,
   },
@@ -111,5 +111,5 @@ test('invokes the exact private page loader only after a resolved authenticated 
   render(<ModuleTargetPage />);
   expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('crm.core.page-customers')).toBeTruthy();
+  expect(await screen.findByText('crm.core.page-customers-list')).toBeTruthy();
 });

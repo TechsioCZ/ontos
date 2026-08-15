@@ -21,6 +21,46 @@
       "crm": {
         "description": "This page is ready for implementation.",
         "title": "New Page"
+      },
+      "customersList": {
+        "description": "View and filter active and archived Customers.",
+        "filter": {
+          "active": "Active",
+          "all": "All",
+          "archived": "Archived",
+          "label": "Customer status",
+          "placeholder": "Choose a status"
+        },
+        "pagination": {
+          "label": "Customer list pages",
+          "next": "Next",
+          "previous": "Previous"
+        },
+        "states": {
+          "authenticationExpired": "Your session has expired. Try again after signing in.",
+          "decode": "The Customer list response could not be read. Try again.",
+          "empty": "No Customers match this filter.",
+          "forbidden": "You do not have permission to view Customers.",
+          "internal": "The Customer list could not be loaded safely. Try again.",
+          "loading": "Loading Customers…",
+          "retry": "Try again",
+          "retrying": "Trying again…",
+          "transport": "The Customer list could not be reached. Check your connection and try again.",
+          "unavailable": "The Customer list is temporarily unavailable. Try again."
+        },
+        "status": {
+          "active": "Active",
+          "archived": "Archived"
+        },
+        "table": {
+          "caption": "Customers",
+          "createdAt": "Created",
+          "customerId": "Customer ID",
+          "name": "Customer name",
+          "status": "Status",
+          "updatedAt": "Updated"
+        },
+        "title": "Customers"
       }
     }
   }

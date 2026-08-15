@@ -17,6 +17,7 @@ import {
   Effect,
   HttpApiBuilder,
   HttpEffect,
+  HttpRouter,
   HttpServerResponse,
   Layer,
 } from '@modern-js/plugin-bff/effect-edge';
@@ -30,6 +31,11 @@ import { Config } from 'effect';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { crmApi, crmOperationContexts } from '../shared/api.ts';
 import type { CrmProblem, OperationContext } from '../shared/api.ts';
+import {
+  crmCorsAllowedHeaders,
+  crmCorsAllowedMethods,
+  crmCorsAllowedOrigins,
+} from '../shared/cors.ts';
 import type { CrmContactNotFound } from '../shared/apis/contact-detail.ts';
 import type {
   CrmCustomerNotFound,
@@ -328,6 +334,8 @@ const readRuntimeLive = makeReadRuntimeLive(ContextAccessLive).pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
 );
+const shellOrigin =
+  typeof ULTRAMODERN_SHELL_ORIGIN === 'string' ? ULTRAMODERN_SHELL_ORIGIN : 'http://localhost:3020';
 export const makeCrmApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,
@@ -344,6 +352,14 @@ export const makeCrmApiRuntime = (
   );
   const layer = HttpApiBuilder.layer(crmApi).pipe(
     Layer.provide(apiHandlersLive),
+    Layer.merge(
+      HttpRouter.cors({
+        allowedHeaders: [...crmCorsAllowedHeaders],
+        allowedMethods: [...crmCorsAllowedMethods],
+        allowedOrigins: crmCorsAllowedOrigins(shellOrigin),
+        maxAge: 600,
+      }),
+    ),
   ) satisfies EffectRuntimeLayer;
   return defineEffectBff({ api: crmApi, layer });
 };

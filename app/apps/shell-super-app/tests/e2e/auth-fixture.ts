@@ -16,6 +16,9 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
+import { createCrmE2eCustomersFixture } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
+
+export { crmE2eCustomers as e2eCustomers } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
 
 export const e2eCredentials = {
   email: 'e2e.user@example.test',
@@ -42,11 +45,17 @@ export const createAuthenticationFixture = async () => {
     path: APP_ENV_PATH,
     quiet: true,
   });
+  const adminConnectionString = process.env['DATABASE_ADMIN_URL'];
   const connectionString = process.env['DATABASE_URL'];
   const secret = process.env['BETTER_AUTH_SECRET'];
   const baseURL = process.env['BETTER_AUTH_URL'];
 
-  if (connectionString === undefined || secret === undefined || baseURL === undefined) {
+  if (
+    adminConnectionString === undefined ||
+    connectionString === undefined ||
+    secret === undefined ||
+    baseURL === undefined
+  ) {
     throw new Error('The E2E authentication fixture requires the root development environment');
   }
 
@@ -54,6 +63,10 @@ export const createAuthenticationFixture = async () => {
   const authPool = new Pool({ connectionString });
   const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
   const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
+  const crmCustomersFixture = createCrmE2eCustomersFixture({
+    connectionString: adminConnectionString,
+    tenantIds: [e2eTenants.first.tenantId, e2eTenants.second.tenantId],
+  });
   const authentication = betterAuth({
     baseURL,
     database: drizzleAdapter(authDatabase, {
@@ -107,6 +120,7 @@ export const createAuthenticationFixture = async () => {
     await coreDatabase
       .delete(tenantModuleStates)
       .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
+    await crmCustomersFixture.cleanup();
     await coreDatabase
       .delete(legalEntities)
       .where(eq(legalEntities.tenantId, e2eTenants.first.tenantId));
@@ -207,12 +221,13 @@ export const createAuthenticationFixture = async () => {
     { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
     { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
   ]);
+  await crmCustomersFixture.seed(e2eTenants.first.tenantId);
 
   return async () => {
     try {
       await cleanup();
     } finally {
-      await Promise.all([authPool.end(), corePool.end()]);
+      await Promise.all([authPool.end(), corePool.end(), crmCustomersFixture.close()]);
     }
   };
 };
