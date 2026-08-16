@@ -5,7 +5,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Schema } from 'effect';
+import { Effect as EffectRuntime, Random, Schema } from 'effect';
 import { useMemo, useRef } from 'react';
 import type { CustomerDetailResponse } from '../../../../../../shared/api.ts';
 import { CrmUuidSchema } from '../../../../../../shared/apis/customer-detail.ts';
@@ -184,10 +184,10 @@ export const CustomerDetailView = ({
   view,
 }: CustomerDetailViewProps) => {
   const resultsRef = useRef<HTMLDivElement>(null);
-  const retry = async () => {
-    await onRetry();
-    resultsRef.current?.focus();
-  };
+  const retry = () =>
+    onRetry().then(() => {
+      resultsRef.current?.focus();
+    });
   const unavailableCopy =
     view.state === 'unavailable'
       ? {
@@ -252,8 +252,13 @@ export const CustomerDetailView = ({
 
 const formatCustomerTimestamp = (value: string, language: string) =>
   new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(
-    new Date(value),
+    Date.parse(value),
   );
+
+const createCorrelationId = () =>
+  Array.from({ length: 4 }, () =>
+    EffectRuntime.runSync(Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER)).toString(36),
+  ).join('-');
 
 const toReadyModel = (
   customer: CustomerDetailResponse,
@@ -286,7 +291,7 @@ const CustomerDetailQuery = ({
           { customerId },
           {
             baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
-            correlationId: crypto.randomUUID(),
+            correlationId: createCorrelationId(),
             locale: language,
           },
         ),
@@ -294,9 +299,7 @@ const CustomerDetailQuery = ({
     queryKey: customerDetailQueryKey(customerId),
     retry: false,
   });
-  const refetch = async () => {
-    await query.refetch();
-  };
+  const refetch = () => query.refetch().then(() => undefined);
   let view: CustomerDetailViewState;
   if (query.isPending) {
     view = { state: 'loading' };
