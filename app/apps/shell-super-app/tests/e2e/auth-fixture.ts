@@ -19,6 +19,7 @@ import { account, authDatabaseSchema, session, user } from '../../api/auth/db/sc
 import { createCrmE2eCustomersFixture } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
 
 export { crmE2eCustomers as e2eCustomers } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
+export { crmE2eContacts as e2eContacts } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
 
 export const e2eCredentials = {
   email: 'e2e.user@example.test',

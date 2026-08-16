@@ -5,12 +5,14 @@ import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import {
   createAuthenticationFixture,
   e2eCredentials,
+  e2eContacts,
   e2eCustomers,
   e2eTenants,
 } from './auth-fixture.ts';
 
 const customerListPath = `${crmApiContract.basePath}/customers/list`;
 const customerDetailPath = `${crmApiContract.basePath}/customers/detail`;
+const contactDetailPath = `${crmApiContract.basePath}/contacts/detail`;
 
 const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   await page.goto(`/${language}/login`);
@@ -38,6 +40,17 @@ const customerResponse = (customer: typeof e2eCustomers.active | typeof e2eCusto
   customerId: customer.customerId,
   name: customer.name,
   updatedAt: customer.updatedAt,
+});
+
+const contactResponse = (contact: typeof e2eContacts.active | typeof e2eContacts.archived) => ({
+  archivedAt: 'archivedAt' in contact ? contact.archivedAt : null,
+  contactId: contact.contactId,
+  createdAt: contact.createdAt,
+  customerId: contact.customerId,
+  email: contact.email,
+  name: contact.name,
+  phone: contact.phone,
+  updatedAt: contact.updatedAt,
 });
 
 let cleanupFixture: (() => Promise<void>) | undefined;
@@ -734,6 +747,230 @@ test.describe('Customer detail flows', () => {
     expect(payloads).toEqual([
       { customerId: e2eCustomers.active.customerId },
       { customerId: e2eCustomers.active.customerId },
+    ]);
+  });
+});
+
+test.describe('Contact detail flows', () => {
+  test.describe.configure({ timeout: 90_000 });
+
+  test('Contact detail stays private anonymously and renders real English and Czech BFF data', async ({
+    page,
+  }) => {
+    let contactRequests = 0;
+    const payloads: unknown[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === contactDetailPath) {
+        contactRequests += 1;
+        payloads.push(request.postDataJSON());
+      }
+    });
+
+    await page.goto(
+      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+    );
+    await expect(page.getByText(e2eContacts.active.name)).toHaveCount(0);
+    await page.goto(
+      `/cs/crm/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
+    );
+    await expect(page.getByText(e2eContacts.archived.name)).toHaveCount(0);
+    expect(contactRequests).toBe(0);
+
+    await login(page);
+    const englishResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === contactDetailPath &&
+        response.request().method() === 'POST',
+    );
+    await page.goto(
+      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+    );
+    const englishResponse = await englishResponsePromise;
+    expect(englishResponse.status(), await englishResponse.text()).toBe(200);
+    await expect(page.getByRole('heading', { name: e2eContacts.active.name })).toBeVisible();
+    await expect(page.getByText(e2eContacts.active.contactId)).toBeVisible();
+    await expect(page.getByText(e2eContacts.active.customerId)).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Send email to this Contact' })).toHaveAttribute(
+      'href',
+      `mailto:${e2eContacts.active.email}`,
+    );
+    await expect(page.getByRole('link', { name: 'Call this Contact' })).toHaveAttribute(
+      'href',
+      `tel:${e2eContacts.active.phone}`,
+    );
+    await expect(page.getByRole('link', { name: 'Back to Customer' })).toHaveAttribute(
+      'href',
+      `/en/crm/customers/${e2eContacts.active.customerId}`,
+    );
+
+    await page.setViewportSize({ height: 667, width: 375 });
+    const czechResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === contactDetailPath &&
+        response.request().method() === 'POST',
+    );
+    await page.goto(
+      `/cs/crm/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
+    );
+    const czechResponse = await czechResponsePromise;
+    expect(czechResponse.status(), await czechResponse.text()).toBe(200);
+    await expect(page.getByRole('heading', { name: e2eContacts.archived.name })).toBeVisible();
+    await expect(page.getByText(e2eContacts.archived.email)).toBeVisible();
+    await expect(page.getByText('Archivovaný')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Zpět na zákazníka' })).toHaveAttribute(
+      'href',
+      `/cs/crm/customers/${e2eContacts.archived.customerId}`,
+    );
+    const emailLayout = await page
+      .getByRole('link', { name: 'Napsat e-mail tomuto kontaktu' })
+      .evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const style = getComputedStyle(element);
+        return {
+          className: element.className,
+          display: style.display,
+          parentClientWidth: element.parentElement?.clientWidth,
+          parentScrollWidth: element.parentElement?.scrollWidth,
+          rectangles: Array.from(range.getClientRects(), (rectangle) => ({
+            right: rectangle.right,
+            width: rectangle.width,
+          })),
+          scrollWidth: element.scrollWidth,
+          width: element.clientWidth,
+          wordBreak: style.wordBreak,
+        };
+      });
+    expect(emailLayout.rectangles.length, JSON.stringify(emailLayout)).toBeGreaterThan(1);
+    expect(
+      emailLayout.rectangles.every((rectangle) => rectangle.right <= 375 && rectangle.width <= 375),
+    ).toBe(true);
+    expect(payloads).toEqual([
+      { contactId: e2eContacts.active.contactId },
+      { contactId: e2eContacts.archived.contactId },
+    ]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    const screenshotPath = process.env['ULTRAMODERN_CONTACT_DETAIL_REVIEW_SCREENSHOT_PATH'];
+    if (screenshotPath !== undefined) {
+      await page.screenshot({ fullPage: true, path: screenshotPath });
+    }
+  });
+
+  test('Contact detail rejects malformed IDs and suppresses a Contact under the wrong Customer', async ({
+    page,
+  }) => {
+    await login(page);
+    let attempts = 0;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === contactDetailPath) {
+        attempts += 1;
+      }
+    });
+
+    await page.goto('/en/crm/customers/not-a-uuid/contacts/not-a-contact');
+    await expect(
+      page.getByText('This Contact could not be found for the selected Customer.'),
+    ).toBeVisible({ timeout: 60_000 });
+    expect(attempts).toBe(0);
+
+    await page.goto(
+      `/en/crm/customers/${e2eCustomers.archived.customerId}/contacts/${e2eContacts.active.contactId}`,
+    );
+    await expect(
+      page.getByText('This Contact could not be found for the selected Customer.'),
+    ).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(e2eContacts.active.name)).toHaveCount(0);
+    await expect(page.getByText(e2eContacts.active.email)).toHaveCount(0);
+    expect(attempts).toBe(1);
+  });
+
+  for (const [state, status, tag, message] of [
+    [
+      'not found',
+      404,
+      'ContactDetailNotFoundProblem',
+      'This Contact could not be found for the selected Customer.',
+    ],
+    [
+      'forbidden',
+      403,
+      'ContactDetailForbiddenProblem',
+      'You do not have permission to view this Contact.',
+    ],
+  ] as const) {
+    test(`Contact detail renders a declared ${state} response without retry`, async ({ page }) => {
+      await login(page);
+      await page.route(`**${contactDetailPath}`, (route) =>
+        route.fulfill({
+          body: JSON.stringify({
+            _tag: tag,
+            detail: message,
+            status,
+            title: message,
+            type: `https://ontos.dev/problems/crm/contact-detail-${status}`,
+          }),
+          contentType: 'application/problem+json',
+          status,
+        }),
+      );
+
+      await page.goto(
+        `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+      );
+      await expect(page.getByText(message)).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+    });
+  }
+
+  test('Contact detail retries a 503 from the keyboard with only the Contact ID and restores focus', async ({
+    page,
+  }) => {
+    await login(page);
+    const payloads: unknown[] = [];
+    let attempts = 0;
+    await page.route(`**${contactDetailPath}`, (route) => {
+      attempts += 1;
+      payloads.push(route.request().postDataJSON());
+      if (attempts === 1) {
+        return route.fulfill({
+          body: JSON.stringify({
+            _tag: 'ContactDetailUnavailableProblem',
+            detail: 'The E2E Contact is temporarily unavailable.',
+            retryable: true,
+            status: 503,
+            title: 'Contact unavailable',
+            type: 'https://ontos.dev/problems/crm/contact-detail-unavailable',
+          }),
+          contentType: 'application/problem+json',
+          status: 503,
+        });
+      }
+      return route.fulfill({
+        body: JSON.stringify(contactResponse(e2eContacts.active)),
+        contentType: 'application/json',
+        status: 200,
+      });
+    });
+
+    await page.goto(
+      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+    );
+    await expect(page.getByText('The Contact is temporarily unavailable. Try again.')).toBeVisible({
+      timeout: 60_000,
+    });
+    const retry = page.getByRole('button', { name: 'Try again' });
+    await retry.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: e2eContacts.active.name })).toBeVisible();
+    await expect(page.getByTestId('contact-detail-results')).toBeFocused();
+    expect(attempts).toBe(2);
+    expect(payloads).toEqual([
+      { contactId: e2eContacts.active.contactId },
+      { contactId: e2eContacts.active.contactId },
     ]);
   });
 });

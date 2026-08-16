@@ -6,6 +6,7 @@ import { defineOntosModuleManifest } from '@app/core-runtime';
 import { archiveContactAction } from './src/actions/archive-contact.action.ts';
 import { archiveCustomerAction } from './src/actions/archive-customer.action.ts';
 import { ContactDetailApi } from './shared/apis/contact-detail.ts';
+import { ContactDetailPage } from './src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.tsx';
 import { ContactListApi } from './shared/apis/contact-list.ts';
 import { createContactAction } from './src/actions/create-contact.action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
@@ -66,6 +67,7 @@ export const crmManifest = defineOntosModuleManifest({
     },
     components: {
       // <generated-module-manifest-components>
+      'page-contact-detail': ContactDetailPage,
       'page-crm': CrmPage,
       'page-customer-detail': CustomerDetailPage,
       'page-customer-edit': CustomerEditPage,
@@ -103,6 +105,18 @@ export const crmManifest = defineOntosModuleManifest({
       ],
       pages: [
         // <generated-module-shell-pages>
+        {
+          componentKey: 'crm.core.page-contact-detail',
+          contributionKey: 'crm.core.page.contact-detail',
+          entrypoint: {
+            access: 'read',
+            entrypointKey: 'crm.core.page.contact-detail',
+            moduleKey: 'crm.core',
+            role: 'page',
+            scope: 'tenant',
+          },
+          routePath: '/crm/customers/:id/contacts/:contactId',
+        },
         {
           componentKey: 'crm.core.page-crm',
           contributionKey: 'crm.core.page.crm',

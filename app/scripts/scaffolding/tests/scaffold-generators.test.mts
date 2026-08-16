@@ -2604,6 +2604,65 @@ test('generates a non-navigational dynamic page with canonical parameters and ro
   });
 });
 
+test('generates the CRM Contact-detail two-parameter page atomically and safely reruns it', async () => {
+  const arguments_ = [
+    '--vertical',
+    'inventory-stock',
+    '--page',
+    'contact-detail',
+    '--url',
+    '/crm/customers/:id/contacts/:contactId',
+  ];
+
+  await withFixture(async (fixture) => {
+    const ownerRoute =
+      'verticals/inventory-stock/src/routes/[lang]/crm/customers/[id]/contacts/[contactId]';
+    const shellRoute =
+      'apps/shell-super-app/src/routes/[lang]/crm/customers/[id]/contacts/[contactId]';
+
+    await run(fixture, 'microvertical-page', arguments_);
+
+    const page = await readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
+    const ownerMetadata = await readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
+    const shellLoader = await readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
+    const shellMetadata = await readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
+    const manifest = await readFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/vertical.manifest.ts',
+    );
+
+    assert.match(page, /Readonly<Partial<Record<'id' \| 'contactId', string>>>/u);
+    assert.match(ownerMetadata, /canonicalPath: '\/crm\/customers\/:id\/contacts\/:contactId'/u);
+    assert.match(shellMetadata, /canonicalPath: '\/crm\/customers\/:id\/contacts\/:contactId'/u);
+    assert.match(manifest, /routePath: '\/crm\/customers\/:id\/contacts\/:contactId'/u);
+    assert.match(manifest, /inventory\.stock\.page\.contact-detail/u);
+    assert.doesNotMatch(manifest, /inventory\.stock\.navigation\.contact-detail/u);
+    assert.match(shellLoader, /const routeParameterNames = \['id', 'contactId'\] as const;/u);
+    assert.match(shellLoader, /routeParams: selectRouteParams\(params, routeParameterNames\)/u);
+    await stat(path.join(fixture.root, ownerRoute));
+    await stat(path.join(fixture.root, shellRoute));
+
+    const afterFirstRun = await snapshotTree(fixture.root);
+    await run(fixture, 'microvertical-page', arguments_);
+    assert.deepEqual(await snapshotTree(fixture.root), afterFirstRun);
+  });
+
+  await withFixture(async (fixture) => {
+    await writeFixtureFile(
+      fixture.root,
+      'apps/shell-super-app/src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.tsx',
+      'export default function DeveloperOwnedPage() { return null; }\n',
+    );
+    const before = await snapshotTree(fixture.root);
+
+    await assert.rejects(
+      run(fixture, 'microvertical-page', arguments_),
+      /refusing to overwrite|already exists/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+});
+
 test('rejects unsafe dynamic parameters and dynamic route collisions without writing', async () => {
   await Promise.all(
     [

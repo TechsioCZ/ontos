@@ -18,6 +18,40 @@
     "title": "Crm Vertical",
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
+      "contactDetail": {
+        "back": "Zpět na zákazníka",
+        "description": "Zobrazení komunikačních údajů a stavu tohoto kontaktu.",
+        "fields": {
+          "contactId": "ID kontaktu",
+          "createdAt": "Vytvořeno",
+          "customerId": "ID zákazníka",
+          "email": "E-mail",
+          "phone": "Telefon",
+          "status": "Stav",
+          "updatedAt": "Aktualizováno"
+        },
+        "lifecycle": {
+          "active": "Aktivní",
+          "archived": "Archivovaný"
+        },
+        "links": {
+          "email": "Napsat e-mail tomuto kontaktu",
+          "phone": "Zavolat tomuto kontaktu"
+        },
+        "states": {
+          "authenticationExpired": "Vaše relace vypršela. Po přihlášení to zkuste znovu.",
+          "decode": "Odpověď s údaji kontaktu se nepodařilo přečíst. Zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění zobrazit tento kontakt.",
+          "internal": "Kontakt se nepodařilo bezpečně načíst. Zkuste to znovu.",
+          "loading": "Načítání údajů kontaktu…",
+          "notFound": "Tento kontakt se pro vybraného zákazníka nepodařilo najít.",
+          "retry": "Zkusit znovu",
+          "retrying": "Opakování…",
+          "transport": "Kontakt není dostupný. Zkontrolujte připojení a zkuste to znovu.",
+          "unavailable": "Kontakt je dočasně nedostupný. Zkuste to znovu."
+        },
+        "title": "Detail kontaktu"
+      },
       "crm": {
         "description": "Tato stránka je připravena k implementaci.",
         "title": "Nová stránka"

@@ -170,6 +170,30 @@ test('loads the approved Customer-detail remote once with the exact declared Cus
   ).toBeTruthy();
 });
 
+test('loads the approved Contact-detail remote once with both exact hierarchical IDs', async () => {
+  const contactDetailModel: ModuleTargetPageModel = {
+    ...resolvedModel,
+    routeParams: {
+      contactId: '33333333-3333-4333-8333-333333333333',
+      id: '11111111-1111-4111-8111-111111111111',
+    },
+    target: {
+      ...resolvedModel.target,
+      componentKey: 'crm.core.page-contact-detail',
+      entrypointKey: 'crm.core.page.contact-detail',
+    },
+  };
+  useLoaderDataMock.mockReturnValue(contactDetailModel);
+  render(<ModuleTargetPage />);
+
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactDetailModel.target);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(remotePropsMock).toHaveBeenCalledWith({
+    routeParams: contactDetailModel.routeParams,
+    target: contactDetailModel.target,
+  });
+});
+
 test('passes CustomerEdit its exact ID and fail-closed writable target', async () => {
   const customerEditModel: ModuleTargetPageModel = {
     ...resolvedModel,

@@ -17,6 +17,28 @@ export const crmE2eCustomers = {
   },
 } as const;
 
+export const crmE2eContacts = {
+  active: {
+    contactId: '71000000-0000-4000-8000-000000000001',
+    createdAt: '2026-08-02T08:30:00.000Z',
+    customerId: crmE2eCustomers.active.customerId,
+    email: 'active.contact@example.test',
+    name: 'E2E Active Contact',
+    phone: '+420 777 100 001',
+    updatedAt: '2026-08-11T09:45:00.000Z',
+  },
+  archived: {
+    archivedAt: '2026-08-13T12:00:00.000Z',
+    contactId: '71000000-0000-4000-8000-000000000002',
+    createdAt: '2026-07-02T07:30:00.000Z',
+    customerId: crmE2eCustomers.archived.customerId,
+    email: 'archived.contact.with.a.deliberately.long.address@example.test',
+    name: 'E2E Archived Contact with a deliberately long name',
+    phone: '+420 777 100 002',
+    updatedAt: '2026-08-13T12:00:00.000Z',
+  },
+} as const;
+
 interface CrmE2eCustomersFixtureOptions {
   readonly connectionString: string;
   readonly tenantIds: readonly string[];
@@ -28,6 +50,7 @@ export const createCrmE2eCustomersFixture = ({
 }: CrmE2eCustomersFixtureOptions) => {
   const pool = new Pool({ connectionString });
   const cleanup = async () => {
+    await pool.query('delete from crm.contacts where tenant_id = any($1::uuid[])', [tenantIds]);
     await pool.query('delete from crm.customers where tenant_id = any($1::uuid[])', [tenantIds]);
   };
 
@@ -52,6 +75,31 @@ export const createCrmE2eCustomersFixture = ({
           crmE2eCustomers.archived.createdAt,
           crmE2eCustomers.archived.updatedAt,
           crmE2eCustomers.archived.archivedAt,
+        ],
+      );
+      await pool.query(
+        `insert into crm.contacts
+          (tenant_id, contact_id, customer_id, name, email, phone, created_at, updated_at, archived_at)
+         values
+          ($1, $2, $3, $4, $5, $6, $7, $8, null),
+          ($1, $9, $10, $11, $12, $13, $14, $15, $16)`,
+        [
+          tenantId,
+          crmE2eContacts.active.contactId,
+          crmE2eContacts.active.customerId,
+          crmE2eContacts.active.name,
+          crmE2eContacts.active.email,
+          crmE2eContacts.active.phone,
+          crmE2eContacts.active.createdAt,
+          crmE2eContacts.active.updatedAt,
+          crmE2eContacts.archived.contactId,
+          crmE2eContacts.archived.customerId,
+          crmE2eContacts.archived.name,
+          crmE2eContacts.archived.email,
+          crmE2eContacts.archived.phone,
+          crmE2eContacts.archived.createdAt,
+          crmE2eContacts.archived.updatedAt,
+          crmE2eContacts.archived.archivedAt,
         ],
       );
     },

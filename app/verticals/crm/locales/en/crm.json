@@ -18,6 +18,40 @@
     "title": "Crm Vertical",
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
+      "contactDetail": {
+        "back": "Back to Customer",
+        "description": "View this Contact's communication details and lifecycle state.",
+        "fields": {
+          "contactId": "Contact ID",
+          "createdAt": "Created",
+          "customerId": "Customer ID",
+          "email": "Email",
+          "phone": "Phone",
+          "status": "Status",
+          "updatedAt": "Updated"
+        },
+        "lifecycle": {
+          "active": "Active",
+          "archived": "Archived"
+        },
+        "links": {
+          "email": "Send email to this Contact",
+          "phone": "Call this Contact"
+        },
+        "states": {
+          "authenticationExpired": "Your session has expired. Try again after signing in.",
+          "decode": "The Contact response could not be read. Try again.",
+          "forbidden": "You do not have permission to view this Contact.",
+          "internal": "The Contact could not be loaded safely. Try again.",
+          "loading": "Loading Contact details…",
+          "notFound": "This Contact could not be found for the selected Customer.",
+          "retry": "Try again",
+          "retrying": "Trying again…",
+          "transport": "The Contact could not be reached. Check your connection and try again.",
+          "unavailable": "The Contact is temporarily unavailable. Try again."
+        },
+        "title": "Contact detail"
+      },
       "crm": {
         "description": "This page is ready for implementation.",
         "title": "New Page"

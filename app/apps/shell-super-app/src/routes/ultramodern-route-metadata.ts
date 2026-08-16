@@ -98,6 +98,29 @@ export const ultramodernRouteMetadata = [
     titleKey: 'shell.moduleTarget.title',
   },
   {
+    canonicalPath: '/crm/customers/:id/contacts/:contactId',
+    descriptionKey: 'shell.moduleTarget.seoDescription',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'shell-super-app.page.crm-contact-detail',
+      moduleKey: 'shell-super-app',
+      role: 'page',
+      scope: 'system',
+    },
+    id: 'shell-crm-contact-detail',
+    indexable: false,
+    localisedPaths: {
+      cs: '/crm/customers/:id/contacts/:contactId',
+      en: '/crm/customers/:id/contacts/:contactId',
+    },
+    mfBoundaryId: 'shellSuperApp',
+    namespace: 'shell',
+    ownerAppId: 'shell-super-app',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'shell.moduleTarget.title',
+  },
+  {
     canonicalPath: '/crm/customers/:id/edit',
     descriptionKey: 'shell.moduleTarget.seoDescription',
     entrypoint: {
@@ -226,6 +249,10 @@ export const ultramodernLocalisedUrls = {
   '/crm/customers/:id': {
     cs: '/crm/customers/:id',
     en: '/crm/customers/:id',
+  },
+  '/crm/customers/:id/contacts/:contactId': {
+    cs: '/crm/customers/:id/contacts/:contactId',
+    en: '/crm/customers/:id/contacts/:contactId',
   },
   '/crm/customers/:id/edit': {
     cs: '/crm/customers/:id/edit',

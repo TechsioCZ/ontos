@@ -7,6 +7,7 @@ import {
   loader,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import { loader as contactDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.data.ts';
 import { loader as customerDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/page.data.ts';
 import { loader as customerEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/edit/page.data.ts';
 import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
@@ -130,6 +131,44 @@ test('forwards only the declared Customer ID after exact Customer-detail resolut
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
     { entrypointKey: 'crm.core.page.customer-detail', moduleId: 'crm.core' },
+    expect.any(Object),
+  );
+});
+
+test('gates Contact detail exactly and forwards only its two bounded hierarchical IDs', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-contact-detail',
+      entrypointKey: 'crm.core.page.contact-detail',
+      moduleId: 'crm.core',
+      writable: true,
+    }),
+  );
+  await expect(
+    contactDetailLoader({
+      params: {
+        appId: 'attacker-app',
+        contactId: '33333333-3333-4333-8333-333333333333',
+        id: '11111111-1111-4111-8111-111111111111',
+        moduleId: 'attacker.module',
+        overlong: 'x'.repeat(201),
+      },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: {
+      contactId: '33333333-3333-4333-8333-333333333333',
+      id: '11111111-1111-4111-8111-111111111111',
+    },
+    state: 'resolved',
+    target: {
+      componentKey: 'crm.core.page-contact-detail',
+      entrypointKey: 'crm.core.page.contact-detail',
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.contact-detail', moduleId: 'crm.core' },
     expect.any(Object),
   );
 });
