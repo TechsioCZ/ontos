@@ -1,18 +1,19 @@
+// @effect-diagnostics asyncFunction:off
 import { Pool } from 'pg';
 
 export const crmE2eCustomers = {
   active: {
-    createdAt: new Date('2026-08-01T08:00:00.000Z'),
+    createdAt: '2026-08-01T08:00:00.000Z',
     customerId: '70000000-0000-4000-8000-000000000001',
     name: 'E2E Alpha Customer',
-    updatedAt: new Date('2026-08-10T09:30:00.000Z'),
+    updatedAt: '2026-08-10T09:30:00.000Z',
   },
   archived: {
-    archivedAt: new Date('2026-08-12T11:00:00.000Z'),
-    createdAt: new Date('2026-07-01T07:00:00.000Z'),
+    archivedAt: '2026-08-12T11:00:00.000Z',
+    createdAt: '2026-07-01T07:00:00.000Z',
     customerId: '70000000-0000-4000-8000-000000000002',
     name: 'E2E Archived Customer',
-    updatedAt: new Date('2026-08-12T11:00:00.000Z'),
+    updatedAt: '2026-08-12T11:00:00.000Z',
   },
 } as const;
 

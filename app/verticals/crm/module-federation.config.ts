@@ -30,6 +30,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     exposes: {
       './PageCrm': './src/federation-entry.tsx',
       './PageCustomerDetail': './src/federation/page-customer-detail.tsx',
+      './PageCustomerEdit': './src/federation/page-customer-edit.tsx',
       './PageCustomersList': './src/federation/page-customers-list.tsx',
     },
     filename: 'remoteEntry.js',

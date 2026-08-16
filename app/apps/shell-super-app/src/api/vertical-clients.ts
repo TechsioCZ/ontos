@@ -23,6 +23,11 @@ export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] =
   },
   {
     appId: 'crm',
+    componentKey: 'crm.core.page-customer-edit',
+    load: () => import('crm/PageCustomerEdit'),
+  },
+  {
+    appId: 'crm',
     componentKey: 'crm.core.page-customers-list',
     load: () => import('crm/PageCustomersList'),
   },

@@ -5,12 +5,17 @@ import type { ReactNode } from 'react';
 import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
 
-const { findApprovedVerticalPageClientMock, loadRemotePageMock, useLoaderDataMock } =
-  rstest.hoisted(() => ({
-    findApprovedVerticalPageClientMock: rstest.fn(),
-    loadRemotePageMock: rstest.fn(),
-    useLoaderDataMock: rstest.fn(),
-  }));
+const {
+  findApprovedVerticalPageClientMock,
+  loadRemotePageMock,
+  remotePropsMock,
+  useLoaderDataMock,
+} = rstest.hoisted(() => ({
+  findApprovedVerticalPageClientMock: rstest.fn(),
+  loadRemotePageMock: rstest.fn(),
+  remotePropsMock: rstest.fn(),
+  useLoaderDataMock: rstest.fn(),
+}));
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ t: (key: string) => key }),
@@ -90,8 +95,11 @@ beforeEach(() => {
       target,
     }: {
       readonly routeParams: Readonly<Record<string, string>>;
-      readonly target: { readonly componentKey: string };
-    }) => <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>,
+      readonly target: { readonly componentKey: string; readonly writable: boolean };
+    }) => {
+      remotePropsMock({ routeParams, target });
+      return <div>{`${target.componentKey}:${routeParams['id'] ?? 'static'}`}</div>;
+    },
   });
   findApprovedVerticalPageClientMock.mockReturnValue({ load: loadRemotePageMock });
 });
@@ -160,4 +168,27 @@ test('loads the approved Customer-detail remote once with the exact declared Cus
   expect(
     await screen.findByText('crm.core.page-customer-detail:11111111-1111-4111-8111-111111111111'),
   ).toBeTruthy();
+});
+
+test('passes CustomerEdit its exact ID and fail-closed writable target', async () => {
+  const customerEditModel: ModuleTargetPageModel = {
+    ...resolvedModel,
+    routeParams: { id: 'customer-1' },
+    target: {
+      ...resolvedModel.target,
+      componentKey: 'crm.core.page-customer-edit',
+      entrypointKey: 'crm.core.page.customer-edit',
+      writable: false,
+    },
+  };
+  useLoaderDataMock.mockReturnValue(customerEditModel);
+  render(<ModuleTargetPage />);
+
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerEditModel.target);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(remotePropsMock).toHaveBeenCalledWith({
+    routeParams: { id: 'customer-1' },
+    target: customerEditModel.target,
+  });
+  expect(await screen.findByText('crm.core.page-customer-edit:customer-1')).toBeTruthy();
 });

@@ -49,6 +49,40 @@
         },
         "title": "Customer detail"
       },
+      "customerEdit": {
+        "back": "Back to Customers",
+        "description": "Update the canonical Customer name.",
+        "form": {
+          "cancel": "Cancel",
+          "nameInvalid": "Enter a valid Customer name.",
+          "nameLabel": "Customer name",
+          "nameRequired": "Enter a Customer name.",
+          "save": "Save changes",
+          "saving": "Saving changes…"
+        },
+        "mutation": {
+          "authenticationExpired": "Your session expired before the Customer could be saved.",
+          "conflict": "The Customer changed while you were editing it. Review the current value and try again.",
+          "forbidden": "You do not have permission to edit this Customer.",
+          "generic": "The Customer could not be saved safely. Try again.",
+          "notFound": "This Customer no longer exists or is not available to you.",
+          "success": "Customer changes saved."
+        },
+        "states": {
+          "authenticationExpired": "Your session has expired. Sign in and try again.",
+          "decode": "The Customer response could not be read. Try again.",
+          "forbidden": "You do not have permission to view this Customer.",
+          "generic": "The Customer could not be loaded safely. Try again.",
+          "loading": "Loading Customer…",
+          "notFound": "This Customer was not found or is not available to you.",
+          "readOnly": "CRM is currently read-only. You can review this Customer, but cannot save changes.",
+          "retry": "Try again",
+          "retrying": "Trying again…",
+          "transport": "The Customer service could not be reached. Check your connection and try again.",
+          "unavailable": "The Customer service is temporarily unavailable. Try again."
+        },
+        "title": "Edit Customer"
+      },
       "customersList": {
         "description": "View and filter active and archived Customers.",
         "filter": {
