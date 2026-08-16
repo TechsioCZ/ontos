@@ -1,6 +1,6 @@
 ---
 type: feature
-status: in_progress
+status: done
 created: 2026-08-14
 ---
 
@@ -262,7 +262,7 @@ Execute every command to validate the feature with zero regressions.
 
 ## Review Checklist
 
-- [ ] Every acceptance criterion is satisfied.
+- [x] Every acceptance criterion is satisfied.
 - [x] The diff complies with `../AGENTS.md`, `AGENTS.md`, and all relevant referenced guidance.
 - [x] MicroVertical, Action, generated BFF client, and typed Effect error boundaries are preserved.
 - [x] Tests cover every changed behavior and important failure path.
@@ -286,5 +286,5 @@ Execute every command to validate the feature with zero regressions.
 - **Implemented:** private/non-indexable dynamic Shell and CRM routes, exact bounded `id` forwarding, approved Module Federation exposure, contract-derived Customer-detail query, closed localized presentation states, responsive semantic UI, and resilient E2E fixture cleanup.
 - **Tests passing:** feature-specific CRM unit 20/20, CRM component 32/32, CRM integration 3/3, Shell unit 152/152, generator 35/35, and the canonical filtered Shell browser suite 5/5. After merging current `develop`, the combined CRM component suite passes 61/61 and the combined Shell unit suite passes 154/154. The Czech 375 px normal state was visually reviewed with no page overflow.
 - **Repository gates passing:** generator TypeScript, root workspace typecheck, i18n boundaries, module entrypoints, module contracts, the complete `pnpm check` quality gate, and the full production build with federated types, CRM/Shell bundles, Node deploy output, Module Federation archive checks, and performance readiness.
-- **Review:** the final diff was checked against the specification, root/app `AGENTS.md`, MicroVertical, module-entrypoint, frontend, i18n, Effect, data-access, and generated-wiring guidance. The loading heading was corrected to valid semantic markup; generated declaration artifacts were removed; no feature findings remain.
-- **Validation corrections:** the E2E command now passes `--grep` through pnpm correctly, and login coverage waits for client hydration before submitting. The validation list uses the authoritative root project-reference typecheck and excludes the unrelated broad Shell integration baseline described above. The clean production build passed at immutable source revision `0971107cb3995c7b9aa15717ff3eff95e7e9b39f` using the repository-documented worktree revision override.
+- **Review:** independent specification and standards reviews found no remaining feature defect. Review fixes include valid loading-heading semantics, removal of generated declaration artifacts, and mapping a definite invalid Customer-detail request to the non-retryable not-found state.
+- **Validation corrections:** the E2E command now passes `--grep` through pnpm correctly, and login coverage waits for client hydration before submitting. The validation list uses the authoritative root project-reference typecheck and excludes the unrelated broad Shell integration baseline described above. The clean production build passed at the latest production-code revision `0432613d5019574c1d49f5ac3e2780d645692fd5` using the repository-documented worktree revision override.
