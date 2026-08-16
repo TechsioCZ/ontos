@@ -9,6 +9,7 @@ import {
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
 import { loader as customerDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/page.data.ts';
 import { loader as customerEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/edit/page.data.ts';
+import { loader as contactCreateLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/new/page.data.ts';
 import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
@@ -160,6 +161,40 @@ test('gates CustomerEdit exactly and carries only its declared bounded Customer 
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
     { entrypointKey: 'crm.core.page.customer-edit', moduleId: 'crm.core' },
+    expect.any(Object),
+  );
+});
+
+test('gates ContactCreate exactly and carries only its declared bounded Customer ID', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-contact-create',
+      entrypointKey: 'crm.core.page.contact-create',
+      moduleId: 'crm.core',
+      writable: false,
+    }),
+  );
+  await expect(
+    contactCreateLoader({
+      params: {
+        appId: 'attacker-app',
+        id: '11111111-1111-4111-8111-111111111111',
+        moduleId: 'attacker.module',
+      },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    state: 'resolved',
+    target: {
+      componentKey: 'crm.core.page-contact-create',
+      entrypointKey: 'crm.core.page.contact-create',
+      writable: false,
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.contact-create', moduleId: 'crm.core' },
     expect.any(Object),
   );
 });

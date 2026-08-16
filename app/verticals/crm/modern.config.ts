@@ -294,8 +294,8 @@ export default defineConfig(
         },
         devServer: {
           headers: {
-            'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': crmCorsAllowedHeaders.join(', '),
+            'Access-Control-Allow-Methods': crmCorsAllowedMethods.join(', '),
             'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
           },
         },

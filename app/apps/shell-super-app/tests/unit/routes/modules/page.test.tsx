@@ -192,3 +192,28 @@ test('passes CustomerEdit its exact ID and fail-closed writable target', async (
   });
   expect(await screen.findByText('crm.core.page-customer-edit:customer-1')).toBeTruthy();
 });
+
+test('passes ContactCreate its exact ID and fail-closed writable target', async () => {
+  const contactCreateModel: ModuleTargetPageModel = {
+    ...resolvedModel,
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    target: {
+      ...resolvedModel.target,
+      componentKey: 'crm.core.page-contact-create',
+      entrypointKey: 'crm.core.page.contact-create',
+      writable: false,
+    },
+  };
+  useLoaderDataMock.mockReturnValue(contactCreateModel);
+  render(<ModuleTargetPage />);
+
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(contactCreateModel.target);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(remotePropsMock).toHaveBeenCalledWith({
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    target: contactCreateModel.target,
+  });
+  expect(
+    await screen.findByText('crm.core.page-contact-create:11111111-1111-4111-8111-111111111111'),
+  ).toBeTruthy();
+});

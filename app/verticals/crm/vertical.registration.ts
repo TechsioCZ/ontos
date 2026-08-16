@@ -42,6 +42,8 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
     },
     pages: {
       // <generated-module-registration-pages>
+      'page-contact-create': () =>
+        import('./src/routes/[lang]/crm/customers/[id]/contacts/new/page.tsx'),
       'page-crm': () => import('./src/routes/[lang]/crm/page.tsx'),
       'page-customer-detail': () => import('./src/routes/[lang]/crm/customers/[id]/page.tsx'),
       'page-customer-edit': () => import('./src/routes/[lang]/crm/customers/[id]/edit/page.tsx'),
