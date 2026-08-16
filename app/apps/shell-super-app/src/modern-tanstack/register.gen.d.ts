@@ -16,6 +16,7 @@ declare module '@modern-js/plugin-i18n/runtime' {
     '/crm/customers/$id': { "id": string };
     '/crm/customers/$id/contacts/$contactId': { "id": string; "contactId": string };
     '/crm/customers/$id/edit': { "id": string };
+    '/crm/customers/$id/new': { "id": string };
     '/login': Record<string, never>;
     '/modules/$moduleId': { "moduleId": string };
     '/resources/$moduleId/$resourceType/$resourceId': { "moduleId": string; "resourceType": string; "resourceId": string };
