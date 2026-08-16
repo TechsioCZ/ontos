@@ -102,6 +102,7 @@ export const classifyCustomerDetailError = (
     case 'GatewayForbiddenProblem': {
       return { state: 'forbidden' };
     }
+    case 'CustomerDetailInvalidProblem':
     case 'CustomerDetailNotFoundProblem': {
       return { state: 'not_found' };
     }
@@ -111,7 +112,6 @@ export const classifyCustomerDetailError = (
       return { reason: 'backend', state: 'unavailable' };
     }
     case 'CustomerDetailInternalProblem':
-    case 'CustomerDetailInvalidProblem':
     case 'GatewayAudienceInvalidProblem':
     case 'GatewayInternalProblem': {
       return { reason: 'internal', state: 'unavailable' };

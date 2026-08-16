@@ -263,6 +263,9 @@ test('maps every remaining client failure family without exposing raw errors', (
   expect(classifyCustomerDetailError({ _tag: 'CustomerDetailNotFoundProblem' } as never)).toEqual({
     state: 'not_found',
   });
+  expect(classifyCustomerDetailError({ _tag: 'CustomerDetailInvalidProblem' } as never)).toEqual({
+    state: 'not_found',
+  });
   expect(classifyCustomerDetailError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
     state: 'forbidden',
   });
@@ -278,7 +281,6 @@ test('maps every remaining client failure family without exposing raw errors', (
   ).toEqual({ reason: 'transport', state: 'unavailable' });
   for (const tag of [
     'CustomerDetailInternalProblem',
-    'CustomerDetailInvalidProblem',
     'GatewayAudienceInvalidProblem',
     'GatewayInternalProblem',
   ] as const) {
