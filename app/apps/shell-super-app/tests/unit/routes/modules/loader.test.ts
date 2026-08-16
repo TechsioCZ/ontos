@@ -7,6 +7,7 @@ import {
   loader,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import { loader as customerCreateLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/new/page.data.ts';
 import { loader as customerEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/edit/page.data.ts';
 import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
 
@@ -126,6 +127,52 @@ test('gates CustomerEdit exactly and carries only its declared bounded Customer 
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
     { entrypointKey: 'crm.core.page.customer-edit', moduleId: 'crm.core' },
+    expect.any(Object),
+  );
+});
+
+test('gates CustomerCreate exactly and carries only its declared bounded route ID', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-customer-create',
+      entrypointKey: 'crm.core.page.customer-create',
+      moduleId: 'crm.core',
+      writable: true,
+    }),
+  );
+  await expect(
+    customerCreateLoader({
+      params: {
+        appId: 'attacker-app',
+        id: 'untrusted-route-context',
+        moduleId: 'attacker.module',
+      },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: { id: 'untrusted-route-context' },
+    state: 'resolved',
+    target: {
+      componentKey: 'crm.core.page-customer-create',
+      entrypointKey: 'crm.core.page.customer-create',
+      writable: true,
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.customer-create', moduleId: 'crm.core' },
+    expect.any(Object),
+  );
+
+  rstest.clearAllMocks();
+  await expect(
+    customerCreateLoader({
+      params: { id: 'x'.repeat(201) },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({ routeParams: {} });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.customer-create', moduleId: 'crm.core' },
     expect.any(Object),
   );
 });

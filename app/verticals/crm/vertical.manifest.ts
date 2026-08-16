@@ -10,6 +10,7 @@ import { ContactListApi } from './shared/apis/contact-list.ts';
 import { createContactAction } from './src/actions/create-contact.action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { CrmPage } from './src/routes/[lang]/crm/page.tsx';
+import { CustomerCreatePage } from './src/routes/[lang]/crm/customers/[id]/new/page.tsx';
 import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
 import { CustomerEditPage } from './src/routes/[lang]/crm/customers/[id]/edit/page.tsx';
 import { CustomerListApi } from './shared/apis/customer-list.ts';
@@ -66,6 +67,7 @@ export const crmManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-crm': CrmPage,
+      'page-customer-create': CustomerCreatePage,
       'page-customer-edit': CustomerEditPage,
       'page-customers-list': CustomersListPage,
       // </generated-module-manifest-components>
@@ -112,6 +114,18 @@ export const crmManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           routePath: '/crm',
+        },
+        {
+          componentKey: 'crm.core.page-customer-create',
+          contributionKey: 'crm.core.page.customer-create',
+          entrypoint: {
+            access: 'read',
+            entrypointKey: 'crm.core.page.customer-create',
+            moduleKey: 'crm.core',
+            role: 'page',
+            scope: 'tenant',
+          },
+          routePath: '/crm/customers/:id/new',
         },
         {
           componentKey: 'crm.core.page-customer-edit',
