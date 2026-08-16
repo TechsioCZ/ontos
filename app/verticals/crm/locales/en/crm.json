@@ -22,6 +22,33 @@
         "description": "This page is ready for implementation.",
         "title": "New Page"
       },
+      "customerDetail": {
+        "back": "Back to Customers",
+        "description": "View the current details and lifecycle state of this Customer.",
+        "fields": {
+          "createdAt": "Created",
+          "customerId": "Customer ID",
+          "status": "Status",
+          "updatedAt": "Updated"
+        },
+        "lifecycle": {
+          "active": "Active",
+          "archived": "Archived"
+        },
+        "states": {
+          "authenticationExpired": "Your session has expired. Try again after signing in.",
+          "decode": "The Customer response could not be read. Try again.",
+          "forbidden": "You do not have permission to view this Customer.",
+          "internal": "The Customer could not be loaded safely. Try again.",
+          "loading": "Loading Customer details…",
+          "notFound": "This Customer could not be found.",
+          "retry": "Try again",
+          "retrying": "Trying again…",
+          "transport": "The Customer could not be reached. Check your connection and try again.",
+          "unavailable": "The Customer is temporarily unavailable. Try again."
+        },
+        "title": "Customer detail"
+      },
       "customersList": {
         "description": "View and filter active and archived Customers.",
         "filter": {

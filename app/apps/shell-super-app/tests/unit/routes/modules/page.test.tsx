@@ -142,3 +142,22 @@ test('loads the generated Customers list page as a static exact target', async (
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
   expect(await screen.findByText('crm.core.page-customers-list:static')).toBeTruthy();
 });
+
+test('loads the approved Customer-detail remote once with the exact declared Customer ID', async () => {
+  const customerDetailModel: ModuleTargetPageModel = {
+    ...resolvedModel,
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    target: {
+      ...resolvedModel.target,
+      componentKey: 'crm.core.page-customer-detail',
+      entrypointKey: 'crm.core.page.customer-detail',
+    },
+  };
+  useLoaderDataMock.mockReturnValue(customerDetailModel);
+  render(<ModuleTargetPage />);
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerDetailModel.target);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(
+    await screen.findByText('crm.core.page-customer-detail:11111111-1111-4111-8111-111111111111'),
+  ).toBeTruthy();
+});

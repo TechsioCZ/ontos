@@ -7,6 +7,7 @@ import {
   loader,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import { loader as customerDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/page.data.ts';
 import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
@@ -96,6 +97,39 @@ test('forwards an exact generated page entrypoint through the authenticated clie
       baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
       cookie: 'session=test-session',
     },
+  );
+});
+
+test('forwards only the declared Customer ID after exact Customer-detail resolution', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-customer-detail',
+      entrypointKey: 'crm.core.page.customer-detail',
+      moduleId: 'crm.core',
+      writable: true,
+    }),
+  );
+  await expect(
+    customerDetailLoader({
+      params: {
+        appId: 'attacker-app',
+        id: '11111111-1111-4111-8111-111111111111',
+        moduleId: 'attacker.module',
+      },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+    state: 'resolved',
+    target: {
+      componentKey: 'crm.core.page-customer-detail',
+      entrypointKey: 'crm.core.page.customer-detail',
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.customer-detail', moduleId: 'crm.core' },
+    expect.any(Object),
   );
 });
 

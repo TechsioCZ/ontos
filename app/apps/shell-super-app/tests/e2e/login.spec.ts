@@ -10,9 +10,18 @@ import {
 } from './auth-fixture.ts';
 
 const customerListPath = `${crmApiContract.basePath}/customers/list`;
+const customerDetailPath = `${crmApiContract.basePath}/customers/detail`;
+
+const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
+  await page.goto(`/${language}/login`);
+  await page.waitForFunction(() => {
+    const form = document.querySelector('form');
+    return form !== null && Object.keys(form).some((key) => key.startsWith('__reactProps$'));
+  });
+};
 
 const login = async (page: Page) => {
-  await page.goto('/en/login');
+  await gotoHydratedLogin(page, 'en');
   await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
   await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await page.getByRole('button', { name: 'Login' }).click();
@@ -78,9 +87,9 @@ test('keeps English and Czech login pages free of authenticated dashboard chrome
       expect(page.locator('button[aria-haspopup="menu"]')).toHaveCount(0),
     ]);
 
-  await page.goto('/en/login');
+  await gotoHydratedLogin(page, 'en');
   await expectDashboardAbsent();
-  await page.goto('/cs/login');
+  await gotoHydratedLogin(page, 'cs');
   await expectDashboardAbsent();
 });
 
@@ -120,7 +129,7 @@ test('logs a user in without any server-error response', async ({ page }, testIn
     }
   });
 
-  await page.goto('/en/login');
+  await gotoHydratedLogin(page, 'en');
   await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
   await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
 
@@ -147,7 +156,7 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
   await page.goto('/cs/crm');
   await expect(page.getByRole('heading', { name: 'Nová stránka' })).toHaveCount(0);
 
-  await page.goto('/cs/login');
+  await gotoHydratedLogin(page, 'cs');
   await page
     .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
     .fill(e2eCredentials.email);
@@ -176,7 +185,7 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({
   page,
 }) => {
-  await page.goto('/en/login');
+  await gotoHydratedLogin(page, 'en');
   await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
   await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await page.getByRole('button', { name: 'Login' }).click();
@@ -231,7 +240,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   page,
 }) => {
-  await page.goto('/en/login');
+  await gotoHydratedLogin(page, 'en');
   await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
   await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await page.getByRole('button', { name: 'Login' }).click();
@@ -270,7 +279,7 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   page,
 }) => {
   let failSwitch = true;
-  await page.goto('/cs/login');
+  await gotoHydratedLogin(page, 'cs');
   await page
     .getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u })
     .fill(e2eCredentials.email);
@@ -362,7 +371,7 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
 
 test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
   await page.setViewportSize({ height: 667, width: 375 });
-  await page.goto('/cs/login');
+  await gotoHydratedLogin(page, 'cs');
   const loginInput = page.getByRole('textbox', { name: /^Přihlašovací jméno\s*\*$/u });
   await expect(async () => {
     await loginInput.fill('hydration-probe');
@@ -383,7 +392,7 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   page,
 }) => {
   await page.setViewportSize({ height: 667, width: 375 });
-  await page.goto('/en/login');
+  await gotoHydratedLogin(page, 'en');
   await page.getByRole('textbox', { name: /^Login\s*\*$/u }).fill(e2eCredentials.email);
   await page.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await page.getByRole('button', { name: 'Login' }).click();
@@ -583,4 +592,148 @@ test('customers keep filter and pagination in the URL without page overflow at 3
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
     ),
   ).toBe(true);
+});
+
+test.describe('Customer detail flows', () => {
+  test.describe.configure({ timeout: 90_000 });
+
+  test('Customer detail stays private anonymously and renders real English and Czech BFF data', async ({
+    page,
+  }) => {
+    let customerDetailRequests = 0;
+    const payloads: unknown[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === customerDetailPath) {
+        customerDetailRequests += 1;
+        payloads.push(request.postDataJSON());
+      }
+    });
+
+    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
+    await page.goto(`/cs/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
+    expect(customerDetailRequests).toBe(0);
+
+    await login(page);
+    const englishResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === customerDetailPath &&
+        response.request().method() === 'POST',
+    );
+    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    const englishResponse = await englishResponsePromise;
+    expect(englishResponse.status(), await englishResponse.text()).toBe(200);
+    await expect(page.getByRole('heading', { name: e2eCustomers.active.name })).toBeVisible();
+    await expect(page.getByText(e2eCustomers.active.customerId)).toBeVisible();
+    await expect(page.getByText('Active')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Back to Customers' })).toHaveAttribute(
+      'href',
+      '/en/crm/customers',
+    );
+    await page.setViewportSize({ height: 667, width: 375 });
+    const czechResponsePromise = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === customerDetailPath &&
+        response.request().method() === 'POST',
+    );
+    await page.goto(`/cs/crm/customers/${e2eCustomers.archived.customerId}`);
+    const czechResponse = await czechResponsePromise;
+    expect(czechResponse.status(), await czechResponse.text()).toBe(200);
+    await expect(page.getByRole('heading', { name: e2eCustomers.archived.name })).toBeVisible();
+    await expect(page.getByText(e2eCustomers.archived.customerId)).toBeVisible();
+    await expect(page.getByText('Archivovaný')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Zpět na zákazníky' })).toHaveAttribute(
+      'href',
+      '/cs/crm/customers',
+    );
+    expect(payloads).toContainEqual({ customerId: e2eCustomers.active.customerId });
+    expect(payloads).toContainEqual({ customerId: e2eCustomers.archived.customerId });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    const screenshotPath = process.env['ULTRAMODERN_CUSTOMER_DETAIL_REVIEW_SCREENSHOT_PATH'];
+    if (screenshotPath !== undefined) {
+      await page.screenshot({ fullPage: true, path: screenshotPath });
+    }
+  });
+
+  for (const [state, status, tag, message] of [
+    ['not found', 404, 'CustomerDetailNotFoundProblem', 'This Customer could not be found.'],
+    [
+      'forbidden',
+      403,
+      'CustomerDetailForbiddenProblem',
+      'You do not have permission to view this Customer.',
+    ],
+  ] as const) {
+    test(`Customer detail renders a declared ${state} response without retry`, async ({ page }) => {
+      await login(page);
+      await page.route(`**${customerDetailPath}`, (route) =>
+        route.fulfill({
+          body: JSON.stringify({
+            _tag: tag,
+            detail: message,
+            status,
+            title: message,
+            type: `https://ontos.dev/problems/crm/customer-detail-${status}`,
+          }),
+          contentType: 'application/problem+json',
+          status,
+        }),
+      );
+
+      await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+      await expect(page.getByText(message)).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
+    });
+  }
+
+  test('Customer detail retries an unavailable response with the exact URL ID and restores focus', async ({
+    page,
+  }) => {
+    await login(page);
+    const payloads: unknown[] = [];
+    let attempts = 0;
+    await page.route(`**${customerDetailPath}`, (route) => {
+      attempts += 1;
+      payloads.push(route.request().postDataJSON());
+      if (attempts === 1) {
+        return route.fulfill({
+          body: JSON.stringify({
+            _tag: 'CustomerDetailUnavailableProblem',
+            detail: 'The E2E Customer is temporarily unavailable.',
+            retryable: true,
+            status: 503,
+            title: 'Customer unavailable',
+            type: 'https://ontos.dev/problems/crm/customer-detail-unavailable',
+          }),
+          contentType: 'application/problem+json',
+          status: 503,
+        });
+      }
+      return route.fulfill({
+        body: JSON.stringify(customerResponse(e2eCustomers.active)),
+        contentType: 'application/json',
+        status: 200,
+      });
+    });
+
+    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect(page.getByText('The Customer is temporarily unavailable. Try again.')).toBeVisible(
+      { timeout: 60_000 },
+    );
+    const retry = page.getByRole('button', { name: 'Try again' });
+    await retry.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { name: e2eCustomers.active.name })).toBeVisible();
+    await expect(page.getByTestId('customer-detail-results')).toBeFocused();
+    expect(attempts).toBe(2);
+    expect(payloads).toEqual([
+      { customerId: e2eCustomers.active.customerId },
+      { customerId: e2eCustomers.active.customerId },
+    ]);
+  });
 });

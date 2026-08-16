@@ -100,13 +100,28 @@ export const createAuthenticationFixture = async () => {
 
     await Promise.all(
       existingUsers.map(async (existingUser) => {
-        await coreDatabase
-          .delete(principalAuthBindings)
-          .where(eq(principalAuthBindings.providerSubjectId, existingUser.id));
         await authDatabase.delete(session).where(eq(session.userId, existingUser.id));
         await authDatabase.delete(account).where(eq(account.userId, existingUser.id));
         await authDatabase.delete(user).where(eq(user.id, existingUser.id));
       }),
+    );
+    // A page read can finish its asynchronous evidence write while auth rows
+    // are being removed. Clear that final E2E-owned batch before deleting the
+    // binding referenced by the evidence foreign key.
+    await coreDatabase
+      .delete(dataAccessEvents)
+      .where(
+        inArray(dataAccessEvents.principalId, [
+          e2eTenants.first.principalId,
+          e2eTenants.second.principalId,
+        ]),
+      );
+    await Promise.all(
+      existingUsers.map((existingUser) =>
+        coreDatabase
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.providerSubjectId, existingUser.id)),
+      ),
     );
     await coreDatabase
       .delete(principalAuthBindings)

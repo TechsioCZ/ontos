@@ -2517,6 +2517,19 @@ test('supports an explicit nested page URL and rejects unsafe URL inputs atomica
 
 test('generates a non-navigational dynamic page with canonical parameters and router directories', async () => {
   await withFixture(async (fixture) => {
+    await writeFixtureFile(
+      fixture.root,
+      'verticals/inventory-stock/module-federation.config.ts',
+      `export default {
+  exposes: {
+    './PageInventoryStock': './src/federation-entry.tsx',
+  },
+  manifest: {
+    additionalData: ({ stats }) => ({ exposes: stats.exposes }),
+  },
+};
+`,
+    );
     const arguments_ = [
       '--vertical',
       'inventory-stock',

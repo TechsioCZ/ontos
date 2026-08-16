@@ -22,6 +22,33 @@
         "description": "Tato stránka je připravena k implementaci.",
         "title": "Nová stránka"
       },
+      "customerDetail": {
+        "back": "Zpět na zákazníky",
+        "description": "Zobrazení aktuálních údajů a stavu tohoto zákazníka.",
+        "fields": {
+          "createdAt": "Vytvořeno",
+          "customerId": "ID zákazníka",
+          "status": "Stav",
+          "updatedAt": "Aktualizováno"
+        },
+        "lifecycle": {
+          "active": "Aktivní",
+          "archived": "Archivovaný"
+        },
+        "states": {
+          "authenticationExpired": "Vaše relace vypršela. Po přihlášení to zkuste znovu.",
+          "decode": "Odpověď s údaji zákazníka se nepodařilo přečíst. Zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění zobrazit tohoto zákazníka.",
+          "internal": "Zákazníka se nepodařilo bezpečně načíst. Zkuste to znovu.",
+          "loading": "Načítání údajů zákazníka…",
+          "notFound": "Tohoto zákazníka se nepodařilo najít.",
+          "retry": "Zkusit znovu",
+          "retrying": "Opakování…",
+          "transport": "Zákazník není dostupný. Zkontrolujte připojení a zkuste to znovu.",
+          "unavailable": "Zákazník je dočasně nedostupný. Zkuste to znovu."
+        },
+        "title": "Detail zákazníka"
+      },
       "customersList": {
         "description": "Zobrazení a filtrování aktivních a archivovaných zákazníků.",
         "filter": {
