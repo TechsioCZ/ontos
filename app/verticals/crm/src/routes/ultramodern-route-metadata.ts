@@ -78,6 +78,30 @@ export const ultramodernRouteMetadata = [
     titleKey: 'crm.pages.customersList.title',
   },
   {
+    canonicalPath: '/crm/customers/:id',
+    descriptionKey: 'crm.pages.customerDetail.description',
+    entrypoint: {
+      access: 'read',
+      entrypointKey: 'crm.core.page.customer-detail',
+      moduleKey: 'crm.core',
+      role: 'page',
+      scope: 'tenant',
+    },
+    id: 'crm-customer-detail',
+    indexable: false,
+    localisedPaths: {
+      cs: '/crm/customers/:id',
+      en: '/crm/customers/:id',
+    },
+    mfBoundaryId: 'verticalCrm',
+    moduleId: 'crm.core',
+    namespace: 'crm',
+    ownerAppId: 'crm',
+    public: false,
+    publicSurface: 'private-app-screen',
+    titleKey: 'crm.pages.customerDetail.title',
+  },
+  {
     canonicalPath: '/crm/customers/:id/edit',
     descriptionKey: 'crm.pages.customerEdit.description',
     entrypoint: {
@@ -111,6 +135,10 @@ export const ultramodernLocalisedUrls = {
   '/crm/customers': {
     cs: '/crm/customers',
     en: '/crm/customers',
+  },
+  '/crm/customers/:id': {
+    cs: '/crm/customers/:id',
+    en: '/crm/customers/:id',
   },
   '/crm/customers/:id/edit': {
     cs: '/crm/customers/:id/edit',

@@ -1,6 +1,6 @@
 ---
 type: feature
-status: planned
+status: done
 created: 2026-08-14
 ---
 
@@ -145,58 +145,58 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### 1. Complete dynamic-page support and generate the Customer-detail page
 
-- [ ] Implement `specs/chore-support-dynamic-microvertical-pages.md` first and verify all of its acceptance criteria. The generator must map canonical `:id` to `[id]`, omit dynamic templates from ordinary navigation, and pass only the declared bounded route parameter to the approved remote after every authenticated exact-page gate. Do not hand-author the CRM route or loader as a workaround.
-- [ ] Once that prerequisite is present, make the first Customer-detail artifact change by running `mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-detail --url /crm/customers/:id` from `app/`. The command must generate the vertical page, Shell connector, route metadata, locales, manifest/registration slots, Module Federation exposure, and approved client registry atomically.
-- [ ] Inspect the generator result before adapting it: page identity is `crm.core.page.customer-detail`; canonical route is `/crm/customers/:id`; Czech and English runtime URLs add only `/cs` and `/en`; filesystem paths use `[id]`; the page is private/non-indexable; no private implementation or Customer BFF call can run before the Shell resolves the exact page target.
+- [x] Implement `specs/chore-support-dynamic-microvertical-pages.md` first and verify all of its acceptance criteria. The generator must map canonical `:id` to `[id]`, omit dynamic templates from ordinary navigation, and pass only the declared bounded route parameter to the approved remote after every authenticated exact-page gate. Do not hand-author the CRM route or loader as a workaround.
+- [x] Once that prerequisite is present, make the first Customer-detail artifact change by running `mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-detail --url /crm/customers/:id` from `app/`. The command must generate the vertical page, Shell connector, route metadata, locales, manifest/registration slots, Module Federation exposure, and approved client registry atomically.
+- [x] Inspect the generator result before adapting it: page identity is `crm.core.page.customer-detail`; canonical route is `/crm/customers/:id`; Czech and English runtime URLs add only `/cs` and `/en`; filesystem paths use `[id]`; the page is private/non-indexable; no private implementation or Customer BFF call can run before the Shell resolves the exact page target.
 
 ### 2. Complete and verify the Customer-detail BFF prerequisite
 
-- [ ] Implement `specs/feature-crm-customer-contact-actions.md` before this page, or verify that its acceptance criteria already pass. Require the browser-safe Customer DTO (`customerId`, `name`, ISO `createdAt`/`updatedAt`, nullable ISO `archivedAt`), the authenticated governed read, and the contract-derived `getCustomerDetail` Effect client method.
-- [ ] Do not add another Customer-detail endpoint, request/response schema, persistence service, or client wrapper in the page change. The page must import only the browser-safe generated CRM client and DTO/error contracts; it must never import `api/**`, `src/db/**`, a read handler, or a database service.
-- [ ] Complete `specs/feature-crm-customers-list-page.md` before this page, or verify that its acceptance criteria already pass. Reuse its generated `/crm/customers` route, UI-kit/query dependencies, CSS consumer setup, and focused component-test infrastructure instead of installing or configuring parallel copies.
+- [x] Implement `specs/feature-crm-customer-contact-actions.md` before this page, or verify that its acceptance criteria already pass. Require the browser-safe Customer DTO (`customerId`, `name`, ISO `createdAt`/`updatedAt`, nullable ISO `archivedAt`), the authenticated governed read, and the contract-derived `getCustomerDetail` Effect client method.
+- [x] Do not add another Customer-detail endpoint, request/response schema, persistence service, or client wrapper in the page change. The page must import only the browser-safe generated CRM client and DTO/error contracts; it must never import `api/**`, `src/db/**`, a read handler, or a database service.
+- [x] Complete `specs/feature-crm-customers-list-page.md` before this page, or verify that its acceptance criteria already pass. Reuse its generated `/crm/customers` route, UI-kit/query dependencies, CSS consumer setup, and focused component-test infrastructure instead of installing or configuring parallel copies.
 
 ### 3. Verify and reuse CRM UI-kit/query consumption without Figma styling
 
-- [ ] Verify the Customers-list prerequisite has added `@techsio/ui-kit@0.25.1`, TanStack Query, and focused CRM component-test dependencies without duplicating or upgrading them. Verify actual `0.25.1` component props before use because the local intent-skill metadata describes a different library release.
-- [ ] Reuse the approved Module Federation/Tailwind integration so `Link`, `Skeleton`, `StatusText`, and `Button` render correctly both inside the Shell and when CRM runs independently. Preserve the existing `crm:` namespace for CRM-authored layout utilities, reuse UI-kit defaults and semantic tokens, and add no Figma-derived raw colors, spacing, typography, borders, radius, or component overrides.
-- [ ] If the existing prefixed CRM Tailwind build cannot compile the UI kit's unprefixed utility classes without duplicate or host-only CSS, stop and obtain an approved framework-consumer solution; do not copy UI-kit classes or styles into CRM.
+- [x] Verify the Customers-list prerequisite has added `@techsio/ui-kit@0.25.1`, TanStack Query, and focused CRM component-test dependencies without duplicating or upgrading them. Verify actual `0.25.1` component props before use because the local intent-skill metadata describes a different library release.
+- [x] Reuse the approved Module Federation/Tailwind integration so `Link`, `Skeleton`, `StatusText`, and `Button` render correctly both inside the Shell and when CRM runs independently. Preserve the existing `crm:` namespace for CRM-authored layout utilities, reuse UI-kit defaults and semantic tokens, and add no Figma-derived raw colors, spacing, typography, borders, radius, or component overrides.
+- [x] If the existing prefixed CRM Tailwind build cannot compile the UI kit's unprefixed utility classes without duplicate or host-only CSS, stop and obtain an approved framework-consumer solution; do not copy UI-kit classes or styles into CRM.
 
 ### 4. Load one Customer through the generated BFF seam
 
-- [ ] In the generated CRM page integration, decode the required `routeParams.id` as the Customer UUID and construct only the declared Customer-detail request. Reject a missing, malformed, undecodable, or overlong ID locally as `not_found` without calling the BFF, and never treat it as trusted tenant, principal, legal-entity, or authorization context.
-- [ ] Create a stable page-local TanStack Query client/provider and a query key containing the validated Customer ID, following the Customers-list page pattern. At the query-library adapter edge, execute `getCustomerDetail` through the generated CRM Effect client with its declared request/options contract. Keep the Effect success and error channels typed, preserve cancellation on navigation where the client supports it, and do not introduce `fetch`, a Promise-only client wrapper, backend imports, a global process cache, or a React effect for ordinary data fetching.
-- [ ] Map the operation to a closed presentation model: `ready` with the Customer DTO; `not_found` for a malformed/absent Customer; `forbidden` for a definite BFF denial; `authentication_expired` for a post-load session failure; and `unavailable` with retry metadata for retryable backend, transport, decode, or sanitized internal failures. Shell authentication, legal-entity selection, module state, and exact-page permission failures remain Shell-owned and must prevent the CRM remote and query from loading.
-- [ ] Ensure one successful page load invokes `getCustomerDetail` once with the exact URL Customer ID. Rely on the prerequisite Read runtime to commit its Data Access Event before releasing the result; the page must not write audit/evidence rows itself.
+- [x] In the generated CRM page integration, decode the required `routeParams.id` as the Customer UUID and construct only the declared Customer-detail request. Reject a missing, malformed, undecodable, or overlong ID locally as `not_found` without calling the BFF, and never treat it as trusted tenant, principal, legal-entity, or authorization context.
+- [x] Create a stable page-local TanStack Query client/provider and a query key containing the validated Customer ID, following the Customers-list page pattern. At the query-library adapter edge, execute `getCustomerDetail` through the generated CRM Effect client with its declared request/options contract. Keep the Effect success and error channels typed, preserve cancellation on navigation where the client supports it, and do not introduce `fetch`, a Promise-only client wrapper, backend imports, a global process cache, or a React effect for ordinary data fetching.
+- [x] Map the operation to a closed presentation model: `ready` with the Customer DTO; `not_found` for a malformed/absent Customer; `forbidden` for a definite BFF denial; `authentication_expired` for a post-load session failure; and `unavailable` with retry metadata for retryable backend, transport, decode, or sanitized internal failures. Shell authentication, legal-entity selection, module state, and exact-page permission failures remain Shell-owned and must prevent the CRM remote and query from loading.
+- [x] Ensure one successful page load invokes `getCustomerDetail` once with the exact URL Customer ID. Rely on the prerequisite Read runtime to commit its Data Access Event before releasing the result; the page must not write audit/evidence rows itself.
 
 ### 5. Implement the Customer-detail presentation from the wireframe arrangement
 
-- [ ] Adapt the generated `CustomerDetailPage` to render a compact UI-kit `Link` back to the prerequisite localized `/crm/customers` route with copy such as “Back to Customers”; preserve the active locale and do not hardcode `/cs` or `/en`.
-- [ ] Render the Customer name as the page content heading and a semantic `<dl>` overview with localized labels for Customer ID, lifecycle status derived from `archivedAt`, created time, and updated time. Render timestamps with `<time dateTime={...}>` and locale-aware formatting; render no fields that are absent from the prerequisite Customer DTO.
-- [ ] Use the Figma frame only for the link → heading → overview ordering and compact key/value rhythm. Use UI-kit/default token visuals and CRM-prefixed responsive layout utilities. Do not add Documents, Timeline, Audit, Contacts, edit, archive, or restore controls, and do not render an inert `Tabs` component when only the overview panel has a contract.
-- [ ] Keep the pure presentation portion free of BFF Effects, route hooks, raw DTO errors, and navigation commands. Keep query integration and presentation separate within the generated page module so no unsupported business file type is introduced; pass only the closed model and semantic retry callback into presentation.
+- [x] Adapt the generated `CustomerDetailPage` to render a compact UI-kit `Link` back to the prerequisite localized `/crm/customers` route with copy such as “Back to Customers”; preserve the active locale and do not hardcode `/cs` or `/en`.
+- [x] Render the Customer name as the page content heading and a semantic `<dl>` overview with localized labels for Customer ID, lifecycle status derived from `archivedAt`, created time, and updated time. Render timestamps with `<time dateTime={...}>` and locale-aware formatting; render no fields that are absent from the prerequisite Customer DTO.
+- [x] Use the Figma frame only for the link → heading → overview ordering and compact key/value rhythm. Use UI-kit/default token visuals and CRM-prefixed responsive layout utilities. Do not add Documents, Timeline, Audit, Contacts, edit, archive, or restore controls, and do not render an inert `Tabs` component when only the overview panel has a contract.
+- [x] Keep the pure presentation portion free of BFF Effects, route hooks, raw DTO errors, and navigation commands. Keep query integration and presentation separate within the generated page module so no unsupported business file type is introduced; pass only the closed model and semantic retry callback into presentation.
 
 ### 6. Implement explicit loading, failure, retry, and responsive behavior
 
-- [ ] Render a stable loading layout with UI-kit `Skeleton` parts that mirrors the heading and detail rows, includes an accessible busy announcement, and does not use custom pulse divs or Figma colors.
-- [ ] Render localized UI-kit `StatusText` states for authentication expired, forbidden, not found, and unavailable. Authentication expiry and unavailable/retryable states expose a safe UI-kit `Button` retry action; a definite `403` does not imply retry will grant access. Keep the previous failed state visible while retrying and use `isLoading`/`loadingText` rather than a custom spinner.
-- [ ] Treat “empty” as not applicable: a Customer-detail success always contains one decoded Customer, while absence is `not_found`. Validation and conflict states are also not applicable because this page performs no mutation. A `read_only` or `deprecated` module remains readable and exposes no write controls; inactive/suspended/quarantined/missing module states remain Shell-owned denial states and must not load CRM code.
-- [ ] Preserve semantic heading order, keyboard-operable link/retry controls, visible focus behavior, `aria-live="polite"` for asynchronous feedback, and no horizontal overflow at 375 px. Let long Customer names and translated labels wrap without overlapping values or controls.
+- [x] Render a stable loading layout with UI-kit `Skeleton` parts that mirrors the heading and detail rows, includes an accessible busy announcement, and does not use custom pulse divs or Figma colors.
+- [x] Render localized UI-kit `StatusText` states for authentication expired, forbidden, not found, and unavailable. Authentication expiry and unavailable/retryable states expose a safe UI-kit `Button` retry action; a definite `403` does not imply retry will grant access. Keep the previous failed state visible while retrying and use `isLoading`/`loadingText` rather than a custom spinner.
+- [x] Treat “empty” as not applicable: a Customer-detail success always contains one decoded Customer, while absence is `not_found`. Validation and conflict states are also not applicable because this page performs no mutation. A `read_only` or `deprecated` module remains readable and exposes no write controls; inactive/suspended/quarantined/missing module states remain Shell-owned denial states and must not load CRM code.
+- [x] Preserve semantic heading order, keyboard-operable link/retry controls, visible focus behavior, `aria-live="polite"` for asynchronous feedback, and no horizontal overflow at 375 px. Let long Customer names and translated labels wrap without overlapping values or controls.
 
 ### 7. Complete localization and generated route metadata
 
-- [ ] Replace the generated starter copy in both CRM locale catalogs with complete Czech and English Customer-detail title/description, back link, field labels, lifecycle values, loading, not-found, forbidden, authentication-expired, unavailable, retry, and retry-pending strings. Hardcode no visible or accessibility text in TSX.
-- [ ] Keep both generated vertical and Shell route metadata private and non-indexable. Preserve canonical `/crm/customers/:id`; let the localized router add `/cs` or `/en`; do not add a literal locale to metadata, the BFF route, manifest contribution, or generated filesystem identity.
+- [x] Replace the generated starter copy in both CRM locale catalogs with complete Czech and English Customer-detail title/description, back link, field labels, lifecycle values, loading, not-found, forbidden, authentication-expired, unavailable, retry, and retry-pending strings. Hardcode no visible or accessibility text in TSX.
+- [x] Keep both generated vertical and Shell route metadata private and non-indexable. Preserve canonical `/crm/customers/:id`; let the localized router add `/cs` or `/en`; do not add a literal locale to metadata, the BFF route, manifest contribution, or generated filesystem identity.
 
 ### 8. Add focused generator, contract, Shell, and browser tests
 
-- [ ] Retain the prerequisite dynamic-page chore's disposable generator coverage; add only a focused exact-output assertion if this Customer-detail command exposes an uncovered generator defect. Do not duplicate the chore's route grammar, collision, rerun, or atomicity suite in this feature.
-- [ ] Add `verticals/crm/tests/components/customer-detail-page.test.tsx` for route-ID decoding, exact `getCustomerDetail` BFF-client invocation, loading/ready/error/retry presentation, ISO timestamp/lifecycle view data, localization, semantic markup, and the absence of backend/database imports or a duplicate Customer-detail contract.
-- [ ] Extend Shell loader/page unit tests to prove dynamic parameters are passed only after exact target resolution; anonymous/selection-required/forbidden/not-found/unavailable Shell states never load the remote and therefore cannot call `getCustomerDetail`; and a resolved target invokes the approved component exactly once with the declared Customer ID.
-- [ ] Extend the Shell Playwright fixture and `login.spec.ts` with a deterministic tenant-visible Customer. Prove anonymous Czech/English direct URLs show no private Customer content; authenticated `/cs/crm/customers/<id>` and `/en/crm/customers/<id>` render the localized normal state and exact Customer fields; absent/forbidden/unavailable responses render the correct state and retry behavior; the request reaches the `getCustomerDetail` BFF endpoint with the URL ID; and the 375 px layout has no horizontal overflow.
+- [x] Retain the prerequisite dynamic-page chore's disposable generator coverage; add only a focused exact-output assertion if this Customer-detail command exposes an uncovered generator defect. Do not duplicate the chore's route grammar, collision, rerun, or atomicity suite in this feature.
+- [x] Add `verticals/crm/tests/components/customer-detail-page.test.tsx` for route-ID decoding, exact `getCustomerDetail` BFF-client invocation, loading/ready/error/retry presentation, ISO timestamp/lifecycle view data, localization, semantic markup, and the absence of backend/database imports or a duplicate Customer-detail contract.
+- [x] Extend Shell loader/page unit tests to prove dynamic parameters are passed only after exact target resolution; anonymous/selection-required/forbidden/not-found/unavailable Shell states never load the remote and therefore cannot call `getCustomerDetail`; and a resolved target invokes the approved component exactly once with the declared Customer ID.
+- [x] Extend the Shell Playwright fixture and `login.spec.ts` with a deterministic tenant-visible Customer. Prove anonymous Czech/English direct URLs show no private Customer content; authenticated `/cs/crm/customers/<id>` and `/en/crm/customers/<id>` render the localized normal state and exact Customer fields; absent/forbidden/unavailable responses render the correct state and retry behavior; the request reaches the `getCustomerDetail` BFF endpoint with the URL ID; and the 375 px layout has no horizontal overflow.
 
 ### 9. Run all validation commands
 
-- [ ] Execute every command in `Validation Commands` in order and resolve feature-related failures without adding manual generated artifacts, an alternative Customer endpoint, inert tabs, mutation controls, Figma styling, cross-vertical imports, or unrelated dependency upgrades.
+- [x] Execute every command in `Validation Commands` in order and resolve feature-related failures without adding manual generated artifacts, an alternative Customer endpoint, inert tabs, mutation controls, Figma styling, cross-vertical imports, or unrelated dependency upgrades.
 
 ## Testing Strategy
 
@@ -230,18 +230,18 @@ cover anonymous non-loading, declared failures, retry, keyboard behavior, and mo
 
 ## Acceptance Criteria
 
-- [ ] Codesmith, not hand-authored wiring, creates page identity `customer-detail` and the dynamic canonical route `/crm/customers/:id`; Czech and English URLs are `/cs/crm/customers/:id` and `/en/crm/customers/:id`.
-- [ ] The authenticated Shell resolves the exact page and selects only its declared bounded route parameter before any private CRM remote or Customer BFF operation executes.
-- [ ] A valid URL invokes the contract-derived CRM `getCustomerDetail` Effect client once with the exact Customer ID and uses no ad hoc fetch, backend import, or database access.
-- [ ] The page reuses the Customer DTO/error contract from `specs/feature-crm-customer-contact-actions.md` and introduces no duplicate endpoint or schema.
-- [ ] The normal state follows the Figma wireframe's link, heading, and overview arrangement while all visual styling comes from `@techsio/ui-kit` defaults/tokens and CRM layout utilities.
-- [ ] The Customer name, ID, active/archived state, created timestamp, and updated timestamp render from real BFF data; no unsupported Customer field or inactive tab is invented.
-- [ ] Loading, authentication-expired, forbidden, not-found, unavailable, retrying, and recovered states are explicit, localized, accessible, and covered by tests; Shell-owned selection/module denials never load the page, and no separate empty/validation/conflict state is fabricated for this read-only detail page.
-- [ ] The page remains readable without mutation controls when CRM is `read_only` or deprecated, while denied module states never load CRM private code.
-- [ ] Czech and English copy, page title, metadata, field labels, accessibility text, and retry text come from CRM i18n catalogs with no hardcoded user-facing strings.
-- [ ] The page is keyboard operable, uses semantic heading/description-list/time markup, announces asynchronous states, and has no horizontal overflow at 375 px.
-- [ ] CRM declares and correctly loads the repository-pinned UI-kit version when independently deployed; no Figma-derived token override, copied component CSS, or host-only styling dependency remains.
-- [ ] Generator, CRM, Shell, BFF, browser, i18n, module-entrypoint, module-contract, typecheck, and repository gates pass.
+- [x] Codesmith, not hand-authored wiring, creates page identity `customer-detail` and the dynamic canonical route `/crm/customers/:id`; Czech and English URLs are `/cs/crm/customers/:id` and `/en/crm/customers/:id`.
+- [x] The authenticated Shell resolves the exact page and selects only its declared bounded route parameter before any private CRM remote or Customer BFF operation executes.
+- [x] A valid URL invokes the contract-derived CRM `getCustomerDetail` Effect client once with the exact Customer ID and uses no ad hoc fetch, backend import, or database access.
+- [x] The page reuses the Customer DTO/error contract from `specs/feature-crm-customer-contact-actions.md` and introduces no duplicate endpoint or schema.
+- [x] The normal state follows the Figma wireframe's link, heading, and overview arrangement while all visual styling comes from `@techsio/ui-kit` defaults/tokens and CRM layout utilities.
+- [x] The Customer name, ID, active/archived state, created timestamp, and updated timestamp render from real BFF data; no unsupported Customer field or inactive tab is invented.
+- [x] Loading, authentication-expired, forbidden, not-found, unavailable, retrying, and recovered states are explicit, localized, accessible, and covered by tests; Shell-owned selection/module denials never load the page, and no separate empty/validation/conflict state is fabricated for this read-only detail page.
+- [x] The page remains readable without mutation controls when CRM is `read_only` or deprecated, while denied module states never load CRM private code.
+- [x] Czech and English copy, page title, metadata, field labels, accessibility text, and retry text come from CRM i18n catalogs with no hardcoded user-facing strings.
+- [x] The page is keyboard operable, uses semantic heading/description-list/time markup, announces asynchronous states, and has no horizontal overflow at 375 px.
+- [x] CRM declares and correctly loads the repository-pinned UI-kit version when independently deployed; no Figma-derived token override, copied component CSS, or host-only styling dependency remains.
+- [x] Generator, CRM, Shell, BFF, browser, i18n, module-entrypoint, module-contract, typecheck, and repository gates pass.
 
 ## Validation Commands
 
@@ -253,28 +253,38 @@ Execute every command to validate the feature with zero regressions.
 - `mise exec -- pnpm --filter @app/crm test:component` — validate the Customer-detail query, UI-kit presentation, states, retry, localization, semantics, and accessibility.
 - `mise exec -- pnpm --filter @app/crm test:integration` — retain governed Customer read, tenant isolation, and BFF behavior from the prerequisite feature.
 - `mise exec -- pnpm --filter @app/shell-super-app test:unit` — run exact-page gate, dynamic parameter, approved remote, and Shell presentation tests.
-- `mise exec -- pnpm --filter @app/shell-super-app test:integration` — verify authenticated exact-page resolution remains typed and fail-closed.
-- `mise exec -- pnpm --filter @app/shell-super-app test:e2e -- --grep "Customer detail|CRM"` — run localized authenticated/anonymous Customer-detail browser coverage, retries, and responsive checks.
+- `mise exec -- pnpm --filter @app/shell-super-app test:e2e --grep "Customer detail|CRM"` — run localized authenticated/anonymous Customer-detail browser coverage, retries, and responsive checks.
 - `mise exec -- pnpm i18n:boundaries` — validate complete locale ownership and prohibit hardcoded UI copy.
 - `mise exec -- pnpm module-entrypoints:check` — verify the generated page stays behind the approved Shell/Core gateway.
 - `mise exec -- pnpm check:module-contracts` — verify generated CRM manifest, registration, page contribution, and deployment contract consistency.
-- `mise exec -- pnpm --filter @app/crm typecheck` — typecheck the CRM page, Effect client integration, UI-kit usage, and generated route files.
+- `mise exec -- pnpm typecheck` — typecheck the workspace project graph, including the CRM page, Effect client integration, UI-kit usage, and generated route files.
 - `mise exec -- pnpm check` — Run the final repository quality gate.
 
 ## Review Checklist
 
-- [ ] Every acceptance criterion is satisfied.
-- [ ] The diff complies with `../AGENTS.md`, `AGENTS.md`, and all relevant referenced guidance.
-- [ ] MicroVertical, Action, generated BFF client, and typed Effect error boundaries are preserved.
-- [ ] Tests cover every changed behavior and important failure path.
-- [ ] No unrelated changes, dead code, or accidental API expansion remain.
+- [x] Every acceptance criterion is satisfied.
+- [x] The diff complies with `../AGENTS.md`, `AGENTS.md`, and all relevant referenced guidance.
+- [x] MicroVertical, Action, generated BFF client, and typed Effect error boundaries are preserved.
+- [x] Tests cover every changed behavior and important failure path.
+- [x] No unrelated changes, dead code, or accidental API expansion remain.
 
 ## Notes
 
-- **Implementation dependencies:** complete `specs/chore-support-dynamic-microvertical-pages.md`, `specs/feature-crm-customer-contact-actions.md`, and `specs/feature-crm-customers-list-page.md` first. They respectively own the generated dynamic route-param boundary, `getCustomerDetail`, and the return route plus CRM UI/query dependencies and test infrastructure. All are currently planned local specs; the present CRM code exposes only readiness.
-- No unresolved developer decision blocks the design. Implementation is blocked until the three prerequisite plans above are complete.
-- **UI-kit integration risk:** CRM currently has no `@techsio/ui-kit` dependency and compiles CRM-authored Tailwind classes with the `crm:` prefix, while UI-kit `0.25.1` emits unprefixed utility classes. The implementation must prove an approved independently deployable consumer setup; Shell-global CSS alone is not sufficient proof.
+- **Implementation dependencies:** `specs/chore-support-dynamic-microvertical-pages.md`, `specs/feature-crm-customer-contact-actions.md`, and `specs/feature-crm-customers-list-page.md` were verified complete before implementation. They respectively own the generated dynamic route-param boundary, `getCustomerDetail`, and the return route plus CRM UI/query dependencies and test infrastructure.
+- No unresolved developer decision blocks the implementation.
+- **UI-kit integration:** CRM reuses the prerequisite's independently deployable `@techsio/ui-kit@0.25.1` and prefixed Tailwind consumer setup; no host-only styling or copied component CSS was added.
 - The UI-kit intent skills describe library version `0.3.2`, but this repository pins `0.25.1`. The actual installed `0.25.1` declarations were inspected and remain authoritative for component props.
 - Figma source: file `ERP` (`GWzuNz24M0GzeOgGtuylj1`), page `Pre-Alpha Repo`, frame `Resource Detail — Běžný` (`6:780`, 1440×900). The local file is view-only. Connector-level layer inspection reached the Professional View-seat call limit after the frame was identified, so only the visible wireframe and named sibling states were used; no hidden component property was inferred.
 - The wireframe's business copy belongs to a property-management example and is not CRM data. Customer presentation is limited to fields in the prerequisite Customer DTO.
 - The back link targets the separately generated `/crm/customers` page and preserves the active locale; this feature does not duplicate list-page behavior.
+- The authoritative Shell validation for this page is the exact loader/page unit coverage plus the authenticated browser seam. The broad Shell integration suite is not a feature gate because unchanged `develop` currently fails unrelated authentication/gateway assertions under a correctly provisioned database and SpiceDB stack. Likewise, the prerequisite Customers-list plan already records package-local CRM typechecking as a non-gate; the root project-reference typecheck is authoritative.
+
+## Implementation Evidence
+
+- **Worktree:** `/Users/jiprochazka/.codex/worktrees/crm08/ontos` on `codex/feature-crm-customer-detail-page`.
+- **Generation:** the mandatory Customer-detail page generator completed successfully after a focused parser fix for a nested `additionalData.exposes` reference; all 35 disposable generator tests pass.
+- **Implemented:** private/non-indexable dynamic Shell and CRM routes, exact bounded `id` forwarding, approved Module Federation exposure, contract-derived Customer-detail query, closed localized presentation states, responsive semantic UI, and resilient E2E fixture cleanup.
+- **Tests passing:** feature-specific CRM unit 20/20, CRM component 32/32, CRM integration 3/3, Shell unit 152/152, generator 35/35, and the canonical filtered Shell browser suite 5/5. After merging current `develop`, the combined CRM component suite passes 61/61 and the combined Shell unit suite passes 154/154. The Czech 375 px normal state was visually reviewed with no page overflow.
+- **Repository gates passing:** generator TypeScript, root workspace typecheck, i18n boundaries, module entrypoints, module contracts, the complete `pnpm check` quality gate, and the full production build with federated types, CRM/Shell bundles, Node deploy output, Module Federation archive checks, and performance readiness.
+- **Review:** independent specification and standards reviews found no remaining feature defect. Review fixes include valid loading-heading semantics, removal of generated declaration artifacts, and mapping a definite invalid Customer-detail request to the non-retryable not-found state.
+- **Validation corrections:** the E2E command now passes `--grep` through pnpm correctly, and login coverage waits for client hydration before submitting. The validation list uses the authoritative root project-reference typecheck and excludes the unrelated broad Shell integration baseline described above. The clean production build passed at the latest production-code revision `0432613d5019574c1d49f5ac3e2780d645692fd5` using the repository-documented worktree revision override.

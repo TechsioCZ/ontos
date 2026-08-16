@@ -413,7 +413,7 @@ const moduleFederationExposesRange = (
   content: string,
 ): { readonly closeIndex: number; readonly openIndex: number; readonly propertyIndex: number } => {
   const code = maskNonCode(content);
-  const propertyMatches = [...code.matchAll(/\bexposes\s*:/gu)];
+  const propertyMatches = [...code.matchAll(/\bexposes\s*:\s*\{/gu)];
   if (propertyMatches.length === 0) {
     throw new Error('generated Module Federation exposes object is missing');
   }
