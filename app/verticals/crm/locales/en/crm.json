@@ -24,6 +24,33 @@
       },
       "customerDetail": {
         "back": "Back to Customers",
+        "contacts": {
+          "heading": "Contacts",
+          "pagination": {
+            "label": "Customer Contact pages",
+            "next": "Next",
+            "previous": "Previous"
+          },
+          "states": {
+            "authenticationExpired": "Your session has expired. Sign in and load the Contacts again.",
+            "decode": "The Contact list response could not be read. Try again.",
+            "empty": "This Customer has no active Contacts.",
+            "forbidden": "You do not have permission to view this Customer’s Contacts.",
+            "internal": "The Contacts could not be loaded safely. Try again.",
+            "loading": "Loading Contacts…",
+            "parentNotFound": "The Customer for this Contact list no longer exists.",
+            "retry": "Try again",
+            "retrying": "Trying again…",
+            "transport": "The Contacts could not be reached. Check your connection and try again.",
+            "unavailable": "The Contacts are temporarily unavailable. Try again."
+          },
+          "table": {
+            "caption": "Active Customer Contacts",
+            "email": "Email",
+            "name": "Name",
+            "phone": "Phone"
+          }
+        },
         "description": "View the current details and lifecycle state of this Customer.",
         "fields": {
           "createdAt": "Created",
