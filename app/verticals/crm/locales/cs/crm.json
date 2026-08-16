@@ -18,6 +18,43 @@
     "title": "Crm Vertical",
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
+      "contactCreate": {
+        "back": "Zpět k zákazníkovi",
+        "description": "Přidejte kontakt k tomuto zákazníkovi.",
+        "form": {
+          "cancel": "Zrušit",
+          "emailInvalid": "Zadejte platnou e-mailovou adresu.",
+          "emailLabel": "E-mail",
+          "emailRequired": "Zadejte e-mailovou adresu.",
+          "nameInvalid": "Zadejte jméno kontaktu o délce nejvýše 200 znaků.",
+          "nameLabel": "Jméno kontaktu",
+          "nameRequired": "Zadejte jméno kontaktu.",
+          "phoneCountryLabel": "Vybrat zemi telefonního čísla",
+          "phoneInvalid": "Zadejte telefonní číslo o délce nejvýše 100 znaků.",
+          "phoneLabel": "Telefon",
+          "phonePlaceholder": "Telefonní číslo",
+          "phoneRequired": "Zadejte telefonní číslo.",
+          "submit": "Vytvořit kontakt",
+          "submitting": "Vytváření kontaktu…"
+        },
+        "mutation": {
+          "authenticationExpired": "Relace vypršela před vytvořením kontaktu.",
+          "conflict": "Kontakt nelze vytvořit, protože požadavek koliduje s aktuálním stavem. Zkontrolujte hodnoty a zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění vytvořit kontakt pro tohoto zákazníka.",
+          "generic": "Kontakt se nepodařilo bezpečně vytvořit. Zkuste to znovu.",
+          "invalidForm": "Údaje kontaktu byly odmítnuty. Zkontrolujte pole a zkuste to znovu.",
+          "notFound": "Tento zákazník již neexistuje nebo pro vás není dostupný.",
+          "success": "Kontakt byl vytvořen."
+        },
+        "states": {
+          "decode": "Odpověď s kontaktem se nepodařilo přečíst. Požadavek mohl být dokončen; opakujte jej pouze se stejnými hodnotami.",
+          "invalidTarget": "Tento zákazník nebyl nalezen nebo pro vás není dostupný.",
+          "readOnly": "CRM je nyní jen pro čtení. Kontakt momentálně nelze vytvořit.",
+          "transport": "Služba kontaktů není dostupná. Požadavek mohl být dokončen; zkontrolujte připojení a opakujte jej se stejnými hodnotami.",
+          "unavailable": "Služba kontaktů je dočasně nedostupná. Požadavek mohl být dokončen; opakujte jej se stejnými hodnotami."
+        },
+        "title": "Vytvořit kontakt"
+      },
       "contactDetail": {
         "back": "Zpět na zákazníka",
         "description": "Zobrazení komunikačních údajů a stavu tohoto kontaktu.",
@@ -58,6 +95,33 @@
       },
       "customerDetail": {
         "back": "Zpět na zákazníky",
+        "contacts": {
+          "heading": "Kontakty",
+          "pagination": {
+            "label": "Stránky kontaktů zákazníka",
+            "next": "Další",
+            "previous": "Předchozí"
+          },
+          "states": {
+            "authenticationExpired": "Vaše relace vypršela. Po přihlášení načtěte kontakty znovu.",
+            "decode": "Odpověď se seznamem kontaktů se nepodařilo přečíst. Zkuste to znovu.",
+            "empty": "Tento zákazník nemá žádné aktivní kontakty.",
+            "forbidden": "Nemáte oprávnění zobrazit kontakty tohoto zákazníka.",
+            "internal": "Kontakty se nepodařilo bezpečně načíst. Zkuste to znovu.",
+            "loading": "Načítání kontaktů…",
+            "parentNotFound": "Zákazník pro tento seznam kontaktů již neexistuje.",
+            "retry": "Zkusit znovu",
+            "retrying": "Opakování…",
+            "transport": "Kontakty nejsou dostupné. Zkontrolujte připojení a zkuste to znovu.",
+            "unavailable": "Kontakty jsou dočasně nedostupné. Zkuste to znovu."
+          },
+          "table": {
+            "caption": "Aktivní kontakty zákazníka",
+            "email": "E-mail",
+            "name": "Jméno",
+            "phone": "Telefon"
+          }
+        },
         "description": "Zobrazení aktuálních údajů a stavu tohoto zákazníka.",
         "fields": {
           "createdAt": "Vytvořeno",

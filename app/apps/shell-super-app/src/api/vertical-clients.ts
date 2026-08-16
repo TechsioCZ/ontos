@@ -17,6 +17,11 @@ export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] =
   // @ontos-codegen-start shell-page-clients
   {
     appId: 'crm',
+    componentKey: 'crm.core.page-contact-create',
+    load: () => import('crm/PageContactCreate'),
+  },
+  {
+    appId: 'crm',
     componentKey: 'crm.core.page-contact-detail',
     load: () => import('crm/PageContactDetail'),
   },
