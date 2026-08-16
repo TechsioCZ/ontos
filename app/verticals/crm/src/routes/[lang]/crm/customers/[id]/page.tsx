@@ -66,7 +66,7 @@ interface CustomerDetailCopy {
 interface CustomerDetailViewProps {
   readonly backHref: string;
   readonly copy: CustomerDetailCopy;
-  readonly onRetry: () => Promise<void>;
+  readonly onRetry: () => Promise<unknown>;
   readonly retrying: boolean;
   readonly view: CustomerDetailViewState;
 }
@@ -184,10 +184,10 @@ export const CustomerDetailView = ({
   view,
 }: CustomerDetailViewProps) => {
   const resultsRef = useRef<HTMLDivElement>(null);
-  const retry = () =>
-    onRetry().then(() => {
-      resultsRef.current?.focus();
-    });
+  const retry = () => {
+    resultsRef.current?.focus();
+    return onRetry();
+  };
   const unavailableCopy =
     view.state === 'unavailable'
       ? {
@@ -299,7 +299,7 @@ const CustomerDetailQuery = ({
     queryKey: customerDetailQueryKey(customerId),
     retry: false,
   });
-  const refetch = () => query.refetch().then(() => undefined);
+  const refetch = () => query.refetch();
   let view: CustomerDetailViewState;
   if (query.isPending) {
     view = { state: 'loading' };

@@ -33,11 +33,11 @@ const login = async (page: Page) => {
 };
 
 const customerResponse = (customer: typeof e2eCustomers.active | typeof e2eCustomers.archived) => ({
-  archivedAt: 'archivedAt' in customer ? customer.archivedAt.toISOString() : null,
-  createdAt: customer.createdAt.toISOString(),
+  archivedAt: 'archivedAt' in customer ? customer.archivedAt : null,
+  createdAt: customer.createdAt,
   customerId: customer.customerId,
   name: customer.name,
-  updatedAt: customer.updatedAt.toISOString(),
+  updatedAt: customer.updatedAt,
 });
 
 let cleanupFixture: (() => Promise<void>) | undefined;

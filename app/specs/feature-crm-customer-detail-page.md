@@ -196,7 +196,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### 9. Run all validation commands
 
-- [ ] Execute every command in `Validation Commands` in order and resolve feature-related failures without adding manual generated artifacts, an alternative Customer endpoint, inert tabs, mutation controls, Figma styling, cross-vertical imports, or unrelated dependency upgrades.
+- [x] Execute every command in `Validation Commands` in order and resolve feature-related failures without adding manual generated artifacts, an alternative Customer endpoint, inert tabs, mutation controls, Figma styling, cross-vertical imports, or unrelated dependency upgrades.
 
 ## Testing Strategy
 
@@ -241,7 +241,7 @@ cover anonymous non-loading, declared failures, retry, keyboard behavior, and mo
 - [x] Czech and English copy, page title, metadata, field labels, accessibility text, and retry text come from CRM i18n catalogs with no hardcoded user-facing strings.
 - [x] The page is keyboard operable, uses semantic heading/description-list/time markup, announces asynchronous states, and has no horizontal overflow at 375 px.
 - [x] CRM declares and correctly loads the repository-pinned UI-kit version when independently deployed; no Figma-derived token override, copied component CSS, or host-only styling dependency remains.
-- [ ] Generator, CRM, Shell, BFF, browser, i18n, module-entrypoint, module-contract, typecheck, and repository gates pass.
+- [x] Generator, CRM, Shell, BFF, browser, i18n, module-entrypoint, module-contract, typecheck, and repository gates pass.
 
 ## Validation Commands
 
@@ -284,7 +284,7 @@ Execute every command to validate the feature with zero regressions.
 - **Worktree:** `/Users/jiprochazka/.codex/worktrees/crm08/ontos` on `codex/feature-crm-customer-detail-page`.
 - **Generation:** the mandatory Customer-detail page generator completed successfully after a focused parser fix for a nested `additionalData.exposes` reference; all 35 disposable generator tests pass.
 - **Implemented:** private/non-indexable dynamic Shell and CRM routes, exact bounded `id` forwarding, approved Module Federation exposure, contract-derived Customer-detail query, closed localized presentation states, responsive semantic UI, and resilient E2E fixture cleanup.
-- **Tests passing:** CRM unit 20/20, CRM component 32/32, CRM integration 3/3, Shell unit 152/152, generator 35/35, and the canonical filtered Shell browser suite 5/5. The Czech 375 px normal state was visually reviewed with no page overflow.
-- **Repository gates passing:** generator TypeScript, root workspace typecheck, i18n boundaries, module entrypoints, module contracts, and the complete `pnpm check` quality gate.
+- **Tests passing:** feature-specific CRM unit 20/20, CRM component 32/32, CRM integration 3/3, Shell unit 152/152, generator 35/35, and the canonical filtered Shell browser suite 5/5. After merging current `develop`, the combined CRM component suite passes 61/61 and the combined Shell unit suite passes 154/154. The Czech 375 px normal state was visually reviewed with no page overflow.
+- **Repository gates passing:** generator TypeScript, root workspace typecheck, i18n boundaries, module entrypoints, module contracts, the complete `pnpm check` quality gate, and the full production build with federated types, CRM/Shell bundles, Node deploy output, Module Federation archive checks, and performance readiness.
 - **Review:** the final diff was checked against the specification, root/app `AGENTS.md`, MicroVertical, module-entrypoint, frontend, i18n, Effect, data-access, and generated-wiring guidance. The loading heading was corrected to valid semantic markup; generated declaration artifacts were removed; no feature findings remain.
-- **Validation corrections:** the E2E command now passes `--grep` through pnpm correctly, and login coverage waits for client hydration before submitting. The validation list uses the authoritative root project-reference typecheck and excludes the unrelated broad Shell integration baseline described above. A clean committed build is the final PR-readiness proof.
+- **Validation corrections:** the E2E command now passes `--grep` through pnpm correctly, and login coverage waits for client hydration before submitting. The validation list uses the authoritative root project-reference typecheck and excludes the unrelated broad Shell integration baseline described above. The clean production build passed at immutable source revision `0971107cb3995c7b9aa15717ff3eff95e7e9b39f` using the repository-documented worktree revision override.
