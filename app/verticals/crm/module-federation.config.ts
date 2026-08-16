@@ -28,6 +28,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       tsConfigPath: './tsconfig.mf-types.json',
     },
     exposes: {
+      './PageContactCreate': './src/federation/page-contact-create.tsx',
       './PageCrm': './src/federation-entry.tsx',
       './PageCustomerCreate': './src/federation/page-customer-create.tsx',
       './PageCustomerDetail': './src/federation/page-customer-detail.tsx',

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { Page } from '@playwright/test';
 import { crmApiContract } from '../../../../verticals/crm/shared/api.ts';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
@@ -11,6 +12,20 @@ import {
 
 const customerListPath = `${crmApiContract.basePath}/customers/list`;
 const customerDetailPath = `${crmApiContract.basePath}/customers/detail`;
+const contactCreatePath = `${crmApiContract.basePath}/contacts/create`;
+
+const mockCrmGateway = async (page: Page) => {
+  const payloads: unknown[] = [];
+  await page.route(`**${shellGatewayContextContract.issueGatewayContextPath}`, (route) => {
+    payloads.push(route.request().postDataJSON());
+    return route.fulfill({
+      body: JSON.stringify({ expiresAt: 2_000_000_000, token: 'e2e-crm-gateway-token' }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  return payloads;
+};
 
 const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
   await page.goto(`/${language}/login`);
@@ -734,6 +749,168 @@ test.describe('Customer detail flows', () => {
     expect(payloads).toEqual([
       { customerId: e2eCustomers.active.customerId },
       { customerId: e2eCustomers.active.customerId },
+    ]);
+  });
+});
+
+test.describe('Contact create flows', () => {
+  test.describe.configure({ timeout: 90_000 });
+
+  const contactCorsHeaders = {
+    'access-control-allow-origin': 'http://127.0.0.1:3020',
+  } as const;
+  const contactResponse = {
+    archivedAt: null,
+    contactId: '7c000000-0000-4000-8000-000000000001',
+    createdAt: '2026-08-16T08:00:00.000Z',
+    customerId: e2eCustomers.active.customerId,
+    email: 'ada@example.test',
+    name: 'Ada Lovelace',
+    phone: '123456789',
+    updatedAt: '2026-08-16T08:00:00.000Z',
+  } as const;
+
+  test('Contact create stays private, renders localized forms, and submits the real page request', async ({
+    page,
+  }) => {
+    let contactRequests = 0;
+    const payloads: unknown[] = [];
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === contactCreatePath) {
+        contactRequests += 1;
+      }
+    });
+
+    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await expect(page.getByRole('heading', { name: 'Create Contact' })).toHaveCount(0);
+    await page.goto(`/cs/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await expect(page.getByRole('heading', { name: 'Vytvořit kontakt' })).toHaveCount(0);
+    expect(contactRequests).toBe(0);
+
+    await login(page);
+    const gatewayPayloads = await mockCrmGateway(page);
+    await page.route(`**${contactCreatePath}`, (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fallback();
+      }
+      payloads.push(route.request().postDataJSON());
+      return route.fulfill({
+        body: JSON.stringify(contactResponse),
+        contentType: 'application/json',
+        headers: contactCorsHeaders,
+        status: 200,
+      });
+    });
+
+    await page.goto(`/cs/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await expect(page.getByRole('heading', { name: 'Vytvořit kontakt' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: /^Jméno kontaktu/u })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: /^E-mail/u })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: /^Telefon/u })).toHaveAttribute(
+      'placeholder',
+      'Telefonní číslo',
+    );
+    await expect(
+      page.getByRole('combobox', { name: 'Vybrat zemi telefonního čísla' }),
+    ).toBeVisible();
+
+    await page.setViewportSize({ height: 667, width: 375 });
+    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await expect(page.getByRole('heading', { name: 'Create Contact' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Back to Customer' })).toHaveAttribute(
+      'href',
+      `/en/crm/customers/${e2eCustomers.active.customerId}`,
+    );
+    await page.getByRole('textbox', { name: /^Contact name/u }).fill(contactResponse.name);
+    await page.getByRole('textbox', { name: /^Email/u }).fill(contactResponse.email);
+    await page.getByRole('textbox', { name: /^Phone/u }).fill(contactResponse.phone);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    const screenshotPath = process.env['ULTRAMODERN_CONTACT_CREATE_REVIEW_SCREENSHOT_PATH'];
+    if (screenshotPath !== undefined) {
+      await page.screenshot({ fullPage: true, path: screenshotPath });
+    }
+
+    await page.getByRole('textbox', { name: /^Email/u }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => payloads.length).toBe(1);
+    expect(payloads).toEqual([
+      {
+        customerId: e2eCustomers.active.customerId,
+        email: contactResponse.email,
+        name: contactResponse.name,
+        phone: contactResponse.phone,
+      },
+    ]);
+    await expect(page).toHaveURL(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect.poll(() => gatewayPayloads.length).toBe(2);
+    expect(gatewayPayloads).toEqual([{ audience: 'crm' }, { audience: 'crm' }]);
+  });
+
+  test('Contact create preserves values and reuses its key after a mocked uncertain failure', async ({
+    page,
+  }) => {
+    await login(page);
+    const gatewayPayloads = await mockCrmGateway(page);
+    let attempts = 0;
+    const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
+    await page.route(`**${contactCreatePath}`, (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fallback();
+      }
+      attempts += 1;
+      const requestHeaders = route.request().headers();
+      headers.push({
+        correlationId: requestHeaders['x-correlation-id'],
+        idempotencyKey: requestHeaders['idempotency-key'],
+      });
+      if (attempts === 1) {
+        return route.fulfill({
+          body: JSON.stringify({
+            _tag: 'CrmUnavailableProblem',
+            detail: 'The E2E Contact service is unavailable.',
+            retryable: true,
+            status: 503,
+            title: 'Contact service unavailable',
+            type: 'https://ontos.dev/problems/crm-unavailable',
+          }),
+          contentType: 'application/problem+json',
+          headers: contactCorsHeaders,
+          status: 503,
+        });
+      }
+      return route.fulfill({
+        body: JSON.stringify(contactResponse),
+        contentType: 'application/json',
+        headers: contactCorsHeaders,
+        status: 200,
+      });
+    });
+
+    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await page.getByRole('textbox', { name: /^Contact name/u }).fill(contactResponse.name);
+    await page.getByRole('textbox', { name: /^Email/u }).fill(contactResponse.email);
+    await page.getByRole('textbox', { name: /^Phone/u }).fill(contactResponse.phone);
+    await page.getByRole('button', { name: 'Create Contact' }).click();
+
+    await expect(page.getByText(/request may have completed/u)).toBeVisible();
+    await expect(page.getByRole('textbox', { name: /^Contact name/u })).toHaveValue(
+      contactResponse.name,
+    );
+    await page.getByRole('button', { name: 'Create Contact' }).click();
+    await expect.poll(() => attempts).toBe(2);
+    expect(headers[0]?.idempotencyKey).toBeTruthy();
+    expect(headers[1]?.idempotencyKey).toBe(headers[0]?.idempotencyKey);
+    expect(headers[1]?.correlationId).not.toBe(headers[0]?.correlationId);
+    await expect(page).toHaveURL(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect.poll(() => gatewayPayloads.length).toBe(3);
+    expect(gatewayPayloads).toEqual([
+      { audience: 'crm' },
+      { audience: 'crm' },
+      { audience: 'crm' },
     ]);
   });
 });

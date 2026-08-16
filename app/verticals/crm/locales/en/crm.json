@@ -18,6 +18,43 @@
     "title": "Crm Vertical",
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
+      "contactCreate": {
+        "back": "Back to Customer",
+        "description": "Add a Contact to this Customer.",
+        "form": {
+          "cancel": "Cancel",
+          "emailInvalid": "Enter a valid email address.",
+          "emailLabel": "Email",
+          "emailRequired": "Enter an email address.",
+          "nameInvalid": "Enter a Contact name with at most 200 characters.",
+          "nameLabel": "Contact name",
+          "nameRequired": "Enter a Contact name.",
+          "phoneCountryLabel": "Choose phone country",
+          "phoneInvalid": "Enter a phone number with at most 100 characters.",
+          "phoneLabel": "Phone",
+          "phonePlaceholder": "Phone number",
+          "phoneRequired": "Enter a phone number.",
+          "submit": "Create Contact",
+          "submitting": "Creating Contact…"
+        },
+        "mutation": {
+          "authenticationExpired": "Your session expired before the Contact could be created.",
+          "conflict": "The Contact could not be created because the request conflicts with the current state. Review the values and try again.",
+          "forbidden": "You do not have permission to create a Contact for this Customer.",
+          "generic": "The Contact could not be created safely. Try again.",
+          "invalidForm": "The Contact details were rejected. Review the fields and try again.",
+          "notFound": "This Customer no longer exists or is not available to you.",
+          "success": "Contact created."
+        },
+        "states": {
+          "decode": "The Contact response could not be read. Your request may have completed; retry only with the same values.",
+          "invalidTarget": "This Customer was not found or is not available to you.",
+          "readOnly": "CRM is currently read-only. A Contact cannot be created right now.",
+          "transport": "The Contact service could not be reached. Your request may have completed; check your connection and retry with the same values.",
+          "unavailable": "The Contact service is temporarily unavailable. Your request may have completed; retry with the same values."
+        },
+        "title": "Create Contact"
+      },
       "crm": {
         "description": "This page is ready for implementation.",
         "title": "New Page"

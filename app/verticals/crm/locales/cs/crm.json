@@ -18,6 +18,43 @@
     "title": "Crm Vertical",
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
+      "contactCreate": {
+        "back": "Zpět k zákazníkovi",
+        "description": "Přidejte kontakt k tomuto zákazníkovi.",
+        "form": {
+          "cancel": "Zrušit",
+          "emailInvalid": "Zadejte platnou e-mailovou adresu.",
+          "emailLabel": "E-mail",
+          "emailRequired": "Zadejte e-mailovou adresu.",
+          "nameInvalid": "Zadejte jméno kontaktu o délce nejvýše 200 znaků.",
+          "nameLabel": "Jméno kontaktu",
+          "nameRequired": "Zadejte jméno kontaktu.",
+          "phoneCountryLabel": "Vybrat zemi telefonního čísla",
+          "phoneInvalid": "Zadejte telefonní číslo o délce nejvýše 100 znaků.",
+          "phoneLabel": "Telefon",
+          "phonePlaceholder": "Telefonní číslo",
+          "phoneRequired": "Zadejte telefonní číslo.",
+          "submit": "Vytvořit kontakt",
+          "submitting": "Vytváření kontaktu…"
+        },
+        "mutation": {
+          "authenticationExpired": "Relace vypršela před vytvořením kontaktu.",
+          "conflict": "Kontakt nelze vytvořit, protože požadavek koliduje s aktuálním stavem. Zkontrolujte hodnoty a zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění vytvořit kontakt pro tohoto zákazníka.",
+          "generic": "Kontakt se nepodařilo bezpečně vytvořit. Zkuste to znovu.",
+          "invalidForm": "Údaje kontaktu byly odmítnuty. Zkontrolujte pole a zkuste to znovu.",
+          "notFound": "Tento zákazník již neexistuje nebo pro vás není dostupný.",
+          "success": "Kontakt byl vytvořen."
+        },
+        "states": {
+          "decode": "Odpověď s kontaktem se nepodařilo přečíst. Požadavek mohl být dokončen; opakujte jej pouze se stejnými hodnotami.",
+          "invalidTarget": "Tento zákazník nebyl nalezen nebo pro vás není dostupný.",
+          "readOnly": "CRM je nyní jen pro čtení. Kontakt momentálně nelze vytvořit.",
+          "transport": "Služba kontaktů není dostupná. Požadavek mohl být dokončen; zkontrolujte připojení a opakujte jej se stejnými hodnotami.",
+          "unavailable": "Služba kontaktů je dočasně nedostupná. Požadavek mohl být dokončen; opakujte jej se stejnými hodnotami."
+        },
+        "title": "Vytvořit kontakt"
+      },
       "crm": {
         "description": "Tato stránka je připravena k implementaci.",
         "title": "Nová stránka"
