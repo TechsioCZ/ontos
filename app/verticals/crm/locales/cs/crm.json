@@ -83,6 +83,32 @@
         },
         "title": "Detail zákazníka"
       },
+      "customerCreate": {
+        "back": "Zpět na zákazníky",
+        "description": "Vytvořte nového zákazníka zadáním jeho názvu.",
+        "form": {
+          "cancel": "Zrušit",
+          "nameInvalid": "Zadejte platný název zákazníka.",
+          "nameLabel": "Název zákazníka",
+          "nameRequired": "Zadejte název zákazníka.",
+          "save": "Vytvořit zákazníka",
+          "saving": "Vytváření zákazníka…"
+        },
+        "mutation": {
+          "authenticationExpired": "Relace vypršela před vytvořením zákazníka.",
+          "conflict": "Požadavek koliduje s předchozím pokusem o vytvoření zákazníka. Zkontrolujte název a zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění vytvářet zákazníky.",
+          "generic": "Zákazníka se nepodařilo bezpečně vytvořit. Zkuste to znovu.",
+          "success": "Zákazník byl vytvořen."
+        },
+        "states": {
+          "decode": "Odpověď se zákazníkem se nepodařilo přečíst. Zkuste to znovu.",
+          "readOnly": "CRM je nyní jen pro čtení. Zákazníka nelze vytvořit.",
+          "transport": "Služba zákazníků není dostupná. Zkontrolujte připojení a zkuste to znovu.",
+          "unavailable": "Služba zákazníků je dočasně nedostupná. Zkuste to znovu."
+        },
+        "title": "Vytvořit zákazníka"
+      },
       "customerEdit": {
         "back": "Zpět na zákazníky",
         "description": "Upravte oficiální název zákazníka.",

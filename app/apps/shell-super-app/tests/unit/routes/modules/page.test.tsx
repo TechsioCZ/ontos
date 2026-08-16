@@ -216,3 +216,28 @@ test('passes CustomerEdit its exact ID and fail-closed writable target', async (
   });
   expect(await screen.findByText('crm.core.page-customer-edit:customer-1')).toBeTruthy();
 });
+
+test('passes CustomerCreate its bounded route context and resolved writable target', async () => {
+  const customerCreateModel: ModuleTargetPageModel = {
+    ...resolvedModel,
+    routeParams: { id: 'untrusted-route-context' },
+    target: {
+      ...resolvedModel.target,
+      componentKey: 'crm.core.page-customer-create',
+      entrypointKey: 'crm.core.page.customer-create',
+      writable: true,
+    },
+  };
+  useLoaderDataMock.mockReturnValue(customerCreateModel);
+  render(<ModuleTargetPage />);
+
+  expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerCreateModel.target);
+  await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
+  expect(remotePropsMock).toHaveBeenCalledWith({
+    routeParams: { id: 'untrusted-route-context' },
+    target: customerCreateModel.target,
+  });
+  expect(
+    await screen.findByText('crm.core.page-customer-create:untrusted-route-context'),
+  ).toBeTruthy();
+});
