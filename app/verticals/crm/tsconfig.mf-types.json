@@ -3,6 +3,7 @@
   "include": [
     "src/federation-entry.tsx",
     "src/federation/page-crm.tsx",
+    "shared/api.ts",
     "src/modern-app-env.d.ts"
   ]
 }

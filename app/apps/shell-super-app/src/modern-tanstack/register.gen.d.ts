@@ -13,6 +13,7 @@ declare module '@modern-js/plugin-i18n/runtime' {
     '/': Record<string, never>;
     '/crm': Record<string, never>;
     '/crm/customers': Record<string, never>;
+    '/crm/customers/$id/edit': { "id": string };
     '/login': Record<string, never>;
     '/modules/$moduleId': { "moduleId": string };
     '/resources/$moduleId/$resourceType/$resourceId': { "moduleId": string; "resourceType": string; "resourceId": string };

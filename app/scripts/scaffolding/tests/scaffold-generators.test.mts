@@ -551,7 +551,12 @@ test('governed contribution generators patch owner contracts and lazy adapters a
       billingFederationPath,
       `const ignored = /exposes: \\{\\}/u;
 // exposes: {}
-export default { exposes: {} };
+export default {
+  exposes: {},
+  manifest: {
+    additionalData: ({ stats }) => ({ exposes: stats.exposes.map(String) }),
+  },
+};
 void ignored;
 `,
       'utf-8',

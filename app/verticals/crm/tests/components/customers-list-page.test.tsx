@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off anyUnknownInErrorContext:off globalDate:off nodeBuiltinImport:off
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';

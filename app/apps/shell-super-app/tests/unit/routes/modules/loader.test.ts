@@ -7,6 +7,7 @@ import {
   loader,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
+import { loader as customerEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/edit/page.data.ts';
 import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
@@ -96,6 +97,36 @@ test('forwards an exact generated page entrypoint through the authenticated clie
       baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
       cookie: 'session=test-session',
     },
+  );
+});
+
+test('gates CustomerEdit exactly and carries only its declared bounded Customer ID', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-customer-edit',
+      entrypointKey: 'crm.core.page.customer-edit',
+      moduleId: 'crm.core',
+      writable: false,
+    }),
+  );
+  await expect(
+    customerEditLoader({
+      params: { appId: 'attacker-app', id: 'customer-1', moduleId: 'attacker.module' },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: { id: 'customer-1' },
+    state: 'resolved',
+    target: {
+      componentKey: 'crm.core.page-customer-edit',
+      entrypointKey: 'crm.core.page.customer-edit',
+      writable: false,
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.customer-edit', moduleId: 'crm.core' },
+    expect.any(Object),
   );
 });
 

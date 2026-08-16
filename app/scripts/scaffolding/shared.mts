@@ -417,10 +417,27 @@ const moduleFederationExposesRange = (
   if (propertyMatches.length === 0) {
     throw new Error('generated Module Federation exposes object is missing');
   }
-  if (propertyMatches.length > 1) {
+  const braceDepthAt = (targetIndex: number) => {
+    let depth = 0;
+    for (let index = 0; index < targetIndex; index += 1) {
+      if (code[index] === '{') {
+        depth += 1;
+      } else if (code[index] === '}') {
+        depth -= 1;
+      }
+    }
+    return depth;
+  };
+  const matchesWithDepth = propertyMatches.map((match) => ({
+    depth: braceDepthAt(match.index ?? -1),
+    match,
+  }));
+  const shallowestDepth = Math.min(...matchesWithDepth.map(({ depth }) => depth));
+  const shallowestMatches = matchesWithDepth.filter(({ depth }) => depth === shallowestDepth);
+  if (shallowestMatches.length > 1) {
     throw new Error('generated Module Federation exposes object is duplicated');
   }
-  const propertyIndex = propertyMatches[0]?.index ?? -1;
+  const propertyIndex = shallowestMatches[0]?.match.index ?? -1;
   const openIndex = code.indexOf('{', propertyIndex);
   if (openIndex === -1) {
     throw new Error('generated Module Federation exposes object is malformed');

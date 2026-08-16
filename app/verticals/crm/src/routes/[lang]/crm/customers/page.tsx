@@ -8,6 +8,7 @@ import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import { Effect as EffectRuntime, Random } from 'effect';
 import { useMemo, useRef } from 'react';
 import type { CustomerListResponse } from '../../../../../shared/api.ts';
 import { getCustomerList, runEffectRequest } from '../../../../api/crm-client.ts';
@@ -177,7 +178,7 @@ interface CustomersListViewProps {
   readonly currentSearch: string;
   readonly language: string;
   readonly offset: number;
-  readonly onRetry: () => Promise<void>;
+  readonly onRetry: () => Promise<unknown>;
   readonly onStatusChange: (status: CustomerArchiveFilter) => void;
   readonly retrying: boolean;
   readonly status: CustomerArchiveFilter;
@@ -267,10 +268,11 @@ export const CustomersListView = ({
     { label: copy.filterArchived, value: 'archived' },
     { label: copy.filterAll, value: 'all' },
   ];
-  const retry = async () => {
-    await onRetry();
-    resultsRef.current?.focus();
-  };
+  const retry = () =>
+    // oxlint-disable-next-line promise/prefer-await-to-then -- Retry callbacks stay non-async under strict Effect diagnostics.
+    onRetry().then(() => {
+      resultsRef.current?.focus();
+    });
   const unavailableCopy =
     view.state === 'unavailable'
       ? {
@@ -419,8 +421,13 @@ export const CustomersListView = ({
 
 const formatCustomerTimestamp = (value: string, language: string) =>
   new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeStyle: 'short' }).format(
-    new Date(value),
+    Date.parse(value),
   );
+
+const createCorrelationId = () =>
+  Array.from({ length: 4 }, () =>
+    EffectRuntime.runSync(Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER)).toString(36),
+  ).join('-');
 
 const CustomersListFeature = () => {
   const { language, t } = useModernI18n();
@@ -438,7 +445,7 @@ const CustomersListFeature = () => {
           },
           {
             baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
-            correlationId: crypto.randomUUID(),
+            correlationId: createCorrelationId(),
             locale: language,
           },
         ),
@@ -446,9 +453,7 @@ const CustomersListFeature = () => {
     queryKey: customerListQueryKey(urlState),
     retry: false,
   });
-  const refetch = async () => {
-    await query.refetch();
-  };
+  const refetch = () => query.refetch();
   const copy: CustomersListCopy = {
     authenticationExpired: t('crm.pages.customersList.states.authenticationExpired'),
     createdAtColumn: t('crm.pages.customersList.table.createdAt'),

@@ -4292,6 +4292,7 @@ const assertTsConfigReferenceGraph = () => {
               ...vertical.componentPaths.map((componentPath) =>
                 componentPath.replace(`${vertical.path}/`, ''),
               ),
+              ...(vertical.emitsApi ? [vertical.apiContractPath] : []),
               'src/modern-app-env.d.ts',
             ]
           : ['src/modern-app-env.d.ts'],
