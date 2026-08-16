@@ -61,6 +61,33 @@
       },
       "customerDetail": {
         "back": "Zpět na zákazníky",
+        "contacts": {
+          "heading": "Kontakty",
+          "pagination": {
+            "label": "Stránky kontaktů zákazníka",
+            "next": "Další",
+            "previous": "Předchozí"
+          },
+          "states": {
+            "authenticationExpired": "Vaše relace vypršela. Po přihlášení načtěte kontakty znovu.",
+            "decode": "Odpověď se seznamem kontaktů se nepodařilo přečíst. Zkuste to znovu.",
+            "empty": "Tento zákazník nemá žádné aktivní kontakty.",
+            "forbidden": "Nemáte oprávnění zobrazit kontakty tohoto zákazníka.",
+            "internal": "Kontakty se nepodařilo bezpečně načíst. Zkuste to znovu.",
+            "loading": "Načítání kontaktů…",
+            "parentNotFound": "Zákazník pro tento seznam kontaktů již neexistuje.",
+            "retry": "Zkusit znovu",
+            "retrying": "Opakování…",
+            "transport": "Kontakty nejsou dostupné. Zkontrolujte připojení a zkuste to znovu.",
+            "unavailable": "Kontakty jsou dočasně nedostupné. Zkuste to znovu."
+          },
+          "table": {
+            "caption": "Aktivní kontakty zákazníka",
+            "email": "E-mail",
+            "name": "Jméno",
+            "phone": "Telefon"
+          }
+        },
         "description": "Zobrazení aktuálních údajů a stavu tohoto zákazníka.",
         "fields": {
           "createdAt": "Vytvořeno",
