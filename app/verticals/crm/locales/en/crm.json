@@ -89,9 +89,82 @@
         },
         "title": "Contact detail"
       },
+      "contactEdit": {
+        "back": "Back to Contact",
+        "description": "Update this Contact's communication details.",
+        "form": {
+          "cancel": "Cancel",
+          "emailInvalid": "Enter a valid email address.",
+          "emailLabel": "Email",
+          "emailRequired": "Enter an email address.",
+          "nameInvalid": "Enter a Contact name with at most 200 characters.",
+          "nameLabel": "Contact name",
+          "nameRequired": "Enter a Contact name.",
+          "phoneCountryLabel": "Choose phone country",
+          "phoneInvalid": "Enter a phone number with at most 100 characters.",
+          "phoneLabel": "Phone",
+          "phonePlaceholder": "Phone number",
+          "phoneRequired": "Enter a phone number.",
+          "submit": "Save Contact",
+          "submitting": "Saving Contact…"
+        },
+        "mutation": {
+        "authenticationExpired": "Your session expired before the Contact could be saved.",
+        "conflict": "The Contact changed while you were editing it. Review the current values and try again.",
+        "decode": "The Contact response could not be read. Your request may have completed; retry only with the same values.",
+        "forbidden": "You do not have permission to edit this Contact.",
+          "generic": "The Contact could not be saved safely. Try again.",
+          "invalidForm": "The Contact details were rejected. Review the fields and try again.",
+          "notFound": "This Contact no longer exists or is not available to you.",
+        "success": "Contact changes saved.",
+        "transport": "The Contact service could not be reached. Your request may have completed; check your connection and retry with the same values.",
+        "unavailable": "The Contact service is temporarily unavailable. Your request may have completed; retry with the same values."
+        },
+        "states": {
+          "authenticationExpired": "Your session has expired. Try again after signing in.",
+        "decode": "The Contact response could not be read. Try again.",
+          "forbidden": "You do not have permission to view this Contact.",
+          "generic": "The Contact could not be loaded safely. Try again.",
+          "invalidTarget": "This Contact could not be found for the selected Customer.",
+          "loading": "Loading Contact details…",
+          "notFound": "This Contact could not be found for the selected Customer.",
+          "readOnly": "CRM is currently read-only. You can review this Contact, but cannot save changes.",
+          "retry": "Try again",
+          "retrying": "Trying again…",
+        "transport": "The Contact service could not be reached. Check your connection and try again.",
+        "unavailable": "The Contact service is temporarily unavailable. Try again."
+        },
+        "title": "Edit Contact"
+      },
       "crm": {
         "description": "This page is ready for implementation.",
         "title": "New Page"
+      },
+      "customerCreate": {
+        "back": "Back to Customers",
+        "description": "Create a canonical Customer by entering its name.",
+        "form": {
+          "cancel": "Cancel",
+          "nameInvalid": "Enter a valid Customer name.",
+          "nameLabel": "Customer name",
+          "nameRequired": "Enter a Customer name.",
+          "save": "Create Customer",
+          "saving": "Creating Customer…"
+        },
+        "mutation": {
+          "authenticationExpired": "Your session expired before the Customer could be created.",
+          "conflict": "This request conflicts with a previous Customer creation attempt. Review the name and try again.",
+          "forbidden": "You do not have permission to create Customers.",
+          "generic": "The Customer could not be created safely. Try again.",
+          "success": "Customer created."
+        },
+        "states": {
+          "decode": "The Customer response could not be read. Try again.",
+          "readOnly": "CRM is currently read-only. You cannot create a Customer.",
+          "transport": "The Customer service could not be reached. Check your connection and try again.",
+          "unavailable": "The Customer service is temporarily unavailable. Try again."
+        },
+        "title": "Create Customer"
       },
       "customerDetail": {
         "back": "Back to Customers",
@@ -146,32 +219,6 @@
           "unavailable": "The Customer is temporarily unavailable. Try again."
         },
         "title": "Customer detail"
-      },
-      "customerCreate": {
-        "back": "Back to Customers",
-        "description": "Create a canonical Customer by entering its name.",
-        "form": {
-          "cancel": "Cancel",
-          "nameInvalid": "Enter a valid Customer name.",
-          "nameLabel": "Customer name",
-          "nameRequired": "Enter a Customer name.",
-          "save": "Create Customer",
-          "saving": "Creating Customer…"
-        },
-        "mutation": {
-          "authenticationExpired": "Your session expired before the Customer could be created.",
-          "conflict": "This request conflicts with a previous Customer creation attempt. Review the name and try again.",
-          "forbidden": "You do not have permission to create Customers.",
-          "generic": "The Customer could not be created safely. Try again.",
-          "success": "Customer created."
-        },
-        "states": {
-          "decode": "The Customer response could not be read. Try again.",
-          "readOnly": "CRM is currently read-only. You cannot create a Customer.",
-          "transport": "The Customer service could not be reached. Check your connection and try again.",
-          "unavailable": "The Customer service is temporarily unavailable. Try again."
-        },
-        "title": "Create Customer"
       },
       "customerEdit": {
         "back": "Back to Customers",

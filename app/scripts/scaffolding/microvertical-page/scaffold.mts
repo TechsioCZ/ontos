@@ -752,23 +752,22 @@ const assertShellRouteIsAvailable = async (
       }
       throw error;
     }
-    const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
-    const siblingCollision = entries.find(
-      (entry) =>
-        entry.isDirectory() &&
-        entry.name !== segment &&
-        (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
-    );
-    if (siblingCollision !== undefined) {
-      const collisionKind = isDynamicShellRouteSegment(siblingCollision.name)
-        ? 'dynamic'
-        : 'static';
-      throw new Error(
-        `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
-      );
-    }
     const childEntry = entries.find((entry) => entry.name === segment);
     if (childEntry === undefined) {
+      const desiredSegmentIsDynamic = isDynamicShellRouteSegment(segment);
+      const siblingCollision = entries.find(
+        (entry) =>
+          entry.isDirectory() &&
+          (desiredSegmentIsDynamic || isDynamicShellRouteSegment(entry.name)),
+      );
+      if (siblingCollision !== undefined) {
+        const collisionKind = isDynamicShellRouteSegment(siblingCollision.name)
+          ? 'dynamic'
+          : 'static';
+        throw new Error(
+          `Shell route ${route.canonicalPath} collides with ${collisionKind} route segment ${siblingCollision.name}`,
+        );
+      }
       return;
     }
     const child = path.join(parent, segment);

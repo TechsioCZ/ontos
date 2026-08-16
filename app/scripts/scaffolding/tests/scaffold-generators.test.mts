@@ -2817,6 +2817,40 @@ test('rejects unsafe dynamic parameters and dynamic route collisions without wri
   ]);
 });
 
+test('extends an existing dynamic route branch without reclassifying an existing static sibling', async () => {
+  await withFixture(async (fixture) => {
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'customer-detail',
+      '--url',
+      '/inventory/customers/:id',
+    ]);
+    await writeFixtureFile(
+      fixture.root,
+      'apps/shell-super-app/src/routes/[lang]/inventory/customers/new/page.tsx',
+      'export default function ExistingStaticSibling() { return null; }\n',
+    );
+
+    await run(fixture, 'microvertical-page', [
+      '--vertical',
+      'inventory-stock',
+      '--page',
+      'customer-edit',
+      '--url',
+      '/inventory/customers/:id/edit',
+    ]);
+
+    await stat(
+      path.join(
+        fixture.root,
+        'apps/shell-super-app/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
+      ),
+    );
+  });
+});
+
 test('rejects reserved, dynamic, and cross-owner page URLs before writing', async () => {
   await Promise.all([
     withFixture(async (fixture) => {

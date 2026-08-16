@@ -15,6 +15,11 @@ const customerListPath = `${crmApiContract.basePath}/customers/list`;
 const customerDetailPath = `${crmApiContract.basePath}/customers/detail`;
 const contactDetailPath = `${crmApiContract.basePath}/contacts/detail`;
 const contactCreatePath = `${crmApiContract.basePath}/contacts/create`;
+const contactEditPath = `${crmApiContract.basePath}/contacts/edit`;
+const contactEditUrl = (language: 'cs' | 'en') =>
+  `/${language}/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}/edit`;
+const contactEditDetailUrl = (language: 'cs' | 'en') =>
+  `/${language}/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`;
 
 const mockCrmGateway = async (page: Page) => {
   const payloads: unknown[] = [];
@@ -1151,5 +1156,188 @@ test.describe('Contact detail flows', () => {
       { contactId: e2eContacts.active.contactId },
       { contactId: e2eContacts.active.contactId },
     ]);
+  });
+});
+
+test.describe('Contact edit flows', () => {
+  test.describe.configure({ timeout: 90_000 });
+
+  const contactCorsHeaders = {
+    'access-control-allow-origin': 'http://127.0.0.1:3020',
+  } as const;
+  const editedContact = {
+    ...contactDetailResponse(e2eContacts.active),
+    email: 'grace@example.test',
+    name: 'Grace Hopper',
+    phone: '987654321',
+    updatedAt: '2026-08-16T10:00:00.000Z',
+  } as const;
+  test('Contact edit stays private, prefills localized forms, submits the strict request, and remains responsive', async ({
+    page,
+  }) => {
+    let anonymousCrmRequests = 0;
+    page.on('request', (request) => {
+      const { pathname } = new URL(request.url());
+      if (pathname === contactDetailPath || pathname === contactEditPath) {
+        anonymousCrmRequests += 1;
+      }
+    });
+
+    await page.goto(contactEditUrl('en'));
+    await expect(page.getByRole('heading', { name: 'Edit Contact' })).toHaveCount(0);
+    await page.goto(contactEditUrl('cs'));
+    await expect(page.getByRole('heading', { name: 'Upravit kontakt' })).toHaveCount(0);
+    expect(anonymousCrmRequests).toBe(0);
+
+    await login(page);
+    await mockCrmGateway(page);
+    const detailPayloads: unknown[] = [];
+    const editPayloads: unknown[] = [];
+    const editHeaders: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
+    await page.route(`**${contactDetailPath}`, (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fallback();
+      }
+      detailPayloads.push(route.request().postDataJSON());
+      return route.fulfill({
+        body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
+        contentType: 'application/json',
+        headers: contactCorsHeaders,
+        status: 200,
+      });
+    });
+    await page.route(`**${contactEditPath}`, (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fallback();
+      }
+      editPayloads.push(route.request().postDataJSON());
+      const headers = route.request().headers();
+      editHeaders.push({
+        correlationId: headers['x-correlation-id'],
+        idempotencyKey: headers['idempotency-key'],
+      });
+      return route.fulfill({
+        body: JSON.stringify(editedContact),
+        contentType: 'application/json',
+        headers: contactCorsHeaders,
+        status: 200,
+      });
+    });
+
+    await page.goto(contactEditUrl('cs'));
+    await expect(page.getByRole('heading', { name: 'Upravit kontakt' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: /^Jméno kontaktu/u })).toHaveValue(
+      e2eContacts.active.name,
+    );
+    await expect(page.getByRole('link', { name: 'Zpět na kontakt' })).toHaveAttribute(
+      'href',
+      contactEditDetailUrl('cs'),
+    );
+
+    await page.setViewportSize({ height: 667, width: 375 });
+    await page.goto(contactEditUrl('en'));
+    await expect(page.getByRole('heading', { name: 'Edit Contact' })).toBeVisible();
+    await page.getByRole('textbox', { name: /^Contact name/u }).fill('  Grace Hopper  ');
+    await page.getByRole('textbox', { name: /^Email/u }).fill('  Grace@Example.Test  ');
+    await page.getByRole('textbox', { name: /^Phone/u }).fill('  987654321  ');
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    const screenshotPath = process.env['ULTRAMODERN_CONTACT_EDIT_REVIEW_SCREENSHOT_PATH'];
+    if (screenshotPath !== undefined) {
+      await page.screenshot({ fullPage: true, path: screenshotPath });
+    }
+
+    await page.getByRole('textbox', { name: /^Email/u }).focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => editPayloads.length).toBe(1);
+    expect(editPayloads).toEqual([
+      {
+        contactId: e2eContacts.active.contactId,
+        email: 'Grace@Example.Test',
+        name: 'Grace Hopper',
+        phone: '98 765 432 1',
+      },
+    ]);
+    expect(editHeaders[0]?.idempotencyKey).toBeTruthy();
+    expect(editHeaders[0]?.correlationId).toBeTruthy();
+    await expect(page).toHaveURL(contactEditDetailUrl('en'));
+    expect(
+      detailPayloads.every(
+        (payload) =>
+          JSON.stringify(payload) ===
+          JSON.stringify({
+            contactId: e2eContacts.active.contactId,
+          }),
+      ),
+    ).toBe(true);
+  });
+
+  test('Contact edit retains values and reuses its key after a typed uncertain failure', async ({
+    page,
+  }) => {
+    await login(page);
+    await mockCrmGateway(page);
+    let attempts = 0;
+    const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
+    await page.route(`**${contactDetailPath}`, (route) =>
+      route.fulfill({
+        body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
+        contentType: 'application/json',
+        headers: contactCorsHeaders,
+        status: 200,
+      }),
+    );
+    await page.route(`**${contactEditPath}`, (route) => {
+      if (route.request().method() === 'OPTIONS') {
+        return route.fallback();
+      }
+      attempts += 1;
+      const requestHeaders = route.request().headers();
+      headers.push({
+        correlationId: requestHeaders['x-correlation-id'],
+        idempotencyKey: requestHeaders['idempotency-key'],
+      });
+      if (attempts === 1) {
+        return route.fulfill({
+          body: JSON.stringify({
+            _tag: 'CrmUnavailableProblem',
+            detail: 'The E2E Contact service is unavailable.',
+            retryable: true,
+            status: 503,
+            title: 'Contact service unavailable',
+            type: 'https://ontos.dev/problems/crm-unavailable',
+          }),
+          contentType: 'application/problem+json',
+          headers: contactCorsHeaders,
+          status: 503,
+        });
+      }
+      return route.fulfill({
+        body: JSON.stringify(editedContact),
+        contentType: 'application/json',
+        headers: contactCorsHeaders,
+        status: 200,
+      });
+    });
+
+    await page.goto(contactEditUrl('en'));
+    await expect(page.getByRole('textbox', { name: /^Contact name/u })).toHaveValue(
+      e2eContacts.active.name,
+    );
+    await page.getByRole('button', { name: 'Save Contact' }).click();
+    await expect(page.getByText(/request may have completed/u)).toBeVisible();
+    await expect(page.getByRole('textbox', { name: /^Contact name/u })).toHaveValue(
+      e2eContacts.active.name,
+    );
+    await page.getByRole('button', { name: 'Save Contact' }).click();
+
+    await expect.poll(() => attempts).toBe(2);
+    expect(headers[0]?.idempotencyKey).toBeTruthy();
+    expect(headers[1]?.idempotencyKey).toBe(headers[0]?.idempotencyKey);
+    expect(headers[1]?.correlationId).not.toBe(headers[0]?.correlationId);
+    await expect(page).toHaveURL(contactEditDetailUrl('en'));
   });
 });

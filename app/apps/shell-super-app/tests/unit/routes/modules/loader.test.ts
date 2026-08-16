@@ -8,6 +8,7 @@ import {
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
 import { loader as contactDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.data.ts';
+import { loader as contactEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/edit/page.data.ts';
 import { loader as customerDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/page.data.ts';
 import { loader as customerCreateLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/new/page.data.ts';
 import { loader as customerEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/edit/page.data.ts';
@@ -173,6 +174,55 @@ test('gates Contact detail exactly and forwards only its two bounded hierarchica
     { entrypointKey: 'crm.core.page.contact-detail', moduleId: 'crm.core' },
     expect.any(Object),
   );
+});
+
+test('gates ContactEdit exactly and forwards only its ordered bounded hierarchical IDs', async () => {
+  resolveModuleTargetMock.mockReturnValueOnce(
+    Effect.succeed({
+      appId: 'crm',
+      componentKey: 'crm.core.page-contact-edit',
+      entrypointKey: 'crm.core.page.contact-edit',
+      moduleId: 'crm.core',
+      writable: false,
+    }),
+  );
+  await expect(
+    contactEditLoader({
+      params: {
+        appId: 'attacker-app',
+        contactId: '33333333-3333-4333-8333-333333333333',
+        id: '11111111-1111-4111-8111-111111111111',
+        moduleId: 'attacker.module',
+        overlong: 'x'.repeat(201),
+      },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: {
+      contactId: '33333333-3333-4333-8333-333333333333',
+      id: '11111111-1111-4111-8111-111111111111',
+    },
+    state: 'resolved',
+    target: {
+      componentKey: 'crm.core.page-contact-edit',
+      entrypointKey: 'crm.core.page.contact-edit',
+      writable: false,
+    },
+  });
+  expect(resolveModuleTargetMock).toHaveBeenCalledWith(
+    { entrypointKey: 'crm.core.page.contact-edit', moduleId: 'crm.core' },
+    expect.any(Object),
+  );
+
+  rstest.clearAllMocks();
+  await expect(
+    contactEditLoader({
+      params: { contactId: 'x'.repeat(201), id: '11111111-1111-4111-8111-111111111111' },
+      request: request(),
+    }),
+  ).resolves.toMatchObject({
+    routeParams: { id: '11111111-1111-4111-8111-111111111111' },
+  });
 });
 
 test('gates CustomerEdit exactly and carries only its declared bounded Customer ID', async () => {

@@ -30,6 +30,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     exposes: {
       './PageContactCreate': './src/federation/page-contact-create.tsx',
       './PageContactDetail': './src/federation/page-contact-detail.tsx',
+      './PageContactEdit': './src/federation/page-contact-edit.tsx',
       './PageCrm': './src/federation-entry.tsx',
       './PageCustomerCreate': './src/federation/page-customer-create.tsx',
       './PageCustomerDetail': './src/federation/page-customer-detail.tsx',

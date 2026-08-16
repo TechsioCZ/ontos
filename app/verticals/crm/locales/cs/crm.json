@@ -89,9 +89,82 @@
         },
         "title": "Detail kontaktu"
       },
+      "contactEdit": {
+        "back": "Zpět na kontakt",
+        "description": "Upravte komunikační údaje tohoto kontaktu.",
+        "form": {
+          "cancel": "Zrušit",
+          "emailInvalid": "Zadejte platnou e-mailovou adresu.",
+          "emailLabel": "E-mail",
+          "emailRequired": "Zadejte e-mailovou adresu.",
+          "nameInvalid": "Zadejte jméno kontaktu o délce nejvýše 200 znaků.",
+          "nameLabel": "Jméno kontaktu",
+          "nameRequired": "Zadejte jméno kontaktu.",
+          "phoneCountryLabel": "Vybrat zemi telefonního čísla",
+          "phoneInvalid": "Zadejte telefonní číslo o délce nejvýše 100 znaků.",
+          "phoneLabel": "Telefon",
+          "phonePlaceholder": "Telefonní číslo",
+          "phoneRequired": "Zadejte telefonní číslo.",
+          "submit": "Uložit kontakt",
+          "submitting": "Ukládání kontaktu…"
+        },
+        "mutation": {
+        "authenticationExpired": "Relace vypršela před uložením kontaktu.",
+        "conflict": "Kontakt se během úprav změnil. Zkontrolujte aktuální hodnoty a zkuste to znovu.",
+        "decode": "Odpověď s kontaktem se nepodařilo přečíst. Požadavek mohl být dokončen; opakujte jej pouze se stejnými hodnotami.",
+        "forbidden": "Nemáte oprávnění upravit tento kontakt.",
+          "generic": "Kontakt se nepodařilo bezpečně uložit. Zkuste to znovu.",
+          "invalidForm": "Údaje kontaktu byly odmítnuty. Zkontrolujte pole a zkuste to znovu.",
+          "notFound": "Tento kontakt již neexistuje nebo pro vás není dostupný.",
+        "success": "Změny kontaktu byly uloženy.",
+        "transport": "Služba kontaktů není dostupná. Požadavek mohl být dokončen; zkontrolujte připojení a opakujte jej se stejnými hodnotami.",
+        "unavailable": "Služba kontaktů je dočasně nedostupná. Požadavek mohl být dokončen; opakujte jej se stejnými hodnotami."
+        },
+        "states": {
+          "authenticationExpired": "Vaše relace vypršela. Po přihlášení to zkuste znovu.",
+        "decode": "Odpověď s kontaktem se nepodařilo přečíst. Zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění zobrazit tento kontakt.",
+          "generic": "Kontakt se nepodařilo bezpečně načíst. Zkuste to znovu.",
+          "invalidTarget": "Tento kontakt se pro vybraného zákazníka nepodařilo najít.",
+          "loading": "Načítání údajů kontaktu…",
+          "notFound": "Tento kontakt se pro vybraného zákazníka nepodařilo najít.",
+          "readOnly": "CRM je nyní jen pro čtení. Kontakt si můžete prohlédnout, ale změny nelze uložit.",
+          "retry": "Zkusit znovu",
+          "retrying": "Opakování…",
+        "transport": "Služba kontaktů není dostupná. Zkontrolujte připojení a zkuste to znovu.",
+        "unavailable": "Služba kontaktů je dočasně nedostupná. Zkuste to znovu."
+        },
+        "title": "Upravit kontakt"
+      },
       "crm": {
         "description": "Tato stránka je připravena k implementaci.",
         "title": "Nová stránka"
+      },
+      "customerCreate": {
+        "back": "Zpět na zákazníky",
+        "description": "Vytvořte nového zákazníka zadáním jeho názvu.",
+        "form": {
+          "cancel": "Zrušit",
+          "nameInvalid": "Zadejte platný název zákazníka.",
+          "nameLabel": "Název zákazníka",
+          "nameRequired": "Zadejte název zákazníka.",
+          "save": "Vytvořit zákazníka",
+          "saving": "Vytváření zákazníka…"
+        },
+        "mutation": {
+          "authenticationExpired": "Relace vypršela před vytvořením zákazníka.",
+          "conflict": "Požadavek koliduje s předchozím pokusem o vytvoření zákazníka. Zkontrolujte název a zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění vytvářet zákazníky.",
+          "generic": "Zákazníka se nepodařilo bezpečně vytvořit. Zkuste to znovu.",
+          "success": "Zákazník byl vytvořen."
+        },
+        "states": {
+          "decode": "Odpověď se zákazníkem se nepodařilo přečíst. Zkuste to znovu.",
+          "readOnly": "CRM je nyní jen pro čtení. Zákazníka nelze vytvořit.",
+          "transport": "Služba zákazníků není dostupná. Zkontrolujte připojení a zkuste to znovu.",
+          "unavailable": "Služba zákazníků je dočasně nedostupná. Zkuste to znovu."
+        },
+        "title": "Vytvořit zákazníka"
       },
       "customerDetail": {
         "back": "Zpět na zákazníky",
@@ -146,32 +219,6 @@
           "unavailable": "Zákazník je dočasně nedostupný. Zkuste to znovu."
         },
         "title": "Detail zákazníka"
-      },
-      "customerCreate": {
-        "back": "Zpět na zákazníky",
-        "description": "Vytvořte nového zákazníka zadáním jeho názvu.",
-        "form": {
-          "cancel": "Zrušit",
-          "nameInvalid": "Zadejte platný název zákazníka.",
-          "nameLabel": "Název zákazníka",
-          "nameRequired": "Zadejte název zákazníka.",
-          "save": "Vytvořit zákazníka",
-          "saving": "Vytváření zákazníka…"
-        },
-        "mutation": {
-          "authenticationExpired": "Relace vypršela před vytvořením zákazníka.",
-          "conflict": "Požadavek koliduje s předchozím pokusem o vytvoření zákazníka. Zkontrolujte název a zkuste to znovu.",
-          "forbidden": "Nemáte oprávnění vytvářet zákazníky.",
-          "generic": "Zákazníka se nepodařilo bezpečně vytvořit. Zkuste to znovu.",
-          "success": "Zákazník byl vytvořen."
-        },
-        "states": {
-          "decode": "Odpověď se zákazníkem se nepodařilo přečíst. Zkuste to znovu.",
-          "readOnly": "CRM je nyní jen pro čtení. Zákazníka nelze vytvořit.",
-          "transport": "Služba zákazníků není dostupná. Zkontrolujte připojení a zkuste to znovu.",
-          "unavailable": "Služba zákazníků je dočasně nedostupná. Zkuste to znovu."
-        },
-        "title": "Vytvořit zákazníka"
       },
       "customerEdit": {
         "back": "Zpět na zákazníky",

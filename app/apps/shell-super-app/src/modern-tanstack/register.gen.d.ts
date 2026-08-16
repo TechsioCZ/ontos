@@ -15,6 +15,7 @@ declare module '@modern-js/plugin-i18n/runtime' {
     '/crm/customers': Record<string, never>;
     '/crm/customers/$id': { "id": string };
     '/crm/customers/$id/contacts/$contactId': { "id": string; "contactId": string };
+    '/crm/customers/$id/contacts/$contactId/edit': { "id": string; "contactId": string };
     '/crm/customers/$id/contacts/new': { "id": string };
     '/crm/customers/$id/edit': { "id": string };
     '/crm/customers/$id/new': { "id": string };
