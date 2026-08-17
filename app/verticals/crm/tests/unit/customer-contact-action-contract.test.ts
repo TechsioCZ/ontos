@@ -204,6 +204,43 @@ test('defines exact flat Customer business-field result schemas', () => {
     name: 'Acme',
     updatedAt: '2026-08-14T10:00:00.000Z',
   });
+  const nullable = decodeCustomer({
+    ...complete,
+    dic: null,
+    dissolvedOn: null,
+    establishedOn: null,
+    ico: null,
+    legalFormCode: null,
+  });
+  assert.deepEqual(nullable, {
+    archivedAt: null,
+    createdAt: '2026-08-14T10:00:00.000Z',
+    customerId: 'c2000000-0000-4000-8000-000000000001',
+    dic: null,
+    dissolvedOn: null,
+    establishedOn: null,
+    ico: null,
+    legalFormCode: null,
+    name: 'Acme',
+    updatedAt: '2026-08-14T10:00:00.000Z',
+  });
+  assert.deepEqual(
+    decodeCustomer({
+      ...complete,
+      dissolvedOn: '2020-01-02',
+      establishedOn: '2020-01-02',
+    }),
+    { ...complete, dissolvedOn: '2020-01-02', establishedOn: '2020-01-02' },
+  );
+  assert.throws(() =>
+    decodeCustomer({
+      ...complete,
+      dissolvedOn: '2020-01-01',
+      establishedOn: '2020-01-02',
+    }),
+  );
+  const { ico: _omittedIco, ...customerWithoutIco } = nullable;
+  assert.throws(() => decodeCustomer(customerWithoutIco));
   assert.throws(() => decodeCustomer({ ...complete, ares: { source: 'ares' } }));
   assert.throws(() => decodeCustomer({ ...complete, address: { city: 'Praha' } }));
   assert.throws(() => decodeCustomer({ ...complete, legalName: 'Alternate name' }));

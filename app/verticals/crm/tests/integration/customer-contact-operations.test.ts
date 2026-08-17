@@ -417,6 +417,18 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           }
           const [crossCustomer] = sameNameCustomers;
           assert.ok(crossCustomer);
+          yield* Effect.promise(() =>
+            adminPool.query(
+              `update crm.customers
+                  set ico = '00123456',
+                      dic = 'CZ00123456',
+                      legal_form_code = '112',
+                      established_on = '2020-01-02',
+                      dissolved_on = '2026-08-17'
+                where tenant_id = $1 and customer_id = $2`,
+              [tenantId, customer.customerId],
+            ),
+          );
           const crossCustomerContact = yield* actions.runAction({
             payload: {
               customerId: crossCustomer.customerId,
@@ -460,6 +472,19 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
               .map((item) => item.customerId),
             sameNameCustomers.map((item) => item.customerId).toSorted(),
           );
+          assert.deepEqual(
+            [...firstPage.items, ...secondPage.items].find(
+              (item) => item.customerId === customer.customerId,
+            ),
+            {
+              ...editedCustomer,
+              dic: 'CZ00123456',
+              dissolvedOn: '2026-08-17',
+              establishedOn: '2020-01-02',
+              ico: '00123456',
+              legalFormCode: '112',
+            },
+          );
 
           const detail = yield* verifyReadEvidence(
             reads.runRead({
@@ -473,7 +498,14 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
               resultCount: () => 1,
             },
           );
-          assert.equal(detail.customerId, customer.customerId);
+          assert.deepEqual(detail, {
+            ...editedCustomer,
+            dic: 'CZ00123456',
+            dissolvedOn: '2026-08-17',
+            establishedOn: '2020-01-02',
+            ico: '00123456',
+            legalFormCode: '112',
+          });
           const contactPage = yield* verifyReadEvidence(
             reads.runRead({
               input: { customerId: customer.customerId, limit: 10, offset: 0 },
