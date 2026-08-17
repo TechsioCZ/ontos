@@ -215,7 +215,13 @@
         "fields": {
           "createdAt": "Created",
           "customerId": "Customer ID",
+          "dic": "Tax ID",
+          "dissolvedOn": "Dissolution date",
+          "establishedOn": "Establishment date",
+          "ico": "Company ID (IČO)",
+          "legalFormCode": "Legal-form code",
           "status": "Status",
+          "unavailable": "Not available",
           "updatedAt": "Updated"
         },
         "lifecycle": {

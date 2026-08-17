@@ -215,7 +215,13 @@
         "fields": {
           "createdAt": "Vytvořeno",
           "customerId": "ID zákazníka",
+          "dic": "DIČ",
+          "dissolvedOn": "Datum zániku",
+          "establishedOn": "Datum vzniku",
+          "ico": "IČO",
+          "legalFormCode": "Kód právní formy",
           "status": "Stav",
+          "unavailable": "Neuvedeno",
           "updatedAt": "Aktualizováno"
         },
         "lifecycle": {
