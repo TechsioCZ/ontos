@@ -55,9 +55,14 @@ const login = async (page: Page) => {
 };
 
 const customerResponse = (customer: typeof e2eCustomers.active | typeof e2eCustomers.archived) => ({
-  archivedAt: 'archivedAt' in customer ? customer.archivedAt : null,
+  archivedAt: customer.archivedAt,
   createdAt: customer.createdAt,
   customerId: customer.customerId,
+  dic: customer.dic,
+  dissolvedOn: customer.dissolvedOn,
+  establishedOn: customer.establishedOn,
+  ico: customer.ico,
+  legalFormCode: customer.legalFormCode,
   name: customer.name,
   updatedAt: customer.updatedAt,
 });

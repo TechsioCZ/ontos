@@ -135,6 +135,11 @@ const activeCustomer = {
   archivedAt: null,
   createdAt: '2026-08-13T08:15:00.000Z',
   customerId: '11111111-1111-4111-8111-111111111111',
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
   name: 'Acme Property Group',
   updatedAt: '2026-08-14T09:30:00.000Z',
 } as const;
@@ -142,6 +147,11 @@ const archivedCustomer = {
   archivedAt: '2026-08-14T10:00:00.000Z',
   createdAt: '2026-07-01T12:00:00.000Z',
   customerId: '22222222-2222-4222-8222-222222222222',
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
   name: 'Former Customer',
   updatedAt: '2026-08-14T10:00:00.000Z',
 } as const;

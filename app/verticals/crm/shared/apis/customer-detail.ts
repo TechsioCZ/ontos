@@ -38,7 +38,15 @@ export const CustomerSchema = Schema.Struct({
   legalFormCode: Schema.NullOr(CrmLegalFormCodeSchema),
   name: CrmPersistedTextSchema,
   updatedAt: CrmIsoTimestampSchema,
-});
+}).check(
+  Schema.makeFilter((customer) =>
+    customer.dissolvedOn === null ||
+    customer.establishedOn === null ||
+    customer.dissolvedOn >= customer.establishedOn
+      ? undefined
+      : [{ issue: 'dissolvedOn must not precede establishedOn', path: ['dissolvedOn'] }],
+  ),
+);
 export type Customer = typeof CustomerSchema.Type;
 
 export const CreateCustomerPayloadSchema = Schema.Struct({ name: CrmNameSchema });

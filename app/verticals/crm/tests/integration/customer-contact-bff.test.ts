@@ -12,7 +12,7 @@ import {
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
-import { Effect, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Effect, Layer, Schema } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeCrmApiRuntime } from '../../api/index.ts';
 import { CrmCustomerNotFound, CrmLifecycleConflict } from '../../shared/apis/customer-detail.ts';
@@ -39,11 +39,12 @@ const principal = {
   tenantId: 'b3000000-0000-4000-8000-000000000001',
 };
 const customerId = 'b4000000-0000-4000-8000-000000000001';
+const completeCustomerId = 'b4000000-0000-4000-8000-000000000002';
 const contactId = 'b5000000-0000-4000-8000-000000000001';
 const missingId = 'b6000000-0000-4000-8000-000000000001';
 const conflictId = 'b7000000-0000-4000-8000-000000000001';
 const timestamp = '2026-08-14T10:00:00.000Z';
-const customer = {
+const nullableCustomer = {
   archivedAt: null,
   createdAt: timestamp,
   customerId,
@@ -54,6 +55,15 @@ const customer = {
   legalFormCode: null,
   name: 'Acme',
   updatedAt: timestamp,
+};
+const completeCustomer = {
+  ...nullableCustomer,
+  customerId: completeCustomerId,
+  dic: 'CZ00123456',
+  dissolvedOn: '2026-08-17',
+  establishedOn: '2020-01-02',
+  ico: '00123456',
+  legalFormCode: '112',
 };
 const contact = {
   archivedAt: null,
@@ -195,7 +205,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       if (key.endsWith('contact')) {
         return Effect.succeed(contact);
       }
-      return Effect.succeed(customer);
+      return Effect.succeed(nullableCustomer);
     },
   } as unknown as ActionRuntimeService;
   const readRuntime = {
@@ -215,10 +225,20 @@ test('runs every CRM client operation through the real governed BFF boundary', a
         );
       }
       if (key.endsWith('customer-detail')) {
-        return Effect.succeed(customer);
+        return Effect.succeed(
+          input.input['customerId'] === completeCustomerId ? completeCustomer : nullableCustomer,
+        );
       }
       if (key.endsWith('customer-list')) {
-        return Effect.succeed({ items: [customer], nextOffset: null });
+        if (input.input['offset'] === 99) {
+          return Effect.fail(
+            new ReadEvidencePersistenceError({
+              code: 'read_evidence_persistence_failed',
+              reason: 'simulated list evidence outage',
+            }),
+          );
+        }
+        return Effect.succeed({ items: [completeCustomer, nullableCustomer], nextOffset: null });
       }
       if (key.endsWith('contact-detail')) {
         return Effect.succeed(contact);
@@ -264,13 +284,20 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       Effect.runPromise(archiveContact({ contactId }, mutation)),
       Effect.runPromise(unarchiveContact({ contactId }, mutation)),
       Effect.runPromise(getCustomerDetail({ customerId }, base)),
+      Effect.runPromise(getCustomerDetail({ customerId: completeCustomerId }, base)),
       Effect.runPromise(getCustomerList({ limit: 10, offset: 0 }, base)),
       Effect.runPromise(getContact({ contactId }, base)),
       Effect.runPromise(getContactList({ customerId, limit: 10, offset: 0 }, base)),
     ]);
-    assert.equal(results.length, 12);
-    assert.equal(gatewayIssues, 12);
-    assert.equal(invocations.length, 12);
+    assert.equal(results.length, 13);
+    assert.deepEqual(results[8], nullableCustomer);
+    assert.deepEqual(results[9], completeCustomer);
+    assert.deepEqual(results[10], {
+      items: [completeCustomer, nullableCustomer],
+      nextOffset: null,
+    });
+    assert.equal(gatewayIssues, 13);
+    assert.equal(invocations.length, 13);
     assert.ok(invocations.every((invocation) => invocation.correlationId === base.correlationId));
     assert.ok(
       invocations
@@ -294,6 +321,68 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     assert.equal(
       (evidenceFailure as { readonly _tag: string })._tag,
       'CustomerDetailUnavailableProblem',
+    );
+    const listEvidenceFailure = await Effect.runPromise(
+      Effect.flip(getCustomerList({ limit: 10, offset: 99 }, base)),
+    );
+    assert.equal(
+      (listEvidenceFailure as { readonly _tag: string })._tag,
+      'CustomerListUnavailableProblem',
+    );
+
+    let malformedGatewayIssues = 0;
+    const malformedServer = await startServer(
+      {
+        handler: () =>
+          Promise.resolve(
+            Response.json(
+              { ...completeCustomer, ico: 'malformed' },
+              {
+                status: 200,
+              },
+            ),
+          ),
+      },
+      assertion,
+      () => {
+        malformedGatewayIssues += 1;
+      },
+    );
+    const malformedBase = {
+      baseUrl: malformedServer.baseUrl,
+      correlationId: 'crm-bff-malformed-correlation',
+      gateway: { baseUrl: malformedServer.baseUrl },
+    } as const;
+    try {
+      const detailDecodingFailure = await Effect.runPromise(
+        Effect.flip(getCustomerDetail({ customerId: completeCustomerId }, malformedBase)),
+      );
+      const listDecodingFailure = await Effect.runPromise(
+        Effect.flip(getCustomerList({ limit: 10, offset: 0 }, malformedBase)),
+      );
+      assert.equal(Schema.isSchemaError(detailDecodingFailure), true);
+      assert.equal(Schema.isSchemaError(listDecodingFailure), true);
+      assert.equal(malformedGatewayIssues, 2);
+    } finally {
+      await malformedServer.close();
+    }
+
+    const transportFailure = await Effect.runPromise(
+      Effect.flip(
+        getCustomerDetail(
+          { customerId: completeCustomerId },
+          {
+            baseUrl: malformedServer.baseUrl,
+            correlationId: 'crm-bff-transport-correlation',
+            gateway: { baseUrl: server.baseUrl },
+          },
+        ),
+      ),
+    );
+    assert.equal((transportFailure as { readonly _tag: string })._tag, 'HttpClientError');
+    assert.equal(
+      (transportFailure as { readonly reason: { readonly _tag: string } }).reason._tag,
+      'TransportError',
     );
 
     const defectFailure = await Effect.runPromise(

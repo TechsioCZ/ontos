@@ -3,8 +3,14 @@ import { Pool } from 'pg';
 
 export const crmE2eCustomers = {
   active: {
+    archivedAt: null,
     createdAt: '2026-08-01T08:00:00.000Z',
     customerId: '70000000-0000-4000-8000-000000000001',
+    dic: null,
+    dissolvedOn: null,
+    establishedOn: null,
+    ico: null,
+    legalFormCode: null,
     name: 'E2E Alpha Customer',
     updatedAt: '2026-08-10T09:30:00.000Z',
   },
@@ -12,6 +18,11 @@ export const crmE2eCustomers = {
     archivedAt: '2026-08-12T11:00:00.000Z',
     createdAt: '2026-07-01T07:00:00.000Z',
     customerId: '70000000-0000-4000-8000-000000000002',
+    dic: null,
+    dissolvedOn: null,
+    establishedOn: null,
+    ico: null,
+    legalFormCode: null,
     name: 'E2E Archived Customer',
     updatedAt: '2026-08-12T11:00:00.000Z',
   },
