@@ -5,6 +5,7 @@ import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import {
+  CrmCustomerIcoConflict,
   CrmCustomerNotFound,
   CrmPersistenceUnavailable,
   CustomerSchema,
@@ -21,12 +22,16 @@ export const EditCustomerPayload = EditCustomerPayloadSchema;
 export type EditCustomerPayload = Payload;
 export const EditCustomerResult = CustomerSchema;
 export type EditCustomerResult = Customer;
-export const EditCustomerError = Schema.Union([CrmCustomerNotFound, CrmPersistenceUnavailable]);
+export const EditCustomerError = Schema.Union([
+  CrmCustomerIcoConflict,
+  CrmCustomerNotFound,
+  CrmPersistenceUnavailable,
+]);
 
 interface Services {
   readonly edit: (
     payload: Payload,
-  ) => Effect.Effect<LookupResult<Customer>, CrmPersistenceUnavailable>;
+  ) => Effect.Effect<LookupResult<Customer>, CrmCustomerIcoConflict | CrmPersistenceUnavailable>;
 }
 
 const handleEditCustomer = (

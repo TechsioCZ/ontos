@@ -237,7 +237,7 @@ interface MutationFeedback {
 
 interface LogicalMutationAttempt {
   readonly idempotencyKey: string;
-  readonly name: string;
+  readonly payload: CustomerPayloadValues;
   readonly uncertain: boolean;
 }
 
@@ -256,11 +256,11 @@ interface CustomerFormDraft {
 }
 
 const formValuesForCustomer = (customer: CustomerDetail): CustomerFormValues => ({
-  dic: '',
-  dissolvedOn: '',
-  establishedOn: '',
-  ico: '',
-  legalFormCode: '',
+  dic: customer.dic ?? '',
+  dissolvedOn: customer.dissolvedOn ?? '',
+  establishedOn: customer.establishedOn ?? '',
+  ico: customer.ico ?? '',
+  legalFormCode: customer.legalFormCode ?? '',
   name: customer.name,
 });
 
@@ -272,6 +272,14 @@ const customerPayloadValues = (values: CustomerFormValues): CustomerPayloadValue
   legalFormCode: values.legalFormCode.length === 0 ? null : values.legalFormCode,
   name: values.name,
 });
+
+const sameCustomerPayload = (left: CustomerPayloadValues, right: CustomerPayloadValues) =>
+  left.dic === right.dic &&
+  left.dissolvedOn === right.dissolvedOn &&
+  left.establishedOn === right.establishedOn &&
+  left.ico === right.ico &&
+  left.legalFormCode === right.legalFormCode &&
+  left.name === right.name;
 
 const createRequestId = () =>
   Array.from({ length: 4 }, () =>
@@ -415,12 +423,16 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
   const editMutation = useMutation<
     CustomerDetail,
     EditCustomerClientError,
-    { readonly customerId: string; readonly idempotencyKey: string; readonly name: string }
+    {
+      readonly customerId: string;
+      readonly idempotencyKey: string;
+      readonly payload: CustomerPayloadValues;
+    }
   >({
-    mutationFn: ({ customerId: mutationCustomerId, idempotencyKey, name }) =>
+    mutationFn: ({ customerId: mutationCustomerId, idempotencyKey, payload }) =>
       runEffectRequest(
         editCustomer(
-          { customerId: mutationCustomerId, name },
+          { customerId: mutationCustomerId, ...payload },
           {
             baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
             correlationId: createRequestId(),
@@ -443,14 +455,14 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
     const values = customerPayloadValues(formValues);
     const previousAttempt = logicalAttemptRef.current;
     const idempotencyKey =
-      previousAttempt?.uncertain === true && previousAttempt.name === values.name
+      previousAttempt?.uncertain === true && sameCustomerPayload(previousAttempt.payload, values)
         ? previousAttempt.idempotencyKey
         : createRequestId();
-    logicalAttemptRef.current = { idempotencyKey, name: values.name, uncertain: false };
+    logicalAttemptRef.current = { idempotencyKey, payload: values, uncertain: false };
     setFeedback(null);
 
     // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning form callbacks stay non-async under strict Effect diagnostics.
-    return editMutation.mutateAsync({ customerId, idempotencyKey, name: values.name }).then(
+    return editMutation.mutateAsync({ customerId, idempotencyKey, payload: values }).then(
       (customer) => {
         logicalAttemptRef.current = null;
         queryClient.setQueryData(customerDetailQueryKey(customerId), customer);
@@ -464,7 +476,7 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
         const state = classifyEditCustomerError(error);
         logicalAttemptRef.current =
           state.state === 'unavailable'
-            ? { idempotencyKey, name: values.name, uncertain: true }
+            ? { idempotencyKey, payload: values, uncertain: true }
             : null;
         setFeedback(feedbackForEditError(state, copy));
       },

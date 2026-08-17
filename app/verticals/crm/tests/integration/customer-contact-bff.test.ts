@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import {
   ActionIdempotencyKeyRequired,
+  ActionPayloadValidationError,
   ActionPermissionDenied,
   ActionRuntime,
   ReadEvidencePersistenceError,
@@ -15,7 +16,12 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { Effect, Layer, Schema } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeCrmApiRuntime } from '../../api/index.ts';
-import { CrmCustomerNotFound, CrmLifecycleConflict } from '../../shared/apis/customer-detail.ts';
+import {
+  CrmCustomerIcoConflict,
+  CrmCustomerNotFound,
+  CrmLifecycleConflict,
+  CrmPersistenceUnavailable,
+} from '../../shared/apis/customer-detail.ts';
 import {
   archiveContact,
   archiveCustomer,
@@ -65,6 +71,14 @@ const completeCustomer = {
   ico: '00123456',
   legalFormCode: '112',
 };
+const customerPayload = (name: string) => ({
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
+  name,
+});
 const contact = {
   archivedAt: null,
   contactId,
@@ -174,6 +188,30 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       if (input.payload['name'] === 'trigger-defect') {
         return Effect.die(new Error('secret persistence detail'));
       }
+      if (input.payload['name'] === 'trigger-invalid') {
+        return Effect.fail(
+          new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'The Customer payload is invalid',
+          }),
+        );
+      }
+      if (input.payload['name'] === 'trigger-ico-conflict') {
+        return Effect.fail(
+          new CrmCustomerIcoConflict({
+            code: 'crm_customer_ico_conflict',
+            reason: 'A Customer with this IČO already exists',
+          }),
+        );
+      }
+      if (input.payload['name'] === 'trigger-unavailable') {
+        return Effect.fail(
+          new CrmPersistenceUnavailable({
+            code: 'crm_persistence_unavailable',
+            reason: 'CRM persistence is temporarily unavailable',
+          }),
+        );
+      }
       if (input.payload['name'] === 'trigger-forbidden') {
         return Effect.fail(
           new ActionPermissionDenied({
@@ -265,8 +303,8 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     } as const;
     const mutation = { ...base, idempotencyKey: 'crm-bff-idempotency' };
     const results = await Promise.all([
-      Effect.runPromise(createCustomer({ name: 'Acme' }, mutation)),
-      Effect.runPromise(editCustomer({ customerId, name: 'Acme' }, mutation)),
+      Effect.runPromise(createCustomer(customerPayload('Acme'), mutation)),
+      Effect.runPromise(editCustomer({ customerId, ...customerPayload('Acme') }, mutation)),
       Effect.runPromise(archiveCustomer({ customerId }, mutation)),
       Effect.runPromise(unarchiveCustomer({ customerId }, mutation)),
       Effect.runPromise(
@@ -386,23 +424,38 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     );
 
     const defectFailure = await Effect.runPromise(
-      Effect.flip(createCustomer({ name: 'trigger-defect' }, mutation)),
+      Effect.flip(createCustomer(customerPayload('trigger-defect'), mutation)),
     );
     assert.equal((defectFailure as { readonly _tag: string })._tag, 'CrmInternalProblem');
     assert.equal(JSON.stringify(defectFailure).includes('secret persistence detail'), false);
 
     const forbiddenFailure = await Effect.runPromise(
-      Effect.flip(createCustomer({ name: 'trigger-forbidden' }, mutation)),
+      Effect.flip(createCustomer(customerPayload('trigger-forbidden'), mutation)),
     );
     assert.equal((forbiddenFailure as { readonly _tag: string })._tag, 'CrmForbiddenProblem');
     const notFoundFailure = await Effect.runPromise(
-      Effect.flip(editCustomer({ customerId: missingId, name: 'Missing' }, mutation)),
+      Effect.flip(editCustomer({ customerId: missingId, ...customerPayload('Missing') }, mutation)),
     );
     assert.equal((notFoundFailure as { readonly _tag: string })._tag, 'CrmNotFoundProblem');
     const conflictFailure = await Effect.runPromise(
       Effect.flip(archiveCustomer({ customerId: conflictId }, mutation)),
     );
     assert.equal((conflictFailure as { readonly _tag: string })._tag, 'CrmConflictProblem');
+
+    const invalidMutation = await Effect.runPromise(
+      Effect.flip(createCustomer(customerPayload('trigger-invalid'), mutation)),
+    );
+    assert.equal((invalidMutation as { readonly _tag: string })._tag, 'CrmInvalidRequestProblem');
+    const icoConflict = await Effect.runPromise(
+      Effect.flip(createCustomer(customerPayload('trigger-ico-conflict'), mutation)),
+    );
+    assert.equal((icoConflict as { readonly _tag: string })._tag, 'CrmConflictProblem');
+    assert.equal(JSON.stringify(icoConflict).includes('crm_customers_tenant_ico_uk'), false);
+    const unavailableMutation = await Effect.runPromise(
+      Effect.flip(createCustomer(customerPayload('trigger-unavailable'), mutation)),
+    );
+    assert.equal((unavailableMutation as { readonly _tag: string })._tag, 'CrmUnavailableProblem');
+    assert.equal((unavailableMutation as { readonly retryable: boolean }).retryable, true);
 
     const rawValidHeaders = {
       authorization: `Bearer ${assertion}`,
@@ -412,7 +465,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     };
     const missingAssertion = await handler.handler(
       new Request('https://crm.test/crm/customers/create', {
-        body: JSON.stringify({ name: 'Acme' }),
+        body: JSON.stringify(customerPayload('Acme')),
         headers: { ...rawValidHeaders, authorization: '' },
         method: 'POST',
       }),
@@ -421,7 +474,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     assert.equal(missingAssertion.headers.get('www-authenticate'), 'Bearer');
     const invalidAssertion = await handler.handler(
       new Request('https://crm.test/crm/customers/create', {
-        body: JSON.stringify({ name: 'Acme' }),
+        body: JSON.stringify(customerPayload('Acme')),
         headers: { ...rawValidHeaders, authorization: 'Bearer invalid.jwt.assertion' },
         method: 'POST',
       }),
@@ -431,7 +484,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
 
     const missingCorrelation = await handler.handler(
       new Request('https://crm.test/crm/customers/create', {
-        body: JSON.stringify({ name: 'Acme' }),
+        body: JSON.stringify(customerPayload('Acme')),
         headers: { ...rawValidHeaders, 'x-correlation-id': '' },
         method: 'POST',
       }),
@@ -440,7 +493,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
 
     const missingIdempotency = await handler.handler(
       new Request('https://crm.test/crm/customers/create', {
-        body: JSON.stringify({ name: 'Acme' }),
+        body: JSON.stringify(customerPayload('Acme')),
         headers: {
           authorization: `Bearer ${assertion}`,
           'content-type': 'application/json',

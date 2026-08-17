@@ -80,11 +80,11 @@ const customer = {
   archivedAt: null,
   createdAt: '2026-08-13T08:15:00.000Z',
   customerId,
-  dic: null,
-  dissolvedOn: null,
-  establishedOn: null,
-  ico: null,
-  legalFormCode: null,
+  dic: 'CZ00123456',
+  dissolvedOn: '2026-08-17',
+  establishedOn: '2020-01-02',
+  ico: '00123456',
+  legalFormCode: '112',
   name: 'Acme Property Group',
   updatedAt: '2026-08-14T09:30:00.000Z',
 } as const;
@@ -129,6 +129,15 @@ test('loads the exact route Customer through the typed client and prefills the f
 
   const name = await screen.findByRole('textbox', { name: /^Customer name/u });
   expect(name.getAttribute('value')).toBe('Acme Property Group');
+  expect(document.querySelector<HTMLInputElement>('#customer-ico')?.value).toBe('00123456');
+  expect(document.querySelector<HTMLInputElement>('#customer-dic')?.value).toBe('CZ00123456');
+  expect(document.querySelector<HTMLInputElement>('#customer-legal-form-code')?.value).toBe('112');
+  expect(document.querySelector<HTMLInputElement>('#customer-established-on')?.value).toBe(
+    '2020-01-02',
+  );
+  expect(document.querySelector<HTMLInputElement>('#customer-dissolved-on')?.value).toBe(
+    '2026-08-17',
+  );
   expect(getCustomerDetailMock).toHaveBeenCalledTimes(1);
   expect(getCustomerDetailMock).toHaveBeenCalledWith(
     { customerId },
@@ -234,7 +243,15 @@ test('submits the normalized payload, updates the detail cache, and navigates lo
 
   await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/en/crm/customers' }));
   expect(editCustomerMock).toHaveBeenCalledWith(
-    { customerId, name: 'Updated Customer' },
+    {
+      customerId,
+      dic: 'CZ00123456',
+      dissolvedOn: '2026-08-17',
+      establishedOn: '2020-01-02',
+      ico: '00123456',
+      legalFormCode: '112',
+      name: 'Updated Customer',
+    },
     {
       baseUrl: 'http://localhost:4101/crm-api',
       correlationId: expect.any(String),

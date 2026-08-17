@@ -39,6 +39,7 @@ import {
 } from '../shared/cors.ts';
 import type { CrmContactNotFound } from '../shared/apis/contact-detail.ts';
 import type {
+  CrmCustomerIcoConflict,
   CrmCustomerNotFound,
   CrmLifecycleConflict,
   CrmPersistenceUnavailable,
@@ -141,6 +142,7 @@ const failProblem = (mapped: CrmProblem) =>
 type CrmActionError =
   | ActionCoreError
   | CrmContactNotFound
+  | CrmCustomerIcoConflict
   | CrmCustomerNotFound
   | CrmLifecycleConflict
   | CrmPersistenceUnavailable;
@@ -168,6 +170,7 @@ const actionProblem = (error: CrmActionError, supportsNotFound: boolean): CrmPro
     case 'ActionAlreadyCommitted':
     case 'ActionInvocationStateError':
     case 'ActionRequestHashConflict':
+    case 'CrmCustomerIcoConflict':
     case 'CrmLifecycleConflict':
       return problem.conflict();
     case 'ActionCommitIndeterminate':
