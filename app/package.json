@@ -33,6 +33,7 @@
     "zerops:materialize": "node ./scripts/materialize-zerops-runtime.mjs",
     "scaffold:action": "node ./scripts/scaffolding/cli.mts action",
     "scaffold:action-service": "node ./scripts/scaffolding/cli.mts action-service",
+    "scaffold:external-http-adapter": "node ./scripts/scaffolding/cli.mts external-http-adapter",
     "scaffold:microvertical-page": "node ./scripts/scaffolding/cli.mts microvertical-page",
     "scaffold:module-contract": "node ./scripts/scaffolding/cli.mts module-contract",
     "scaffold:module-api": "node ./scripts/scaffolding/cli.mts module-api",

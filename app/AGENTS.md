@@ -42,6 +42,18 @@ Use `scaffold:action-service` before adding an owner-local persistence service c
 more generated MicroVertical Actions. Adapt the generated Effect service without exposing a
 database executor to an Action handler.
 
+Use `scaffold:external-http-adapter` before adding a private third-party HTTP adapter inside any
+`verticals/*` package. The generated file remains an owner-local implementation detail and must not
+patch or appear in a module manifest, runtime registration, package export, Module Federation
+exposure, generated BFF client, or Shell surface. Substitute the generated Effect `HttpClient`
+context service in deterministic tests. The owning adapter must define its provider-specific
+input/result schemas, tagged error union, request construction, resilience policy, diagnostics,
+and business mapping when adapting the fail-closed scaffold.
+
+```bash
+mise exec -- pnpm scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>
+```
+
 Before any business generator targets a newly created MicroVertical, generate its paired manifest
 and private registration exactly once:
 

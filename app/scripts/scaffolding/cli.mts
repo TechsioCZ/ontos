@@ -6,6 +6,7 @@ import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
 import actionGenerator from './action/scaffold.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
+import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import moduleContractGenerator from './module-contract/scaffold.mts';
@@ -21,6 +22,8 @@ import type {
   ActionScaffoldResult,
   ActionServiceScaffoldConfig,
   ActionServiceScaffoldResult,
+  ExternalHttpAdapterScaffoldConfig,
+  ExternalHttpAdapterScaffoldResult,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
   ActionBoundaryScaffoldConfig,
@@ -40,6 +43,7 @@ import type {
 export type ScaffoldCommand =
   | 'action'
   | 'action-service'
+  | 'external-http-adapter'
   | 'microvertical-action-boundary'
   | 'microvertical-page'
   | 'module-contract'
@@ -55,6 +59,7 @@ type GeneratorResult =
   | ActionBoundaryScaffoldResult
   | ActionScaffoldResult
   | ActionServiceScaffoldResult
+  | ExternalHttpAdapterScaffoldResult
   | ModuleContractScaffoldResult
   | GovernedContributionScaffoldResult
   | OutboxScaffoldResult
@@ -66,6 +71,7 @@ type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
   | ActionScaffoldConfig
   | ActionServiceScaffoldConfig
+  | ExternalHttpAdapterScaffoldConfig
   | ModuleContractScaffoldConfig
   | GovernedContributionScaffoldConfig
   | OutboxScaffoldConfig
@@ -191,6 +197,31 @@ Options:
     requiredFlags: ['service', 'vertical'],
     toConfig: (flags) => ({
       service: flags['service'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
+  },
+  'external-http-adapter': {
+    flags: ['operation', 'provider', 'vertical'],
+    generator: externalHttpAdapterGenerator,
+    help: `Usage: pnpm scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>
+
+Generate one private, owner-local Effect HTTP adapter starting point without publishing it.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --provider <provider>  External provider name (lower-kebab-case)
+  --operation <operation> Adapter operation name (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+
+Example:
+  mise exec -- pnpm scaffold:external-http-adapter -- --vertical crm --provider ares --operation subject
+`,
+    requiredFlags: ['operation', 'provider', 'vertical'],
+    toConfig: (flags) => ({
+      operation: flags['operation'] ?? '',
+      provider: flags['provider'] ?? '',
       vertical: flags['vertical'] ?? '',
     }),
   },
