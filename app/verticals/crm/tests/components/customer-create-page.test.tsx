@@ -352,7 +352,7 @@ describe('generated boundaries and localization', () => {
     );
 
     expect(pageSource).toContain('createCustomer(');
-    expect(pageSource).toContain("initialValues={{ name: '' }}");
+    expect(pageSource).toContain('values={formValues}');
     expect(pageSource).toContain('target={{ writable: false }}');
     expect(pageSource).not.toMatch(
       /\bfetch\s*\(|getCustomerDetail|api\/index|src\/actions|src\/db|src\/services/u,
