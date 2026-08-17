@@ -22,6 +22,7 @@ import {
 import type { Effect } from '../../../../../../api/crm-client.ts';
 import { CustomerForm } from '../../../../../../features/customers/customer-form.tsx';
 import type {
+  CustomerFormFieldErrors,
   CustomerFormStatus,
   CustomerFormValues,
 } from '../../../../../../features/customers/customer-form.tsx';
@@ -184,6 +185,21 @@ interface CustomerEditCopy {
   readonly description: string;
   readonly form: {
     readonly cancel: string;
+    readonly dicHint: string;
+    readonly dicInvalid: string;
+    readonly dicLabel: string;
+    readonly dissolvedBeforeEstablished: string;
+    readonly dissolvedOnHint: string;
+    readonly dissolvedOnLabel: string;
+    readonly establishedOnHint: string;
+    readonly establishedOnLabel: string;
+    readonly icoHint: string;
+    readonly icoInvalid: string;
+    readonly icoLabel: string;
+    readonly legalFormCodeHint: string;
+    readonly legalFormCodeInvalid: string;
+    readonly legalFormCodeLabel: string;
+    readonly nameHint: string;
     readonly nameInvalid: string;
     readonly nameLabel: string;
     readonly nameRequired: string;
@@ -215,8 +231,8 @@ interface CustomerEditCopy {
 }
 
 interface MutationFeedback {
+  readonly fieldErrors?: CustomerFormFieldErrors;
   readonly formStatus?: CustomerFormStatus;
-  readonly nameError?: string;
 }
 
 interface LogicalMutationAttempt {
@@ -224,6 +240,38 @@ interface LogicalMutationAttempt {
   readonly name: string;
   readonly uncertain: boolean;
 }
+
+interface CustomerPayloadValues {
+  readonly dic: string | null;
+  readonly dissolvedOn: string | null;
+  readonly establishedOn: string | null;
+  readonly ico: string | null;
+  readonly legalFormCode: string | null;
+  readonly name: string;
+}
+
+interface CustomerFormDraft {
+  readonly customerId: string;
+  readonly values: CustomerFormValues;
+}
+
+const formValuesForCustomer = (customer: CustomerDetail): CustomerFormValues => ({
+  dic: '',
+  dissolvedOn: '',
+  establishedOn: '',
+  ico: '',
+  legalFormCode: '',
+  name: customer.name,
+});
+
+const customerPayloadValues = (values: CustomerFormValues): CustomerPayloadValues => ({
+  dic: values.dic.length === 0 ? null : values.dic,
+  dissolvedOn: values.dissolvedOn.length === 0 ? null : values.dissolvedOn,
+  establishedOn: values.establishedOn.length === 0 ? null : values.establishedOn,
+  ico: values.ico.length === 0 ? null : values.ico,
+  legalFormCode: values.legalFormCode.length === 0 ? null : values.legalFormCode,
+  name: values.name,
+});
 
 const createRequestId = () =>
   Array.from({ length: 4 }, () =>
@@ -254,7 +302,7 @@ const feedbackForEditError = (
 ): MutationFeedback => {
   switch (state.state) {
     case 'name_invalid': {
-      return { nameError: copy.form.nameInvalid };
+      return { fieldErrors: { name: copy.form.nameInvalid } };
     }
     case 'authentication_expired': {
       return {
@@ -294,12 +342,28 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
   const queryClient = useQueryClient();
   const customerId = decodeCustomerEditId(routeParams);
   const [feedback, setFeedback] = useState<MutationFeedback | null>(null);
+  const [formDraft, setFormDraft] = useState<CustomerFormDraft | null>(null);
   const logicalAttemptRef = useRef<LogicalMutationAttempt | null>(null);
   const copy: CustomerEditCopy = {
     back: t('crm.pages.customerEdit.back'),
     description: t('crm.pages.customerEdit.description'),
     form: {
       cancel: t('crm.pages.customerEdit.form.cancel'),
+      dicHint: t('crm.pages.customerEdit.form.dicHint'),
+      dicInvalid: t('crm.pages.customerEdit.form.dicInvalid'),
+      dicLabel: t('crm.pages.customerEdit.form.dicLabel'),
+      dissolvedBeforeEstablished: t('crm.pages.customerEdit.form.dissolvedBeforeEstablished'),
+      dissolvedOnHint: t('crm.pages.customerEdit.form.dissolvedOnHint'),
+      dissolvedOnLabel: t('crm.pages.customerEdit.form.dissolvedOnLabel'),
+      establishedOnHint: t('crm.pages.customerEdit.form.establishedOnHint'),
+      establishedOnLabel: t('crm.pages.customerEdit.form.establishedOnLabel'),
+      icoHint: t('crm.pages.customerEdit.form.icoHint'),
+      icoInvalid: t('crm.pages.customerEdit.form.icoInvalid'),
+      icoLabel: t('crm.pages.customerEdit.form.icoLabel'),
+      legalFormCodeHint: t('crm.pages.customerEdit.form.legalFormCodeHint'),
+      legalFormCodeInvalid: t('crm.pages.customerEdit.form.legalFormCodeInvalid'),
+      legalFormCodeLabel: t('crm.pages.customerEdit.form.legalFormCodeLabel'),
+      nameHint: t('crm.pages.customerEdit.form.nameHint'),
       nameInvalid: t('crm.pages.customerEdit.form.nameInvalid'),
       nameLabel: t('crm.pages.customerEdit.form.nameLabel'),
       nameRequired: t('crm.pages.customerEdit.form.nameRequired'),
@@ -372,10 +436,11 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
     void navigate({ to: destination });
   };
 
-  const submit = (values: CustomerFormValues): Promise<void> => {
+  const submit = (formValues: CustomerFormValues): Promise<void> => {
     if (customerId === undefined || !target.writable) {
       return Promise.resolve();
     }
+    const values = customerPayloadValues(formValues);
     const previousAttempt = logicalAttemptRef.current;
     const idempotencyKey =
       previousAttempt?.uncertain === true && previousAttempt.name === values.name
@@ -449,6 +514,10 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
       </div>
     );
   } else {
+    const formValues =
+      formDraft !== null && formDraft.customerId === detailQuery.data.customerId
+        ? formDraft.values
+        : formValuesForCustomer(detailQuery.data);
     content = (
       <div className="crm:grid crm:gap-5">
         {target.writable ? null : (
@@ -461,17 +530,18 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
         <CustomerForm
           copy={copy.form}
           disabled={!target.writable}
+          {...(feedback?.fieldErrors === undefined ? {} : { fieldErrors: feedback.fieldErrors })}
           {...(feedback?.formStatus === undefined ? {} : { formStatus: feedback.formStatus })}
-          initialValues={{ name: detailQuery.data.name }}
-          {...(feedback?.nameError === undefined ? {} : { nameError: feedback.nameError })}
           onCancel={goToCustomerList}
           onSubmit={submit}
-          onValuesChange={() => {
+          onValuesChange={(nextValues) => {
+            setFormDraft({ customerId: detailQuery.data.customerId, values: nextValues });
             logicalAttemptRef.current = null;
             setFeedback(null);
             editMutation.reset();
           }}
           pending={editMutation.isPending}
+          values={formValues}
         />
       </div>
     );
