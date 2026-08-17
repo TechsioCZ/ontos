@@ -26,7 +26,17 @@ type Expect<Value extends true> = Value;
 type _CustomerRecordKeys = Expect<
   Equal<
     keyof CustomerRecord,
-    'archivedAt' | 'createdAt' | 'customerId' | 'name' | 'tenantId' | 'updatedAt'
+    | 'archivedAt'
+    | 'createdAt'
+    | 'customerId'
+    | 'dic'
+    | 'dissolvedOn'
+    | 'establishedOn'
+    | 'ico'
+    | 'legalFormCode'
+    | 'name'
+    | 'tenantId'
+    | 'updatedAt'
   >
 >;
 type _ContactRecordKeys = Expect<
@@ -44,8 +54,14 @@ type _ContactRecordKeys = Expect<
   >
 >;
 type _CustomerArchive = Expect<Equal<CustomerRecord['archivedAt'], Date | null>>;
+type _CustomerIco = Expect<Equal<CustomerRecord['ico'], string | null>>;
+type _CustomerDic = Expect<Equal<CustomerRecord['dic'], string | null>>;
+type _CustomerLegalFormCode = Expect<Equal<CustomerRecord['legalFormCode'], string | null>>;
+type _CustomerEstablishedOn = Expect<Equal<CustomerRecord['establishedOn'], string | null>>;
+type _CustomerDissolvedOn = Expect<Equal<CustomerRecord['dissolvedOn'], string | null>>;
 type _ContactArchive = Expect<Equal<ContactRecord['archivedAt'], Date | null>>;
 type _NewCustomerArchive = Expect<Equal<NewCustomerRecord['archivedAt'], Date | null | undefined>>;
+type _NewCustomerIco = Expect<Equal<NewCustomerRecord['ico'], string | null | undefined>>;
 type _NewContactArchive = Expect<Equal<NewContactRecord['archivedAt'], Date | null | undefined>>;
 
 const findColumn = (config: typeof customerConfig | typeof contactConfig, name: string) => {
@@ -76,12 +92,24 @@ test('owns exactly Customer and Contact tables in the CRM schema', () => {
   assert.deepEqual(qualifiedNames, ['crm.contacts', 'crm.customers']);
 });
 
-test('keeps Customer minimal, tenant-owned, timestamped, and archivable', () => {
+test('keeps Customer business identity tenant-owned, nullable, constrained, and archivable', () => {
   assert.equal(customerConfig.schema, 'crm');
   assert.equal(customerConfig.name, 'customers');
   assert.deepEqual(
     customerConfig.columns.map((column) => column.name),
-    ['customer_id', 'tenant_id', 'name', 'created_at', 'updated_at', 'archived_at'],
+    [
+      'customer_id',
+      'tenant_id',
+      'name',
+      'ico',
+      'dic',
+      'legal_form_code',
+      'established_on',
+      'dissolved_on',
+      'created_at',
+      'updated_at',
+      'archived_at',
+    ],
   );
   for (const name of ['customer_id', 'tenant_id', 'name', 'created_at', 'updated_at']) {
     assert.equal(findColumn(customerConfig, name).notNull, true);
@@ -89,7 +117,21 @@ test('keeps Customer minimal, tenant-owned, timestamped, and archivable', () => 
   assert.equal(findColumn(customerConfig, 'customer_id').hasDefault, true);
   assert.equal(findColumn(customerConfig, 'created_at').hasDefault, true);
   assert.equal(findColumn(customerConfig, 'updated_at').hasDefault, true);
-  assert.equal(findColumn(customerConfig, 'archived_at').notNull, false);
+  for (const name of [
+    'ico',
+    'dic',
+    'legal_form_code',
+    'established_on',
+    'dissolved_on',
+    'archived_at',
+  ]) {
+    assert.equal(findColumn(customerConfig, name).notNull, false);
+  }
+  assert.equal(findColumn(customerConfig, 'ico').getSQLType(), 'text');
+  assert.equal(findColumn(customerConfig, 'dic').getSQLType(), 'text');
+  assert.equal(findColumn(customerConfig, 'legal_form_code').getSQLType(), 'text');
+  assert.equal(findColumn(customerConfig, 'established_on').getSQLType(), 'date');
+  assert.equal(findColumn(customerConfig, 'dissolved_on').getSQLType(), 'date');
   const tenantIdentity = customerConfig.uniqueConstraints.find(
     (candidate) => candidate.name === 'crm_customers_tenant_id_uk',
   );
@@ -106,11 +148,35 @@ test('keeps Customer minimal, tenant-owned, timestamped, and archivable', () => 
     (candidate) => candidate.config.name === 'crm_customers_tenant_active_idx',
   );
   assert.ok(activeIndex?.config.where);
-  const nameCheck = customerConfig.checks.find(
-    (candidate) => candidate.name === 'crm_customers_name_ck',
+  const icoIndex = customerConfig.indexes.find(
+    (candidate) => candidate.config.name === 'crm_customers_tenant_ico_uk',
   );
-  assert.ok(nameCheck);
-  assert.match(dialect.sqlToQuery(nameCheck.value).sql, /btrim/u);
+  assert.ok(icoIndex);
+  assert.equal(icoIndex.config.unique, true);
+  assert.equal(icoIndex.config.where, undefined);
+  assert.deepEqual(indexColumnNames(customerConfig, 'crm_customers_tenant_ico_uk'), [
+    'tenant_id',
+    'ico',
+  ]);
+
+  assert.deepEqual(customerConfig.checks.map((candidate) => candidate.name).toSorted(), [
+    'crm_customers_dic_ck',
+    'crm_customers_ico_ck',
+    'crm_customers_legal_form_code_ck',
+    'crm_customers_lifecycle_dates_ck',
+    'crm_customers_name_ck',
+  ]);
+  const checkSql = Object.fromEntries(
+    customerConfig.checks.map((candidate) => [
+      candidate.name,
+      dialect.sqlToQuery(candidate.value).sql,
+    ]),
+  );
+  assert.match(checkSql['crm_customers_name_ck'] ?? '', /btrim/u);
+  assert.match(checkSql['crm_customers_ico_ck'] ?? '', /\[0-9\]\{8\}/u);
+  assert.match(checkSql['crm_customers_dic_ck'] ?? '', /between 1 and 20/u);
+  assert.match(checkSql['crm_customers_legal_form_code_ck'] ?? '', /\[0-9\]\{3\}/u);
+  assert.match(checkSql['crm_customers_lifecycle_dates_ck'] ?? '', />=/u);
 });
 
 test('requires Contact business fields and one restrictive same-tenant Customer parent', () => {
@@ -199,11 +265,12 @@ test('enables forced tenant RLS with complete CRUD policies on both tables', () 
 test('keeps the narrow generated-migration adjustment that forces RLS', async () => {
   const migrationDirectory = new URL('../../drizzle/', import.meta.url);
   const directoryEntries = await readdir(migrationDirectory);
-  const migrationFiles = directoryEntries.filter((name) => name.endsWith('.sql'));
-  assert.equal(migrationFiles.length, 1);
-  const [migrationFile] = migrationFiles;
-  assert.ok(migrationFile);
-  const migration = await readFile(new URL(migrationFile, migrationDirectory), 'utf-8');
+  const migrationFiles = directoryEntries.filter((name) => name.endsWith('.sql')).toSorted();
+  assert.equal(migrationFiles.length, 2);
+  const migrations = await Promise.all(
+    migrationFiles.map((name) => readFile(new URL(name, migrationDirectory), 'utf-8')),
+  );
+  const migration = migrations.join('\n');
 
   assert.equal(
     migration.match(/ALTER TABLE "crm"\."(?:contacts|customers)" ENABLE ROW LEVEL SECURITY;/gu)
@@ -214,6 +281,24 @@ test('keeps the narrow generated-migration adjustment that forces RLS', async ()
     migration.match(/ALTER TABLE "crm"\."(?:contacts|customers)" FORCE ROW LEVEL SECURITY;/gu)
       ?.length,
     2,
+  );
+
+  const [, customerBusinessFieldsMigration] = migrations;
+  assert.ok(customerBusinessFieldsMigration);
+  assert.doesNotMatch(customerBusinessFieldsMigration, /CREATE (?:SCHEMA|TABLE)/u);
+  assert.doesNotMatch(customerBusinessFieldsMigration, /"crm"\."contacts"/u);
+  assert.equal(
+    customerBusinessFieldsMigration.match(/ALTER TABLE "crm"\."customers" ADD COLUMN/gu)?.length,
+    5,
+  );
+  assert.equal(
+    customerBusinessFieldsMigration.match(/ALTER TABLE "crm"\."customers" ADD CONSTRAINT/gu)
+      ?.length,
+    4,
+  );
+  assert.match(
+    customerBusinessFieldsMigration,
+    /CREATE UNIQUE INDEX "crm_customers_tenant_ico_uk"[\s\S]*\("tenant_id","ico"\)/u,
   );
 });
 
@@ -237,6 +322,11 @@ test('creates the runtime role before CRM policies and refreshes grants afterwar
 test('keeps inferred insert and record shapes aligned at runtime', () => {
   const customerInsert = {
     archivedAt: null,
+    dic: 'CZ00123456',
+    dissolvedOn: null,
+    establishedOn: '2020-01-02',
+    ico: '00123456',
+    legalFormCode: '112',
     name: 'Customer',
     tenantId: '00000000-0000-4000-8000-000000000001',
   } satisfies NewCustomerRecord;
@@ -251,7 +341,16 @@ test('keeps inferred insert and record shapes aligned at runtime', () => {
 
   assert.equal(customerInsert.archivedAt, null);
   assert.equal(contactInsert.archivedAt, null);
-  assert.deepEqual(Object.keys(customerInsert).toSorted(), ['archivedAt', 'name', 'tenantId']);
+  assert.deepEqual(Object.keys(customerInsert).toSorted(), [
+    'archivedAt',
+    'dic',
+    'dissolvedOn',
+    'establishedOn',
+    'ico',
+    'legalFormCode',
+    'name',
+    'tenantId',
+  ]);
   assert.deepEqual(Object.keys(contactInsert).toSorted(), [
     'archivedAt',
     'customerId',

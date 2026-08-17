@@ -3,6 +3,7 @@ import { enableGovernedRls, tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import {
   check,
+  date,
   foreignKey,
   index,
   pgSchema,
@@ -30,6 +31,11 @@ export const customers = enableGovernedRls(
       customerId: uuid('customer_id').defaultRandom().primaryKey(),
       tenantId: uuid('tenant_id').notNull(),
       name: text('name').notNull(),
+      ico: text('ico'),
+      dic: text('dic'),
+      legalFormCode: text('legal_form_code'),
+      establishedOn: date('established_on'),
+      dissolvedOn: date('dissolved_on'),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
       archivedAt: archivedAt(),
@@ -39,9 +45,23 @@ export const customers = enableGovernedRls(
       index('crm_customers_tenant_active_idx')
         .on(table.tenantId, table.name)
         .where(sql`${table.archivedAt} is null`),
+      uniqueIndex('crm_customers_tenant_ico_uk').on(table.tenantId, table.ico),
       check(
         'crm_customers_name_ck',
         sql`${table.name} = btrim(${table.name}) and length(${table.name}) > 0`,
+      ),
+      check('crm_customers_ico_ck', sql`${table.ico} is null or ${table.ico} ~ '^[0-9]{8}$'`),
+      check(
+        'crm_customers_dic_ck',
+        sql`${table.dic} is null or (${table.dic} = btrim(${table.dic}) and length(${table.dic}) between 1 and 20)`,
+      ),
+      check(
+        'crm_customers_legal_form_code_ck',
+        sql`${table.legalFormCode} is null or ${table.legalFormCode} ~ '^[0-9]{3}$'`,
+      ),
+      check(
+        'crm_customers_lifecycle_dates_ck',
+        sql`${table.dissolvedOn} is null or ${table.establishedOn} is null or ${table.dissolvedOn} >= ${table.establishedOn}`,
       ),
       ...tenantRlsPolicies('crm_customers_tenant', table.tenantId),
     ],
