@@ -44,6 +44,13 @@ interface CustomerDetailReadyModel {
   readonly createdAt: string;
   readonly createdAtIso: string;
   readonly customerId: string;
+  readonly dic: string;
+  readonly dissolvedOn: string;
+  readonly dissolvedOnIso: null | string;
+  readonly establishedOn: string;
+  readonly establishedOnIso: null | string;
+  readonly ico: string;
+  readonly legalFormCode: string;
   readonly lifecycle: 'active' | 'archived';
   readonly name: string;
   readonly updatedAt: string;
@@ -80,8 +87,13 @@ interface CustomerDetailCopy {
   readonly createdAt: string;
   readonly customerId: string;
   readonly decode: string;
+  readonly dic: string;
+  readonly dissolvedOn: string;
+  readonly establishedOn: string;
   readonly forbidden: string;
+  readonly ico: string;
   readonly internal: string;
+  readonly legalFormCode: string;
   readonly loading: string;
   readonly notFound: string;
   readonly retry: string;
@@ -92,6 +104,7 @@ interface CustomerDetailCopy {
   readonly title: string;
   readonly transport: string;
   readonly unavailable: string;
+  readonly unavailableValue: string;
   readonly updatedAt: string;
 }
 
@@ -239,7 +252,17 @@ const LoadingCustomerDetail = ({ copy }: { readonly copy: CustomerDetailCopy }) 
       <output>{copy.loading}</output>
     </StatusText>
     <dl className="crm:grid crm:min-w-0 crm:gap-x-6 crm:gap-y-4 crm:sm:grid-cols-[minmax(8rem,12rem)_minmax(0,1fr)]">
-      {[copy.customerId, copy.status, copy.createdAt, copy.updatedAt].map((label) => (
+      {[
+        copy.customerId,
+        copy.ico,
+        copy.dic,
+        copy.legalFormCode,
+        copy.establishedOn,
+        copy.dissolvedOn,
+        copy.status,
+        copy.createdAt,
+        copy.updatedAt,
+      ].map((label) => (
         <div className="crm:contents" key={label}>
           <dt className="crm:font-medium">{label}</dt>
           <dd className="crm:min-w-0">
@@ -268,6 +291,34 @@ const ReadyCustomerDetail = ({
     <dl className="crm:grid crm:min-w-0 crm:gap-x-6 crm:gap-y-4 crm:sm:grid-cols-[minmax(8rem,12rem)_minmax(0,1fr)]">
       <dt className="crm:font-medium">{copy.customerId}</dt>
       <dd className="crm:min-w-0 crm:break-all">{customer.customerId}</dd>
+      <dt className="crm:font-medium">{copy.ico}</dt>
+      <dd className="crm:min-w-0 crm:break-all">
+        <code>{customer.ico}</code>
+      </dd>
+      <dt className="crm:font-medium">{copy.dic}</dt>
+      <dd className="crm:min-w-0 crm:break-all">
+        <code>{customer.dic}</code>
+      </dd>
+      <dt className="crm:font-medium">{copy.legalFormCode}</dt>
+      <dd className="crm:min-w-0 crm:break-all">
+        <code>{customer.legalFormCode}</code>
+      </dd>
+      <dt className="crm:font-medium">{copy.establishedOn}</dt>
+      <dd className="crm:min-w-0">
+        {customer.establishedOnIso === null ? (
+          customer.establishedOn
+        ) : (
+          <time dateTime={customer.establishedOnIso}>{customer.establishedOn}</time>
+        )}
+      </dd>
+      <dt className="crm:font-medium">{copy.dissolvedOn}</dt>
+      <dd className="crm:min-w-0">
+        {customer.dissolvedOnIso === null ? (
+          customer.dissolvedOn
+        ) : (
+          <time dateTime={customer.dissolvedOnIso}>{customer.dissolvedOn}</time>
+        )}
+      </dd>
       <dt className="crm:font-medium">{copy.status}</dt>
       <dd>{customer.lifecycle === 'active' ? copy.statusActive : copy.statusArchived}</dd>
       <dt className="crm:font-medium">{copy.createdAt}</dt>
@@ -602,6 +653,11 @@ const formatCustomerTimestamp = (value: string, language: string) =>
     Date.parse(value),
   );
 
+export const formatCustomerDateOnly = (value: string, language: string) =>
+  new Intl.DateTimeFormat(language, { dateStyle: 'medium', timeZone: 'UTC' }).format(
+    Date.parse(`${value}T00:00:00.000Z`),
+  );
+
 const createCorrelationId = () =>
   Array.from({ length: 4 }, () =>
     EffectRuntime.runSync(Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER)).toString(36),
@@ -610,10 +666,24 @@ const createCorrelationId = () =>
 const toReadyModel = (
   customer: CustomerDetailResponse,
   language: string,
+  unavailableValue: string,
 ): CustomerDetailReadyModel => ({
   createdAt: formatCustomerTimestamp(customer.createdAt, language),
   createdAtIso: customer.createdAt,
   customerId: customer.customerId,
+  dic: customer.dic ?? unavailableValue,
+  dissolvedOn:
+    customer.dissolvedOn === null
+      ? unavailableValue
+      : formatCustomerDateOnly(customer.dissolvedOn, language),
+  dissolvedOnIso: customer.dissolvedOn,
+  establishedOn:
+    customer.establishedOn === null
+      ? unavailableValue
+      : formatCustomerDateOnly(customer.establishedOn, language),
+  establishedOnIso: customer.establishedOn,
+  ico: customer.ico ?? unavailableValue,
+  legalFormCode: customer.legalFormCode ?? unavailableValue,
   lifecycle: customer.archivedAt === null ? 'active' : 'archived',
   name: customer.name,
   updatedAt: formatCustomerTimestamp(customer.updatedAt, language),
@@ -726,7 +796,7 @@ const CustomerDetailQuery = ({
   } else if (query.isError) {
     view = classifyCustomerDetailError(query.error);
   } else {
-    view = { customer: toReadyModel(query.data, language), state: 'ready' };
+    view = { customer: toReadyModel(query.data, language, copy.unavailableValue), state: 'ready' };
   }
 
   return (
@@ -759,8 +829,13 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
     createdAt: t('crm.pages.customerDetail.fields.createdAt'),
     customerId: t('crm.pages.customerDetail.fields.customerId'),
     decode: t('crm.pages.customerDetail.states.decode'),
+    dic: t('crm.pages.customerDetail.fields.dic'),
+    dissolvedOn: t('crm.pages.customerDetail.fields.dissolvedOn'),
+    establishedOn: t('crm.pages.customerDetail.fields.establishedOn'),
     forbidden: t('crm.pages.customerDetail.states.forbidden'),
+    ico: t('crm.pages.customerDetail.fields.ico'),
     internal: t('crm.pages.customerDetail.states.internal'),
+    legalFormCode: t('crm.pages.customerDetail.fields.legalFormCode'),
     loading: t('crm.pages.customerDetail.states.loading'),
     notFound: t('crm.pages.customerDetail.states.notFound'),
     retry: t('crm.pages.customerDetail.states.retry'),
@@ -771,6 +846,7 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
     title: t('crm.pages.customerDetail.title'),
     transport: t('crm.pages.customerDetail.states.transport'),
     unavailable: t('crm.pages.customerDetail.states.unavailable'),
+    unavailableValue: t('crm.pages.customerDetail.fields.unavailable'),
     updatedAt: t('crm.pages.customerDetail.fields.updatedAt'),
   };
   const contactCopy: ContactListCopy = {

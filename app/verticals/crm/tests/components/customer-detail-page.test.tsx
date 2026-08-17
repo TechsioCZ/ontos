@@ -15,6 +15,7 @@ import StandaloneCustomerDetailPage, {
   contactListQueryKey,
   customerDetailQueryKey,
   decodeCustomerDetailId,
+  formatCustomerDateOnly,
 } from '../../src/routes/[lang]/crm/customers/[id]/page.tsx';
 
 Object.assign(globalThis, {
@@ -69,7 +70,13 @@ const translations = {
     'crm.pages.customerDetail.contacts.table.phone': 'Telefon',
     'crm.pages.customerDetail.fields.createdAt': 'Vytvořeno',
     'crm.pages.customerDetail.fields.customerId': 'ID zákazníka',
+    'crm.pages.customerDetail.fields.dic': 'DIČ',
+    'crm.pages.customerDetail.fields.dissolvedOn': 'Datum zániku',
+    'crm.pages.customerDetail.fields.establishedOn': 'Datum vzniku',
+    'crm.pages.customerDetail.fields.ico': 'IČO',
+    'crm.pages.customerDetail.fields.legalFormCode': 'Kód právní formy',
     'crm.pages.customerDetail.fields.status': 'Stav',
+    'crm.pages.customerDetail.fields.unavailable': 'Neuvedeno',
     'crm.pages.customerDetail.fields.updatedAt': 'Aktualizováno',
     'crm.pages.customerDetail.lifecycle.active': 'Aktivní',
     'crm.pages.customerDetail.lifecycle.archived': 'Archivovaný',
@@ -123,7 +130,13 @@ const translations = {
     'crm.pages.customerDetail.contacts.table.phone': 'Phone',
     'crm.pages.customerDetail.fields.createdAt': 'Created',
     'crm.pages.customerDetail.fields.customerId': 'Customer ID',
+    'crm.pages.customerDetail.fields.dic': 'Tax ID',
+    'crm.pages.customerDetail.fields.dissolvedOn': 'Dissolution date',
+    'crm.pages.customerDetail.fields.establishedOn': 'Establishment date',
+    'crm.pages.customerDetail.fields.ico': 'Company ID (IČO)',
+    'crm.pages.customerDetail.fields.legalFormCode': 'Legal-form code',
     'crm.pages.customerDetail.fields.status': 'Status',
+    'crm.pages.customerDetail.fields.unavailable': 'Not available',
     'crm.pages.customerDetail.fields.updatedAt': 'Updated',
     'crm.pages.customerDetail.lifecycle.active': 'Active',
     'crm.pages.customerDetail.lifecycle.archived': 'Archived',
@@ -189,8 +202,17 @@ const activeCustomer = {
   updatedAt: '2026-08-14T09:30:00.000Z',
 } as const;
 
-const archivedCustomer = {
+const completeCustomer = {
   ...activeCustomer,
+  dic: 'CZ00123456',
+  dissolvedOn: '2026-12-31',
+  establishedOn: '2026-01-01',
+  ico: '00123456',
+  legalFormCode: '112',
+} as const;
+
+const archivedCustomer = {
+  ...completeCustomer,
   archivedAt: '2026-08-14T10:00:00.000Z',
   name: 'Former Customer with a deliberately long business name',
 } as const;
@@ -317,21 +339,43 @@ test('loads the Customer and its active Contacts through the typed CRM client wi
 });
 
 test('renders the Customer overview followed by ordered semantic Contact rows', async () => {
+  getCustomerDetailMock.mockReturnValue(Effect.succeed(completeCustomer));
   render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
-  await screen.findByRole('heading', { name: activeCustomer.name });
+  await screen.findByRole('heading', { name: completeCustomer.name });
   expect(screen.getByRole('link', { name: 'Back to Customers' }).getAttribute('href')).toBe(
     '/en/crm/customers',
   );
   const list = document.querySelector('dl');
   expect(list).not.toBeNull();
   expect(within(list as HTMLElement).getByText('Customer ID')).toBeTruthy();
-  expect(within(list as HTMLElement).getByText(activeCustomer.customerId)).toBeTruthy();
+  expect(within(list as HTMLElement).getByText(completeCustomer.customerId)).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Company ID (IČO)')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('00123456')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Tax ID')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('CZ00123456')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Legal-form code')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('112')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Establishment date')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Jan 1, 2026')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Dissolution date')).toBeTruthy();
+  expect(within(list as HTMLElement).getByText('Dec 31, 2026')).toBeTruthy();
   expect(within(list as HTMLElement).getByText('Active')).toBeTruthy();
-  const times = list?.querySelectorAll('time');
-  expect(times).toHaveLength(2);
-  expect(times?.[0]?.getAttribute('datetime')).toBe(activeCustomer.createdAt);
-  expect(times?.[1]?.getAttribute('datetime')).toBe(activeCustomer.updatedAt);
+  const times = (list as HTMLElement).querySelectorAll('time');
+  expect(times).toHaveLength(4);
+  expect([...times].map((time) => time.getAttribute('datetime'))).toEqual([
+    completeCustomer.establishedOn,
+    completeCustomer.dissolvedOn,
+    completeCustomer.createdAt,
+    completeCustomer.updatedAt,
+  ]);
+  expect(list?.className).toContain('crm:min-w-0');
+  for (const term of list?.querySelectorAll('dt') ?? []) {
+    expect(term.nextElementSibling?.tagName).toBe('DD');
+  }
+  for (const value of list?.querySelectorAll('code') ?? []) {
+    expect(value.parentElement?.className).toContain('crm:break-all');
+  }
   const contactsHeading = await screen.findByRole('heading', { name: 'Contacts' });
   const table = screen.getByRole('table', { name: 'Active Customer Contacts' });
   expect(contactsHeading.compareDocumentPosition(table)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
@@ -366,6 +410,22 @@ test('renders the Customer overview followed by ordered semantic Contact rows', 
     'crm:overflow-x-auto',
   );
   expect(document.querySelector('[role="tablist"]')).toBeNull();
+  expect(screen.queryByRole('heading', { name: /ares|address/iu })).toBeNull();
+});
+
+test('uses one localized unavailable value for every null business field', async () => {
+  render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  await screen.findByRole('heading', { name: activeCustomer.name });
+  const list = document.querySelector('dl');
+  expect(list).not.toBeNull();
+  expect(within(list as HTMLElement).getAllByText('Not available')).toHaveLength(5);
+  expect(list?.querySelectorAll('time')).toHaveLength(2);
+});
+
+test('formats date-only values by locale without shifting the calendar day', () => {
+  expect(formatCustomerDateOnly('2026-01-01', 'en')).toBe('Jan 1, 2026');
+  expect(formatCustomerDateOnly('2026-01-01', 'cs')).toBe('1. 1. 2026');
 });
 
 test('keeps a semantic busy announcement and stable detail-row skeleton while loading', () => {
@@ -374,7 +434,7 @@ test('keeps a semantic busy announcement and stable detail-row skeleton while lo
 
   expect(screen.getByRole('status').textContent).toBe('Loading Customer details…');
   expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
-  expect(document.querySelectorAll('dt')).toHaveLength(4);
+  expect(document.querySelectorAll('dt')).toHaveLength(9);
   expect(screen.getByTestId('customer-detail-results').getAttribute('aria-live')).toBe('polite');
   expect(getContactListMock).not.toHaveBeenCalled();
 });
@@ -416,6 +476,8 @@ test('renders Czech archived data and preserves the active locale in the return 
 
   expect(await screen.findByRole('heading', { name: archivedCustomer.name })).toBeTruthy();
   expect(screen.getByText('Archivovaný')).toBeTruthy();
+  expect(screen.getByText('00123456')).toBeTruthy();
+  expect(screen.getByText('1. 1. 2026')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Zpět na zákazníky' }).getAttribute('href')).toBe(
     '/cs/crm/customers',
   );
