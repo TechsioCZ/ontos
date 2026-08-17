@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect } from 'effect';
 import { Pool } from 'pg';
@@ -14,6 +14,9 @@ const tenantB = 'c1000000-0000-4000-8000-000000000002';
 const customerA = 'c2000000-0000-4000-8000-000000000001';
 const customerB = 'c2000000-0000-4000-8000-000000000002';
 const customerA2 = 'c2000000-0000-4000-8000-000000000003';
+const customerA3 = 'c2000000-0000-4000-8000-000000000004';
+const customerB2 = 'c2000000-0000-4000-8000-000000000005';
+const customerA4 = 'c2000000-0000-4000-8000-000000000006';
 const contactA1 = 'c3000000-0000-4000-8000-000000000001';
 const contactA2 = 'c3000000-0000-4000-8000-000000000002';
 const fixtureTenants = [tenantA, tenantB] as const;
@@ -49,8 +52,39 @@ test('enforces CRM constraints, tenant RLS, parent integrity, and durable archiv
     await cleanup();
     await admin.insert(customers).values([
       { customerId: customerA, name: 'Tenant A customer', tenantId: tenantA },
+      { customerId: customerA4, name: 'Second null-IČO Customer', tenantId: tenantA },
       { customerId: customerB, name: 'Tenant B customer', tenantId: tenantB },
     ]);
+    assert.deepEqual(
+      await admin
+        .select({
+          dic: customers.dic,
+          dissolvedOn: customers.dissolvedOn,
+          establishedOn: customers.establishedOn,
+          ico: customers.ico,
+          legalFormCode: customers.legalFormCode,
+        })
+        .from(customers)
+        .where(eq(customers.customerId, customerA)),
+      [
+        {
+          dic: null,
+          dissolvedOn: null,
+          establishedOn: null,
+          ico: null,
+          legalFormCode: null,
+        },
+      ],
+    );
+    assert.equal(
+      (
+        await admin
+          .select({ customerId: customers.customerId })
+          .from(customers)
+          .where(and(eq(customers.tenantId, tenantA), isNull(customers.ico)))
+      ).length,
+      2,
+    );
 
     assert.deepEqual(await runtime.select().from(customers), []);
     await assert.rejects(
@@ -65,7 +99,7 @@ test('enforces CRM constraints, tenant RLS, parent integrity, and durable archiv
           .select({ customerId: customers.customerId })
           .from(customers)
           .orderBy(customers.customerId),
-        [{ customerId: customerA }],
+        [{ customerId: customerA }, { customerId: customerA4 }],
       );
       assert.deepEqual(
         await transaction
@@ -84,6 +118,89 @@ test('enforces CRM constraints, tenant RLS, parent integrity, and durable archiv
       }),
       hasPostgreSqlCode('23514'),
     );
+    await Promise.all(
+      [
+        { ico: '1234567' },
+        { ico: '1234567A' },
+        { dic: ' padded ' },
+        { dic: '   ' },
+        { dic: 'x'.repeat(21) },
+        { legalFormCode: '11A' },
+        { dissolvedOn: '2020-01-01', establishedOn: '2020-01-02' },
+      ].map((invalidBusinessFields) =>
+        assert.rejects(
+          runtime.transaction(async (transaction) => {
+            await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
+            await transaction.insert(customers).values({
+              name: 'Invalid business fields',
+              tenantId: tenantA,
+              ...invalidBusinessFields,
+            });
+          }),
+          hasPostgreSqlCode('23514'),
+        ),
+      ),
+    );
+
+    await runtime.transaction(async (transaction) => {
+      await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
+      await transaction.insert(customers).values({
+        customerId: customerA2,
+        dic: 'CZ00123456',
+        dissolvedOn: '2026-08-17',
+        establishedOn: '2020-01-02',
+        ico: '00123456',
+        legalFormCode: '112',
+        name: 'Complete Customer',
+        tenantId: tenantA,
+      });
+      assert.deepEqual(
+        await transaction
+          .select({
+            dic: customers.dic,
+            dissolvedOn: customers.dissolvedOn,
+            establishedOn: customers.establishedOn,
+            ico: customers.ico,
+            legalFormCode: customers.legalFormCode,
+            name: customers.name,
+          })
+          .from(customers)
+          .where(eq(customers.customerId, customerA2)),
+        [
+          {
+            dic: 'CZ00123456',
+            dissolvedOn: '2026-08-17',
+            establishedOn: '2020-01-02',
+            ico: '00123456',
+            legalFormCode: '112',
+            name: 'Complete Customer',
+          },
+        ],
+      );
+    });
+    await assert.rejects(
+      runtime.transaction(async (transaction) => {
+        await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
+        await transaction.insert(customers).values({
+          customerId: customerA3,
+          ico: '00123456',
+          name: 'Duplicate active IČO',
+          tenantId: tenantA,
+        });
+      }),
+      hasPostgreSqlCode('23505'),
+    );
+    await runtime.transaction(async (transaction) => {
+      await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantB}, true)`);
+      await transaction.insert(customers).values({
+        customerId: customerB2,
+        dissolvedOn: '2020-01-02',
+        establishedOn: '2020-01-02',
+        ico: '00123456',
+        name: 'Same IČO in another tenant',
+        tenantId: tenantB,
+      });
+    });
     await assert.rejects(
       runtime.transaction(async (transaction) => {
         await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
@@ -145,11 +262,6 @@ test('enforces CRM constraints, tenant RLS, parent integrity, and durable archiv
     const archivedAt = new Date('2026-08-13T12:00:00.000Z');
     await runtime.transaction(async (transaction) => {
       await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
-      await transaction.insert(customers).values({
-        customerId: customerA2,
-        name: 'Tenant A customer',
-        tenantId: tenantA,
-      });
       await transaction.insert(contacts).values([
         {
           contactId: contactA1,
@@ -185,7 +297,23 @@ test('enforces CRM constraints, tenant RLS, parent integrity, and durable archiv
         .update(customers)
         .set({ archivedAt })
         .where(eq(customers.customerId, customerA));
+      await transaction
+        .update(customers)
+        .set({ archivedAt })
+        .where(eq(customers.customerId, customerA2));
     });
+    await assert.rejects(
+      runtime.transaction(async (transaction) => {
+        await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
+        await transaction.insert(customers).values({
+          customerId: customerA3,
+          ico: '00123456',
+          name: 'Duplicate archived IČO',
+          tenantId: tenantA,
+        });
+      }),
+      hasPostgreSqlCode('23505'),
+    );
 
     const persisted = await admin
       .select({

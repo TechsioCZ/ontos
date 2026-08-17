@@ -20,7 +20,14 @@ import {
   CreateContactPayloadSchema,
   EditContactPayloadSchema,
 } from '../../shared/apis/contact-detail.ts';
-import { CreateCustomerPayloadSchema, CustomerSchema } from '../../shared/apis/customer-detail.ts';
+import {
+  CreateCustomerPayloadSchema,
+  CrmDateOnlySchema,
+  CrmDicSchema,
+  CrmIcoSchema,
+  CrmLegalFormCodeSchema,
+  CustomerSchema,
+} from '../../shared/apis/customer-detail.ts';
 import { ContactListRequestSchema } from '../../shared/apis/contact-list.ts';
 
 const actions = [
@@ -135,6 +142,11 @@ test('keeps result DTOs compatible with rows allowed by the existing persistence
     Schema.decodeUnknownSync(CustomerSchema)({
       ...shared,
       customerId: 'c2000000-0000-4000-8000-000000000001',
+      dic: null,
+      dissolvedOn: null,
+      establishedOn: null,
+      ico: null,
+      legalFormCode: null,
       name: legacyText,
     }).name,
     legacyText,
@@ -150,6 +162,51 @@ test('keeps result DTOs compatible with rows allowed by the existing persistence
   assert.equal(legacyContact.email, 'legacy-email-without-at-sign');
   assert.equal(legacyContact.phone, legacyText);
   assert.throws(() => Schema.decodeUnknownSync(CreateCustomerPayloadSchema)({ name: legacyText }));
+});
+
+test('defines exact flat Customer business-field result schemas', () => {
+  assert.equal(Schema.decodeUnknownSync(CrmIcoSchema)('00123456'), '00123456');
+  assert.equal(Schema.decodeUnknownSync(CrmDicSchema)('  CZ00123456  '), 'CZ00123456');
+  assert.equal(Schema.decodeUnknownSync(CrmLegalFormCodeSchema)('112'), '112');
+  assert.equal(Schema.decodeUnknownSync(CrmDateOnlySchema)('2024-02-29'), '2024-02-29');
+  for (const invalidIco of ['1234567', '123456789', '1234A678']) {
+    assert.throws(() => Schema.decodeUnknownSync(CrmIcoSchema)(invalidIco));
+  }
+  assert.throws(() => Schema.decodeUnknownSync(CrmDicSchema)('   '));
+  assert.throws(() => Schema.decodeUnknownSync(CrmDicSchema)('x'.repeat(21)));
+  assert.throws(() => Schema.decodeUnknownSync(CrmLegalFormCodeSchema)('12A'));
+  for (const invalidDate of ['2024-2-09', '2023-02-29', '2024-04-31']) {
+    assert.throws(() => Schema.decodeUnknownSync(CrmDateOnlySchema)(invalidDate));
+  }
+
+  const decodeCustomer = Schema.decodeUnknownSync(CustomerSchema, { onExcessProperty: 'error' });
+  const complete = decodeCustomer({
+    archivedAt: null,
+    createdAt: '2026-08-14T10:00:00.000Z',
+    customerId: 'c2000000-0000-4000-8000-000000000001',
+    dic: 'CZ00123456',
+    dissolvedOn: '2026-08-17',
+    establishedOn: '2020-01-02',
+    ico: '00123456',
+    legalFormCode: '112',
+    name: 'Acme',
+    updatedAt: '2026-08-14T10:00:00.000Z',
+  });
+  assert.deepEqual(complete, {
+    archivedAt: null,
+    createdAt: '2026-08-14T10:00:00.000Z',
+    customerId: 'c2000000-0000-4000-8000-000000000001',
+    dic: 'CZ00123456',
+    dissolvedOn: '2026-08-17',
+    establishedOn: '2020-01-02',
+    ico: '00123456',
+    legalFormCode: '112',
+    name: 'Acme',
+    updatedAt: '2026-08-14T10:00:00.000Z',
+  });
+  assert.throws(() => decodeCustomer({ ...complete, ares: { source: 'ares' } }));
+  assert.throws(() => decodeCustomer({ ...complete, address: { city: 'Praha' } }));
+  assert.throws(() => decodeCustomer({ ...complete, legalName: 'Alternate name' }));
 });
 
 test('registers four governed reads with exact tenant-scoped evidence contracts', () => {

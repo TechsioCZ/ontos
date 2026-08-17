@@ -47,6 +47,11 @@ const customer = {
   archivedAt: null,
   createdAt: timestamp,
   customerId,
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
   name: 'Acme',
   updatedAt: timestamp,
 };

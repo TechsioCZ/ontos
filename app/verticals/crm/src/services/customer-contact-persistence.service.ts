@@ -47,6 +47,11 @@ const customerDto = (row: CustomerRecord): Customer => ({
   archivedAt: row.archivedAt?.toISOString() ?? null,
   createdAt: row.createdAt.toISOString(),
   customerId: row.customerId,
+  dic: row.dic,
+  dissolvedOn: row.dissolvedOn,
+  establishedOn: row.establishedOn,
+  ico: row.ico,
+  legalFormCode: row.legalFormCode,
   name: row.name,
   updatedAt: row.updatedAt.toISOString(),
 });

@@ -149,15 +149,14 @@ const verification = Effect.gen(function* verifyCrmDatabase() {
       new CrmDatabaseVerificationError({
         reason: 'Typed active-Customer verification failed',
       }),
-    try: () =>
-      database.executor.select({ customerId: customers.customerId }).from(customers).limit(0),
+    try: () => database.executor.select().from(customers).limit(0),
   });
   const activeContacts = yield* Effect.tryPromise({
     catch: () =>
       new CrmDatabaseVerificationError({
         reason: 'Typed active-Contact verification failed',
       }),
-    try: () => database.executor.select({ contactId: contacts.contactId }).from(contacts).limit(0),
+    try: () => database.executor.select().from(contacts).limit(0),
   });
 
   return {

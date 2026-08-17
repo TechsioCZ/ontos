@@ -6,6 +6,23 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from 'effect/un
 export const CrmUuidSchema = Schema.String.check(Schema.isUUID());
 export const CrmPersistedTextSchema = Schema.String.check(Schema.isMinLength(1));
 export const CrmNameSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200));
+export const CrmIcoSchema = Schema.String.check(Schema.isPattern(/^\d{8}$/u));
+export const CrmDicSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(20));
+export const CrmLegalFormCodeSchema = Schema.String.check(Schema.isPattern(/^\d{3}$/u));
+export const CrmDateOnlySchema = Schema.String.check(
+  Schema.isPattern(/^\d{4}-\d{2}-\d{2}$/u),
+  Schema.makeFilter((value) => {
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(5, 7));
+    const day = Number(value.slice(8, 10));
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    const maximumDay = daysInMonth[month - 1];
+    return maximumDay !== undefined && day >= 1 && day <= maximumDay
+      ? undefined
+      : 'date must be a valid calendar date in YYYY-MM-DD format';
+  }),
+);
 export const CrmIsoTimestampSchema = Schema.String.check(
   Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u),
 );
@@ -14,6 +31,11 @@ export const CustomerSchema = Schema.Struct({
   archivedAt: Schema.NullOr(CrmIsoTimestampSchema),
   createdAt: CrmIsoTimestampSchema,
   customerId: CrmUuidSchema,
+  dic: Schema.NullOr(CrmDicSchema),
+  dissolvedOn: Schema.NullOr(CrmDateOnlySchema),
+  establishedOn: Schema.NullOr(CrmDateOnlySchema),
+  ico: Schema.NullOr(CrmIcoSchema),
+  legalFormCode: Schema.NullOr(CrmLegalFormCodeSchema),
   name: CrmPersistedTextSchema,
   updatedAt: CrmIsoTimestampSchema,
 });
