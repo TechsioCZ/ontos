@@ -139,7 +139,14 @@ test('submits one normalized keyboard intent through the generated client withou
   await waitFor(() => expect(navigateMock).toHaveBeenCalledWith({ to: '/en/crm/customers' }));
   expect(createCustomerMock).toHaveBeenCalledTimes(1);
   expect(createCustomerMock).toHaveBeenCalledWith(
-    { name: 'Acme Property Group' },
+    {
+      dic: null,
+      dissolvedOn: null,
+      establishedOn: null,
+      ico: null,
+      legalFormCode: null,
+      name: 'Acme Property Group',
+    },
     {
       baseUrl: 'http://localhost:4101/crm-api',
       correlationId: expect.any(String),
@@ -208,7 +215,7 @@ test('reuses an idempotency key only for an uncertain retry of the same name', a
   expect(secondOptions.correlationId).not.toBe(firstOptions.correlationId);
 });
 
-test('creates a new idempotency key after the user changes an uncertain intent', async () => {
+test('creates a new idempotency key after any Customer field changes an uncertain intent', async () => {
   createCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
   const user = userEvent.setup();
   renderFeature();
@@ -217,7 +224,7 @@ test('creates a new idempotency key after the user changes an uncertain intent',
 
   await user.click(screen.getByRole('button', { name: 'Create Customer' }));
   await screen.findByText('The Customer service is temporarily unavailable. Try again.');
-  await user.type(name, ' Group');
+  await user.type(screen.getByRole('textbox', { name: /^IČO/u }), '00123456');
   await user.click(screen.getByRole('button', { name: 'Create Customer' }));
   await waitFor(() => expect(createCustomerMock).toHaveBeenCalledTimes(2));
 

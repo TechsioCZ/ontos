@@ -2,7 +2,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
-import { findCustomerRecord } from '../../src/services/customer-contact-persistence.service.ts';
+import {
+  createCustomerRecord,
+  editCustomerRecord,
+  findCustomerRecord,
+} from '../../src/services/customer-contact-persistence.service.ts';
 import type { CustomerRecord } from '../../src/db/schema.ts';
 
 type CustomerTransaction = Parameters<typeof findCustomerRecord>[0];
@@ -27,16 +31,37 @@ const baseRow = {
   updatedAt: new Date('2026-08-15T11:30:00.000Z'),
 } as const;
 
+const completeBusinessFields = {
+  dic: 'CZ00123456',
+  dissolvedOn: '2026-08-17',
+  establishedOn: '2020-01-02',
+  ico: '00123456',
+  legalFormCode: '112',
+} as const;
+
+const rejectingTransaction = (constraint: string) =>
+  ({
+    insert: () => ({
+      values: () => ({
+        returning: () =>
+          Promise.reject(
+            new Error('Drizzle query failed', {
+              cause: Object.assign(new Error('duplicate key'), {
+                code: '23505',
+                constraint,
+              }),
+            }),
+          ),
+      }),
+    }),
+  }) as unknown as Parameters<typeof createCustomerRecord>[0];
+
 test('maps complete persisted Customer business fields to flat date-only DTO values', async () => {
   const result = await Effect.runPromise(
     findCustomerRecord(
       transactionReturning({
         ...baseRow,
-        dic: 'CZ00123456',
-        dissolvedOn: '2026-08-17',
-        establishedOn: '2020-01-02',
-        ico: '00123456',
-        legalFormCode: '112',
+        ...completeBusinessFields,
       }),
       baseRow.tenantId,
       baseRow.customerId,
@@ -58,6 +83,127 @@ test('maps complete persisted Customer business fields to flat date-only DTO val
       updatedAt: '2026-08-15T11:30:00.000Z',
     },
   });
+});
+
+test('persists every Customer business field on create and edit', async () => {
+  let inserted: Record<string, unknown> | undefined;
+  const createTransaction = {
+    insert: () => ({
+      values: (value: Record<string, unknown>) => {
+        inserted = value;
+        return {
+          returning: () =>
+            Promise.resolve([{ ...baseRow, ...completeBusinessFields, name: 'Created' }]),
+        };
+      },
+    }),
+  } as unknown as Parameters<typeof createCustomerRecord>[0];
+  const created = await Effect.runPromise(
+    createCustomerRecord(createTransaction, baseRow.tenantId, {
+      ...completeBusinessFields,
+      name: 'Created',
+    }),
+  );
+  assert.deepEqual(inserted, {
+    ...completeBusinessFields,
+    name: 'Created',
+    tenantId: baseRow.tenantId,
+  });
+  assert.deepEqual(
+    {
+      dic: created.dic,
+      dissolvedOn: created.dissolvedOn,
+      establishedOn: created.establishedOn,
+      ico: created.ico,
+      legalFormCode: created.legalFormCode,
+      name: created.name,
+    },
+    { ...completeBusinessFields, name: 'Created' },
+  );
+
+  let updated: Record<string, unknown> | undefined;
+  const editTransaction = {
+    update: () => ({
+      set: (value: Record<string, unknown>) => {
+        updated = value;
+        return {
+          where: () => ({
+            returning: () =>
+              Promise.resolve([
+                {
+                  ...baseRow,
+                  dic: null,
+                  dissolvedOn: null,
+                  establishedOn: null,
+                  ico: null,
+                  legalFormCode: null,
+                  name: 'Cleared',
+                  updatedAt: value['updatedAt'],
+                },
+              ]),
+          }),
+        };
+      },
+    }),
+  } as unknown as Parameters<typeof editCustomerRecord>[0];
+  const edited = await Effect.runPromise(
+    editCustomerRecord(editTransaction, baseRow.tenantId, {
+      customerId: baseRow.customerId,
+      dic: null,
+      dissolvedOn: null,
+      establishedOn: null,
+      ico: null,
+      legalFormCode: null,
+      name: 'Cleared',
+    }),
+  );
+  assert.deepEqual(
+    {
+      dic: updated?.['dic'],
+      dissolvedOn: updated?.['dissolvedOn'],
+      establishedOn: updated?.['establishedOn'],
+      ico: updated?.['ico'],
+      legalFormCode: updated?.['legalFormCode'],
+      name: updated?.['name'],
+    },
+    {
+      dic: null,
+      dissolvedOn: null,
+      establishedOn: null,
+      ico: null,
+      legalFormCode: null,
+      name: 'Cleared',
+    },
+  );
+  assert.equal(edited._tag, 'found');
+  assert.equal(edited._tag === 'found' ? edited.value.ico : undefined, null);
+});
+
+test('maps only the named tenant/IČO uniqueness constraint to the typed conflict', async () => {
+  const payload = { ...completeBusinessFields, name: 'Duplicate' };
+  const conflict = await Effect.runPromise(
+    Effect.flip(
+      createCustomerRecord(
+        rejectingTransaction('crm_customers_tenant_ico_uk'),
+        baseRow.tenantId,
+        payload,
+      ),
+    ),
+  );
+  assert.equal(conflict._tag, 'CrmCustomerIcoConflict');
+  assert.equal(JSON.stringify(conflict).includes('crm_customers_tenant_ico_uk'), false);
+  assert.equal(JSON.stringify(conflict).includes(baseRow.tenantId), false);
+
+  const unrelated = await Effect.runPromise(
+    Effect.flip(
+      createCustomerRecord(
+        rejectingTransaction('another_unique_constraint'),
+        baseRow.tenantId,
+        payload,
+      ),
+    ),
+  );
+  assert.equal(unrelated._tag, 'CrmPersistenceUnavailable');
 });
 
 test('maps legacy Customer rows to explicit null business fields', async () => {

@@ -3,9 +3,10 @@
 // @ontos-action-slug create-customer
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import {
   CreateCustomerPayloadSchema,
+  CrmCustomerIcoConflict,
   CrmPersistenceUnavailable,
   CustomerSchema,
 } from '../../shared/apis/customer-detail.ts';
@@ -19,9 +20,15 @@ export const CreateCustomerPayload = CreateCustomerPayloadSchema;
 export type CreateCustomerPayload = Payload;
 export const CreateCustomerResult = CustomerSchema;
 export type CreateCustomerResult = Customer;
+export const CreateCustomerError = Schema.Union([
+  CrmCustomerIcoConflict,
+  CrmPersistenceUnavailable,
+]);
 
 interface Services {
-  readonly create: (payload: Payload) => Effect.Effect<Customer, CrmPersistenceUnavailable>;
+  readonly create: (
+    payload: Payload,
+  ) => Effect.Effect<Customer, CrmCustomerIcoConflict | CrmPersistenceUnavailable>;
 }
 
 const handleCreateCustomer = (
@@ -37,7 +44,7 @@ export const createCustomerAction = defineAction(
     },
     actionKey: 'crm.core.create-customer',
     auditProfile: 'standard',
-    domainErrorSchema: CrmPersistenceUnavailable,
+    domainErrorSchema: CreateCustomerError,
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',

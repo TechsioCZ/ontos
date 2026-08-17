@@ -148,7 +148,7 @@ interface MutationFeedback {
 
 interface LogicalMutationAttempt {
   readonly idempotencyKey: string;
-  readonly name: string;
+  readonly payload: CustomerPayloadValues;
   readonly uncertain: boolean;
 }
 
@@ -178,6 +178,14 @@ const customerPayloadValues = (values: CustomerFormValues): CustomerPayloadValue
   legalFormCode: values.legalFormCode.length === 0 ? null : values.legalFormCode,
   name: values.name,
 });
+
+const sameCustomerPayload = (left: CustomerPayloadValues, right: CustomerPayloadValues) =>
+  left.dic === right.dic &&
+  left.dissolvedOn === right.dissolvedOn &&
+  left.establishedOn === right.establishedOn &&
+  left.ico === right.ico &&
+  left.legalFormCode === right.legalFormCode &&
+  left.name === right.name;
 
 const createRequestId = () =>
   Array.from({ length: 4 }, () =>
@@ -272,19 +280,16 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
   const createMutation = useMutation<
     CreatedCustomer,
     CreateCustomerClientError,
-    { readonly idempotencyKey: string; readonly name: string }
+    { readonly idempotencyKey: string; readonly payload: CustomerPayloadValues }
   >({
-    mutationFn: ({ idempotencyKey, name }) =>
+    mutationFn: ({ idempotencyKey, payload }) =>
       runEffectRequest(
-        createCustomer(
-          { name },
-          {
-            baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
-            correlationId: createRequestId(),
-            idempotencyKey,
-            locale: language,
-          },
-        ),
+        createCustomer(payload, {
+          baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
+          correlationId: createRequestId(),
+          idempotencyKey,
+          locale: language,
+        }),
       ),
     retry: false,
   });
@@ -300,14 +305,14 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
     const values = customerPayloadValues(submittedValues);
     const previousAttempt = logicalAttemptRef.current;
     const idempotencyKey =
-      previousAttempt?.uncertain === true && previousAttempt.name === values.name
+      previousAttempt?.uncertain === true && sameCustomerPayload(previousAttempt.payload, values)
         ? previousAttempt.idempotencyKey
         : createRequestId();
-    logicalAttemptRef.current = { idempotencyKey, name: values.name, uncertain: false };
+    logicalAttemptRef.current = { idempotencyKey, payload: values, uncertain: false };
     setFeedback(null);
 
     // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning form callbacks stay non-async under strict Effect diagnostics.
-    return createMutation.mutateAsync({ idempotencyKey, name: values.name }).then(
+    return createMutation.mutateAsync({ idempotencyKey, payload: values }).then(
       () => {
         logicalAttemptRef.current = null;
         setFeedback({
@@ -320,7 +325,7 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
         const state = classifyCreateCustomerError(error);
         logicalAttemptRef.current =
           state.state === 'unavailable'
-            ? { idempotencyKey, name: values.name, uncertain: true }
+            ? { idempotencyKey, payload: values, uncertain: true }
             : null;
         setFeedback(feedbackForCreateError(state, copy));
       },

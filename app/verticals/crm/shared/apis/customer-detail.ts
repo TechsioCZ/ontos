@@ -49,12 +49,31 @@ export const CustomerSchema = Schema.Struct({
 );
 export type Customer = typeof CustomerSchema.Type;
 
-export const CreateCustomerPayloadSchema = Schema.Struct({ name: CrmNameSchema });
+const customerBusinessFields = {
+  dic: Schema.NullOr(CrmDicSchema),
+  dissolvedOn: Schema.NullOr(CrmDateOnlySchema),
+  establishedOn: Schema.NullOr(CrmDateOnlySchema),
+  ico: Schema.NullOr(CrmIcoSchema),
+  legalFormCode: Schema.NullOr(CrmLegalFormCodeSchema),
+  name: CrmNameSchema,
+} as const;
+const validCustomerLifecycleDates = Schema.makeFilter(
+  (customer: { readonly dissolvedOn: string | null; readonly establishedOn: string | null }) =>
+    customer.dissolvedOn === null ||
+    customer.establishedOn === null ||
+    customer.dissolvedOn >= customer.establishedOn
+      ? undefined
+      : [{ issue: 'dissolvedOn must not precede establishedOn', path: ['dissolvedOn'] }],
+);
+
+export const CreateCustomerPayloadSchema = Schema.Struct(customerBusinessFields).check(
+  validCustomerLifecycleDates,
+);
 export type CreateCustomerPayload = typeof CreateCustomerPayloadSchema.Type;
 export const EditCustomerPayloadSchema = Schema.Struct({
   customerId: CrmUuidSchema,
-  name: CrmNameSchema,
-});
+  ...customerBusinessFields,
+}).check(validCustomerLifecycleDates);
 export type EditCustomerPayload = typeof EditCustomerPayloadSchema.Type;
 export const CustomerLifecyclePayloadSchema = Schema.Struct({ customerId: CrmUuidSchema });
 export type CustomerLifecyclePayload = typeof CustomerLifecyclePayloadSchema.Type;
@@ -75,6 +94,13 @@ export class CrmLifecycleConflict extends Schema.TaggedErrorClass<CrmLifecycleCo
     requestedState: Schema.Literals(['active', 'archived']),
     resourceId: CrmUuidSchema,
     resourceType: Schema.Literals(['customer', 'contact']),
+  },
+) {}
+export class CrmCustomerIcoConflict extends Schema.TaggedErrorClass<CrmCustomerIcoConflict>()(
+  'CrmCustomerIcoConflict',
+  {
+    code: Schema.Literal('crm_customer_ico_conflict'),
+    reason: Schema.String,
   },
 ) {}
 export class CrmPersistenceUnavailable extends Schema.TaggedErrorClass<CrmPersistenceUnavailable>()(

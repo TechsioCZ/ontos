@@ -8,12 +8,16 @@ import type {
   CreateContactPayload,
   EditContactPayload,
 } from '../../shared/apis/contact-detail.ts';
+import {
+  CrmCustomerIcoConflict as CrmCustomerIcoConflictError,
+  CrmPersistenceUnavailable,
+} from '../../shared/apis/customer-detail.ts';
 import type {
   CreateCustomerPayload,
+  CrmCustomerIcoConflict,
   Customer,
   EditCustomerPayload,
 } from '../../shared/apis/customer-detail.ts';
-import { CrmPersistenceUnavailable } from '../../shared/apis/customer-detail.ts';
 import type { ArchiveFilter } from '../../shared/apis/customer-list.ts';
 import { contacts, customers } from '../db/schema.ts';
 import type { ContactRecord, CustomerRecord } from '../db/schema.ts';
@@ -42,6 +46,37 @@ const unavailable = () =>
 
 const attempt = <Value>(operation: () => PromiseLike<Value>) =>
   Effect.tryPromise({ catch: unavailable, try: operation });
+
+const isCustomerIcoUniquenessFailure = (error: unknown): boolean => {
+  let current = error;
+  const visited = new Set<object>();
+  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+    visited.add(current);
+    if (
+      'code' in current &&
+      current.code === '23505' &&
+      'constraint' in current &&
+      current.constraint === 'crm_customers_tenant_ico_uk'
+    ) {
+      return true;
+    }
+    current = 'cause' in current ? current.cause : undefined;
+  }
+  return false;
+};
+
+const customerMutationFailure = (
+  error: unknown,
+): CrmCustomerIcoConflict | CrmPersistenceUnavailable =>
+  isCustomerIcoUniquenessFailure(error)
+    ? new CrmCustomerIcoConflictError({
+        code: 'crm_customer_ico_conflict',
+        reason: 'A Customer with this IČO already exists',
+      })
+    : unavailable();
+
+const customerMutationAttempt = <Value>(operation: () => PromiseLike<Value>) =>
+  Effect.tryPromise({ catch: customerMutationFailure, try: operation });
 
 const customerDto = (row: CustomerRecord): Customer => ({
   archivedAt: row.archivedAt?.toISOString() ?? null,
@@ -75,8 +110,19 @@ export const createCustomerRecord = (
   tenantId: string,
   payload: CreateCustomerPayload,
 ) =>
-  attempt(() =>
-    transaction.insert(customers).values({ name: payload.name, tenantId }).returning(),
+  customerMutationAttempt(() =>
+    transaction
+      .insert(customers)
+      .values({
+        dic: payload.dic,
+        dissolvedOn: payload.dissolvedOn,
+        establishedOn: payload.establishedOn,
+        ico: payload.ico,
+        legalFormCode: payload.legalFormCode,
+        name: payload.name,
+        tenantId,
+      })
+      .returning(),
   ).pipe(
     Effect.flatMap(([row]) =>
       row === undefined ? Effect.fail(unavailable()) : Effect.succeed(customerDto(row)),
@@ -87,13 +133,21 @@ export const editCustomerRecord = (
   transaction: CrmScopedTransaction,
   tenantId: string,
   payload: EditCustomerPayload,
-): Effect.Effect<LookupResult<Customer>, CrmPersistenceUnavailable> =>
+): Effect.Effect<LookupResult<Customer>, CrmCustomerIcoConflict | CrmPersistenceUnavailable> =>
   Effect.gen(function* editCustomer() {
     const now = yield* DateTime.nowAsDate;
-    const [row] = yield* attempt(() =>
+    const [row] = yield* customerMutationAttempt(() =>
       transaction
         .update(customers)
-        .set({ name: payload.name, updatedAt: now })
+        .set({
+          dic: payload.dic,
+          dissolvedOn: payload.dissolvedOn,
+          establishedOn: payload.establishedOn,
+          ico: payload.ico,
+          legalFormCode: payload.legalFormCode,
+          name: payload.name,
+          updatedAt: now,
+        })
         .where(and(eq(customers.tenantId, tenantId), eq(customers.customerId, payload.customerId)))
         .returning(),
     );

@@ -24,9 +24,12 @@ import {
   CreateCustomerPayloadSchema,
   CrmDateOnlySchema,
   CrmDicSchema,
+  CrmCustomerIcoConflict,
   CrmIcoSchema,
   CrmLegalFormCodeSchema,
+  CrmPersistenceUnavailable,
   CustomerSchema,
+  EditCustomerPayloadSchema,
 } from '../../shared/apis/customer-detail.ts';
 import { ContactListRequestSchema } from '../../shared/apis/contact-list.ts';
 
@@ -51,6 +54,14 @@ const expectedActionKeys = [
   'crm.core.unarchive-contact',
   'crm.core.unarchive-customer',
 ] as const;
+
+const nullCustomerBusinessFields = {
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
+} as const;
 
 test('registers the exact generated CRM write contracts', async () => {
   assert.deepEqual(
@@ -95,9 +106,13 @@ test('registers the exact generated CRM write contracts', async () => {
 });
 
 test('normalizes business strings and rejects invalid or mutable-parent payloads', () => {
-  assert.deepEqual(Schema.decodeUnknownSync(CreateCustomerPayloadSchema)({ name: '  Acme  ' }), {
-    name: 'Acme',
-  });
+  assert.deepEqual(
+    Schema.decodeUnknownSync(CreateCustomerPayloadSchema)({
+      ...nullCustomerBusinessFields,
+      name: '  Acme  ',
+    }),
+    { ...nullCustomerBusinessFields, name: 'Acme' },
+  );
   assert.deepEqual(
     Schema.decodeUnknownSync(CreateContactPayloadSchema)({
       customerId: 'c2000000-0000-4000-8000-000000000001',
@@ -161,7 +176,86 @@ test('keeps result DTOs compatible with rows allowed by the existing persistence
   });
   assert.equal(legacyContact.email, 'legacy-email-without-at-sign');
   assert.equal(legacyContact.phone, legacyText);
-  assert.throws(() => Schema.decodeUnknownSync(CreateCustomerPayloadSchema)({ name: legacyText }));
+  assert.throws(() =>
+    Schema.decodeUnknownSync(CreateCustomerPayloadSchema)({
+      ...nullCustomerBusinessFields,
+      name: legacyText,
+    }),
+  );
+});
+
+test('governs complete Customer mutation payloads and keeps generated Action identities stable', () => {
+  const complete = {
+    dic: '  CZ00123456  ',
+    dissolvedOn: '2026-08-17',
+    establishedOn: '2020-01-02',
+    ico: '00123456',
+    legalFormCode: '112',
+    name: '  Acme  ',
+  } as const;
+  assert.deepEqual(Schema.decodeUnknownSync(CreateCustomerPayloadSchema)(complete), {
+    ...complete,
+    dic: 'CZ00123456',
+    name: 'Acme',
+  });
+  assert.deepEqual(
+    Schema.decodeUnknownSync(EditCustomerPayloadSchema)({
+      customerId: 'c2000000-0000-4000-8000-000000000001',
+      ...complete,
+    }),
+    {
+      customerId: 'c2000000-0000-4000-8000-000000000001',
+      ...complete,
+      dic: 'CZ00123456',
+      name: 'Acme',
+    },
+  );
+  assert.throws(() =>
+    Schema.decodeUnknownSync(CreateCustomerPayloadSchema)({
+      ...complete,
+      dissolvedOn: '2019-12-31',
+    }),
+  );
+  assert.throws(() =>
+    Schema.decodeUnknownSync(CreateCustomerPayloadSchema, { onExcessProperty: 'error' })({
+      ...complete,
+      aresSource: 'lookup',
+    }),
+  );
+  assert.throws(() =>
+    Schema.decodeUnknownSync(archiveCustomerAction.descriptor.payloadSchema, {
+      onExcessProperty: 'error',
+    })({
+      customerId: 'c2000000-0000-4000-8000-000000000001',
+      ico: '00123456',
+    }),
+  );
+
+  assert.equal(createCustomerAction.descriptor.actionKey, 'crm.core.create-customer');
+  assert.equal(editCustomerAction.descriptor.actionKey, 'crm.core.edit-customer');
+  assert.equal(createCustomerAction.descriptor.payloadSchema, CreateCustomerPayloadSchema);
+  assert.equal(editCustomerAction.descriptor.payloadSchema, EditCustomerPayloadSchema);
+  assert.equal(createCustomerAction.descriptor.resultSchema, CustomerSchema);
+  assert.equal(editCustomerAction.descriptor.resultSchema, CustomerSchema);
+  assert.equal(archiveCustomerAction.descriptor.resultSchema, CustomerSchema);
+  assert.equal(unarchiveCustomerAction.descriptor.resultSchema, CustomerSchema);
+
+  const createError = Schema.decodeUnknownSync(createCustomerAction.descriptor.domainErrorSchema)(
+    new CrmCustomerIcoConflict({
+      code: 'crm_customer_ico_conflict',
+      reason: 'A Customer with this IČO already exists',
+    }),
+  );
+  assert.equal(createError._tag, 'CrmCustomerIcoConflict');
+  const persistenceError = Schema.decodeUnknownSync(
+    editCustomerAction.descriptor.domainErrorSchema,
+  )(
+    new CrmPersistenceUnavailable({
+      code: 'crm_persistence_unavailable',
+      reason: 'CRM persistence is temporarily unavailable',
+    }),
+  );
+  assert.equal(persistenceError._tag, 'CrmPersistenceUnavailable');
 });
 
 test('defines exact flat Customer business-field result schemas', () => {

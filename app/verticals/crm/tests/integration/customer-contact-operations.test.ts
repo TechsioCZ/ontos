@@ -33,6 +33,7 @@ import { contactListRead } from '../../src/api/contact-list.read.ts';
 import { customerDetailRead } from '../../src/api/customer-detail.read.ts';
 import { customerListRead } from '../../src/api/customer-list.read.ts';
 import { CrmPersistenceUnavailable } from '../../shared/apis/customer-detail.ts';
+import type { CreateCustomerPayload } from '../../shared/apis/customer-detail.ts';
 import { customers } from '../../src/db/schema.ts';
 
 const tenantId = randomUUID();
@@ -58,6 +59,27 @@ const transport = (idempotencyKey?: string) => ({
   correlationId: randomUUID(),
   ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
 });
+
+const customerPayload = (
+  name: string,
+  fields: Partial<Omit<CreateCustomerPayload, 'name'>> = {},
+): CreateCustomerPayload => ({
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
+  name,
+  ...fields,
+});
+
+const completeCustomerFields = {
+  dic: 'CZ00123456',
+  dissolvedOn: '2026-08-17',
+  establishedOn: '2020-01-02',
+  ico: '00123456',
+  legalFormCode: '112',
+} as const;
 
 const contextAccess = {
   legalEntities: () => Effect.succeed([]),
@@ -193,7 +215,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
               moduleStateGate,
               resolveServiceFactory: (() => (transaction: any, scope: any) =>
                 Effect.succeed({
-                  create: (payload: { readonly name: string }) =>
+                  create: (payload: CreateCustomerPayload) =>
                     Effect.tryPromise({
                       catch: () =>
                         new CrmPersistenceUnavailable({
@@ -203,7 +225,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
                       try: () =>
                         transaction
                           .insert(customers)
-                          .values({ name: payload.name, tenantId: scope.tenantId })
+                          .values({ ...payload, tenantId: scope.tenantId })
                           .returning(),
                     }).pipe(
                       Effect.andThen(
@@ -287,15 +309,31 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           });
 
           const customer = yield* actions.runAction({
-            payload: { name: '  Acme  ' },
+            payload: customerPayload('  Acme  ', {
+              ...completeCustomerFields,
+              dic: '  CZ00123456  ',
+            }),
             principal,
             registration: createCustomerAction,
             transport: transport('create-customer'),
           });
-          assert.equal(customer.name, 'Acme');
+          assert.deepEqual(
+            {
+              dic: customer.dic,
+              dissolvedOn: customer.dissolvedOn,
+              establishedOn: customer.establishedOn,
+              ico: customer.ico,
+              legalFormCode: customer.legalFormCode,
+              name: customer.name,
+            },
+            { ...completeCustomerFields, name: 'Acme' },
+          );
           const replay = yield* Effect.flip(
             actions.runAction({
-              payload: { name: '  Acme  ' },
+              payload: customerPayload('  Acme  ', {
+                ...completeCustomerFields,
+                dic: '  CZ00123456  ',
+              }),
               principal,
               registration: createCustomerAction,
               transport: transport('create-customer'),
@@ -304,13 +342,64 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           assert.equal(replay._tag, 'ActionAlreadyCommitted');
           const conflictingReplay = yield* Effect.flip(
             actions.runAction({
-              payload: { name: 'Different request' },
+              payload: customerPayload('  Acme  ', {
+                ...completeCustomerFields,
+                dic: '  CZ00123456  ',
+                dissolvedOn: '2026-08-18',
+              }),
               principal,
               registration: createCustomerAction,
               transport: transport('create-customer'),
             }),
           );
           assert.equal(conflictingReplay._tag, 'ActionRequestHashConflict');
+
+          const customersBeforeInvalidPayload = yield* Effect.promise(() =>
+            adminPool.query<{ count: string }>(
+              'select count(*) from crm.customers where tenant_id = $1',
+              [tenantId],
+            ),
+          );
+          const invalidPayload = yield* Effect.flip(
+            actions.runAction({
+              payload: customerPayload('Invalid lifecycle dates', {
+                dissolvedOn: '2019-12-31',
+                establishedOn: '2020-01-02',
+              }),
+              principal,
+              registration: createCustomerAction,
+              transport: transport('create-customer-invalid-lifecycle-dates'),
+            }),
+          );
+          assert.equal(invalidPayload._tag, 'ActionPayloadValidationError');
+          const customersAfterInvalidPayload = yield* Effect.promise(() =>
+            adminPool.query<{ count: string }>(
+              'select count(*) from crm.customers where tenant_id = $1',
+              [tenantId],
+            ),
+          );
+          assert.equal(
+            customersAfterInvalidPayload.rows[0]?.count,
+            customersBeforeInvalidPayload.rows[0]?.count,
+          );
+
+          const duplicateCreate = yield* Effect.flip(
+            actions.runAction({
+              payload: customerPayload('Duplicate active IČO', completeCustomerFields),
+              principal,
+              registration: createCustomerAction,
+              transport: transport('create-customer-duplicate-active-ico'),
+            }),
+          );
+          assert.equal(duplicateCreate._tag, 'CrmCustomerIcoConflict');
+
+          const otherTenantCustomer = yield* actions.runAction({
+            payload: customerPayload('Same IČO in another tenant', completeCustomerFields),
+            principal: otherPrincipal,
+            registration: createCustomerAction,
+            transport: transport('create-customer-other-tenant-same-ico'),
+          });
+          assert.equal(otherTenantCustomer.ico, completeCustomerFields.ico);
 
           const customersBeforeRollback = yield* Effect.promise(() =>
             adminPool.query<{ count: string }>(
@@ -320,7 +409,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           );
           const rollbackFailure = yield* Effect.flip(
             rollbackActions.runAction({
-              payload: { name: 'Must roll back' },
+              payload: customerPayload('Must roll back'),
               principal,
               registration: createCustomerAction,
               transport: transport('create-customer-rollback-after-write'),
@@ -338,13 +427,67 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             customersBeforeRollback.rows[0]?.count,
           );
 
-          const editedCustomer = yield* actions.runAction({
-            payload: { customerId: customer.customerId, name: 'Acme Corporation' },
+          const completelyEditedCustomer = yield* actions.runAction({
+            payload: {
+              customerId: customer.customerId,
+              ...customerPayload('Acme Corporation', {
+                ...completeCustomerFields,
+                dic: 'CZ00987654',
+                dissolvedOn: '2027-08-17',
+              }),
+            },
             principal,
             registration: editCustomerAction,
             transport: transport('edit-customer'),
           });
-          assert.equal(editedCustomer.name, 'Acme Corporation');
+          assert.equal(completelyEditedCustomer.dic, 'CZ00987654');
+          assert.equal(completelyEditedCustomer.dissolvedOn, '2027-08-17');
+
+          const clearedCustomer = yield* actions.runAction({
+            payload: {
+              customerId: customer.customerId,
+              ...customerPayload('Acme Corporation'),
+            },
+            principal,
+            registration: editCustomerAction,
+            transport: transport('edit-customer-clear-business-fields'),
+          });
+          assert.deepEqual(
+            {
+              dic: clearedCustomer.dic,
+              dissolvedOn: clearedCustomer.dissolvedOn,
+              establishedOn: clearedCustomer.establishedOn,
+              ico: clearedCustomer.ico,
+              legalFormCode: clearedCustomer.legalFormCode,
+            },
+            {
+              dic: null,
+              dissolvedOn: null,
+              establishedOn: null,
+              ico: null,
+              legalFormCode: null,
+            },
+          );
+
+          const editedCustomer = yield* actions.runAction({
+            payload: {
+              customerId: customer.customerId,
+              ...customerPayload('Acme Corporation', completeCustomerFields),
+            },
+            principal,
+            registration: editCustomerAction,
+            transport: transport('edit-customer-restore-business-fields'),
+          });
+          assert.deepEqual(
+            {
+              dic: editedCustomer.dic,
+              dissolvedOn: editedCustomer.dissolvedOn,
+              establishedOn: editedCustomer.establishedOn,
+              ico: editedCustomer.ico,
+              legalFormCode: editedCustomer.legalFormCode,
+            },
+            completeCustomerFields,
+          );
 
           const contact = yield* actions.runAction({
             payload: {
@@ -408,7 +551,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           for (const index of [1, 2, 3]) {
             sameNameCustomers.push(
               yield* actions.runAction({
-                payload: { name: 'Same name' },
+                payload: customerPayload('Same name'),
                 principal,
                 registration: createCustomerAction,
                 transport: transport(`create-pagination-customer-${index}`),
@@ -417,18 +560,6 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           }
           const [crossCustomer] = sameNameCustomers;
           assert.ok(crossCustomer);
-          yield* Effect.promise(() =>
-            adminPool.query(
-              `update crm.customers
-                  set ico = '00123456',
-                      dic = 'CZ00123456',
-                      legal_form_code = '112',
-                      established_on = '2020-01-02',
-                      dissolved_on = '2026-08-17'
-                where tenant_id = $1 and customer_id = $2`,
-              [tenantId, customer.customerId],
-            ),
-          );
           const crossCustomerContact = yield* actions.runAction({
             payload: {
               customerId: crossCustomer.customerId,
@@ -476,14 +607,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             [...firstPage.items, ...secondPage.items].find(
               (item) => item.customerId === customer.customerId,
             ),
-            {
-              ...editedCustomer,
-              dic: 'CZ00123456',
-              dissolvedOn: '2026-08-17',
-              establishedOn: '2020-01-02',
-              ico: '00123456',
-              legalFormCode: '112',
-            },
+            editedCustomer,
           );
 
           const detail = yield* verifyReadEvidence(
@@ -498,14 +622,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
               resultCount: () => 1,
             },
           );
-          assert.deepEqual(detail, {
-            ...editedCustomer,
-            dic: 'CZ00123456',
-            dissolvedOn: '2026-08-17',
-            establishedOn: '2020-01-02',
-            ico: '00123456',
-            legalFormCode: '112',
-          });
+          assert.deepEqual(detail, editedCustomer);
           const contactPage = yield* verifyReadEvidence(
             reads.runRead({
               input: { customerId: customer.customerId, limit: 10, offset: 0 },
@@ -549,12 +666,32 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             registration: createContactAction,
             transport: transport('create-non-cascade-contact'),
           });
-          yield* actions.runAction({
+          const archivedCustomer = yield* actions.runAction({
             payload: { customerId: customer.customerId },
             principal,
             registration: archiveCustomerAction,
             transport: transport('archive-customer'),
           });
+          assert.ok(archivedCustomer.archivedAt);
+          assert.deepEqual(
+            {
+              dic: archivedCustomer.dic,
+              dissolvedOn: archivedCustomer.dissolvedOn,
+              establishedOn: archivedCustomer.establishedOn,
+              ico: archivedCustomer.ico,
+              legalFormCode: archivedCustomer.legalFormCode,
+            },
+            completeCustomerFields,
+          );
+          const duplicateArchivedCreate = yield* Effect.flip(
+            actions.runAction({
+              payload: customerPayload('Duplicate archived IČO', completeCustomerFields),
+              principal,
+              registration: createCustomerAction,
+              transport: transport('create-customer-duplicate-archived-ico'),
+            }),
+          );
+          assert.equal(duplicateArchivedCreate._tag, 'CrmCustomerIcoConflict');
           const repeatedCustomerArchive = yield* Effect.flip(
             actions.runAction({
               payload: { customerId: customer.customerId },
@@ -623,6 +760,34 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             [customer.customerId],
           );
 
+          const duplicateEditTarget = yield* actions.runAction({
+            payload: customerPayload('Duplicate edit target'),
+            principal,
+            registration: createCustomerAction,
+            transport: transport('create-customer-duplicate-edit-target'),
+          });
+          const duplicateEdit = yield* Effect.flip(
+            actions.runAction({
+              payload: {
+                customerId: duplicateEditTarget.customerId,
+                ...customerPayload('Duplicate edit target', completeCustomerFields),
+              },
+              principal,
+              registration: editCustomerAction,
+              transport: transport('edit-customer-duplicate-ico'),
+            }),
+          );
+          assert.equal(duplicateEdit._tag, 'CrmCustomerIcoConflict');
+          const duplicateTargetAfterConflict = yield* Effect.promise(() =>
+            adminPool.query<{ ico: string | null; name: string }>(
+              'select ico, name from crm.customers where tenant_id = $1 and customer_id = $2',
+              [tenantId, duplicateEditTarget.customerId],
+            ),
+          );
+          assert.deepEqual(duplicateTargetAfterConflict.rows, [
+            { ico: null, name: 'Duplicate edit target' },
+          ]);
+
           const restoredContact = yield* actions.runAction({
             payload: { contactId: contact.contactId },
             principal,
@@ -637,6 +802,16 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             transport: transport('unarchive-customer'),
           });
           assert.equal(restoredCustomer.archivedAt, null);
+          assert.deepEqual(
+            {
+              dic: restoredCustomer.dic,
+              dissolvedOn: restoredCustomer.dissolvedOn,
+              establishedOn: restoredCustomer.establishedOn,
+              ico: restoredCustomer.ico,
+              legalFormCode: restoredCustomer.legalFormCode,
+            },
+            completeCustomerFields,
+          );
 
           const crossCustomerContacts = yield* verifyReadEvidence(
             reads.runRead({
@@ -692,7 +867,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
               tenantId: otherTenantId,
             },
           );
-          assert.deepEqual(foreignList.items, []);
+          assert.deepEqual(foreignList.items, [otherTenantCustomer]);
 
           for (const state of ['read_only', 'deprecated'] as const) {
             yield* Effect.promise(() =>
@@ -716,7 +891,10 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             assert.equal(stateRead.customerId, customer.customerId);
             const deniedWrite = yield* Effect.flip(
               actions.runAction({
-                payload: { customerId: customer.customerId, name: `Denied in ${state}` },
+                payload: {
+                  customerId: customer.customerId,
+                  ...customerPayload(`Denied in ${state}`, completeCustomerFields),
+                },
                 principal,
                 registration: editCustomerAction,
                 transport: transport(`state-denied-${state}`),
@@ -758,7 +936,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
 
           const missingKey = yield* Effect.flip(
             actions.runAction({
-              payload: { name: 'Missing key' },
+              payload: customerPayload('Missing key'),
               principal,
               registration: createCustomerAction,
               transport: transport(),
@@ -786,7 +964,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             ),
           );
           const actionEvidence = evidence.filter((row) => row.actionInvocationId !== null);
-          assert.equal(actionEvidence.length, 9);
+          assert.equal(actionEvidence.length, 11);
           assert.deepEqual(
             actionEvidence
               .filter((row) => row.queryHash?.includes('lifecycle-state'))
@@ -810,14 +988,14 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
               .where(eq(dataAccessEvents.tenantId, otherTenantId)),
           );
           assert.equal(otherEvidence.length, 1);
-          assert.equal(otherEvidence[0]?.resultCount, 0);
+          assert.equal(otherEvidence[0]?.resultCount, 1);
           const successfulAudit = yield* Effect.promise(() =>
             database.executor.select().from(auditEvents).where(eq(auditEvents.tenantId, tenantId)),
           );
           const successfulActionAudit = successfulAudit.filter(
             (row) => row.outcome === 'succeeded',
           );
-          assert.equal(successfulActionAudit.length, 13);
+          assert.equal(successfulActionAudit.length, 16);
           assert.ok(
             successfulActionAudit.every(
               (row) =>
@@ -835,7 +1013,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
       'select count(*) from crm.customers where tenant_id = $1',
       [tenantId],
     );
-    assert.equal(customerCount.rows[0]?.count, '4');
+    assert.equal(customerCount.rows[0]?.count, '5');
   } finally {
     for (const cleanupTenantId of [tenantId, otherTenantId]) {
       await adminPool.query('delete from crm.contacts where tenant_id = $1', [cleanupTenantId]);
