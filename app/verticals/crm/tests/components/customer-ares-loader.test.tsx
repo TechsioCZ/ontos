@@ -25,6 +25,22 @@ const loaderProps = (
 
 const customerFormCopy = {
   cancel: 'Cancel',
+  dicHint: 'Use at most 32 characters.',
+  dicInvalid: 'Enter a DIČ with at most 32 characters.',
+  dicLabel: 'DIČ',
+  dissolvedBeforeEstablished: 'Dissolution cannot be before establishment.',
+  dissolvedOnHint: 'Leave empty while the Customer exists.',
+  dissolvedOnLabel: 'Dissolution date',
+  establishedOnHint: 'Use the official establishment date.',
+  establishedOnLabel: 'Establishment date',
+  icoHint: 'Enter exactly eight digits.',
+  icoInvalid: 'Enter an eight-digit IČO.',
+  icoLabel: 'IČO',
+  legalFormCodeHint: 'Enter the three-digit legal-form code.',
+  legalFormCodeInvalid: 'Enter a three-digit legal-form code.',
+  legalFormCodeLabel: 'Legal-form code',
+  nameHint: 'Use the official business name.',
+  nameInvalid: 'Enter a Customer name with at most 200 characters.',
   nameLabel: 'Customer name',
   nameRequired: 'Enter a Customer name.',
   save: 'Create Customer',
@@ -210,14 +226,23 @@ test('stays in a sibling form and never submits Customer creation', async () => 
       <CustomerAresLoader {...loaderProps({ onLookup })} />
       <CustomerForm
         copy={customerFormCopy}
-        initialValues={{ name: 'Acme Property Group' }}
         onCancel={rstest.fn()}
         onSubmit={onCreateCustomer}
+        onValuesChange={rstest.fn()}
+        values={{
+          dic: '',
+          dissolvedOn: '',
+          establishedOn: '',
+          ico: '',
+          legalFormCode: '',
+          name: 'Acme Property Group',
+        }}
       />
     </div>,
   );
 
-  const ico = screen.getByRole('textbox', { name: /^IČO/u });
+  const aresForm = screen.getByRole('form', { name: copy.formLabel });
+  const ico = within(aresForm).getByRole('textbox', { name: /^IČO/u });
   const customerName = screen.getByRole('textbox', { name: /^Customer name/u });
   expect(container.querySelectorAll('form')).toHaveLength(2);
   expect(ico.closest('form')).not.toBe(customerName.closest('form'));
