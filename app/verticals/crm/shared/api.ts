@@ -14,6 +14,7 @@ import {
   EditContactPayloadSchema,
 } from './apis/contact-detail.ts';
 import { ContactListApi } from './apis/contact-list.ts';
+import { CustomerAresLookupApi } from './apis/customer-ares-lookup.ts';
 import { CustomerDetailApi } from './apis/customer-detail.ts';
 import {
   CreateCustomerPayloadSchema,
@@ -37,6 +38,10 @@ export type {
 } from './apis/customer-detail.ts';
 export type { ContactDetailRequest, ContactDetailResponse } from './apis/contact-detail.ts';
 export type { ContactListRequest, ContactListResponse } from './apis/contact-list.ts';
+export type {
+  CustomerAresLookupRequest,
+  CustomerAresLookupResponse,
+} from './apis/customer-ares-lookup.ts';
 export type { CustomerDetailRequest, CustomerDetailResponse } from './apis/customer-detail.ts';
 export type { CustomerListRequest, CustomerListResponse } from './apis/customer-list.ts';
 
@@ -248,6 +253,7 @@ export const crmApi = HttpApi.make('CrmApi')
   .addHttpApi(crmFoundationApi)
   .addHttpApi(crmCustomerMutationApi)
   .addHttpApi(crmContactMutationApi)
+  .addHttpApi(CustomerAresLookupApi)
   .addHttpApi(CustomerDetailApi)
   .addHttpApi(CustomerListApi)
   .addHttpApi(ContactDetailApi)
@@ -271,6 +277,7 @@ export const crmOperationContexts = {
   getContactList: operation('POST', '/crm/contacts/list'),
   getCustomerDetail: operation('POST', '/crm/customers/detail'),
   getCustomerList: operation('POST', '/crm/customers/list'),
+  lookupCustomerAres: operation('POST', '/crm/customers/ares-lookup'),
   readiness: operation('GET', '/crm/readiness'),
   unarchiveContact: operation('POST', '/crm/contacts/unarchive'),
   unarchiveCustomer: operation('POST', '/crm/customers/unarchive'),

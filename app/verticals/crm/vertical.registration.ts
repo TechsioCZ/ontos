@@ -32,6 +32,7 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
       // <generated-module-registration-apis>
       'contact-detail': () => import('./src/api/contact-detail-client.ts'),
       'contact-list': () => import('./src/api/contact-list-client.ts'),
+      'customer-ares-lookup': () => import('./src/api/customer-ares-lookup-client.ts'),
       'customer-detail': () => import('./src/api/customer-detail-client.ts'),
       'customer-list': () => import('./src/api/customer-list-client.ts'),
       // </generated-module-registration-apis>

@@ -28,6 +28,7 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import type { Schema } from 'effect';
 import { Config } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { crmApi, crmOperationContexts } from '../shared/api.ts';
 import type { CrmProblem, OperationContext } from '../shared/api.ts';
@@ -48,10 +49,13 @@ import { createContactAction } from '../src/actions/create-contact.action.ts';
 import { createCustomerAction } from '../src/actions/create-customer.action.ts';
 import { editContactAction } from '../src/actions/edit-contact.action.ts';
 import { editCustomerAction } from '../src/actions/edit-customer.action.ts';
+import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';
+import type { AresSubjectService } from '../src/integrations/ares/ares-subject.service.ts';
 import { unarchiveContactAction } from '../src/actions/unarchive-contact.action.ts';
 import { unarchiveCustomerAction } from '../src/actions/unarchive-customer.action.ts';
 import { contactDetailReadApiLive } from './contact-detail-read-server.ts';
 import { contactListReadApiLive } from './contact-list-read-server.ts';
+import { customerAresLookupReadApiLive } from './customer-ares-lookup-read-server.ts';
 import { customerDetailReadApiLive } from './customer-detail-read-server.ts';
 import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
@@ -334,17 +338,23 @@ const readRuntimeLive = makeReadRuntimeLive(ContextAccessLive).pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
 );
+const aresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
 const shellOrigin =
   typeof ULTRAMODERN_SHELL_ORIGIN === 'string' ? ULTRAMODERN_SHELL_ORIGIN : 'http://localhost:3020';
 export const makeCrmApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,
+  aresSubjectService: Layer.Layer<AresSubjectService> = aresSubjectServiceLive,
 ): EffectBffDefinition<typeof crmApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof crmApi, EffectRuntimeLayer> => {
   const apiHandlersLive = Layer.mergeAll(
     foundationLive,
     customerMutationsLive.pipe(Layer.provide(actionRuntime)),
     contactMutationsLive.pipe(Layer.provide(actionRuntime)),
+    customerAresLookupReadApiLive.pipe(
+      Layer.provide(readRuntime),
+      Layer.provide(aresSubjectService),
+    ),
     customerDetailReadApiLive.pipe(Layer.provide(readRuntime)),
     customerListReadApiLive.pipe(Layer.provide(readRuntime)),
     contactDetailReadApiLive.pipe(Layer.provide(readRuntime)),

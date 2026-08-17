@@ -26,6 +26,7 @@ const expectedOperations = [
   'getContactList',
   'getCustomerDetail',
   'getCustomerList',
+  'lookupCustomerAres',
   'readiness',
   'unarchiveContact',
   'unarchiveCustomer',

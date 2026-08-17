@@ -16,6 +16,7 @@ import type {
   CreateContactPayload,
   CreateCustomerPayload,
   CrmReadiness,
+  CustomerAresLookupRequest,
   CustomerDetailRequest,
   CustomerLifecyclePayload,
   CustomerListRequest,
@@ -154,6 +155,13 @@ export const getCustomerDetail = (payload: CustomerDetailRequest, options: CrmOp
 export const getCustomerList = (payload: CustomerListRequest, options: CrmOperationOptions) =>
   invoke(options, crmOperationContexts.getCustomerList, (client) =>
     client.customerList.getCustomerList({ payload }),
+  );
+export const lookupCustomerAres = (
+  payload: CustomerAresLookupRequest,
+  options: CrmOperationOptions,
+) =>
+  invoke(options, crmOperationContexts.lookupCustomerAres, (client) =>
+    client.customerAresLookup.lookup({ payload }),
   );
 export const getContact = (payload: ContactDetailRequest, options: CrmOperationOptions) =>
   invoke(options, crmOperationContexts.getContact, (client) =>

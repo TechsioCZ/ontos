@@ -13,6 +13,7 @@ import { ContactListApi } from './shared/apis/contact-list.ts';
 import { createContactAction } from './src/actions/create-contact.action.ts';
 import { createCustomerAction } from './src/actions/create-customer.action.ts';
 import { CrmPage } from './src/routes/[lang]/crm/page.tsx';
+import { CustomerAresLookupApi } from './shared/apis/customer-ares-lookup.ts';
 import { CustomerCreatePage } from './src/routes/[lang]/crm/customers/[id]/new/page.tsx';
 import { CustomerDetailApi } from './shared/apis/customer-detail.ts';
 import { CustomerDetailPage } from './src/routes/[lang]/crm/customers/[id]/page.tsx';
@@ -64,6 +65,7 @@ export const crmManifest = defineOntosModuleManifest({
       // <generated-module-manifest-apis>
       'contact-detail': ContactDetailApi,
       'contact-list': ContactListApi,
+      'customer-ares-lookup': CustomerAresLookupApi,
       'customer-detail': CustomerDetailApi,
       'customer-list': CustomerListApi,
       // </generated-module-manifest-apis>
