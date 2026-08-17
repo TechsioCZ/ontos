@@ -8,7 +8,9 @@ import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { consumeContactEditSuccess, getCrmQueryClient } from '../../src/crm-query-client.ts';
 import {
+  ContactEditPage,
   ContactEditFeature,
   classifyContactEditDetailError,
   classifyEditContactError,
@@ -16,6 +18,7 @@ import {
   contactEditDetailQueryKey,
   decodeContactEditRoute,
 } from '../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/edit/page.tsx';
+import { ContactDetailPage } from '../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.tsx';
 
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
@@ -131,6 +134,9 @@ const renderFeature = (
 };
 
 beforeEach(() => {
+  const queryClient = getCrmQueryClient();
+  queryClient.clear();
+  consumeContactEditSuccess(queryClient, customerId, contactId);
   localeState.current = 'en';
   navigateMock.mockResolvedValue();
   getContactMock.mockReturnValue(Effect.succeed(activeContact));
@@ -403,6 +409,31 @@ describe('ContactEdit presentation and mutation', () => {
       updatedContact,
     );
     expect(screen.getByText('Contact changes saved.')).toBeTruthy();
+  });
+
+  test('shares the saved Contact and a one-shot success announcement with the detail page', async () => {
+    const user = userEvent.setup();
+    render(
+      <ContactEditPage routeParams={{ contactId, id: customerId }} target={{ writable: true }} />,
+    );
+
+    await screen.findByRole('textbox', { name: /^Contact name/u });
+    await user.click(screen.getByRole('button', { name: 'Save Contact' }));
+    await waitFor(() => expect(navigateMock).toHaveBeenCalledTimes(1));
+
+    cleanup();
+    render(<ContactDetailPage routeParams={{ contactId, id: customerId }} />);
+
+    expect(await screen.findByRole('heading', { name: updatedContact.name })).toBeTruthy();
+    expect(await screen.findByText('Contact changes saved.')).toBeTruthy();
+    expect(getContactMock).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    render(<ContactDetailPage routeParams={{ contactId, id: customerId }} />);
+
+    expect(await screen.findByRole('heading', { name: updatedContact.name })).toBeTruthy();
+    expect(screen.queryByText('Contact changes saved.')).toBeNull();
+    expect(getContactMock).toHaveBeenCalledTimes(1);
   });
 
   test('permits one semantic submit while pending', async () => {

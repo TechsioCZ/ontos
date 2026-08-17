@@ -7,6 +7,7 @@ import { Effect } from 'effect';
 import type { AnchorHTMLAttributes } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { getCrmQueryClient } from '../../src/crm-query-client.ts';
 import {
   ContactDetailPage,
   classifyContactDetailError,
@@ -94,6 +95,7 @@ const flattenKeys = (value: object, prefix = ''): string[] =>
     .sort();
 
 beforeEach(() => {
+  getCrmQueryClient().clear();
   localeState.current = 'en';
   getContactMock.mockReturnValue(Effect.succeed(activeContact));
   runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>

@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from '@modern-js/plugin-tanstack/runti
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Link as UiLink } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -123,6 +124,8 @@ interface CustomerListRowModel {
   readonly createdAt: string;
   readonly createdAtIso: string;
   readonly customerId: string;
+  readonly detailHref: string;
+  readonly editHref: string;
   readonly lifecycle: 'active' | 'archived';
   readonly name: string;
   readonly updatedAt: string;
@@ -145,7 +148,9 @@ type CustomersListViewState =
     };
 
 interface CustomersListCopy {
+  readonly actionsColumn: string;
   readonly authenticationExpired: string;
+  readonly create: string;
   readonly empty: string;
   readonly filterActive: string;
   readonly filterAll: string;
@@ -153,6 +158,7 @@ interface CustomersListCopy {
   readonly filterLabel: string;
   readonly filterPlaceholder: string;
   readonly forbidden: string;
+  readonly edit: string;
   readonly internal: string;
   readonly loading: string;
   readonly nameColumn: string;
@@ -193,6 +199,7 @@ const CustomerTableHeader = ({ copy }: { readonly copy: CustomersListCopy }) => 
       <Table.ColumnHeader scope="col">{copy.statusColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.createdAtColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.updatedAtColumn}</Table.ColumnHeader>
+      <Table.ColumnHeader scope="col">{copy.actionsColumn}</Table.ColumnHeader>
     </Table.Row>
   </Table.Header>
 );
@@ -205,7 +212,7 @@ const LoadingCustomerTable = ({ copy }: { readonly copy: CustomersListCopy }) =>
       <Table.Body>
         {Array.from({ length: 3 }, (_row, rowIndex) => (
           <Table.Row key={`loading-${rowIndex}`}>
-            {Array.from({ length: 5 }, (_cell, cellIndex) => (
+            {Array.from({ length: 6 }, (_cell, cellIndex) => (
               <Table.Cell aria-hidden="true" key={`loading-${rowIndex}-${cellIndex}`}>
                 <Skeleton.Text noOfLines={1} size="sm" />
               </Table.Cell>
@@ -217,39 +224,71 @@ const LoadingCustomerTable = ({ copy }: { readonly copy: CustomersListCopy }) =>
   </div>
 );
 
-const PopulatedCustomerTable = ({
+const CustomerTable = ({
   copy,
   items,
 }: {
   readonly copy: CustomersListCopy;
   readonly items: readonly CustomerListRowModel[];
-}) => (
-  <div className="crm:max-w-full crm:overflow-x-auto" data-testid="customers-table-overflow">
-    <Table className="crm:min-w-3xl" size="sm" variant="line">
-      <Table.Caption>{copy.tableCaption}</Table.Caption>
-      <CustomerTableHeader copy={copy} />
-      <Table.Body>
-        {items.map((customer) => (
-          <Table.Row key={customer.customerId}>
-            <Table.Cell>{customer.name}</Table.Cell>
-            <Table.Cell className="crm:whitespace-nowrap">{customer.customerId}</Table.Cell>
-            <Table.Cell>
-              <Badge variant={customer.lifecycle === 'active' ? 'success' : 'outline'}>
-                {customer.lifecycle === 'active' ? copy.statusActive : copy.statusArchived}
-              </Badge>
-            </Table.Cell>
-            <Table.Cell className="crm:whitespace-nowrap">
-              <time dateTime={customer.createdAtIso}>{customer.createdAt}</time>
-            </Table.Cell>
-            <Table.Cell className="crm:whitespace-nowrap">
-              <time dateTime={customer.updatedAtIso}>{customer.updatedAt}</time>
-            </Table.Cell>
-          </Table.Row>
-        ))}
-      </Table.Body>
-    </Table>
-  </div>
-);
+}) => {
+  const emptyDescriptionId = items.length === 0 ? 'customers-empty-description' : undefined;
+
+  return (
+    <>
+      <div className="crm:max-w-full crm:overflow-x-auto" data-testid="customers-table-overflow">
+        <Table
+          aria-describedby={emptyDescriptionId}
+          className="crm:min-w-3xl"
+          size="sm"
+          variant="line"
+        >
+          <Table.Caption>{copy.tableCaption}</Table.Caption>
+          <CustomerTableHeader copy={copy} />
+          <Table.Body>
+            {items.map((customer) => (
+              <Table.Row key={customer.customerId}>
+                <Table.Cell>
+                  <UiLink as={Link} to={customer.detailHref}>
+                    {customer.name}
+                  </UiLink>
+                </Table.Cell>
+                <Table.Cell className="crm:whitespace-nowrap">{customer.customerId}</Table.Cell>
+                <Table.Cell>
+                  <Badge variant={customer.lifecycle === 'active' ? 'success' : 'outline'}>
+                    {customer.lifecycle === 'active' ? copy.statusActive : copy.statusArchived}
+                  </Badge>
+                </Table.Cell>
+                <Table.Cell className="crm:whitespace-nowrap">
+                  <time dateTime={customer.createdAtIso}>{customer.createdAt}</time>
+                </Table.Cell>
+                <Table.Cell className="crm:whitespace-nowrap">
+                  <time dateTime={customer.updatedAtIso}>{customer.updatedAt}</time>
+                </Table.Cell>
+                <Table.Cell>
+                  <LinkButton
+                    as={Link}
+                    href={customer.editHref}
+                    size="sm"
+                    theme="outlined"
+                    to={customer.editHref}
+                    variant="secondary"
+                  >
+                    {copy.edit}
+                  </LinkButton>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </div>
+      {emptyDescriptionId === undefined ? null : (
+        <p className="crm:sr-only" id={emptyDescriptionId}>
+          {copy.empty}
+        </p>
+      )}
+    </>
+  );
+};
 
 export const CustomersListView = ({
   copy,
@@ -263,6 +302,7 @@ export const CustomersListView = ({
   view,
 }: CustomersListViewProps) => {
   const resultsRef = useRef<HTMLDivElement>(null);
+  const createHref = `/${language}/crm/customers/context/new`;
   const statusItems = [
     { label: copy.filterActive, value: 'active' },
     { label: copy.filterArchived, value: 'archived' },
@@ -289,9 +329,14 @@ export const CustomersListView = ({
       className="crm:grid crm:min-w-0 crm:w-full crm:gap-6"
     >
       <div className="crm:grid crm:gap-4 crm:sm:grid-cols-[minmax(0,1fr)_minmax(12rem,18rem)] crm:sm:items-end">
-        <h1 className="crm:text-3xl crm:font-bold" id="customers-list-heading">
-          {copy.tableCaption}
-        </h1>
+        <div className="crm:flex crm:flex-wrap crm:items-center crm:justify-between crm:gap-3">
+          <h1 className="crm:text-3xl crm:font-bold" id="customers-list-heading">
+            {copy.tableCaption}
+          </h1>
+          <LinkButton as={Link} href={createHref} size="sm" to={createHref} variant="primary">
+            {copy.create}
+          </LinkButton>
+        </div>
         <Select
           items={statusItems}
           name="customer-status"
@@ -332,11 +377,7 @@ export const CustomersListView = ({
             <LoadingCustomerTable copy={copy} />
           </div>
         ) : null}
-        {view.state === 'empty' ? (
-          <StatusText status="default">
-            <output>{copy.empty}</output>
-          </StatusText>
-        ) : null}
+        {view.state === 'empty' ? <CustomerTable copy={copy} items={[]} /> : null}
         {view.state === 'forbidden' ? (
           <StatusText showIcon status="error">
             <output>{copy.forbidden}</output>
@@ -380,7 +421,7 @@ export const CustomersListView = ({
         ) : null}
         {view.state === 'populated' ? (
           <div className="crm:grid crm:gap-4">
-            <PopulatedCustomerTable copy={copy} items={view.items} />
+            <CustomerTable copy={copy} items={view.items} />
             {offset > 0 || view.nextOffset !== null ? (
               <nav aria-label={copy.paginationLabel} className="crm:flex crm:flex-wrap crm:gap-3">
                 {offset > 0 ? (
@@ -455,10 +496,13 @@ const CustomersListFeature = () => {
   });
   const refetch = () => query.refetch();
   const copy: CustomersListCopy = {
+    actionsColumn: t('crm.pages.customersList.table.actions'),
     authenticationExpired: t('crm.pages.customersList.states.authenticationExpired'),
+    create: t('crm.pages.customerCreate.title'),
     createdAtColumn: t('crm.pages.customersList.table.createdAt'),
     customerIdColumn: t('crm.pages.customersList.table.customerId'),
     decode: t('crm.pages.customersList.states.decode'),
+    edit: t('crm.pages.customerEdit.title'),
     empty: t('crm.pages.customersList.states.empty'),
     filterActive: t('crm.pages.customersList.filter.active'),
     filterAll: t('crm.pages.customersList.filter.all'),
@@ -491,15 +535,20 @@ const CustomersListFeature = () => {
     view = { state: 'empty' };
   } else {
     view = {
-      items: query.data.items.map((customer) => ({
-        createdAt: formatCustomerTimestamp(customer.createdAt, language),
-        createdAtIso: customer.createdAt,
-        customerId: customer.customerId,
-        lifecycle: customer.archivedAt === null ? 'active' : 'archived',
-        name: customer.name,
-        updatedAt: formatCustomerTimestamp(customer.updatedAt, language),
-        updatedAtIso: customer.updatedAt,
-      })),
+      items: query.data.items.map((customer) => {
+        const detailHref = `/${language}/crm/customers/${encodeURIComponent(customer.customerId)}`;
+        return {
+          createdAt: formatCustomerTimestamp(customer.createdAt, language),
+          createdAtIso: customer.createdAt,
+          customerId: customer.customerId,
+          detailHref,
+          editHref: `${detailHref}/edit`,
+          lifecycle: customer.archivedAt === null ? 'active' : 'archived',
+          name: customer.name,
+          updatedAt: formatCustomerTimestamp(customer.updatedAt, language),
+          updatedAtIso: customer.updatedAt,
+        };
+      }),
       nextOffset: query.data.nextOffset,
       state: 'populated',
     };

@@ -189,6 +189,7 @@
             "unavailable": "Kontakty jsou dočasně nedostupné. Zkuste to znovu."
           },
           "table": {
+            "actions": "Akce",
             "caption": "Aktivní kontakty zákazníka",
             "email": "E-mail",
             "name": "Jméno",
@@ -285,6 +286,7 @@
           "archived": "Archivovaný"
         },
         "table": {
+          "actions": "Akce",
           "caption": "Zákazníci",
           "createdAt": "Vytvořeno",
           "customerId": "ID zákazníka",

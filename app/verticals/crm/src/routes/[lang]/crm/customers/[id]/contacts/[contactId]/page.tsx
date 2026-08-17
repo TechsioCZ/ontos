@@ -1,12 +1,12 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link as RouterLink } from '@modern-js/plugin-tanstack/runtime';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
-import { Fragment, useMemo, useRef } from 'react';
+import { Fragment, useEffect, useMemo, useRef } from 'react';
 import type { ContactDetailResponse } from '../../../../../../../../shared/api.ts';
 import {
   CrmEmailSchema,
@@ -15,6 +15,11 @@ import {
 import { CrmUuidSchema } from '../../../../../../../../shared/apis/customer-detail.ts';
 import { getContact, runEffectRequest } from '../../../../../../../api/crm-client.ts';
 import type { Effect } from '../../../../../../../api/crm-client.ts';
+import {
+  consumeContactEditSuccess,
+  getCrmQueryClient,
+  hasContactEditSuccess,
+} from '../../../../../../../crm-query-client.ts';
 import { UltramodernRouteHead } from '../../../../../../ultramodern-route-head';
 
 type ContactDetailPageRouteParams = Readonly<Partial<Record<'id' | 'contactId', string>>>;
@@ -68,6 +73,7 @@ interface ContactDetailCopy {
   readonly phoneLink: string;
   readonly retry: string;
   readonly retrying: string;
+  readonly saved: string;
   readonly status: string;
   readonly statusActive: string;
   readonly statusArchived: string;
@@ -82,6 +88,7 @@ interface ContactDetailViewProps {
   readonly copy: ContactDetailCopy;
   readonly onRetry: () => Promise<unknown>;
   readonly retrying: boolean;
+  readonly saved: boolean;
   readonly view: ContactDetailViewState;
 }
 
@@ -243,6 +250,7 @@ export const ContactDetailView = ({
   copy,
   onRetry,
   retrying,
+  saved,
   view,
 }: ContactDetailViewProps) => {
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -283,6 +291,11 @@ export const ContactDetailView = ({
         </div>
       )}
       <div aria-live="polite" data-testid="contact-detail-results" ref={resultsRef} tabIndex={-1}>
+        {view.state === 'ready' && saved ? (
+          <StatusText align="start" showIcon status="success">
+            <output>{copy.saved}</output>
+          </StatusText>
+        ) : null}
         {view.state === 'loading' ? <LoadingContactDetail copy={copy} /> : null}
         {view.state === 'ready' ? <ReadyContactDetail contact={view.contact} copy={copy} /> : null}
         {view.state !== 'loading' && view.state !== 'ready' ? (
@@ -375,7 +388,18 @@ const ContactDetailQuery = ({
       ),
     queryKey: contactDetailQueryKey(customerId, contactId),
     retry: false,
+    staleTime: 30_000,
   });
+  const queryClient = useQueryClient();
+  const saved = useMemo(
+    () => hasContactEditSuccess(queryClient, customerId, contactId),
+    [contactId, customerId, queryClient],
+  );
+  useEffect(() => {
+    if (saved) {
+      consumeContactEditSuccess(queryClient, customerId, contactId);
+    }
+  }, [contactId, customerId, queryClient, saved]);
   const refetch = () => query.refetch();
   let view: ContactDetailViewState;
   if (query.isPending) {
@@ -393,6 +417,7 @@ const ContactDetailQuery = ({
       copy={copy}
       onRetry={refetch}
       retrying={query.isFetching && !query.isPending}
+      saved={saved}
       view={view}
     />
   );
@@ -419,6 +444,7 @@ const ContactDetailFeature = ({ routeParams }: ContactDetailPageProps) => {
     phoneLink: t('crm.pages.contactDetail.links.phone'),
     retry: t('crm.pages.contactDetail.states.retry'),
     retrying: t('crm.pages.contactDetail.states.retrying'),
+    saved: t('crm.pages.contactEdit.mutation.success'),
     status: t('crm.pages.contactDetail.fields.status'),
     statusActive: t('crm.pages.contactDetail.lifecycle.active'),
     statusArchived: t('crm.pages.contactDetail.lifecycle.archived'),
@@ -436,6 +462,7 @@ const ContactDetailFeature = ({ routeParams }: ContactDetailPageProps) => {
       copy={copy}
       onRetry={() => Promise.resolve()}
       retrying={false}
+      saved={false}
       view={{ state: 'not_found' }}
     />
   ) : (
@@ -450,10 +477,7 @@ const ContactDetailFeature = ({ routeParams }: ContactDetailPageProps) => {
 };
 
 export const ContactDetailPage = ({ routeParams }: ContactDetailPageProps) => {
-  const queryClient = useMemo(
-    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
-    [],
-  );
+  const queryClient = useMemo(() => getCrmQueryClient(), []);
 
   return (
     <>

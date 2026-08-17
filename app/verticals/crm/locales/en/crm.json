@@ -189,6 +189,7 @@
             "unavailable": "The Contacts are temporarily unavailable. Try again."
           },
           "table": {
+            "actions": "Actions",
             "caption": "Active Customer Contacts",
             "email": "Email",
             "name": "Name",
@@ -285,6 +286,7 @@
           "archived": "Archived"
         },
         "table": {
+          "actions": "Actions",
           "caption": "Customers",
           "createdAt": "Created",
           "customerId": "Customer ID",

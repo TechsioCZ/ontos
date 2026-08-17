@@ -31,6 +31,8 @@ const { getCustomerListMock, localeState, navigateMock, runEffectRequestMock, se
 
 const translations = {
   cs: {
+    'crm.pages.customerCreate.title': 'Vytvořit zákazníka',
+    'crm.pages.customerEdit.title': 'Upravit zákazníka',
     'crm.pages.customersList.filter.active': 'Aktivní',
     'crm.pages.customersList.filter.all': 'Všichni',
     'crm.pages.customersList.filter.archived': 'Archivovaní',
@@ -56,6 +58,7 @@ const translations = {
       'Seznam zákazníků je dočasně nedostupný. Zkuste to znovu.',
     'crm.pages.customersList.status.active': 'Aktivní',
     'crm.pages.customersList.status.archived': 'Archivovaný',
+    'crm.pages.customersList.table.actions': 'Akce',
     'crm.pages.customersList.table.caption': 'Zákazníci',
     'crm.pages.customersList.table.createdAt': 'Vytvořeno',
     'crm.pages.customersList.table.customerId': 'ID zákazníka',
@@ -64,6 +67,8 @@ const translations = {
     'crm.pages.customersList.table.updatedAt': 'Aktualizováno',
   },
   en: {
+    'crm.pages.customerCreate.title': 'Create Customer',
+    'crm.pages.customerEdit.title': 'Edit Customer',
     'crm.pages.customersList.filter.active': 'Active',
     'crm.pages.customersList.filter.all': 'All',
     'crm.pages.customersList.filter.archived': 'Archived',
@@ -89,6 +94,7 @@ const translations = {
       'The Customer list is temporarily unavailable. Try again.',
     'crm.pages.customersList.status.active': 'Active',
     'crm.pages.customersList.status.archived': 'Archived',
+    'crm.pages.customersList.table.actions': 'Actions',
     'crm.pages.customersList.table.caption': 'Customers',
     'crm.pages.customersList.table.createdAt': 'Created',
     'crm.pages.customersList.table.customerId': 'Customer ID',
@@ -249,9 +255,19 @@ test('renders semantic Customer values, ordered rows, localized dates, badges, a
     within(table)
       .getAllByRole('columnheader')
       .map((header) => header.textContent),
-  ).toEqual(['Customer name', 'Customer ID', 'Status', 'Created', 'Updated']);
+  ).toEqual(['Customer name', 'Customer ID', 'Status', 'Created', 'Updated', 'Actions']);
   const rows = within(table).getAllByRole('row');
   expect(rows).toHaveLength(3);
+  expect(
+    within(rows[1] as HTMLElement)
+      .getByRole('link', { name: activeCustomer.name })
+      .getAttribute('href'),
+  ).toBe(`/en/crm/customers/${activeCustomer.customerId}`);
+  expect(
+    within(rows[1] as HTMLElement)
+      .getByRole('link', { name: 'Edit Customer' })
+      .getAttribute('href'),
+  ).toBe(`/en/crm/customers/${activeCustomer.customerId}/edit`);
   expect(rows[1]?.textContent).toContain('Acme Property Group');
   expect(rows[1]?.textContent).toContain(activeCustomer.customerId);
   expect(rows[1]?.textContent).toContain('Active');
@@ -274,16 +290,25 @@ test('preserves the final table geometry and a polite status while loading', () 
   const table = screen.getByRole('table', { name: 'Customers' });
   expect(table.getAttribute('aria-busy')).toBe('true');
   expect(within(table).getAllByRole('row')).toHaveLength(4);
-  expect(table.querySelectorAll('tbody td')).toHaveLength(15);
+  expect(table.querySelectorAll('tbody td')).toHaveLength(18);
 });
 
-test('shows one empty message without a table body or pager', async () => {
+test('shows the empty Customer table without data rows or a pager', async () => {
   getCustomerListMock.mockReturnValue(success([], null));
   render(<CustomersListPage />);
 
-  await screen.findByText('No Customers match this filter.');
-  expect(screen.getByRole('status').textContent).toBe('No Customers match this filter.');
-  expect(screen.queryByRole('rowgroup')).toBeNull();
+  const table = await waitFor(() => {
+    const currentTable = screen.getByRole('table', { name: 'Customers' });
+    expect(currentTable.querySelectorAll('tbody tr')).toHaveLength(0);
+    return currentTable;
+  });
+  expect(within(table).getAllByRole('row')).toHaveLength(1);
+  const emptyDescription = screen.getByText('No Customers match this filter.');
+  expect(emptyDescription.className).toContain('crm:sr-only');
+  expect(table.getAttribute('aria-describedby')).toBe(emptyDescription.id);
+  expect(screen.getByRole('link', { name: 'Create Customer' }).getAttribute('href')).toBe(
+    '/en/crm/customers/context/new',
+  );
   expect(screen.queryByRole('navigation', { name: 'Customer list pages' })).toBeNull();
 });
 
@@ -368,6 +393,9 @@ test('renders Czech-owned heading, filter, status, dates, errors, retry, and nav
   render(<CustomersListPage />);
 
   expect(await screen.findByRole('heading', { name: 'Zákazníci' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Vytvořit zákazníka' }).getAttribute('href')).toBe(
+    '/cs/crm/customers/context/new',
+  );
   expect(screen.getByRole('combobox', { name: 'Stav zákazníka' })).toBeTruthy();
   expect(await screen.findByText('Archivovaný')).toBeTruthy();
   expect(screen.getByText(formatDate(archivedCustomer.createdAt, 'cs'))).toBeTruthy();

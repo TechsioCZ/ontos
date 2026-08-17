@@ -1,7 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link as RouterLink, useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
 import {
-  QueryClient,
   QueryClientProvider,
   skipToken,
   useMutation,
@@ -27,6 +26,10 @@ import type {
   ContactFormStatus,
   ContactFormValues,
 } from '../../../../../../../../features/contacts/contact-form.tsx';
+import {
+  getCrmQueryClient,
+  markContactEditSuccess,
+} from '../../../../../../../../crm-query-client.ts';
 import { UltramodernRouteHead } from '../../../../../../../ultramodern-route-head';
 
 export type ContactEditPageRouteParams = Readonly<Partial<Record<'id' | 'contactId', string>>>;
@@ -456,6 +459,7 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
             contactEditDetailQueryKey(decodedRoute.customerId, decodedRoute.contactId),
             contact,
           );
+          markContactEditSuccess(queryClient, decodedRoute.customerId, decodedRoute.contactId);
           setFeedback({
             formStatus: { message: copy.mutation.success, status: 'success' },
           });
@@ -579,13 +583,7 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
 };
 
 export const ContactEditPage = ({ routeParams, target }: ContactEditPageProps) => {
-  const queryClient = useMemo(
-    () =>
-      new QueryClient({
-        defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
-      }),
-    [],
-  );
+  const queryClient = useMemo(() => getCrmQueryClient(), []);
 
   return (
     <>

@@ -517,7 +517,7 @@ test('customers stay private anonymously and load real localized BFF data after 
   );
 });
 
-test('customers empty state omits the table and pager', async ({ page }) => {
+test('customers empty state keeps the table and omits the pager', async ({ page }) => {
   await login(page);
   await page.route(`**${customerListPath}`, (route) =>
     route.fulfill({
@@ -528,8 +528,14 @@ test('customers empty state omits the table and pager', async ({ page }) => {
   );
 
   await page.goto('/en/crm/customers');
-  await expect(page.getByText('No Customers match this filter.')).toBeVisible();
-  await expect(page.getByRole('table', { name: 'Customers' })).toHaveCount(0);
+  const table = page.getByRole('table', { name: 'Customers' });
+  await expect(table).toBeVisible();
+  await expect(table.locator('tbody tr')).toHaveCount(0);
+  await expect(page.getByText('No Customers match this filter.')).toHaveAttribute(
+    'id',
+    'customers-empty-description',
+  );
+  await expect(table).toHaveAttribute('aria-describedby', 'customers-empty-description');
   await expect(page.getByRole('navigation', { name: 'Customer list pages' })).toHaveCount(0);
 });
 

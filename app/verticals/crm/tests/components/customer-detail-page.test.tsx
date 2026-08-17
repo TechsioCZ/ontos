@@ -37,6 +37,8 @@ const {
 
 const translations = {
   cs: {
+    'crm.pages.contactCreate.title': 'Vytvořit kontakt',
+    'crm.pages.contactEdit.title': 'Upravit kontakt',
     'crm.pages.customerDetail.back': 'Zpět na zákazníky',
     'crm.pages.customerDetail.contacts.heading': 'Kontakty',
     'crm.pages.customerDetail.contacts.pagination.label': 'Stránky kontaktů zákazníka',
@@ -60,6 +62,7 @@ const translations = {
       'Kontakty nejsou dostupné. Zkontrolujte připojení a zkuste to znovu.',
     'crm.pages.customerDetail.contacts.states.unavailable':
       'Kontakty jsou dočasně nedostupné. Zkuste to znovu.',
+    'crm.pages.customerDetail.contacts.table.actions': 'Akce',
     'crm.pages.customerDetail.contacts.table.caption': 'Aktivní kontakty zákazníka',
     'crm.pages.customerDetail.contacts.table.email': 'E-mail',
     'crm.pages.customerDetail.contacts.table.name': 'Jméno',
@@ -88,6 +91,8 @@ const translations = {
     'crm.pages.customerDetail.title': 'Detail zákazníka',
   },
   en: {
+    'crm.pages.contactCreate.title': 'Create Contact',
+    'crm.pages.contactEdit.title': 'Edit Contact',
     'crm.pages.customerDetail.back': 'Back to Customers',
     'crm.pages.customerDetail.contacts.heading': 'Contacts',
     'crm.pages.customerDetail.contacts.pagination.label': 'Customer Contact pages',
@@ -111,6 +116,7 @@ const translations = {
       'The Contacts could not be reached. Check your connection and try again.',
     'crm.pages.customerDetail.contacts.states.unavailable':
       'The Contacts are temporarily unavailable. Try again.',
+    'crm.pages.customerDetail.contacts.table.actions': 'Actions',
     'crm.pages.customerDetail.contacts.table.caption': 'Active Customer Contacts',
     'crm.pages.customerDetail.contacts.table.email': 'Email',
     'crm.pages.customerDetail.contacts.table.name': 'Name',
@@ -328,19 +334,29 @@ test('renders the Customer overview followed by ordered semantic Contact rows', 
     within(table)
       .getAllByRole('columnheader')
       .map((header) => header.textContent),
-  ).toEqual(['Name', 'Email', 'Phone']);
+  ).toEqual(['Name', 'Email', 'Phone', 'Actions']);
   const rows = within(table).getAllByRole('row');
   expect(rows).toHaveLength(3);
   expect(
     within(rows[1] as HTMLElement)
       .getAllByRole('cell')
       .map((cell) => cell.textContent),
-  ).toEqual(['Ada Lovelace', 'ada@example.com', '+420 111 222 333']);
+  ).toEqual(['Ada Lovelace', 'ada@example.com', '+420 111 222 333', 'Edit Contact']);
+  expect(
+    within(rows[1] as HTMLElement)
+      .getByRole('link', { name: 'Ada Lovelace' })
+      .getAttribute('href'),
+  ).toBe(`/en/crm/customers/${activeCustomer.customerId}/contacts/${contacts[0].contactId}`);
+  expect(
+    within(rows[1] as HTMLElement)
+      .getByRole('link', { name: 'Edit Contact' })
+      .getAttribute('href'),
+  ).toBe(`/en/crm/customers/${activeCustomer.customerId}/contacts/${contacts[0].contactId}/edit`);
   expect(
     within(rows[2] as HTMLElement)
       .getAllByRole('cell')
       .map((cell) => cell.textContent),
-  ).toEqual(['Grace Hopper', 'grace@example.com', '+420 444 555 666']);
+  ).toEqual(['Grace Hopper', 'grace@example.com', '+420 444 555 666', 'Edit Contact']);
   expect(screen.getByTestId('customer-contacts-table-overflow').className).toContain(
     'crm:overflow-x-auto',
   );
@@ -367,15 +383,25 @@ test('preserves final Contact table geometry while the Contact query is loading'
   const table = screen.getByRole('table', { name: 'Active Customer Contacts' });
   expect(table.getAttribute('aria-busy')).toBe('true');
   expect(within(table).getAllByRole('row')).toHaveLength(4);
-  expect(table.querySelectorAll('td')).toHaveLength(9);
+  expect(table.querySelectorAll('td')).toHaveLength(12);
 });
 
-test('renders a localized empty state without Contact data rows', async () => {
+test('renders the empty Contact table without data rows', async () => {
   getContactListMock.mockReturnValue(Effect.succeed({ items: [], nextOffset: null }));
   render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
-  expect(await screen.findByText('This Customer has no active Contacts.')).toBeTruthy();
-  expect(screen.queryByRole('table', { name: 'Active Customer Contacts' })).toBeNull();
+  const table = await waitFor(() => {
+    const currentTable = screen.getByRole('table', { name: 'Active Customer Contacts' });
+    expect(currentTable.querySelectorAll('tbody tr')).toHaveLength(0);
+    return currentTable;
+  });
+  expect(within(table).getAllByRole('row')).toHaveLength(1);
+  const emptyDescription = screen.getByText('This Customer has no active Contacts.');
+  expect(emptyDescription.className).toContain('crm:sr-only');
+  expect(table.getAttribute('aria-describedby')).toBe(emptyDescription.id);
+  expect(screen.getByRole('link', { name: 'Create Contact' }).getAttribute('href')).toBe(
+    `/en/crm/customers/${activeCustomer.customerId}/contacts/new`,
+  );
 });
 
 test('renders Czech archived data and preserves the active locale in the return link', async () => {
@@ -389,6 +415,9 @@ test('renders Czech archived data and preserves the active locale in the return 
     '/cs/crm/customers',
   );
   expect(await screen.findByRole('heading', { name: 'Kontakty' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Vytvořit kontakt' }).getAttribute('href')).toBe(
+    `/cs/crm/customers/${archivedCustomer.customerId}/contacts/new`,
+  );
   expect(screen.getByRole('table', { name: 'Aktivní kontakty zákazníka' })).toBeTruthy();
   expect(getContactListMock).toHaveBeenCalledWith(
     expect.any(Object),

@@ -3,6 +3,7 @@ import { Link as RouterLink, useParams } from '@modern-js/plugin-tanstack/runtim
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
@@ -51,6 +52,8 @@ interface CustomerDetailReadyModel {
 
 interface ContactListRowModel {
   readonly contactId: string;
+  readonly detailHref: string;
+  readonly editHref: string;
   readonly email: string;
   readonly name: string;
   readonly phone: string;
@@ -93,10 +96,13 @@ interface CustomerDetailCopy {
 }
 
 interface ContactListCopy {
+  readonly actionsColumn: string;
   readonly authenticationExpired: string;
+  readonly create: string;
   readonly decode: string;
   readonly emailColumn: string;
   readonly empty: string;
+  readonly edit: string;
   readonly forbidden: string;
   readonly heading: string;
   readonly internal: string;
@@ -282,6 +288,7 @@ const ContactTableHeader = ({ copy }: { readonly copy: ContactListCopy }) => (
       <Table.ColumnHeader scope="col">{copy.nameColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.emailColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.phoneColumn}</Table.ColumnHeader>
+      <Table.ColumnHeader scope="col">{copy.actionsColumn}</Table.ColumnHeader>
     </Table.Row>
   </Table.Header>
 );
@@ -297,7 +304,7 @@ const LoadingContactTable = ({ copy }: { readonly copy: ContactListCopy }) => (
       <Table.Body>
         {Array.from({ length: 3 }, (_row, rowIndex) => (
           <Table.Row key={`loading-${rowIndex}`}>
-            {Array.from({ length: 3 }, (_cell, cellIndex) => (
+            {Array.from({ length: 4 }, (_cell, cellIndex) => (
               <Table.Cell aria-hidden="true" key={`loading-${rowIndex}-${cellIndex}`}>
                 <Skeleton.Text noOfLines={1} size="sm" />
               </Table.Cell>
@@ -309,35 +316,68 @@ const LoadingContactTable = ({ copy }: { readonly copy: ContactListCopy }) => (
   </div>
 );
 
-const PopulatedContactTable = ({
+const ContactTable = ({
   copy,
   items,
 }: {
   readonly copy: ContactListCopy;
   readonly items: readonly ContactListRowModel[];
-}) => (
-  <div
-    className="crm:max-w-full crm:overflow-x-auto"
-    data-testid="customer-contacts-table-overflow"
-  >
-    <Table className="crm:min-w-xl" size="sm" variant="line">
-      <Table.Caption>{copy.tableCaption}</Table.Caption>
-      <ContactTableHeader copy={copy} />
-      <Table.Body>
-        {items.map((contact) => (
-          <Table.Row key={contact.contactId}>
-            <Table.Cell>{contact.name}</Table.Cell>
-            <Table.Cell className="crm:whitespace-nowrap">{contact.email}</Table.Cell>
-            <Table.Cell className="crm:whitespace-nowrap">{contact.phone}</Table.Cell>
-          </Table.Row>
-        ))}
-      </Table.Body>
-    </Table>
-  </div>
-);
+}) => {
+  const emptyDescriptionId = items.length === 0 ? 'customer-contacts-empty-description' : undefined;
+
+  return (
+    <>
+      <div
+        className="crm:max-w-full crm:overflow-x-auto"
+        data-testid="customer-contacts-table-overflow"
+      >
+        <Table
+          aria-describedby={emptyDescriptionId}
+          className="crm:min-w-xl"
+          size="sm"
+          variant="line"
+        >
+          <Table.Caption>{copy.tableCaption}</Table.Caption>
+          <ContactTableHeader copy={copy} />
+          <Table.Body>
+            {items.map((contact) => (
+              <Table.Row key={contact.contactId}>
+                <Table.Cell>
+                  <Link as={RouterLink} to={contact.detailHref}>
+                    {contact.name}
+                  </Link>
+                </Table.Cell>
+                <Table.Cell className="crm:whitespace-nowrap">{contact.email}</Table.Cell>
+                <Table.Cell className="crm:whitespace-nowrap">{contact.phone}</Table.Cell>
+                <Table.Cell>
+                  <LinkButton
+                    as={RouterLink}
+                    href={contact.editHref}
+                    size="sm"
+                    theme="outlined"
+                    to={contact.editHref}
+                    variant="secondary"
+                  >
+                    {copy.edit}
+                  </LinkButton>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
+      </div>
+      {emptyDescriptionId === undefined ? null : (
+        <p className="crm:sr-only" id={emptyDescriptionId}>
+          {copy.empty}
+        </p>
+      )}
+    </>
+  );
+};
 
 interface CustomerContactsProps {
   readonly copy: ContactListCopy;
+  readonly createHref: string;
   readonly offset: number;
   readonly onNext: (offset: number) => void;
   readonly onPrevious: () => void;
@@ -348,6 +388,7 @@ interface CustomerContactsProps {
 
 const CustomerContacts = ({
   copy,
+  createHref,
   offset,
   onNext,
   onPrevious,
@@ -377,9 +418,14 @@ const CustomerContacts = ({
       aria-labelledby="customer-contacts-heading"
       className="crm:grid crm:min-w-0 crm:w-full crm:gap-4"
     >
-      <h2 className="crm:text-2xl crm:font-bold" id="customer-contacts-heading">
-        {copy.heading}
-      </h2>
+      <header className="crm:flex crm:flex-wrap crm:items-center crm:justify-between crm:gap-3">
+        <h2 className="crm:text-2xl crm:font-bold" id="customer-contacts-heading">
+          {copy.heading}
+        </h2>
+        <LinkButton as={RouterLink} href={createHref} size="sm" to={createHref} variant="primary">
+          {copy.create}
+        </LinkButton>
+      </header>
       <div
         aria-live="polite"
         data-testid="customer-contacts-results"
@@ -394,11 +440,7 @@ const CustomerContacts = ({
             <LoadingContactTable copy={copy} />
           </div>
         ) : null}
-        {view.state === 'empty' ? (
-          <StatusText status="default">
-            <output>{copy.empty}</output>
-          </StatusText>
-        ) : null}
+        {view.state === 'empty' ? <ContactTable copy={copy} items={[]} /> : null}
         {view.state === 'forbidden' ? (
           <StatusText showIcon status="error">
             <output>{copy.forbidden}</output>
@@ -447,7 +489,7 @@ const CustomerContacts = ({
         ) : null}
         {view.state === 'populated' ? (
           <div className="crm:grid crm:gap-4">
-            <PopulatedContactTable copy={copy} items={view.items} />
+            <ContactTable copy={copy} items={view.items} />
             {offset > 0 || nextOffset !== null ? (
               <nav aria-label={copy.paginationLabel} className="crm:flex crm:flex-wrap crm:gap-3">
                 {offset > 0 ? (
@@ -619,12 +661,17 @@ const CustomerContactsQuery = ({
     view = { state: 'empty' };
   } else {
     view = {
-      items: query.data.items.map((contact) => ({
-        contactId: contact.contactId,
-        email: contact.email,
-        name: contact.name,
-        phone: contact.phone,
-      })),
+      items: query.data.items.map((contact) => {
+        const detailHref = `/${language}/crm/customers/${encodeURIComponent(customerId)}/contacts/${encodeURIComponent(contact.contactId)}`;
+        return {
+          contactId: contact.contactId,
+          detailHref,
+          editHref: `${detailHref}/edit`,
+          email: contact.email,
+          name: contact.name,
+          phone: contact.phone,
+        };
+      }),
       nextOffset: query.data.nextOffset,
       state: 'populated',
     };
@@ -633,6 +680,7 @@ const CustomerContactsQuery = ({
   return (
     <CustomerContacts
       copy={copy}
+      createHref={`/${language}/crm/customers/${encodeURIComponent(customerId)}/contacts/new`}
       offset={offset}
       onNext={setOffset}
       onPrevious={() => setOffset((current) => Math.max(0, current - CONTACT_LIST_PAGE_SIZE))}
@@ -726,8 +774,11 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
     updatedAt: t('crm.pages.customerDetail.fields.updatedAt'),
   };
   const contactCopy: ContactListCopy = {
+    actionsColumn: t('crm.pages.customerDetail.contacts.table.actions'),
     authenticationExpired: t('crm.pages.customerDetail.contacts.states.authenticationExpired'),
+    create: t('crm.pages.contactCreate.title'),
     decode: t('crm.pages.customerDetail.contacts.states.decode'),
+    edit: t('crm.pages.contactEdit.title'),
     emailColumn: t('crm.pages.customerDetail.contacts.table.email'),
     empty: t('crm.pages.customerDetail.contacts.states.empty'),
     forbidden: t('crm.pages.customerDetail.contacts.states.forbidden'),
