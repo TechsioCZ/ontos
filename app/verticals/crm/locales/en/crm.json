@@ -145,8 +145,8 @@
         "description": "Create a canonical Customer with its business identity details.",
         "form": {
           "cancel": "Cancel",
-          "dicHint": "Optional; use at most 32 characters. Letters are saved uppercase.",
-          "dicInvalid": "Enter a DIČ with at most 32 characters.",
+          "dicHint": "Optional; use at most 20 characters. Letters are saved uppercase.",
+          "dicInvalid": "Enter a DIČ with at most 20 characters.",
           "dicLabel": "DIČ",
           "dissolvedBeforeEstablished": "The dissolution date cannot be before the establishment date.",
           "dissolvedOnHint": "Optional; leave empty while the Customer exists.",
@@ -247,8 +247,8 @@
         "description": "Review and update the Customer business identity details.",
         "form": {
           "cancel": "Cancel",
-          "dicHint": "Optional; use at most 32 characters. Letters are saved uppercase.",
-          "dicInvalid": "Enter a DIČ with at most 32 characters.",
+          "dicHint": "Optional; use at most 20 characters. Letters are saved uppercase.",
+          "dicInvalid": "Enter a DIČ with at most 20 characters.",
           "dicLabel": "DIČ",
           "dissolvedBeforeEstablished": "The dissolution date cannot be before the establishment date.",
           "dissolvedOnHint": "Optional; leave empty while the Customer exists.",
@@ -271,8 +271,10 @@
         "mutation": {
           "authenticationExpired": "Your session expired before the Customer could be saved.",
           "conflict": "The Customer changed while you were editing it. Review the current value and try again.",
+          "duplicateIco": "A Customer with this IČO already exists. Enter a different IČO and try again.",
           "forbidden": "You do not have permission to edit this Customer.",
           "generic": "The Customer could not be saved safely. Try again.",
+          "invalid": "Review the Customer business fields and correct the invalid values.",
           "notFound": "This Customer no longer exists or is not available to you.",
           "success": "Customer changes saved."
         },

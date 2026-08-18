@@ -93,6 +93,15 @@ const updatedCustomer = {
   name: 'Updated Customer',
   updatedAt: '2026-08-15T09:30:00.000Z',
 } as const;
+const nullableArchivedCustomer = {
+  ...customer,
+  archivedAt: '2026-08-16T10:00:00.000Z',
+  dic: null,
+  dissolvedOn: null,
+  establishedOn: null,
+  ico: null,
+  legalFormCode: null,
+} as const;
 
 const renderFeature = ({
   id = customerId,
@@ -148,6 +157,25 @@ test('loads the exact route Customer through the typed client and prefills the f
     },
   );
   expect(runEffectRequestMock).toHaveBeenCalledTimes(1);
+  expect(screen.queryByText(/ARES/u)).toBeNull();
+});
+
+test('prefills every nullable field as an empty controlled value for an archived Customer', async () => {
+  getCustomerDetailMock.mockReturnValue(Effect.succeed(nullableArchivedCustomer));
+  renderFeature();
+
+  const name = await screen.findByLabelText(/^Customer name/u);
+  expect(name.getAttribute('value')).toBe(nullableArchivedCustomer.name);
+  for (const selector of [
+    '#customer-ico',
+    '#customer-dic',
+    '#customer-legal-form-code',
+    '#customer-established-on',
+    '#customer-dissolved-on',
+  ]) {
+    expect(document.querySelector<HTMLInputElement>(selector)?.value).toBe('');
+  }
+  expect(screen.getByRole('button', { name: 'Save changes' }).hasAttribute('disabled')).toBe(false);
 });
 
 test('renders loading and rejects missing or malformed IDs without a BFF call', () => {
@@ -233,6 +261,35 @@ test('keeps a read-only Customer readable without an enabled mutation path', asy
   expect(editCustomerMock).not.toHaveBeenCalled();
 });
 
+test.each([
+  ['customer-name', ' ', 'Enter a Customer name.'],
+  ['customer-ico', '1234567', 'Enter an IČO containing exactly eight digits.'],
+  ['customer-dic', 'X'.repeat(21), 'Enter a DIČ with at most 20 characters.'],
+  ['customer-legal-form-code', '12A', 'Enter a legal-form code containing exactly three digits.'],
+  [
+    'customer-dissolved-on',
+    '2019-12-31',
+    'The dissolution date cannot be before the establishment date.',
+  ],
+] as const)(
+  'maps invalid %s input to its field without calling the BFF',
+  async (id, value, message) => {
+    const user = userEvent.setup();
+    renderFeature();
+    await screen.findByRole('textbox', { name: /^Customer name/u });
+    const input = document.querySelector<HTMLInputElement>(`#${id}`);
+    expect(input).not.toBeNull();
+    await user.clear(input as HTMLInputElement);
+    await user.type(input as HTMLInputElement, value);
+
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect((input as HTMLInputElement).getAttribute('aria-invalid')).toBe('true');
+    expect(editCustomerMock).not.toHaveBeenCalled();
+  },
+);
+
 test('submits the normalized payload, updates the detail cache, and navigates locally', async () => {
   const queryClient = renderFeature();
   const user = userEvent.setup();
@@ -261,6 +318,42 @@ test('submits the normalized payload, updates the detail cache, and navigates lo
   );
   expect(queryClient.getQueryData(customerDetailQueryKey(customerId))).toEqual(updatedCustomer);
   expect(screen.getByRole('status').textContent).toBe('Customer changes saved.');
+});
+
+test('normalizes explicitly cleared optional fields to null in the exact edit payload', async () => {
+  const user = userEvent.setup();
+  renderFeature();
+  const name = await screen.findByRole('textbox', { name: /^Customer name/u });
+  await user.clear(name);
+  await user.type(name, 'Cleared Customer');
+  const ico = document.querySelector<HTMLInputElement>('#customer-ico');
+  const dic = document.querySelector<HTMLInputElement>('#customer-dic');
+  const legalFormCode = document.querySelector<HTMLInputElement>('#customer-legal-form-code');
+  const establishedOn = document.querySelector<HTMLInputElement>('#customer-established-on');
+  const dissolvedOn = document.querySelector<HTMLInputElement>('#customer-dissolved-on');
+  expect(ico).not.toBeNull();
+  expect(dic).not.toBeNull();
+  expect(legalFormCode).not.toBeNull();
+  expect(establishedOn).not.toBeNull();
+  expect(dissolvedOn).not.toBeNull();
+  await user.clear(ico as HTMLInputElement);
+  await user.clear(dic as HTMLInputElement);
+  await user.clear(legalFormCode as HTMLInputElement);
+  await user.clear(establishedOn as HTMLInputElement);
+  await user.clear(dissolvedOn as HTMLInputElement);
+
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(editCustomerMock).toHaveBeenCalledTimes(1));
+
+  expect(editCustomerMock.mock.calls[0]?.[0]).toEqual({
+    customerId,
+    dic: null,
+    dissolvedOn: null,
+    establishedOn: null,
+    ico: null,
+    legalFormCode: null,
+    name: 'Cleared Customer',
+  });
 });
 
 test('reuses an idempotency key only for an uncertain retry of the same intent', async () => {
@@ -305,8 +398,81 @@ test('creates a new idempotency key after the user changes the failed intent', a
   );
 });
 
+test('creates a new idempotency key when an optional field is cleared after an uncertain failure', async () => {
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  const user = userEvent.setup();
+  renderFeature();
+  await screen.findByRole('textbox', { name: /^Customer name/u });
+
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('The Customer service is temporarily unavailable. Try again.');
+  const ico = document.querySelector<HTMLInputElement>('#customer-ico');
+  expect(ico).not.toBeNull();
+  await user.clear(ico as HTMLInputElement);
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(editCustomerMock).toHaveBeenCalledTimes(2));
+
+  expect(editCustomerMock.mock.calls[1]?.[0].ico).toBeNull();
+  expect(editCustomerMock.mock.calls[1]?.[1].idempotencyKey).not.toBe(
+    editCustomerMock.mock.calls[0]?.[1].idempotencyKey,
+  );
+});
+
+test('preserves the complete unsaved draft after a retryable mutation failure', async () => {
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  const user = userEvent.setup();
+  renderFeature();
+  const name = await screen.findByRole('textbox', { name: /^Customer name/u });
+  const ico = document.querySelector<HTMLInputElement>('#customer-ico');
+  expect(ico).not.toBeNull();
+  await user.clear(name);
+  await user.type(name, 'Unsaved draft');
+  await user.clear(ico as HTMLInputElement);
+  await user.type(ico as HTMLInputElement, '87654321');
+
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  await screen.findByText('The Customer service is temporarily unavailable. Try again.');
+
+  expect(name.getAttribute('value')).toBe('Unsaved draft');
+  expect((ico as HTMLInputElement).value).toBe('87654321');
+  expect(navigateMock).not.toHaveBeenCalled();
+});
+
+test('guards every edit control while the mutation is pending and suppresses duplicate submits', async () => {
+  let settle!: () => void;
+  editCustomerMock.mockReturnValue(
+    Effect.callback<typeof updatedCustomer>((resume) => {
+      settle = () => resume(Effect.succeed(updatedCustomer));
+    }),
+  );
+  const user = userEvent.setup();
+  renderFeature();
+  await screen.findByRole('textbox', { name: /^Customer name/u });
+
+  await user.dblClick(screen.getByRole('button', { name: 'Save changes' }));
+  const saving = await screen.findByRole('button', { name: 'Saving changes…' });
+  expect(saving.hasAttribute('disabled')).toBe(true);
+  for (const selector of [
+    '#customer-name',
+    '#customer-ico',
+    '#customer-dic',
+    '#customer-legal-form-code',
+    '#customer-established-on',
+    '#customer-dissolved-on',
+  ]) {
+    expect(document.querySelector<HTMLInputElement>(selector)?.hasAttribute('disabled')).toBe(true);
+  }
+  expect(editCustomerMock).toHaveBeenCalledTimes(1);
+
+  settle();
+  await waitFor(() => expect(navigateMock).toHaveBeenCalledTimes(1));
+});
+
 test.each([
-  ['CrmInvalidRequestProblem', 'Enter a valid Customer name.'],
+  [
+    'CrmInvalidRequestProblem',
+    'Review the Customer business fields and correct the invalid values.',
+  ],
   ['CrmAuthenticationProblem', 'Your session expired before the Customer could be saved.'],
   ['CrmForbiddenProblem', 'You do not have permission to edit this Customer.'],
   ['CrmNotFoundProblem', 'This Customer no longer exists or is not available to you.'],
@@ -326,16 +492,40 @@ test.each([
   expect(navigateMock).not.toHaveBeenCalled();
 });
 
+test('maps duplicate IČO to a distinct safe and actionable warning', async () => {
+  editCustomerMock.mockReturnValue(
+    Effect.fail({ _tag: 'CrmConflictProblem', code: 'crm_customer_ico_conflict' } as never),
+  );
+  const user = userEvent.setup();
+  renderFeature();
+  await screen.findByRole('textbox', { name: /^Customer name/u });
+
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+
+  expect(
+    await screen.findByText(
+      'A Customer with this IČO already exists. Enter a different IČO and try again.',
+    ),
+  ).toBeTruthy();
+  expect(navigateMock).not.toHaveBeenCalled();
+});
+
 test('maps all mutation failure families to a closed presentation vocabulary', () => {
   expect(classifyEditCustomerError({ _tag: 'CrmInvalidRequestProblem' } as never)).toEqual({
-    state: 'name_invalid',
+    state: 'invalid',
   });
   expect(classifyEditCustomerError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
     state: 'forbidden',
   });
-  expect(classifyEditCustomerError({ _tag: 'CrmConflictProblem' } as never)).toEqual({
-    state: 'conflict',
-  });
+  expect(
+    classifyEditCustomerError({ _tag: 'CrmConflictProblem', code: 'crm_conflict' } as never),
+  ).toEqual({ state: 'conflict' });
+  expect(
+    classifyEditCustomerError({
+      _tag: 'CrmConflictProblem',
+      code: 'crm_customer_ico_conflict',
+    } as never),
+  ).toEqual({ state: 'ico_conflict' });
   expect(classifyEditCustomerError({ _tag: 'SchemaError' } as never)).toEqual({
     reason: 'decode',
     state: 'unavailable',
@@ -381,6 +571,7 @@ describe('generated boundaries and localization', () => {
     );
     expect(pageSource).toContain('getCustomerDetail(');
     expect(pageSource).toContain('editCustomer(');
+    expect(pageSource).not.toMatch(/lookupCustomerAres|customer-ares|ARES/u);
     expect(pageSource).toContain('target={{ writable: false }}');
     expect(pageSource).not.toMatch(/\bfetch\s*\(|api\/customer-detail-read-server|src\/db/u);
     expect(manifest).toContain("contributionKey: 'crm.core.page.customer-edit'");

@@ -58,7 +58,7 @@ export interface CustomerFormProps {
 
 const icoPattern = /^\d{8}$/u;
 const legalFormCodePattern = /^\d{3}$/u;
-const dicMaxLength = 32;
+const dicMaxLength = 20;
 const nameMaxLength = 200;
 
 const normalizeValues = (values: CustomerFormValues): CustomerFormValues => ({

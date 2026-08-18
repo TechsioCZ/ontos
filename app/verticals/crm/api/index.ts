@@ -81,10 +81,19 @@ const problem = {
   }),
   conflict: (): CrmProblem => ({
     _tag: 'CrmConflictProblem',
+    code: 'crm_conflict',
     detail: 'The CRM operation conflicts with the current state.',
     status: 409,
     title: 'CRM operation conflict',
     type: 'https://ontos.dev/problems/crm-conflict',
+  }),
+  customerIcoConflict: (): CrmProblem => ({
+    _tag: 'CrmConflictProblem',
+    code: 'crm_customer_ico_conflict',
+    detail: 'A Customer with this IČO already exists.',
+    status: 409,
+    title: 'Customer IČO conflict',
+    type: 'https://ontos.dev/problems/crm-customer-ico-conflict',
   }),
   forbidden: (): CrmProblem => ({
     _tag: 'CrmForbiddenProblem',
@@ -170,9 +179,10 @@ const actionProblem = (error: CrmActionError, supportsNotFound: boolean): CrmPro
     case 'ActionAlreadyCommitted':
     case 'ActionInvocationStateError':
     case 'ActionRequestHashConflict':
-    case 'CrmCustomerIcoConflict':
     case 'CrmLifecycleConflict':
       return problem.conflict();
+    case 'CrmCustomerIcoConflict':
+      return problem.customerIcoConflict();
     case 'ActionCommitIndeterminate':
     case 'ActionInvocationPersistenceError':
     case 'ActionPermissionCheckError':

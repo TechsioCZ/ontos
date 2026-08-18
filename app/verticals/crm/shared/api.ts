@@ -131,6 +131,7 @@ export const CrmNotFoundProblemSchema = Schema.TaggedStruct('CrmNotFoundProblem'
 }).pipe(asProblemDetails, HttpApiSchema.status(404));
 export const CrmConflictProblemSchema = Schema.TaggedStruct('CrmConflictProblem', {
   ...problemFields,
+  code: Schema.Literals(['crm_conflict', 'crm_customer_ico_conflict']),
   status: Schema.Literal(409),
 }).pipe(asProblemDetails, HttpApiSchema.status(409));
 export const CrmPreconditionRequiredProblemSchema = Schema.TaggedStruct(
