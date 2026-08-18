@@ -16,6 +16,39 @@ class CrmDatabaseVerificationError extends Schema.TaggedErrorClass<CrmDatabaseVe
 type TableCatalogRow = Record<string, unknown> & {
   readonly table_name: string;
 };
+type ColumnCatalogRow = Record<string, unknown> & {
+  readonly column_name: string;
+  readonly table_name: string;
+};
+
+const expectedColumns = [
+  'contacts.archived_at',
+  'contacts.contact_id',
+  'contacts.created_at',
+  'contacts.customer_id',
+  'contacts.email',
+  'contacts.name',
+  'contacts.phone',
+  'contacts.tenant_id',
+  'contacts.updated_at',
+  'customers.archived_at',
+  'customers.created_at',
+  'customers.customer_id',
+  'customers.dic',
+  'customers.dissolved_on',
+  'customers.established_on',
+  'customers.ico',
+  'customers.legal_form_code',
+  'customers.name',
+  'customers.tenant_id',
+  'customers.updated_at',
+] as const;
+
+const describeColumnCatalogMismatch = (actualColumns: readonly string[]) =>
+  actualColumns.length === expectedColumns.length &&
+  actualColumns.every((column, index) => column === expectedColumns[index])
+    ? undefined
+    : `CRM column catalog mismatch; expected=[${expectedColumns.join(', ')}], actual=[${actualColumns.join(', ')}]`;
 
 const verification = Effect.gen(function* verifyCrmDatabase() {
   const connections = yield* loadDatabaseConnectionPair();
@@ -53,6 +86,28 @@ const verification = Effect.gen(function* verifyCrmDatabase() {
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     return yield* new CrmDatabaseVerificationError({
       reason: `CRM catalog mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
+    });
+  }
+
+  const columns = yield* Effect.tryPromise({
+    catch: () =>
+      new CrmDatabaseVerificationError({
+        reason: 'Unable to compare the PostgreSQL CRM column catalog',
+      }),
+    try: () =>
+      database.executor.execute<ColumnCatalogRow>(sql`
+        select table_name, column_name
+        from information_schema.columns
+        where table_schema = ${CRM_SCHEMA_NAME}
+          and table_name in (${'contacts'}, ${'customers'})
+        order by table_name, column_name
+      `),
+  });
+  const actualColumns = columns.rows.map((row) => `${row.table_name}.${row.column_name}`);
+  const columnCatalogMismatch = describeColumnCatalogMismatch(actualColumns);
+  if (columnCatalogMismatch !== undefined) {
+    return yield* new CrmDatabaseVerificationError({
+      reason: columnCatalogMismatch,
     });
   }
 

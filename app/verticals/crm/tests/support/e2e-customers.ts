@@ -1,16 +1,17 @@
 // @effect-diagnostics asyncFunction:off
 import { Pool } from 'pg';
+import type { Customer } from '../../shared/apis/customer-detail.ts';
 
 export const crmE2eCustomers = {
   active: {
     archivedAt: null,
     createdAt: '2026-08-01T08:00:00.000Z',
     customerId: '70000000-0000-4000-8000-000000000001',
-    dic: null,
-    dissolvedOn: null,
-    establishedOn: null,
-    ico: null,
-    legalFormCode: null,
+    dic: 'CZ00123456',
+    dissolvedOn: '2026-08-17',
+    establishedOn: '2020-01-02',
+    ico: '00123456',
+    legalFormCode: '112',
     name: 'E2E Alpha Customer',
     updatedAt: '2026-08-10T09:30:00.000Z',
   },
@@ -26,7 +27,7 @@ export const crmE2eCustomers = {
     name: 'E2E Archived Customer',
     updatedAt: '2026-08-12T11:00:00.000Z',
   },
-} as const;
+} as const satisfies Record<'active' | 'archived', Customer>;
 
 export const crmE2eContacts = {
   active: {
@@ -71,18 +72,29 @@ export const createCrmE2eCustomersFixture = ({
     seed: async (tenantId: string) => {
       await pool.query(
         `insert into crm.customers
-          (tenant_id, customer_id, name, created_at, updated_at, archived_at)
+          (tenant_id, customer_id, name, ico, dic, legal_form_code,
+           established_on, dissolved_on, created_at, updated_at, archived_at)
          values
-          ($1, $2, $3, $4, $5, null),
-          ($1, $6, $7, $8, $9, $10)`,
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, null),
+          ($1, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
         [
           tenantId,
           crmE2eCustomers.active.customerId,
           crmE2eCustomers.active.name,
+          crmE2eCustomers.active.ico,
+          crmE2eCustomers.active.dic,
+          crmE2eCustomers.active.legalFormCode,
+          crmE2eCustomers.active.establishedOn,
+          crmE2eCustomers.active.dissolvedOn,
           crmE2eCustomers.active.createdAt,
           crmE2eCustomers.active.updatedAt,
           crmE2eCustomers.archived.customerId,
           crmE2eCustomers.archived.name,
+          crmE2eCustomers.archived.ico,
+          crmE2eCustomers.archived.dic,
+          crmE2eCustomers.archived.legalFormCode,
+          crmE2eCustomers.archived.establishedOn,
+          crmE2eCustomers.archived.dissolvedOn,
           crmE2eCustomers.archived.createdAt,
           crmE2eCustomers.archived.updatedAt,
           crmE2eCustomers.archived.archivedAt,

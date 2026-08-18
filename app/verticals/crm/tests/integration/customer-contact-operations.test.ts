@@ -1022,12 +1022,12 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
 
           const aresCalls: AresSubjectLookup[] = [];
           const aresSubject = {
-            dic: 'CZ48039101',
+            dic: 'CZ04803910',
             dissolvedOn: null,
             establishedOn: '1992-12-04',
-            ico: '48039101',
+            ico: '04803910',
             legalFormCode: '112',
-            name: 'J.E.S., spol. s r.o.',
+            name: 'ARES Leading Zero s.r.o.',
           } as const;
           const aresLookup = yield* reads
             .runRead({
@@ -1073,6 +1073,40 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             },
             { ...aresSubject, name: 'Reviewed ARES Customer' },
           );
+          const editedAresCustomer = yield* actions.runAction({
+            payload: {
+              customerId: aresCreatedCustomer.customerId,
+              dic: 'CZ04803911',
+              dissolvedOn: aresCreatedCustomer.dissolvedOn,
+              establishedOn: aresCreatedCustomer.establishedOn,
+              ico: aresCreatedCustomer.ico,
+              legalFormCode: aresCreatedCustomer.legalFormCode,
+              name: 'Edited ARES Customer',
+            },
+            principal,
+            registration: editCustomerAction,
+            transport: transport('ares-prefill-follow-up-edit'),
+          });
+          const editedAresDetail = yield* reads.runRead({
+            input: { customerId: editedAresCustomer.customerId },
+            principal,
+            registration: customerDetailRead,
+            transport: transport(),
+          });
+          const editedAresList = yield* reads.runRead({
+            input: { filter: 'all', limit: 20, offset: 0 },
+            principal,
+            registration: customerListRead,
+            transport: transport(),
+          });
+          assert.deepEqual(editedAresDetail, editedAresCustomer);
+          assert.deepEqual(
+            editedAresList.items.find(
+              (candidate) => candidate.customerId === editedAresCustomer.customerId,
+            ),
+            editedAresCustomer,
+          );
+          assert.equal(editedAresCustomer.ico, '04803910');
           const persistedAresCustomer = yield* Effect.promise(() =>
             adminPool.query<{ record: Readonly<Record<string, unknown>> }>(
               `select to_jsonb(customer) as record

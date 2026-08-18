@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link as RouterLink } from '@modern-js/plugin-tanstack/runtime';
+import { Link as RouterLink, useParams } from '@modern-js/plugin-tanstack/runtime';
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -491,4 +491,17 @@ export const ContactDetailPage = ({ routeParams }: ContactDetailPageProps) => {
   );
 };
 
-export default ContactDetailPage;
+const StandaloneContactDetailPage = () => {
+  const routeParams = useParams({ strict: false });
+
+  return (
+    <ContactDetailPage
+      routeParams={{
+        ...(routeParams.contactId === undefined ? {} : { contactId: routeParams.contactId }),
+        ...(routeParams.id === undefined ? {} : { id: routeParams.id }),
+      }}
+    />
+  );
+};
+
+export default StandaloneContactDetailPage;

@@ -6,12 +6,36 @@ Research date: 2026-08-17
 
 Use the public ARES REST API through an OntOS server-side integration:
 
-1. Normalize the entered IČO to exactly eight digits, preserving or restoring leading zeroes.
+1. Trim the entered IČO and require exactly eight digits, preserving leading zeroes.
 2. Fetch the consolidated subject record with `GET /ekonomicke-subjekty/{ico}`.
-3. Use its registration states to decide whether to fetch activity detail from the public register (VR), the Trade Licensing Register (RŽP), or both.
-4. Cache/debounce lookups and map upstream errors into OntOS's typed BFF error contract.
+3. Map only `name`, `ico`, `dic`, `legalFormCode`, `establishedOn`, and `dissolvedOn` into the flat
+   CRM Customer prefill contract.
+4. Cache/coalesce successful lookups, bound concurrency and retries, and map upstream errors into
+   OntOS's typed BFF error contract.
 
 Direct browser calls currently work, but a server-side adapter is the safer production boundary for centralized validation, caching, throttling, observability, and insulation from undocumented CORS/authentication changes.
+
+## Current OntOS CRM implementation profile
+
+The implemented CRM adapter deliberately uses only the consolidated subject endpoint. It does not
+request or persist an address, registration/source/update metadata, CZ-NACE codes, public-register
+activity text, or trade-licence activity data. Those fields remain research context for a future
+separately specified feature and are not part of the Customer model.
+
+The adapter accepts only an already valid eight-digit IČO; it does not guess or pad shorter input.
+The create-page control trims whitespace, preserves a leading zero, and invokes the generated
+governed Read only after exact validation. The browser never calls ARES directly.
+
+Each upstream attempt has a three-second timeout. Retryable throttling, timeout, transport, and
+upstream-availability failures receive at most two bounded exponential retries. Successful results
+are cached for five minutes in a 256-entry cache, concurrent requests for one IČO are coalesced, and
+global adapter concurrency is limited to four. Failures are not cached. Invalid, denied, not-found,
+and decode failures are not retried.
+
+The private adapter distinguishes invalid input, not found, denial, throttling, timeout,
+unavailability, and decode failure. The generated public Read maps not found to `404`, unavailable
+upstream conditions to retryable `503`, malformed input to `400`, authentication to `401`, module
+denial to `403`, and caught decode/internal defects to a sanitized `500` Problem Details response.
 
 ## What “business subject” can mean
 
@@ -30,7 +54,11 @@ GET https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/{ico}
 Accept: application/json
 ```
 
-The path parameter must be an eight-digit string (`^\d{8}$`); there is no request body. The ARES website accepts omitted leading zeroes in its UI, but the REST contract requires all eight digits, so the client must pad before calling. See the [`GET /ekonomicke-subjekty/{ico}` OpenAPI operation](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and the [official ARES search help](https://ares.gov.cz/stranky/napoveda-ekonomicke-subjekty).
+The path parameter must be an eight-digit string (`^\d{8}$`); there is no request body. The ARES
+website accepts omitted leading zeroes in its UI, but the REST contract requires all eight digits.
+The current CRM adapter therefore rejects shorter input instead of guessing or padding it. See the
+[`GET /ekonomicke-subjekty/{ico}` OpenAPI operation](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs)
+and the [official ARES search help](https://ares.gov.cz/stranky/napoveda-ekonomicke-subjekty).
 
 Example:
 
@@ -189,13 +217,13 @@ Therefore, credential-free browser GETs are technically possible today, and JSON
 
 ```text
 IČO input
-  -> strip formatting, validate digits, pad to 8 characters
+  -> trim, require exactly 8 digits, preserve leading zeroes
+  -> generated CRM governed Read
+  -> private server-side ARES adapter
   -> GET consolidated subject
-  -> show name, address, dates and decoded legal form
-  -> inspect seznamRegistraci
-      -> if VR active and legal registered text is needed: GET VR detail
-      -> if RŽP active and trade detail is needed: GET RŽP detail
-  -> preserve source and validity dates on activities
+  -> map only name, IČO, DIČ, legal-form code, establishment date, dissolution date
+  -> user reviews/edits ordinary Customer fields
+  -> generated CreateCustomerAction client persists the final flat Customer payload
 ```
 
 The current public API is version **1.30** on the [official developer page](https://ares.gov.cz/stranky/vyvojar-info), while its machine-readable OpenAPI `info.version` is written as **1.3.0**. Monitor the [official API changelog](https://ares.gov.cz/stranky/changelog-api) before upgrading the integration.
