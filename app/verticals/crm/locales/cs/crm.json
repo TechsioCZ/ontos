@@ -145,8 +145,8 @@
         "description": "Vytvořte nového zákazníka s jeho firemními identifikačními údaji.",
         "form": {
           "cancel": "Zrušit",
-          "dicHint": "Nepovinné; použijte nejvýše 32 znaků. Písmena se uloží velká.",
-          "dicInvalid": "Zadejte DIČ o délce nejvýše 32 znaků.",
+          "dicHint": "Nepovinné; použijte nejvýše 20 znaků. Písmena se uloží velká.",
+          "dicInvalid": "Zadejte DIČ o délce nejvýše 20 znaků.",
           "dicLabel": "DIČ",
           "dissolvedBeforeEstablished": "Datum zániku nesmí být před datem vzniku.",
           "dissolvedOnHint": "Nepovinné; dokud zákazník existuje, ponechte prázdné.",
@@ -264,8 +264,8 @@
         "description": "Zkontrolujte a upravte firemní identifikační údaje zákazníka.",
         "form": {
           "cancel": "Zrušit",
-          "dicHint": "Nepovinné; použijte nejvýše 32 znaků. Písmena se uloží velká.",
-          "dicInvalid": "Zadejte DIČ o délce nejvýše 32 znaků.",
+          "dicHint": "Nepovinné; použijte nejvýše 20 znaků. Písmena se uloží velká.",
+          "dicInvalid": "Zadejte DIČ o délce nejvýše 20 znaků.",
           "dicLabel": "DIČ",
           "dissolvedBeforeEstablished": "Datum zániku nesmí být před datem vzniku.",
           "dissolvedOnHint": "Nepovinné; dokud zákazník existuje, ponechte prázdné.",
@@ -288,8 +288,10 @@
         "mutation": {
           "authenticationExpired": "Relace vypršela před uložením zákazníka.",
           "conflict": "Zákazník se během úprav změnil. Zkontrolujte aktuální hodnotu a zkuste to znovu.",
+          "duplicateIco": "Zákazník s tímto IČO již existuje. Zadejte jiné IČO a zkuste to znovu.",
           "forbidden": "Nemáte oprávnění upravit tohoto zákazníka.",
           "generic": "Zákazníka se nepodařilo bezpečně uložit. Zkuste to znovu.",
+          "invalid": "Zkontrolujte firemní údaje zákazníka a opravte neplatné hodnoty.",
           "notFound": "Tento zákazník již neexistuje nebo pro vás není dostupný.",
           "success": "Změny zákazníka byly uloženy."
         },

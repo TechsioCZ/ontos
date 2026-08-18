@@ -122,13 +122,23 @@ test('uses status-matched, concrete Problem Details schemas', () => {
     [CrmInvalidRequestProblemSchema, 'CrmInvalidRequestProblem', 400],
     [CrmAuthenticationProblemSchema, 'CrmAuthenticationProblem', 401],
     [CrmNotFoundProblemSchema, 'CrmNotFoundProblem', 404],
-    [CrmConflictProblemSchema, 'CrmConflictProblem', 409],
     [CrmPreconditionRequiredProblemSchema, 'CrmPreconditionRequiredProblem', 428],
     [CrmUnavailableProblemSchema, 'CrmUnavailableProblem', 503],
     [CrmInternalProblemSchema, 'CrmInternalProblem', 500],
   ] as const;
   for (const [schema, tag, status] of fixtures) {
     assertProblemSchemaStatus(Schema.decodeUnknownSync(schema), tag, status, status === 503);
+  }
+  for (const code of ['crm_conflict', 'crm_customer_ico_conflict'] as const) {
+    const conflict = Schema.decodeUnknownSync(CrmConflictProblemSchema)({
+      _tag: 'CrmConflictProblem',
+      code,
+      detail: 'safe detail',
+      status: 409,
+      title: 'safe title',
+      type: 'https://ontos.dev/problems/test',
+    });
+    assert.equal(conflict.code, code);
   }
 });
 

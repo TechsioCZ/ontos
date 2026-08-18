@@ -55,7 +55,8 @@ export type EditCustomerErrorState =
   | { readonly state: 'authentication_expired' }
   | { readonly state: 'conflict' }
   | { readonly state: 'forbidden' }
-  | { readonly state: 'name_invalid' }
+  | { readonly state: 'ico_conflict' }
+  | { readonly state: 'invalid' }
   | { readonly state: 'not_found' }
   | {
       readonly reason: Exclude<UnavailableReason, 'unexpected'>;
@@ -136,7 +137,7 @@ export const classifyEditCustomerError = (
 
   switch (error._tag) {
     case 'CrmInvalidRequestProblem': {
-      return { state: 'name_invalid' };
+      return { state: 'invalid' };
     }
     case 'CrmAuthenticationProblem':
     case 'GatewayAuthenticationRequiredProblem': {
@@ -149,7 +150,11 @@ export const classifyEditCustomerError = (
     case 'CrmNotFoundProblem': {
       return { state: 'not_found' };
     }
-    case 'CrmConflictProblem':
+    case 'CrmConflictProblem': {
+      return error.code === 'crm_customer_ico_conflict'
+        ? { state: 'ico_conflict' }
+        : { state: 'conflict' };
+    }
     case 'CrmPreconditionRequiredProblem': {
       return { state: 'conflict' };
     }
@@ -209,8 +214,10 @@ interface CustomerEditCopy {
   readonly mutation: {
     readonly authenticationExpired: string;
     readonly conflict: string;
+    readonly duplicateIco: string;
     readonly forbidden: string;
     readonly generic: string;
+    readonly invalid: string;
     readonly notFound: string;
     readonly success: string;
   };
@@ -309,8 +316,8 @@ const feedbackForEditError = (
   copy: CustomerEditCopy,
 ): MutationFeedback => {
   switch (state.state) {
-    case 'name_invalid': {
-      return { fieldErrors: { name: copy.form.nameInvalid } };
+    case 'invalid': {
+      return { formStatus: { message: copy.mutation.invalid, status: 'error' } };
     }
     case 'authentication_expired': {
       return {
@@ -325,6 +332,9 @@ const feedbackForEditError = (
     }
     case 'conflict': {
       return { formStatus: { message: copy.mutation.conflict, status: 'warning' } };
+    }
+    case 'ico_conflict': {
+      return { formStatus: { message: copy.mutation.duplicateIco, status: 'warning' } };
     }
     case 'unavailable': {
       const message = {
@@ -381,8 +391,10 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
     mutation: {
       authenticationExpired: t('crm.pages.customerEdit.mutation.authenticationExpired'),
       conflict: t('crm.pages.customerEdit.mutation.conflict'),
+      duplicateIco: t('crm.pages.customerEdit.mutation.duplicateIco'),
       forbidden: t('crm.pages.customerEdit.mutation.forbidden'),
       generic: t('crm.pages.customerEdit.mutation.generic'),
+      invalid: t('crm.pages.customerEdit.mutation.invalid'),
       notFound: t('crm.pages.customerEdit.mutation.notFound'),
       success: t('crm.pages.customerEdit.mutation.success'),
     },

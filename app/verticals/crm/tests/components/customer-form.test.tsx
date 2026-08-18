@@ -10,8 +10,8 @@ import type { CustomerFormValues } from '../../src/features/customers/customer-f
 
 const copy = {
   cancel: 'Cancel',
-  dicHint: 'Use at most 32 characters.',
-  dicInvalid: 'Enter a DIČ with at most 32 characters.',
+  dicHint: 'Use at most 20 characters.',
+  dicInvalid: 'Enter a DIČ with at most 20 characters.',
   dicLabel: 'DIČ',
   dissolvedBeforeEstablished: 'Dissolution cannot be before establishment.',
   dissolvedOnHint: 'Leave empty while the Customer exists.',
@@ -199,7 +199,7 @@ test.each([
   ['Customer name', { ...readyValues, name: '   ' }, copy.nameRequired],
   ['Customer name', { ...readyValues, name: 'n'.repeat(201) }, copy.nameInvalid],
   ['IČO', { ...readyValues, ico: '1234567' }, copy.icoInvalid],
-  ['DIČ', { ...readyValues, dic: 'X'.repeat(33) }, copy.dicInvalid],
+  ['DIČ', { ...readyValues, dic: 'X'.repeat(21) }, copy.dicInvalid],
   ['Legal-form code', { ...readyValues, legalFormCode: '12A' }, copy.legalFormCodeInvalid],
   [
     'Dissolution date',

@@ -71,6 +71,15 @@ const completeCustomer = {
   ico: '00123456',
   legalFormCode: '112',
 };
+const completeEditPayload = {
+  customerId,
+  dic: completeCustomer.dic,
+  dissolvedOn: completeCustomer.dissolvedOn,
+  establishedOn: completeCustomer.establishedOn,
+  ico: completeCustomer.ico,
+  legalFormCode: completeCustomer.legalFormCode,
+  name: 'Acme complete edit',
+};
 const customerPayload = (name: string) => ({
   dic: null,
   dissolvedOn: null,
@@ -94,6 +103,7 @@ interface CapturedInvocation {
   readonly correlationId: string;
   readonly idempotencyKey?: string;
   readonly key: string;
+  readonly payload?: Readonly<Record<string, unknown>>;
   readonly traceId?: string;
 }
 
@@ -176,7 +186,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       };
     }) => {
       const key = input.registration.descriptor.actionKey;
-      invocations.push({ key, ...input.transport });
+      invocations.push({ key, payload: input.payload, ...input.transport });
       if (input.transport.idempotencyKey === undefined) {
         return Effect.fail(
           new ActionIdempotencyKeyRequired({
@@ -243,6 +253,13 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       if (key.endsWith('contact')) {
         return Effect.succeed(contact);
       }
+      if (key.endsWith('edit-customer')) {
+        return Effect.succeed({
+          ...nullableCustomer,
+          ...input.payload,
+          updatedAt: timestamp,
+        });
+      }
       return Effect.succeed(nullableCustomer);
     },
   } as unknown as ActionRuntimeService;
@@ -304,7 +321,7 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     const mutation = { ...base, idempotencyKey: 'crm-bff-idempotency' };
     const results = await Promise.all([
       Effect.runPromise(createCustomer(customerPayload('Acme'), mutation)),
-      Effect.runPromise(editCustomer({ customerId, ...customerPayload('Acme') }, mutation)),
+      Effect.runPromise(editCustomer(completeEditPayload, mutation)),
       Effect.runPromise(archiveCustomer({ customerId }, mutation)),
       Effect.runPromise(unarchiveCustomer({ customerId }, mutation)),
       Effect.runPromise(
@@ -328,6 +345,11 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       Effect.runPromise(getContactList({ customerId, limit: 10, offset: 0 }, base)),
     ]);
     assert.equal(results.length, 13);
+    assert.deepEqual(results[1], {
+      ...completeCustomer,
+      customerId,
+      name: 'Acme complete edit',
+    });
     assert.deepEqual(results[8], nullableCustomer);
     assert.deepEqual(results[9], completeCustomer);
     assert.deepEqual(results[10], {
@@ -346,6 +368,10 @@ test('runs every CRM client operation through the real governed BFF boundary', a
             invocation.key.includes('archive-'),
         )
         .every((invocation) => invocation.idempotencyKey === mutation.idempotencyKey),
+    );
+    assert.deepEqual(
+      invocations.find((invocation) => invocation.key.endsWith('edit-customer'))?.payload,
+      completeEditPayload,
     );
     assert.ok(
       invocations
@@ -450,7 +476,23 @@ test('runs every CRM client operation through the real governed BFF boundary', a
       Effect.flip(createCustomer(customerPayload('trigger-ico-conflict'), mutation)),
     );
     assert.equal((icoConflict as { readonly _tag: string })._tag, 'CrmConflictProblem');
+    assert.equal((icoConflict as { readonly code: string }).code, 'crm_customer_ico_conflict');
     assert.equal(JSON.stringify(icoConflict).includes('crm_customers_tenant_ico_uk'), false);
+    const editIcoConflict = await Effect.runPromise(
+      Effect.flip(
+        editCustomer(
+          {
+            customerId,
+            ...customerPayload('trigger-ico-conflict'),
+            ico: completeCustomer.ico,
+          },
+          mutation,
+        ),
+      ),
+    );
+    assert.equal((editIcoConflict as { readonly _tag: string })._tag, 'CrmConflictProblem');
+    assert.equal((editIcoConflict as { readonly code: string }).code, 'crm_customer_ico_conflict');
+    assert.equal(JSON.stringify(editIcoConflict).includes('crm_customers_tenant_ico_uk'), false);
     const unavailableMutation = await Effect.runPromise(
       Effect.flip(createCustomer(customerPayload('trigger-unavailable'), mutation)),
     );
