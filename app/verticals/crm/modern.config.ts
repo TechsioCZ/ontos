@@ -8,12 +8,24 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
+import { config as loadDotenv } from 'dotenv';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import { crmCorsAllowedHeaders, crmCorsAllowedMethods, crmCorsAllowedOrigins } from './shared/cors';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
+
+const rootEnvironmentPath = fileURLToPath(new URL('../../.env', import.meta.url));
+const dotenvResult = loadDotenv({ path: rootEnvironmentPath, quiet: true });
+const dotenvErrorCode: string | undefined = dotenvResult.error?.code;
+if (
+  dotenvResult.error !== undefined &&
+  dotenvErrorCode !== 'ENOENT' &&
+  dotenvErrorCode !== 'NOT_FOUND_DOTENV_ENVIRONMENT'
+) {
+  throw dotenvResult.error;
+}
 
 const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
 const moduleFederationConfigPath = fileURLToPath(

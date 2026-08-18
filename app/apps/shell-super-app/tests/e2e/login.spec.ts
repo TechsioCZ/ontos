@@ -554,6 +554,29 @@ test('customers empty state keeps the table and omits the pager', async ({ page 
   await expect(page.getByRole('navigation', { name: 'Customer list pages' })).toHaveCount(0);
 });
 
+test('customers return an empty table for a tenant without Customer rows', async ({ page }) => {
+  await login(page);
+  const tenant = page.getByRole('combobox', { name: 'Current tenant' });
+  await tenant.click();
+  await Promise.all([
+    page.waitForEvent('framenavigated', { predicate: (frame) => frame === page.mainFrame() }),
+    page.getByRole('option', { name: e2eTenants.second.name }).click(),
+  ]);
+
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === customerListPath &&
+      response.request().method() === 'POST',
+  );
+  await page.goto('/cs/crm/customers');
+  const response = await responsePromise;
+
+  expect(response.status(), await response.text()).toBe(200);
+  const table = page.getByRole('table', { name: 'Zákazníci' });
+  await expect(table).toBeVisible();
+  await expect(table.locator('tbody tr')).toHaveCount(0);
+});
+
 test('customers retry a temporary BFF failure from the keyboard and restore results focus', async ({
   page,
 }) => {
