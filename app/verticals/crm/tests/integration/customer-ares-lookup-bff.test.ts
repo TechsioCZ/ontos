@@ -10,7 +10,7 @@ import { Effect, Layer } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeCrmApiRuntime } from '../../api/index.ts';
-import { lookupCustomerAres } from '../../src/api/crm-client.ts';
+import { createCustomer, lookupCustomerAres } from '../../src/api/crm-client.ts';
 import {
   AresSubjectDecodeFailure,
   AresSubjectDenied,
@@ -115,6 +115,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
   let aresResult: Effect.Effect<AresSubject, AresSubjectError> = Effect.succeed(subject);
   const aresCalls: AresSubjectLookup[] = [];
   const evidenceRows: Readonly<Record<string, unknown>>[] = [];
+  const actionCalls: Readonly<Record<string, unknown>>[] = [];
   let executeCount = 0;
   const transaction = {
     delete: () => {},
@@ -162,8 +163,25 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
     },
   );
   const actionRuntime = {
-    resolveActionCommit: () => Effect.die('Actions are not used by the ARES lookup test'),
-    runAction: () => Effect.die('Actions are not used by the ARES lookup test'),
+    resolveActionCommit: () => Effect.die('Action commit resolution is not used by this test'),
+    runAction: (input: {
+      readonly payload: Readonly<Record<string, unknown>>;
+      readonly registration: { readonly descriptor: { readonly actionKey: string } };
+      readonly transport: Readonly<Record<string, unknown>>;
+    }) => {
+      actionCalls.push({
+        actionKey: input.registration.descriptor.actionKey,
+        payload: input.payload,
+        transport: input.transport,
+      });
+      return Effect.succeed({
+        ...input.payload,
+        archivedAt: null,
+        createdAt: '2026-08-17T10:00:00.000Z',
+        customerId: 'b5000000-0000-4000-8000-000000000001',
+        updatedAt: '2026-08-17T10:00:00.000Z',
+      });
+    },
   } as unknown as ActionRuntimeService;
   const aresService = {
     subject: (input: AresSubjectLookup) => {
@@ -205,6 +223,46 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
         targetModuleKey: 'crm.core',
       },
     );
+
+    const created = await Effect.runPromise(
+      createCustomer(
+        {
+          dic: result.dic,
+          dissolvedOn: result.dissolvedOn,
+          establishedOn: result.establishedOn,
+          ico: result.ico,
+          legalFormCode: result.legalFormCode,
+          name: result.name,
+        },
+        { ...options, idempotencyKey: 'ares-prefill-confirmed-create' },
+      ),
+    );
+    assert.deepEqual(
+      {
+        dic: created.dic,
+        dissolvedOn: created.dissolvedOn,
+        establishedOn: created.establishedOn,
+        ico: created.ico,
+        legalFormCode: created.legalFormCode,
+        name: created.name,
+      },
+      subject,
+    );
+    assert.deepEqual(actionCalls, [
+      {
+        actionKey: 'crm.core.create-customer',
+        payload: subject,
+        transport: {
+          correlationId: options.correlationId,
+          idempotencyKey: 'ares-prefill-confirmed-create',
+        },
+      },
+    ]);
+    const createPayload = actionCalls[0]?.['payload'] as Readonly<Record<string, unknown>>;
+    assert.equal(Object.hasOwn(createPayload, 'address'), false);
+    assert.equal(Object.hasOwn(createPayload, 'ares'), false);
+    assert.equal(Object.hasOwn(createPayload, 'source'), false);
+    assert.equal(Object.hasOwn(createPayload, 'upload'), false);
 
     const callsBeforeInvalid = aresCalls.length;
     const invalid = await handler.handler(

@@ -5,8 +5,11 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect as EffectRuntime, Random } from 'effect';
 import { useMemo, useRef, useState } from 'react';
+import { executeCustomerAresLookup } from '../../../../../../api/customer-ares-lookup-client.ts';
 import { createCustomer, runEffectRequest } from '../../../../../../api/crm-client.ts';
 import type { Effect } from '../../../../../../api/crm-client.ts';
+import { CustomerAresLoader } from '../../../../../../features/customers/customer-ares-loader.tsx';
+import type { CustomerAresLoaderStatus } from '../../../../../../features/customers/customer-ares-loader.tsx';
 import { CustomerForm } from '../../../../../../features/customers/customer-form.tsx';
 import type {
   CustomerFormFieldErrors,
@@ -28,6 +31,8 @@ export interface CustomerCreatePageProps {
 
 type CreateCustomerClientError = Effect.Error<ReturnType<typeof createCustomer>>;
 type CreatedCustomer = Effect.Success<ReturnType<typeof createCustomer>>;
+type CustomerAresLookupClientError = Effect.Error<ReturnType<typeof executeCustomerAresLookup>>;
+type CustomerAresLookupResult = Effect.Success<ReturnType<typeof executeCustomerAresLookup>>;
 
 type UnavailableReason = 'backend' | 'decode' | 'transport';
 
@@ -36,6 +41,14 @@ export type CreateCustomerErrorState =
   | { readonly state: 'conflict' }
   | { readonly state: 'forbidden' }
   | { readonly state: 'name_invalid' }
+  | { readonly reason: UnavailableReason; readonly state: 'unavailable'; readonly uncertain: true }
+  | { readonly state: 'unexpected' };
+
+export type CustomerAresLookupErrorState =
+  | { readonly state: 'authentication_expired' }
+  | { readonly state: 'forbidden' }
+  | { readonly state: 'invalid' }
+  | { readonly state: 'not_found' }
   | { readonly reason: UnavailableReason; readonly state: 'unavailable'; readonly uncertain: true }
   | { readonly state: 'unexpected' };
 
@@ -97,6 +110,51 @@ export const classifyCreateCustomerError = (
   }
 };
 
+export const classifyCustomerAresLookupError = (
+  error: CustomerAresLookupClientError,
+): CustomerAresLookupErrorState => {
+  if (error._tag === 'HttpClientError') {
+    const reason = classifyHttpClientFailure(error);
+    return reason === 'unexpected'
+      ? { state: 'unexpected' }
+      : { reason, state: 'unavailable', uncertain: true };
+  }
+  if (error._tag === 'SchemaError') {
+    return { reason: 'decode', state: 'unavailable', uncertain: true };
+  }
+
+  switch (error._tag) {
+    case 'CustomerAresLookupInvalidProblem': {
+      return { state: 'invalid' };
+    }
+    case 'CustomerAresLookupAuthenticationProblem':
+    case 'GatewayAuthenticationRequiredProblem': {
+      return { state: 'authentication_expired' };
+    }
+    case 'CustomerAresLookupForbiddenProblem':
+    case 'GatewayForbiddenProblem': {
+      return { state: 'forbidden' };
+    }
+    case 'CustomerAresLookupNotFoundProblem': {
+      return { state: 'not_found' };
+    }
+    case 'CustomerAresLookupUnavailableProblem':
+    case 'GatewayRateLimitedProblem':
+    case 'GatewayUnavailableProblem': {
+      return { reason: 'backend', state: 'unavailable', uncertain: true };
+    }
+    case 'CustomerAresLookupInternalProblem':
+    case 'GatewayAudienceInvalidProblem':
+    case 'GatewayInternalProblem': {
+      return { state: 'unexpected' };
+    }
+    default: {
+      const unexpected: never = error;
+      return unexpected;
+    }
+  }
+};
+
 export const customerListHref = (language: string) => `/${language}/crm/customers`;
 
 interface CustomerCreateCopy {
@@ -132,6 +190,23 @@ interface CustomerCreateCopy {
     readonly generic: string;
     readonly success: string;
   };
+  readonly lookup: {
+    readonly authenticationExpired: string;
+    readonly decode: string;
+    readonly forbidden: string;
+    readonly formLabel: string;
+    readonly icoInvalid: string;
+    readonly icoLabel: string;
+    readonly internal: string;
+    readonly lookingUp: string;
+    readonly lookup: string;
+    readonly notFound: string;
+    readonly retry: string;
+    readonly retrying: string;
+    readonly success: string;
+    readonly transport: string;
+    readonly unavailable: string;
+  };
   readonly states: {
     readonly decode: string;
     readonly readOnly: string;
@@ -144,6 +219,11 @@ interface CustomerCreateCopy {
 interface MutationFeedback {
   readonly fieldErrors?: CustomerFormFieldErrors;
   readonly formStatus?: CustomerFormStatus;
+}
+
+interface LookupFeedback {
+  readonly retryable: boolean;
+  readonly status: CustomerAresLoaderStatus;
 }
 
 interface LogicalMutationAttempt {
@@ -229,12 +309,51 @@ const feedbackForCreateError = (
   }
 };
 
+const feedbackForLookupError = (
+  state: CustomerAresLookupErrorState,
+  copy: CustomerCreateCopy['lookup'],
+): LookupFeedback => {
+  switch (state.state) {
+    case 'invalid': {
+      return { retryable: false, status: { message: copy.icoInvalid, status: 'error' } };
+    }
+    case 'authentication_expired': {
+      return {
+        retryable: false,
+        status: { message: copy.authenticationExpired, status: 'error' },
+      };
+    }
+    case 'forbidden': {
+      return { retryable: false, status: { message: copy.forbidden, status: 'error' } };
+    }
+    case 'not_found': {
+      return { retryable: false, status: { message: copy.notFound, status: 'warning' } };
+    }
+    case 'unavailable': {
+      const message = {
+        backend: copy.unavailable,
+        decode: copy.decode,
+        transport: copy.transport,
+      }[state.reason];
+      return { retryable: true, status: { message, status: 'error' } };
+    }
+    case 'unexpected': {
+      return { retryable: false, status: { message: copy.internal, status: 'error' } };
+    }
+    default: {
+      const unexpected: never = state;
+      return unexpected;
+    }
+  }
+};
+
 export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePageProps) => {
   void routeParams;
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const [feedback, setFeedback] = useState<MutationFeedback | null>(null);
   const [formValues, setFormValues] = useState<CustomerFormValues>(emptyCustomerFormValues);
+  const [lookupFeedback, setLookupFeedback] = useState<LookupFeedback | null>(null);
   const logicalAttemptRef = useRef<LogicalMutationAttempt | null>(null);
   const copy: CustomerCreateCopy = {
     back: t('crm.pages.customerCreate.back'),
@@ -261,6 +380,23 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
       nameRequired: t('crm.pages.customerCreate.form.nameRequired'),
       save: t('crm.pages.customerCreate.form.save'),
       saving: t('crm.pages.customerCreate.form.saving'),
+    },
+    lookup: {
+      authenticationExpired: t('crm.pages.customerCreate.lookup.authenticationExpired'),
+      decode: t('crm.pages.customerCreate.lookup.decode'),
+      forbidden: t('crm.pages.customerCreate.lookup.forbidden'),
+      formLabel: t('crm.pages.customerCreate.lookup.formLabel'),
+      icoInvalid: t('crm.pages.customerCreate.lookup.icoInvalid'),
+      icoLabel: t('crm.pages.customerCreate.lookup.icoLabel'),
+      internal: t('crm.pages.customerCreate.lookup.internal'),
+      lookingUp: t('crm.pages.customerCreate.lookup.lookingUp'),
+      lookup: t('crm.pages.customerCreate.lookup.lookup'),
+      notFound: t('crm.pages.customerCreate.lookup.notFound'),
+      retry: t('crm.pages.customerCreate.lookup.retry'),
+      retrying: t('crm.pages.customerCreate.lookup.retrying'),
+      success: t('crm.pages.customerCreate.lookup.success'),
+      transport: t('crm.pages.customerCreate.lookup.transport'),
+      unavailable: t('crm.pages.customerCreate.lookup.unavailable'),
     },
     mutation: {
       authenticationExpired: t('crm.pages.customerCreate.mutation.authenticationExpired'),
@@ -293,13 +429,55 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
       ),
     retry: false,
   });
+  const lookupMutation = useMutation<
+    CustomerAresLookupResult,
+    CustomerAresLookupClientError,
+    { readonly ico: string }
+  >({
+    mutationFn: ({ ico }) =>
+      runEffectRequest(executeCustomerAresLookup({ ico }, createRequestId())),
+    retry: (failureCount, error) =>
+      failureCount < 1 && classifyCustomerAresLookupError(error).state === 'unavailable',
+    retryDelay: 100,
+  });
   const destination = customerListHref(language);
   const goToCustomerList = () => {
     void navigate({ to: destination });
   };
 
+  const lookup = (ico: string): Promise<void> => {
+    setLookupFeedback(null);
+
+    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning presentation callbacks stay non-async under strict Effect diagnostics.
+    return lookupMutation.mutateAsync({ ico }).then(
+      (result) => {
+        setFormValues((current) => ({
+          dic: result.dic ?? current.dic,
+          dissolvedOn: result.dissolvedOn ?? current.dissolvedOn,
+          establishedOn: result.establishedOn ?? current.establishedOn,
+          ico: result.ico,
+          legalFormCode: result.legalFormCode ?? current.legalFormCode,
+          name: result.name,
+        }));
+        logicalAttemptRef.current = null;
+        setFeedback(null);
+        createMutation.reset();
+        setLookupFeedback({
+          retryable: false,
+          status: { message: copy.lookup.success, status: 'success' },
+        });
+      },
+      // oxlint-disable-next-line promise/prefer-await-to-callbacks -- The typed rejection branch maps TanStack Query failures without an async UI callback.
+      (error: CustomerAresLookupClientError) => {
+        setLookupFeedback(
+          feedbackForLookupError(classifyCustomerAresLookupError(error), copy.lookup),
+        );
+      },
+    );
+  };
+
   const submit = (submittedValues: CustomerFormValues): Promise<void> => {
-    if (!target.writable) {
+    if (!target.writable || lookupMutation.isPending) {
       return Promise.resolve();
     }
     const values = customerPayloadValues(submittedValues);
@@ -344,7 +522,7 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
         <p>{copy.description}</p>
       </header>
       <div
-        aria-busy={createMutation.isPending}
+        aria-busy={createMutation.isPending || lookupMutation.isPending}
         className="crm:bg-(--color-surface) crm:p-6 crm:sm:p-8"
       >
         <div className="crm:grid crm:gap-5">
@@ -355,9 +533,23 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
               </StatusText>
             </output>
           )}
+          <CustomerAresLoader
+            copy={{
+              formLabel: copy.lookup.formLabel,
+              icoInvalid: copy.lookup.icoInvalid,
+              icoLabel: copy.lookup.icoLabel,
+              lookingUp:
+                lookupFeedback?.retryable === true ? copy.lookup.retrying : copy.lookup.lookingUp,
+              lookup: lookupFeedback?.retryable === true ? copy.lookup.retry : copy.lookup.lookup,
+            }}
+            disabled={createMutation.isPending}
+            onLookup={lookup}
+            pending={lookupMutation.isPending}
+            {...(lookupFeedback === null ? {} : { status: lookupFeedback.status })}
+          />
           <CustomerForm
             copy={copy.form}
-            disabled={!target.writable}
+            disabled={!target.writable || lookupMutation.isPending}
             {...(feedback?.fieldErrors === undefined ? {} : { fieldErrors: feedback.fieldErrors })}
             {...(feedback?.formStatus === undefined ? {} : { formStatus: feedback.formStatus })}
             onCancel={goToCustomerList}

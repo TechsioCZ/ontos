@@ -28,6 +28,7 @@ import { editContactAction } from '../../src/actions/edit-contact.action.ts';
 import { editCustomerAction } from '../../src/actions/edit-customer.action.ts';
 import { unarchiveContactAction } from '../../src/actions/unarchive-contact.action.ts';
 import { unarchiveCustomerAction } from '../../src/actions/unarchive-customer.action.ts';
+import { customerAresLookupRead } from '../../src/api/customer-ares-lookup.read.ts';
 import { contactDetailRead } from '../../src/api/contact-detail.read.ts';
 import { contactListRead } from '../../src/api/contact-list.read.ts';
 import { customerDetailRead } from '../../src/api/customer-detail.read.ts';
@@ -35,15 +36,19 @@ import { customerListRead } from '../../src/api/customer-list.read.ts';
 import { CrmPersistenceUnavailable } from '../../shared/apis/customer-detail.ts';
 import type { CreateCustomerPayload } from '../../shared/apis/customer-detail.ts';
 import { customers } from '../../src/db/schema.ts';
+import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
+import type { AresSubjectLookup } from '../../src/integrations/ares/ares-subject.service.ts';
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
+const legalEntityId = randomUUID();
 const otherTenantId = randomUUID();
 const otherPrincipalId = randomUUID();
 const principal = {
   authBindingId: randomUUID(),
   authContextRef: 'better-auth-session:crm-integration',
   authMethod: 'session' as const,
+  legalEntityId,
   principalId,
   tenantId,
 };
@@ -82,8 +87,10 @@ const completeCustomerFields = {
 } as const;
 
 const contextAccess = {
-  legalEntities: () => Effect.succeed([]),
-  modules: () => Effect.succeed([]),
+  legalEntities: ({ legalEntityIds }: { readonly legalEntityIds: readonly string[] }) =>
+    Effect.succeed(legalEntityIds.map((key) => ({ decision: 'allowed' as const, key }))),
+  modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
+    Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
   resources: () => Effect.succeed([]),
   tenants: (input: { readonly tenantIds: readonly string[] }) =>
     Effect.succeed(
@@ -144,6 +151,12 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
       `insert into core.tenants (tenant_id, slug, name, status, default_locale)
        values ($1, $2, 'CRM operations integration', 'active', 'en')`,
       [tenantId, `crm-operations-${tenantId}`],
+    );
+    await adminPool.query(
+      `insert into core.legal_entities
+         (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status)
+       values ($1, $2, 'CRM operations entity', 'CZ', $3, 'active')`,
+      [legalEntityId, tenantId, `crm-operations-${legalEntityId}`],
     );
     await adminPool.query(
       `insert into core.principals (principal_id, tenant_id, kind, display_name, status)
@@ -1006,6 +1019,74 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
                 row.actionInvocationId !== null,
             ),
           );
+
+          const aresCalls: AresSubjectLookup[] = [];
+          const aresSubject = {
+            dic: 'CZ48039101',
+            dissolvedOn: null,
+            establishedOn: '1992-12-04',
+            ico: '48039101',
+            legalFormCode: '112',
+            name: 'J.E.S., spol. s r.o.',
+          } as const;
+          const aresLookup = yield* reads
+            .runRead({
+              input: { ico: aresSubject.ico },
+              principal,
+              registration: customerAresLookupRead,
+              transport: { correlationId: 'ares-prefill-governed-read' },
+            })
+            .pipe(
+              Effect.provideService(AresSubjectService, {
+                subject: (input) => {
+                  aresCalls.push(input);
+                  return Effect.succeed(aresSubject);
+                },
+              }),
+            );
+          assert.deepEqual(aresLookup, aresSubject);
+          assert.deepEqual(aresCalls, [
+            { correlationId: 'ares-prefill-governed-read', ico: aresSubject.ico },
+          ]);
+
+          const aresCreatedCustomer = yield* actions.runAction({
+            payload: {
+              dic: aresLookup.dic,
+              dissolvedOn: aresLookup.dissolvedOn,
+              establishedOn: aresLookup.establishedOn,
+              ico: aresLookup.ico,
+              legalFormCode: aresLookup.legalFormCode,
+              name: 'Reviewed ARES Customer',
+            },
+            principal,
+            registration: createCustomerAction,
+            transport: transport('ares-prefill-confirmed-create'),
+          });
+          assert.deepEqual(
+            {
+              dic: aresCreatedCustomer.dic,
+              dissolvedOn: aresCreatedCustomer.dissolvedOn,
+              establishedOn: aresCreatedCustomer.establishedOn,
+              ico: aresCreatedCustomer.ico,
+              legalFormCode: aresCreatedCustomer.legalFormCode,
+              name: aresCreatedCustomer.name,
+            },
+            { ...aresSubject, name: 'Reviewed ARES Customer' },
+          );
+          const persistedAresCustomer = yield* Effect.promise(() =>
+            adminPool.query<{ record: Readonly<Record<string, unknown>> }>(
+              `select to_jsonb(customer) as record
+               from crm.customers as customer
+               where tenant_id = $1 and customer_id = $2`,
+              [tenantId, aresCreatedCustomer.customerId],
+            ),
+          );
+          const persistedAresRecord = persistedAresCustomer.rows[0]?.record;
+          assert.ok(persistedAresRecord !== undefined);
+          assert.equal(Object.hasOwn(persistedAresRecord, 'address'), false);
+          assert.equal(Object.hasOwn(persistedAresRecord, 'ares'), false);
+          assert.equal(Object.hasOwn(persistedAresRecord, 'source'), false);
+          assert.equal(Object.hasOwn(persistedAresRecord, 'upload'), false);
         }),
       ),
     );
@@ -1013,7 +1094,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
       'select count(*) from crm.customers where tenant_id = $1',
       [tenantId],
     );
-    assert.equal(customerCount.rows[0]?.count, '5');
+    assert.equal(customerCount.rows[0]?.count, '6');
   } finally {
     for (const cleanupTenantId of [tenantId, otherTenantId]) {
       await adminPool.query('delete from crm.contacts where tenant_id = $1', [cleanupTenantId]);
@@ -1034,6 +1115,9 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
         cleanupTenantId,
       ]);
       await adminPool.query('delete from core.principals where tenant_id = $1', [cleanupTenantId]);
+      await adminPool.query('delete from core.legal_entities where tenant_id = $1', [
+        cleanupTenantId,
+      ]);
       await adminPool.query('delete from core.tenants where tenant_id = $1', [cleanupTenantId]);
     }
     await adminPool.end();

@@ -166,6 +166,23 @@
           "save": "Create Customer",
           "saving": "Creating Customer…"
         },
+        "lookup": {
+          "authenticationExpired": "Your session expired before ARES could be searched.",
+          "decode": "The ARES response could not be read. Try again.",
+          "forbidden": "You do not have permission to look up Customer data in ARES.",
+          "formLabel": "Load Customer data from ARES",
+          "icoInvalid": "Enter an IČO containing exactly eight digits.",
+          "icoLabel": "IČO",
+          "internal": "The ARES lookup could not be completed safely. Try again.",
+          "lookingUp": "Loading from ARES…",
+          "lookup": "Load from ARES",
+          "notFound": "ARES has no economic subject for this IČO.",
+          "retry": "Try ARES again",
+          "retrying": "Trying ARES again…",
+          "success": "Customer details loaded from ARES. Review and edit them before creating the Customer.",
+          "transport": "ARES could not be reached. Check your connection and try again.",
+          "unavailable": "ARES is temporarily unavailable. Try again."
+        },
         "mutation": {
           "authenticationExpired": "Your session expired before the Customer could be created.",
           "conflict": "This request conflicts with a previous Customer creation attempt. Review the name and try again.",

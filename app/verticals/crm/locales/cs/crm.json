@@ -166,6 +166,23 @@
           "save": "Vytvořit zákazníka",
           "saving": "Vytváření zákazníka…"
         },
+        "lookup": {
+          "authenticationExpired": "Relace vypršela před vyhledáním v ARES.",
+          "decode": "Odpověď ARES se nepodařilo přečíst. Zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění načítat údaje zákazníka z ARES.",
+          "formLabel": "Načíst údaje zákazníka z ARES",
+          "icoInvalid": "Zadejte IČO obsahující přesně osm číslic.",
+          "icoLabel": "IČO",
+          "internal": "Vyhledání v ARES se nepodařilo bezpečně dokončit. Zkuste to znovu.",
+          "lookingUp": "Načítání z ARES…",
+          "lookup": "Načíst z ARES",
+          "notFound": "ARES pro toto IČO neobsahuje žádný ekonomický subjekt.",
+          "retry": "Zkusit ARES znovu",
+          "retrying": "Opakované načítání z ARES…",
+          "success": "Údaje zákazníka byly načteny z ARES. Před vytvořením zákazníka je zkontrolujte a případně upravte.",
+          "transport": "ARES není dostupný. Zkontrolujte připojení a zkuste to znovu.",
+          "unavailable": "ARES je dočasně nedostupný. Zkuste to znovu."
+        },
         "mutation": {
           "authenticationExpired": "Relace vypršela před vytvořením zákazníka.",
           "conflict": "Požadavek koliduje s předchozím pokusem o vytvoření zákazníka. Zkontrolujte název a zkuste to znovu.",
