@@ -202,7 +202,23 @@
       "customerDetail": {
         "back": "Back to Customers",
         "contacts": {
+          "filter": {
+            "active": "Active",
+            "all": "All",
+            "archived": "Archived",
+            "label": "Contact status",
+            "placeholder": "Choose a status"
+          },
           "heading": "Contacts",
+          "lifecycle": {
+            "authenticationExpired": "Your session has expired. Sign in and try changing the Contact status again.",
+            "conflict": "The Contact status changed before this action completed. Refresh the list and try again.",
+            "forbidden": "You do not have permission to change this Contact’s status.",
+            "invalid": "The Contact status could not be changed because the request was invalid.",
+            "notFound": "This Contact could not be found.",
+            "unavailable": "The Contact status could not be changed reliably. Try again.",
+            "unexpected": "The Contact status could not be changed safely. Try again."
+          },
           "pagination": {
             "label": "Customer Contact pages",
             "next": "Next",
@@ -211,7 +227,7 @@
           "states": {
             "authenticationExpired": "Your session has expired. Sign in and load the Contacts again.",
             "decode": "The Contact list response could not be read. Try again.",
-            "empty": "This Customer has no active Contacts.",
+            "empty": "No Contacts match this filter.",
             "forbidden": "You do not have permission to view this Customer’s Contacts.",
             "internal": "The Contacts could not be loaded safely. Try again.",
             "loading": "Loading Contacts…",
@@ -221,12 +237,22 @@
             "transport": "The Contacts could not be reached. Check your connection and try again.",
             "unavailable": "The Contacts are temporarily unavailable. Try again."
           },
+          "status": {
+            "active": "Active",
+            "archived": "Archived"
+          },
           "table": {
             "actions": "Actions",
-            "caption": "Active Customer Contacts",
+            "archive": "Archive",
+            "archiving": "Archiving…",
+            "caption": "Customer Contacts",
+            "edit": "Edit",
             "email": "Email",
             "name": "Name",
-            "phone": "Phone"
+            "phone": "Phone",
+            "status": "Status",
+            "unarchive": "Unarchive",
+            "unarchiving": "Unarchiving…"
           }
         },
         "description": "View the current details and lifecycle state of this Customer.",
@@ -320,6 +346,15 @@
           "label": "Customer status",
           "placeholder": "Choose a status"
         },
+        "lifecycle": {
+          "authenticationExpired": "Your session has expired. Sign in and try changing the Customer status again.",
+          "conflict": "The Customer status changed before this action completed. Refresh the list and try again.",
+          "forbidden": "You do not have permission to change this Customer’s status.",
+          "invalid": "The Customer status could not be changed because the request was invalid.",
+          "notFound": "This Customer could not be found.",
+          "unavailable": "The Customer status could not be changed reliably. Try again.",
+          "unexpected": "The Customer status could not be changed safely. Try again."
+        },
         "pagination": {
           "label": "Customer list pages",
           "next": "Next",
@@ -343,11 +378,15 @@
         },
         "table": {
           "actions": "Actions",
+          "archive": "Archive",
+          "archiving": "Archiving…",
           "caption": "Customers",
           "createdAt": "Created",
-          "customerId": "Customer ID",
+          "edit": "Edit",
           "name": "Customer name",
           "status": "Status",
+          "unarchive": "Unarchive",
+          "unarchiving": "Unarchiving…",
           "updatedAt": "Updated"
         },
         "title": "Customers"

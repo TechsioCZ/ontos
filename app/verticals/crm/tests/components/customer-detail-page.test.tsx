@@ -10,12 +10,14 @@ import enCatalog from '../../locales/en/crm.json';
 import StandaloneCustomerDetailPage, {
   CONTACT_LIST_PAGE_SIZE,
   CustomerDetailPage,
+  buildCustomerContactListHref,
   classifyContactListError,
   classifyCustomerDetailError,
   contactListQueryKey,
   customerDetailQueryKey,
   decodeCustomerDetailId,
   formatCustomerDateOnly,
+  parseCustomerContactListSearch,
 } from '../../src/routes/[lang]/crm/customers/[id]/page.tsx';
 
 Object.assign(globalThis, {
@@ -23,17 +25,25 @@ Object.assign(globalThis, {
 });
 
 const {
+  archiveContactMock,
   getContactListMock,
   getCustomerDetailMock,
   localeState,
+  navigateMock,
   routeParamsState,
   runEffectRequestMock,
+  searchState,
+  unarchiveContactMock,
 } = rstest.hoisted(() => ({
+  archiveContactMock: rstest.fn(),
   getContactListMock: rstest.fn(),
   getCustomerDetailMock: rstest.fn(),
   localeState: { current: 'en' as 'cs' | 'en' },
+  navigateMock: rstest.fn(() => Promise.resolve()),
   routeParamsState: { current: {} as Readonly<Partial<Record<'id', string>>> },
   runEffectRequestMock: rstest.fn(),
+  searchState: { current: '' },
+  unarchiveContactMock: rstest.fn(),
 }));
 
 const translations = {
@@ -41,7 +51,19 @@ const translations = {
     'crm.pages.contactCreate.title': 'Vytvořit kontakt',
     'crm.pages.contactEdit.title': 'Upravit kontakt',
     'crm.pages.customerDetail.back': 'Zpět na zákazníky',
+    'crm.pages.customerDetail.contacts.filter.active': 'Aktivní',
+    'crm.pages.customerDetail.contacts.filter.all': 'Všichni',
+    'crm.pages.customerDetail.contacts.filter.archived': 'Archivovaní',
+    'crm.pages.customerDetail.contacts.filter.label': 'Stav kontaktu',
+    'crm.pages.customerDetail.contacts.filter.placeholder': 'Vyberte stav',
     'crm.pages.customerDetail.contacts.heading': 'Kontakty',
+    'crm.pages.customerDetail.contacts.lifecycle.authenticationExpired': 'Relace vypršela.',
+    'crm.pages.customerDetail.contacts.lifecycle.conflict': 'Stav se změnil.',
+    'crm.pages.customerDetail.contacts.lifecycle.forbidden': 'Změna není povolena.',
+    'crm.pages.customerDetail.contacts.lifecycle.invalid': 'Požadavek není platný.',
+    'crm.pages.customerDetail.contacts.lifecycle.notFound': 'Kontakt nebyl nalezen.',
+    'crm.pages.customerDetail.contacts.lifecycle.unavailable': 'Změna není dostupná.',
+    'crm.pages.customerDetail.contacts.lifecycle.unexpected': 'Změna se nezdařila.',
     'crm.pages.customerDetail.contacts.pagination.label': 'Stránky kontaktů zákazníka',
     'crm.pages.customerDetail.contacts.pagination.next': 'Další',
     'crm.pages.customerDetail.contacts.pagination.previous': 'Předchozí',
@@ -49,7 +71,7 @@ const translations = {
       'Vaše relace vypršela. Po přihlášení načtěte kontakty znovu.',
     'crm.pages.customerDetail.contacts.states.decode':
       'Odpověď se seznamem kontaktů se nepodařilo přečíst. Zkuste to znovu.',
-    'crm.pages.customerDetail.contacts.states.empty': 'Tento zákazník nemá žádné aktivní kontakty.',
+    'crm.pages.customerDetail.contacts.states.empty': 'Tomuto filtru neodpovídají žádné kontakty.',
     'crm.pages.customerDetail.contacts.states.forbidden':
       'Nemáte oprávnění zobrazit kontakty tohoto zákazníka.',
     'crm.pages.customerDetail.contacts.states.internal':
@@ -63,11 +85,19 @@ const translations = {
       'Kontakty nejsou dostupné. Zkontrolujte připojení a zkuste to znovu.',
     'crm.pages.customerDetail.contacts.states.unavailable':
       'Kontakty jsou dočasně nedostupné. Zkuste to znovu.',
+    'crm.pages.customerDetail.contacts.status.active': 'Aktivní',
+    'crm.pages.customerDetail.contacts.status.archived': 'Archivovaný',
     'crm.pages.customerDetail.contacts.table.actions': 'Akce',
-    'crm.pages.customerDetail.contacts.table.caption': 'Aktivní kontakty zákazníka',
+    'crm.pages.customerDetail.contacts.table.archive': 'Archivovat',
+    'crm.pages.customerDetail.contacts.table.archiving': 'Archivuji…',
+    'crm.pages.customerDetail.contacts.table.caption': 'Kontakty zákazníka',
+    'crm.pages.customerDetail.contacts.table.edit': 'Upravit',
     'crm.pages.customerDetail.contacts.table.email': 'E-mail',
     'crm.pages.customerDetail.contacts.table.name': 'Jméno',
     'crm.pages.customerDetail.contacts.table.phone': 'Telefon',
+    'crm.pages.customerDetail.contacts.table.status': 'Stav',
+    'crm.pages.customerDetail.contacts.table.unarchive': 'Odarchivovat',
+    'crm.pages.customerDetail.contacts.table.unarchiving': 'Ruším archivaci…',
     'crm.pages.customerDetail.fields.createdAt': 'Vytvořeno',
     'crm.pages.customerDetail.fields.customerId': 'ID zákazníka',
     'crm.pages.customerDetail.fields.dic': 'DIČ',
@@ -101,7 +131,19 @@ const translations = {
     'crm.pages.contactCreate.title': 'Create Contact',
     'crm.pages.contactEdit.title': 'Edit Contact',
     'crm.pages.customerDetail.back': 'Back to Customers',
+    'crm.pages.customerDetail.contacts.filter.active': 'Active',
+    'crm.pages.customerDetail.contacts.filter.all': 'All',
+    'crm.pages.customerDetail.contacts.filter.archived': 'Archived',
+    'crm.pages.customerDetail.contacts.filter.label': 'Contact status',
+    'crm.pages.customerDetail.contacts.filter.placeholder': 'Choose a status',
     'crm.pages.customerDetail.contacts.heading': 'Contacts',
+    'crm.pages.customerDetail.contacts.lifecycle.authenticationExpired': 'Your session expired.',
+    'crm.pages.customerDetail.contacts.lifecycle.conflict': 'The status changed.',
+    'crm.pages.customerDetail.contacts.lifecycle.forbidden': 'The change is forbidden.',
+    'crm.pages.customerDetail.contacts.lifecycle.invalid': 'The request is invalid.',
+    'crm.pages.customerDetail.contacts.lifecycle.notFound': 'The Contact was not found.',
+    'crm.pages.customerDetail.contacts.lifecycle.unavailable': 'The change is unavailable.',
+    'crm.pages.customerDetail.contacts.lifecycle.unexpected': 'The change failed.',
     'crm.pages.customerDetail.contacts.pagination.label': 'Customer Contact pages',
     'crm.pages.customerDetail.contacts.pagination.next': 'Next',
     'crm.pages.customerDetail.contacts.pagination.previous': 'Previous',
@@ -109,7 +151,7 @@ const translations = {
       'Your session has expired. Sign in and load the Contacts again.',
     'crm.pages.customerDetail.contacts.states.decode':
       'The Contact list response could not be read. Try again.',
-    'crm.pages.customerDetail.contacts.states.empty': 'This Customer has no active Contacts.',
+    'crm.pages.customerDetail.contacts.states.empty': 'No Contacts match this filter.',
     'crm.pages.customerDetail.contacts.states.forbidden':
       'You do not have permission to view this Customer’s Contacts.',
     'crm.pages.customerDetail.contacts.states.internal':
@@ -123,11 +165,19 @@ const translations = {
       'The Contacts could not be reached. Check your connection and try again.',
     'crm.pages.customerDetail.contacts.states.unavailable':
       'The Contacts are temporarily unavailable. Try again.',
+    'crm.pages.customerDetail.contacts.status.active': 'Active',
+    'crm.pages.customerDetail.contacts.status.archived': 'Archived',
     'crm.pages.customerDetail.contacts.table.actions': 'Actions',
-    'crm.pages.customerDetail.contacts.table.caption': 'Active Customer Contacts',
+    'crm.pages.customerDetail.contacts.table.archive': 'Archive',
+    'crm.pages.customerDetail.contacts.table.archiving': 'Archiving…',
+    'crm.pages.customerDetail.contacts.table.caption': 'Customer Contacts',
+    'crm.pages.customerDetail.contacts.table.edit': 'Edit',
     'crm.pages.customerDetail.contacts.table.email': 'Email',
     'crm.pages.customerDetail.contacts.table.name': 'Name',
     'crm.pages.customerDetail.contacts.table.phone': 'Phone',
+    'crm.pages.customerDetail.contacts.table.status': 'Status',
+    'crm.pages.customerDetail.contacts.table.unarchive': 'Unarchive',
+    'crm.pages.customerDetail.contacts.table.unarchiving': 'Unarchiving…',
     'crm.pages.customerDetail.fields.createdAt': 'Created',
     'crm.pages.customerDetail.fields.customerId': 'Customer ID',
     'crm.pages.customerDetail.fields.dic': 'Tax ID',
@@ -176,13 +226,18 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
       {children}
     </a>
   ),
+  useLocation: ({ select }: { select: (location: { searchStr: string }) => string }) =>
+    select({ searchStr: searchState.current }),
+  useNavigate: () => navigateMock,
   useParams: () => routeParamsState.current,
 }));
 
 rstest.mock('../../src/api/crm-client.ts', () => ({
+  archiveContact: archiveContactMock,
   getContactList: getContactListMock,
   getCustomerDetail: getCustomerDetailMock,
   runEffectRequest: runEffectRequestMock,
+  unarchiveContact: unarchiveContactMock,
 }));
 
 rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({
@@ -240,6 +295,11 @@ const contacts = [
   },
 ] as const;
 
+const archivedContact = {
+  ...contacts[1],
+  archivedAt: '2026-08-15T12:00:00.000Z',
+} as const;
+
 const flattenKeys = (value: object, prefix = ''): string[] =>
   Object.entries(value)
     .flatMap(([key, child]) => {
@@ -250,12 +310,16 @@ const flattenKeys = (value: object, prefix = ''): string[] =>
 
 beforeEach(() => {
   localeState.current = 'en';
+  navigateMock.mockResolvedValue();
   routeParamsState.current = {};
+  searchState.current = '';
+  archiveContactMock.mockReturnValue(Effect.succeed({ ...contacts[0], archivedAt: 'now' }));
   getContactListMock.mockReturnValue(Effect.succeed({ items: contacts, nextOffset: null }));
   getCustomerDetailMock.mockReturnValue(Effect.succeed(activeCustomer));
   runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
     Effect.runPromise(effect),
   );
+  unarchiveContactMock.mockReturnValue(Effect.succeed({ ...archivedContact, archivedAt: null }));
 });
 
 afterEach(() => {
@@ -270,7 +334,7 @@ describe('Customer detail route input', () => {
     render(<StandaloneCustomerDetailPage />);
 
     expect(await screen.findByRole('heading', { name: activeCustomer.name })).toBeTruthy();
-    expect(await screen.findByRole('table', { name: 'Active Customer Contacts' })).toBeTruthy();
+    expect(await screen.findByRole('table', { name: 'Customer Contacts' })).toBeTruthy();
   });
 
   test('accepts only a bounded Customer UUID and builds an ID-specific query key', () => {
@@ -284,12 +348,12 @@ describe('Customer detail route input', () => {
       'detail',
       activeCustomer.customerId,
     ]);
-    expect(contactListQueryKey(activeCustomer.customerId, 25)).toEqual([
+    expect(contactListQueryKey(activeCustomer.customerId, 'archived', 25)).toEqual([
       'crm',
       'customers',
       activeCustomer.customerId,
       'contacts',
-      { limit: CONTACT_LIST_PAGE_SIZE, offset: 25 },
+      { filter: 'archived', limit: CONTACT_LIST_PAGE_SIZE, offset: 25 },
     ]);
   });
 
@@ -307,11 +371,50 @@ describe('Customer detail route input', () => {
   );
 });
 
+describe('Customer Contact list URL state', () => {
+  test('accepts only one exact status and one bounded non-negative integer offset', () => {
+    expect(parseCustomerContactListSearch('?status=archived&offset=50')).toEqual({
+      offset: 50,
+      status: 'archived',
+    });
+    expect(parseCustomerContactListSearch('?status=all&offset=0')).toEqual({
+      offset: 0,
+      status: 'all',
+    });
+    for (const search of ['', '?status=unknown&offset=-1']) {
+      expect(parseCustomerContactListSearch(search)).toEqual({ offset: 0, status: 'active' });
+    }
+    expect(parseCustomerContactListSearch('?status=active&status=all&offset=1')).toEqual({
+      offset: 1,
+      status: 'active',
+    });
+    for (const search of [
+      '?status=archived&offset=1.5',
+      '?status=archived&offset=9007199254740991',
+      '?status=archived&offset=25&offset=50',
+    ]) {
+      expect(parseCustomerContactListSearch(search)).toEqual({ offset: 0, status: 'archived' });
+    }
+  });
+
+  test('builds localized Customer detail links while retaining unrelated query state', () => {
+    expect(
+      buildCustomerContactListHref(
+        'en',
+        activeCustomer.customerId,
+        '?view=compact&status=all&offset=50',
+        'active',
+        0,
+      ),
+    ).toBe(`/en/crm/customers/${activeCustomer.customerId}?view=compact&status=active`);
+  });
+});
+
 test('loads the Customer and its active Contacts through the typed CRM client with exact BFF options', async () => {
   render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
   await screen.findByRole('heading', { name: activeCustomer.name });
-  await screen.findByRole('table', { name: 'Active Customer Contacts' });
+  await screen.findByRole('table', { name: 'Customer Contacts' });
   expect(getCustomerDetailMock).toHaveBeenCalledTimes(1);
   expect(getCustomerDetailMock).toHaveBeenCalledWith(
     { customerId: activeCustomer.customerId },
@@ -336,6 +439,27 @@ test('loads the Customer and its active Contacts through the typed CRM client wi
     },
   );
   expect(runEffectRequestMock).toHaveBeenCalledTimes(2);
+});
+
+test('loads URL-derived Contact status and pagination through the same client seam', async () => {
+  searchState.current = '?status=archived&offset=25';
+  getContactListMock.mockReturnValue(
+    Effect.succeed({ items: [archivedContact], nextOffset: null }),
+  );
+
+  render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  await screen.findByRole('button', { name: 'Unarchive' });
+  expect(within(screen.getByRole('table')).getByText('Archived')).toBeTruthy();
+  expect(getContactListMock).toHaveBeenCalledWith(
+    {
+      customerId: activeCustomer.customerId,
+      filter: 'archived',
+      limit: CONTACT_LIST_PAGE_SIZE,
+      offset: 25,
+    },
+    expect.objectContaining({ locale: 'en' }),
+  );
 });
 
 test('renders the Customer overview followed by ordered semantic Contact rows', async () => {
@@ -377,20 +501,23 @@ test('renders the Customer overview followed by ordered semantic Contact rows', 
     expect(value.parentElement?.className).toContain('crm:break-all');
   }
   const contactsHeading = await screen.findByRole('heading', { name: 'Contacts' });
-  const table = screen.getByRole('table', { name: 'Active Customer Contacts' });
+  const table = screen.getByRole('table', { name: 'Customer Contacts' });
   expect(contactsHeading.compareDocumentPosition(table)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   expect(
     within(table)
       .getAllByRole('columnheader')
       .map((header) => header.textContent),
-  ).toEqual(['Name', 'Email', 'Phone', 'Actions']);
+  ).toEqual(['Name', 'Status', 'Email', 'Phone', 'Actions']);
+  expect(
+    within(table).getByRole('columnheader', { name: 'Actions' }).firstElementChild?.className,
+  ).toContain('justify-end');
   const rows = within(table).getAllByRole('row');
   expect(rows).toHaveLength(3);
   expect(
     within(rows[1] as HTMLElement)
       .getAllByRole('cell')
       .map((cell) => cell.textContent),
-  ).toEqual(['Ada Lovelace', 'ada@example.com', '+420 111 222 333', 'Edit Contact']);
+  ).toEqual(['Ada Lovelace', 'Active', 'ada@example.com', '+420 111 222 333', 'EditArchive']);
   expect(
     within(rows[1] as HTMLElement)
       .getByRole('link', { name: 'Ada Lovelace' })
@@ -398,19 +525,68 @@ test('renders the Customer overview followed by ordered semantic Contact rows', 
   ).toBe(`/en/crm/customers/${activeCustomer.customerId}/contacts/${contacts[0].contactId}`);
   expect(
     within(rows[1] as HTMLElement)
-      .getByRole('link', { name: 'Edit Contact' })
+      .getByRole('link', { name: 'ada@example.com' })
       .getAttribute('href'),
-  ).toBe(`/en/crm/customers/${activeCustomer.customerId}/contacts/${contacts[0].contactId}/edit`);
+  ).toBe('mailto:ada@example.com');
+  const editLink = within(rows[1] as HTMLElement).getByRole('link', { name: 'Edit' });
+  expect(editLink.getAttribute('href')).toBe(
+    `/en/crm/customers/${activeCustomer.customerId}/contacts/${contacts[0].contactId}/edit`,
+  );
+  expect(editLink.className).toBe(screen.getByRole('link', { name: 'Create Contact' }).className);
+  expect(editLink.parentElement?.className).toContain('justify-end');
   expect(
     within(rows[2] as HTMLElement)
       .getAllByRole('cell')
       .map((cell) => cell.textContent),
-  ).toEqual(['Grace Hopper', 'grace@example.com', '+420 444 555 666', 'Edit Contact']);
+  ).toEqual(['Grace Hopper', 'Active', 'grace@example.com', '+420 444 555 666', 'EditArchive']);
+  expect(
+    within(rows[2] as HTMLElement)
+      .getByRole('link', { name: 'grace@example.com' })
+      .getAttribute('href'),
+  ).toBe('mailto:grace@example.com');
+  expect(within(table).getAllByText('Active')).toHaveLength(2);
   expect(screen.getByTestId('customer-contacts-table-overflow').className).toContain(
     'crm:overflow-x-auto',
   );
   expect(document.querySelector('[role="tablist"]')).toBeNull();
   expect(screen.queryByRole('heading', { name: /ares|address/iu })).toBeNull();
+});
+
+test('archives active Contacts and unarchives archived Contacts through the typed BFF clients', async () => {
+  getContactListMock.mockReturnValue(
+    Effect.succeed({ items: [contacts[0], archivedContact], nextOffset: null }),
+  );
+  const user = userEvent.setup();
+  render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  const archiveButton = await screen.findByRole('button', { name: 'Archive' });
+  const unarchiveButton = screen.getByRole('button', { name: 'Unarchive' });
+  expect(archiveButton.className).toContain('border-button-border-danger');
+  expect(unarchiveButton.className).toContain('border-button-border-warning');
+
+  await user.click(archiveButton);
+  expect(archiveContactMock).toHaveBeenCalledWith(
+    { contactId: contacts[0].contactId },
+    {
+      baseUrl: 'http://localhost:4101/crm-api',
+      correlationId: expect.any(String),
+      idempotencyKey: expect.any(String),
+      locale: 'en',
+    },
+  );
+  await waitFor(() => expect(getContactListMock).toHaveBeenCalledTimes(2));
+
+  await user.click(unarchiveButton);
+  expect(unarchiveContactMock).toHaveBeenCalledWith(
+    { contactId: archivedContact.contactId },
+    {
+      baseUrl: 'http://localhost:4101/crm-api',
+      correlationId: expect.any(String),
+      idempotencyKey: expect.any(String),
+      locale: 'en',
+    },
+  );
+  await waitFor(() => expect(getContactListMock).toHaveBeenCalledTimes(3));
 });
 
 test('uses one localized unavailable value for every null business field', async () => {
@@ -445,10 +621,10 @@ test('preserves final Contact table geometry while the Contact query is loading'
 
   await screen.findByRole('heading', { name: activeCustomer.name });
   expect(screen.getByRole('status').textContent).toBe('Loading Contacts…');
-  const table = screen.getByRole('table', { name: 'Active Customer Contacts' });
+  const table = screen.getByRole('table', { name: 'Customer Contacts' });
   expect(table.getAttribute('aria-busy')).toBe('true');
   expect(within(table).getAllByRole('row')).toHaveLength(4);
-  expect(table.querySelectorAll('td')).toHaveLength(12);
+  expect(table.querySelectorAll('td')).toHaveLength(15);
 });
 
 test('renders the empty Contact table without data rows', async () => {
@@ -456,12 +632,12 @@ test('renders the empty Contact table without data rows', async () => {
   render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
   const table = await waitFor(() => {
-    const currentTable = screen.getByRole('table', { name: 'Active Customer Contacts' });
+    const currentTable = screen.getByRole('table', { name: 'Customer Contacts' });
     expect(currentTable.querySelectorAll('tbody tr')).toHaveLength(0);
     return currentTable;
   });
   expect(within(table).getAllByRole('row')).toHaveLength(1);
-  const emptyDescription = screen.getByText('This Customer has no active Contacts.');
+  const emptyDescription = screen.getByText('No Contacts match this filter.');
   expect(emptyDescription.className).toContain('crm:sr-only');
   expect(table.getAttribute('aria-describedby')).toBe(emptyDescription.id);
   expect(screen.getByRole('link', { name: 'Create Contact' }).getAttribute('href')).toBe(
@@ -485,42 +661,94 @@ test('renders Czech archived data and preserves the active locale in the return 
   expect(screen.getByRole('link', { name: 'Vytvořit kontakt' }).getAttribute('href')).toBe(
     `/cs/crm/customers/${archivedCustomer.customerId}/contacts/new`,
   );
-  expect(screen.getByRole('table', { name: 'Aktivní kontakty zákazníka' })).toBeTruthy();
+  expect(screen.getByRole('combobox', { name: 'Stav kontaktu' })).toBeTruthy();
+  expect(screen.getByRole('table', { name: 'Kontakty zákazníka' })).toBeTruthy();
+  expect(screen.getAllByRole('link', { name: 'Upravit' })).toHaveLength(2);
+  expect(screen.getAllByRole('button', { name: 'Archivovat' })).toHaveLength(2);
   expect(getContactListMock).toHaveBeenCalledWith(
     expect.any(Object),
     expect.objectContaining({ locale: 'cs' }),
   );
 });
 
-test('pages active Contacts without mixing cached offsets', async () => {
-  getContactListMock
-    .mockReturnValueOnce(
-      Effect.succeed({ items: [contacts[0]], nextOffset: CONTACT_LIST_PAGE_SIZE }),
-    )
-    .mockReturnValueOnce(Effect.succeed({ items: [contacts[1]], nextOffset: null }));
+test('navigates Contact pages while retaining status and unrelated query state', async () => {
+  searchState.current = '?view=compact&status=active';
+  getContactListMock.mockReturnValue(
+    Effect.succeed({ items: [contacts[0]], nextOffset: CONTACT_LIST_PAGE_SIZE }),
+  );
+  render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Next' }).getAttribute('href')).toBe(
+    `/en/crm/customers/${activeCustomer.customerId}?view=compact&status=active&offset=25`,
+  );
+});
+
+test('navigates to the previous Contact page and removes the zero offset', async () => {
+  searchState.current = '?view=compact&status=archived&offset=25';
+  getContactListMock.mockReturnValue(
+    Effect.succeed({ items: [archivedContact], nextOffset: null }),
+  );
+  render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  await screen.findByRole('button', { name: 'Unarchive' });
+  expect(screen.getByRole('link', { name: 'Previous' }).getAttribute('href')).toBe(
+    `/en/crm/customers/${activeCustomer.customerId}?view=compact&status=archived`,
+  );
+});
+
+test('filters Contacts by status and resets pagination to the first page', async () => {
+  searchState.current = '?view=compact&status=active&offset=50';
   const user = userEvent.setup();
   render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
   expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Next' }));
-  expect(await screen.findByText('Grace Hopper')).toBeTruthy();
-  expect(screen.queryByText('Ada Lovelace')).toBeNull();
-  expect(getContactListMock).toHaveBeenLastCalledWith(
-    {
-      customerId: activeCustomer.customerId,
-      filter: 'active',
-      limit: CONTACT_LIST_PAGE_SIZE,
-      offset: CONTACT_LIST_PAGE_SIZE,
-    },
-    expect.objectContaining({ locale: 'en' }),
-  );
-  await user.click(screen.getByRole('button', { name: 'Previous' }));
-  expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
-  expect(getContactListMock).toHaveBeenCalledTimes(2);
+  const filter = screen.getByRole('combobox', { name: 'Contact status' });
+  filter.focus();
+  await user.keyboard('{Enter}{ArrowDown}{Enter}');
+  expect(navigateMock).toHaveBeenCalledWith({
+    to: `/en/crm/customers/${activeCustomer.customerId}?view=compact&status=archived`,
+  });
 });
 
-test('resets Contact pagination when the route Customer changes', async () => {
+test('reloads Contact data when returning to a previously shown status', async () => {
+  let activeRequestCount = 0;
+  getContactListMock.mockImplementation(
+    (payload: { readonly filter: 'active' | 'archived' | 'all' }) => {
+      if (payload.filter === 'archived') {
+        return Effect.succeed({ items: [archivedContact], nextOffset: null });
+      }
+      activeRequestCount += 1;
+      return Effect.succeed({
+        items: [activeRequestCount === 1 ? contacts[0] : contacts[1]],
+        nextOffset: null,
+      });
+    },
+  );
+  const user = userEvent.setup();
+  const rendered = render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
+  const activeFilter = screen.getByRole('combobox', { name: 'Contact status' });
+  activeFilter.focus();
+  await user.keyboard('{Enter}{ArrowDown}{Enter}');
+  searchState.current = '?status=archived';
+  rendered.rerender(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+  await screen.findByRole('button', { name: 'Unarchive' });
+
+  const archivedFilter = screen.getByRole('combobox', { name: 'Contact status' });
+  archivedFilter.focus();
+  await user.keyboard('{Enter}{ArrowUp}{Enter}');
+  searchState.current = '?status=active';
+  rendered.rerender(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
+
+  expect(await screen.findByText('Grace Hopper')).toBeTruthy();
+  expect(getContactListMock).toHaveBeenCalledTimes(3);
+});
+
+test('reads fresh Contact pagination when the route Customer and query string change', async () => {
   const nextCustomerId = '44444444-4444-4444-8444-444444444444';
+  searchState.current = '?status=active&offset=25';
   getContactListMock.mockImplementation(
     (payload: { readonly customerId: string; readonly offset: number }) =>
       Effect.succeed({
@@ -528,11 +756,10 @@ test('resets Contact pagination when the route Customer changes', async () => {
         nextOffset: payload.offset === 0 ? CONTACT_LIST_PAGE_SIZE : null,
       }),
   );
-  const user = userEvent.setup();
   const rendered = render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
-  await user.click(await screen.findByRole('button', { name: 'Next' }));
   expect(await screen.findByText('Grace Hopper')).toBeTruthy();
+  searchState.current = '';
   rendered.rerender(<CustomerDetailPage routeParams={{ id: nextCustomerId }} />);
   await waitFor(() =>
     expect(getContactListMock).toHaveBeenLastCalledWith(

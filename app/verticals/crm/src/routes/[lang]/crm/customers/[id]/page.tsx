@@ -1,20 +1,39 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link as RouterLink, useParams } from '@modern-js/plugin-tanstack/runtime';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import {
+  Link as RouterLink,
+  useLocation,
+  useNavigate,
+  useParams,
+} from '@modern-js/plugin-tanstack/runtime';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
-import { useMemo, useRef, useState } from 'react';
-import type { ContactListResponse, CustomerDetailResponse } from '../../../../../../shared/api.ts';
+import { useMemo, useRef } from 'react';
+import type {
+  Contact,
+  ContactListResponse,
+  CustomerDetailResponse,
+} from '../../../../../../shared/api.ts';
 import { CrmUuidSchema } from '../../../../../../shared/apis/customer-detail.ts';
 import {
+  archiveContact,
   getContactList,
   getCustomerDetail,
   runEffectRequest,
+  unarchiveContact,
 } from '../../../../../api/crm-client.ts';
 import type { Effect } from '../../../../../api/crm-client.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
@@ -27,12 +46,24 @@ interface CustomerDetailPageProps {
 
 type CustomerDetailClientError = Effect.Error<ReturnType<typeof getCustomerDetail>>;
 type ContactListClientError = Effect.Error<ReturnType<typeof getContactList>>;
+type ContactLifecycleClientError =
+  | Effect.Error<ReturnType<typeof archiveContact>>
+  | Effect.Error<ReturnType<typeof unarchiveContact>>;
 type ContactListUnavailableReason = 'backend' | 'decode' | 'internal' | 'transport';
+export type ContactArchiveFilter = 'active' | 'archived' | 'all';
 type ContactListErrorState =
   | { readonly state: 'authentication_expired' }
   | { readonly state: 'forbidden' }
   | { readonly state: 'parent_not_found' }
   | { readonly reason: ContactListUnavailableReason; readonly state: 'unavailable' };
+type ContactLifecycleErrorState =
+  | { readonly state: 'authentication_expired' }
+  | { readonly state: 'conflict' }
+  | { readonly state: 'forbidden' }
+  | { readonly state: 'invalid' }
+  | { readonly state: 'not_found' }
+  | { readonly state: 'unavailable'; readonly uncertain: true }
+  | { readonly state: 'unexpected' };
 type CustomerDetailUnavailableReason = 'backend' | 'decode' | 'internal' | 'transport';
 type CustomerDetailErrorState =
   | { readonly state: 'authentication_expired' }
@@ -62,6 +93,7 @@ interface ContactListRowModel {
   readonly detailHref: string;
   readonly editHref: string;
   readonly email: string;
+  readonly lifecycle: 'active' | 'archived';
   readonly name: string;
   readonly phone: string;
 }
@@ -110,6 +142,8 @@ interface CustomerDetailCopy {
 
 interface ContactListCopy {
   readonly actionsColumn: string;
+  readonly archive: string;
+  readonly archiving: string;
   readonly authenticationExpired: string;
   readonly create: string;
   readonly decode: string;
@@ -117,9 +151,21 @@ interface ContactListCopy {
   readonly empty: string;
   readonly edit: string;
   readonly forbidden: string;
+  readonly filterActive: string;
+  readonly filterAll: string;
+  readonly filterArchived: string;
+  readonly filterLabel: string;
+  readonly filterPlaceholder: string;
   readonly heading: string;
   readonly internal: string;
   readonly loading: string;
+  readonly lifecycleAuthenticationExpired: string;
+  readonly lifecycleConflict: string;
+  readonly lifecycleForbidden: string;
+  readonly lifecycleInvalid: string;
+  readonly lifecycleNotFound: string;
+  readonly lifecycleUnavailable: string;
+  readonly lifecycleUnexpected: string;
   readonly nameColumn: string;
   readonly next: string;
   readonly paginationLabel: string;
@@ -128,8 +174,13 @@ interface ContactListCopy {
   readonly previous: string;
   readonly retry: string;
   readonly retrying: string;
+  readonly statusActive: string;
+  readonly statusArchived: string;
+  readonly statusColumn: string;
   readonly tableCaption: string;
   readonly transport: string;
+  readonly unarchive: string;
+  readonly unarchiving: string;
   readonly unavailable: string;
 }
 
@@ -148,9 +199,68 @@ export const customerDetailQueryKey = (customerId: string) =>
   ['crm', 'customers', 'detail', customerId] as const;
 
 export const CONTACT_LIST_PAGE_SIZE = 25;
+const MAX_CONTACT_LIST_OFFSET = Number.MAX_SAFE_INTEGER - CONTACT_LIST_PAGE_SIZE;
 
-export const contactListQueryKey = (customerId: string, offset: number) =>
-  ['crm', 'customers', customerId, 'contacts', { limit: CONTACT_LIST_PAGE_SIZE, offset }] as const;
+export interface CustomerContactListUrlState {
+  readonly offset: number;
+  readonly status: ContactArchiveFilter;
+}
+
+export const parseCustomerContactListSearch = (search: string): CustomerContactListUrlState => {
+  const parameters = new URLSearchParams(search);
+  const statuses = parameters.getAll('status');
+  const status =
+    statuses.length === 1 &&
+    (statuses[0] === 'active' || statuses[0] === 'archived' || statuses[0] === 'all')
+      ? statuses[0]
+      : 'active';
+  const offsets = parameters.getAll('offset');
+  const rawOffset = offsets.length === 1 ? offsets[0] : undefined;
+  const parsedOffset =
+    rawOffset === undefined || !/^(?:0|[1-9]\d*)$/u.test(rawOffset)
+      ? Number.NaN
+      : Number(rawOffset);
+  const offset =
+    Number.isSafeInteger(parsedOffset) &&
+    parsedOffset >= 0 &&
+    parsedOffset <= MAX_CONTACT_LIST_OFFSET
+      ? parsedOffset
+      : 0;
+
+  return { offset, status };
+};
+
+export const buildCustomerContactListHref = (
+  language: string,
+  customerId: string,
+  currentSearch: string,
+  status: ContactArchiveFilter,
+  offset: number,
+) => {
+  const parameters = new URLSearchParams(currentSearch);
+  parameters.delete('status');
+  parameters.delete('offset');
+  parameters.set('status', status);
+  if (offset > 0) {
+    parameters.set('offset', String(offset));
+  }
+  const search = parameters.toString();
+  const pathname = `/${language}/crm/customers/${encodeURIComponent(customerId)}`;
+  return `${pathname}${search.length === 0 ? '' : `?${search}`}`;
+};
+
+export const contactListQueryKey = (
+  customerId: string,
+  status: ContactArchiveFilter,
+  offset: number,
+) =>
+  [
+    'crm',
+    'customers',
+    customerId,
+    'contacts',
+    { filter: status, limit: CONTACT_LIST_PAGE_SIZE, offset },
+  ] as const;
 
 export const classifyContactListError = (error: ContactListClientError): ContactListErrorState => {
   if (error._tag === 'HttpClientError') {
@@ -188,6 +298,49 @@ export const classifyContactListError = (error: ContactListClientError): Contact
     case 'GatewayAudienceInvalidProblem':
     case 'GatewayInternalProblem': {
       return { reason: 'internal', state: 'unavailable' };
+    }
+    default: {
+      const unexpected: never = error;
+      return unexpected;
+    }
+  }
+};
+
+export const classifyContactLifecycleError = (
+  error: ContactLifecycleClientError,
+): ContactLifecycleErrorState => {
+  if (error._tag === 'HttpClientError' || error._tag === 'SchemaError') {
+    return { state: 'unavailable', uncertain: true };
+  }
+
+  switch (error._tag) {
+    case 'CrmAuthenticationProblem':
+    case 'GatewayAuthenticationRequiredProblem': {
+      return { state: 'authentication_expired' };
+    }
+    case 'CrmForbiddenProblem':
+    case 'GatewayForbiddenProblem': {
+      return { state: 'forbidden' };
+    }
+    case 'CrmInvalidRequestProblem': {
+      return { state: 'invalid' };
+    }
+    case 'CrmNotFoundProblem': {
+      return { state: 'not_found' };
+    }
+    case 'CrmConflictProblem':
+    case 'CrmPreconditionRequiredProblem': {
+      return { state: 'conflict' };
+    }
+    case 'CrmUnavailableProblem':
+    case 'GatewayRateLimitedProblem':
+    case 'GatewayUnavailableProblem': {
+      return { state: 'unavailable', uncertain: true };
+    }
+    case 'CrmInternalProblem':
+    case 'GatewayAudienceInvalidProblem':
+    case 'GatewayInternalProblem': {
+      return { state: 'unexpected' };
     }
     default: {
       const unexpected: never = error;
@@ -337,9 +490,12 @@ const ContactTableHeader = ({ copy }: { readonly copy: ContactListCopy }) => (
   <Table.Header>
     <Table.Row>
       <Table.ColumnHeader scope="col">{copy.nameColumn}</Table.ColumnHeader>
+      <Table.ColumnHeader scope="col">{copy.statusColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.emailColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.phoneColumn}</Table.ColumnHeader>
-      <Table.ColumnHeader scope="col">{copy.actionsColumn}</Table.ColumnHeader>
+      <Table.ColumnHeader scope="col">
+        <span className="crm:flex crm:justify-end">{copy.actionsColumn}</span>
+      </Table.ColumnHeader>
     </Table.Row>
   </Table.Header>
 );
@@ -355,7 +511,7 @@ const LoadingContactTable = ({ copy }: { readonly copy: ContactListCopy }) => (
       <Table.Body>
         {Array.from({ length: 3 }, (_row, rowIndex) => (
           <Table.Row key={`loading-${rowIndex}`}>
-            {Array.from({ length: 4 }, (_cell, cellIndex) => (
+            {Array.from({ length: 5 }, (_cell, cellIndex) => (
               <Table.Cell aria-hidden="true" key={`loading-${rowIndex}-${cellIndex}`}>
                 <Skeleton.Text noOfLines={1} size="sm" />
               </Table.Cell>
@@ -370,9 +526,13 @@ const LoadingContactTable = ({ copy }: { readonly copy: ContactListCopy }) => (
 const ContactTable = ({
   copy,
   items,
+  onToggleLifecycle,
+  pendingContactId,
 }: {
   readonly copy: ContactListCopy;
   readonly items: readonly ContactListRowModel[];
+  readonly onToggleLifecycle: (contactId: string, lifecycle: 'active' | 'archived') => void;
+  readonly pendingContactId: null | string;
 }) => {
   const emptyDescriptionId = items.length === 0 ? 'customer-contacts-empty-description' : undefined;
 
@@ -398,19 +558,41 @@ const ContactTable = ({
                     {contact.name}
                   </Link>
                 </Table.Cell>
-                <Table.Cell className="crm:whitespace-nowrap">{contact.email}</Table.Cell>
+                <Table.Cell>
+                  <Badge variant={contact.lifecycle === 'active' ? 'success' : 'outline'}>
+                    {contact.lifecycle === 'active' ? copy.statusActive : copy.statusArchived}
+                  </Badge>
+                </Table.Cell>
+                <Table.Cell className="crm:whitespace-nowrap">
+                  <Link href={`mailto:${contact.email}`}>{contact.email}</Link>
+                </Table.Cell>
                 <Table.Cell className="crm:whitespace-nowrap">{contact.phone}</Table.Cell>
                 <Table.Cell>
-                  <LinkButton
-                    as={RouterLink}
-                    href={contact.editHref}
-                    size="sm"
-                    theme="outlined"
-                    to={contact.editHref}
-                    variant="secondary"
-                  >
-                    {copy.edit}
-                  </LinkButton>
+                  <div className="crm:flex crm:flex-wrap crm:justify-end crm:gap-2">
+                    <LinkButton
+                      as={RouterLink}
+                      href={contact.editHref}
+                      size="sm"
+                      to={contact.editHref}
+                      variant="primary"
+                    >
+                      {copy.edit}
+                    </LinkButton>
+                    <Button
+                      disabled={pendingContactId !== null}
+                      isLoading={pendingContactId === contact.contactId}
+                      loadingText={
+                        contact.lifecycle === 'active' ? copy.archiving : copy.unarchiving
+                      }
+                      onClick={() => onToggleLifecycle(contact.contactId, contact.lifecycle)}
+                      size="sm"
+                      theme="outlined"
+                      type="button"
+                      variant={contact.lifecycle === 'active' ? 'danger' : 'warning'}
+                    >
+                      {contact.lifecycle === 'active' ? copy.archive : copy.unarchive}
+                    </Button>
+                  </div>
                 </Table.Cell>
               </Table.Row>
             ))}
@@ -429,22 +611,30 @@ const ContactTable = ({
 interface CustomerContactsProps {
   readonly copy: ContactListCopy;
   readonly createHref: string;
-  readonly offset: number;
-  readonly onNext: (offset: number) => void;
-  readonly onPrevious: () => void;
+  readonly lifecycleError: null | string;
+  readonly nextHref: null | string;
   readonly onRetry: () => Promise<unknown>;
+  readonly onStatusChange: (status: ContactArchiveFilter) => void;
+  readonly onToggleLifecycle: (contactId: string, lifecycle: 'active' | 'archived') => void;
+  readonly pendingContactId: null | string;
+  readonly previousHref: null | string;
   readonly retrying: boolean;
+  readonly status: ContactArchiveFilter;
   readonly view: ContactListViewState;
 }
 
 const CustomerContacts = ({
   copy,
   createHref,
-  offset,
-  onNext,
-  onPrevious,
+  lifecycleError,
+  nextHref,
   onRetry,
+  onStatusChange,
+  onToggleLifecycle,
+  pendingContactId,
+  previousHref,
   retrying,
+  status,
   view,
 }: CustomerContactsProps) => {
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -462,20 +652,55 @@ const CustomerContacts = ({
           transport: copy.transport,
         }[view.reason]
       : copy.unavailable;
-  const nextOffset = view.state === 'populated' ? view.nextOffset : null;
+  const statusItems = [
+    { label: copy.filterActive, value: 'active' },
+    { label: copy.filterArchived, value: 'archived' },
+    { label: copy.filterAll, value: 'all' },
+  ];
 
   return (
     <section
       aria-labelledby="customer-contacts-heading"
       className="crm:grid crm:min-w-0 crm:w-full crm:gap-4"
     >
-      <header className="crm:flex crm:flex-wrap crm:items-center crm:justify-between crm:gap-3">
-        <h2 className="crm:text-2xl crm:font-bold" id="customer-contacts-heading">
-          {copy.heading}
-        </h2>
-        <LinkButton as={RouterLink} href={createHref} size="sm" to={createHref} variant="primary">
-          {copy.create}
-        </LinkButton>
+      <header className="crm:grid crm:gap-4 crm:sm:grid-cols-[minmax(0,1fr)_minmax(12rem,18rem)] crm:sm:items-end">
+        <div className="crm:flex crm:flex-wrap crm:items-center crm:justify-between crm:gap-3">
+          <h2 className="crm:text-2xl crm:font-bold" id="customer-contacts-heading">
+            {copy.heading}
+          </h2>
+          <LinkButton as={RouterLink} href={createHref} size="sm" to={createHref} variant="primary">
+            {copy.create}
+          </LinkButton>
+        </div>
+        <Select
+          items={statusItems}
+          name="contact-status"
+          onValueChange={({ value }) => {
+            const [nextStatus] = value;
+            if (nextStatus === 'active' || nextStatus === 'archived' || nextStatus === 'all') {
+              onStatusChange(nextStatus);
+            }
+          }}
+          size="sm"
+          value={[status]}
+        >
+          <Select.Label>{copy.filterLabel}</Select.Label>
+          <Select.Control>
+            <Select.Trigger>
+              <Select.ValueText placeholder={copy.filterPlaceholder} />
+            </Select.Trigger>
+          </Select.Control>
+          <Select.Positioner>
+            <Select.Content>
+              {statusItems.map((item) => (
+                <Select.Item item={item} key={item.value}>
+                  <Select.ItemText />
+                  <Select.ItemIndicator />
+                </Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Positioner>
+        </Select>
       </header>
       <div
         aria-live="polite"
@@ -491,7 +716,19 @@ const CustomerContacts = ({
             <LoadingContactTable copy={copy} />
           </div>
         ) : null}
-        {view.state === 'empty' ? <ContactTable copy={copy} items={[]} /> : null}
+        {lifecycleError === null ? null : (
+          <StatusText showIcon status="error">
+            <output>{lifecycleError}</output>
+          </StatusText>
+        )}
+        {view.state === 'empty' ? (
+          <ContactTable
+            copy={copy}
+            items={[]}
+            onToggleLifecycle={onToggleLifecycle}
+            pendingContactId={pendingContactId}
+          />
+        ) : null}
         {view.state === 'forbidden' ? (
           <StatusText showIcon status="error">
             <output>{copy.forbidden}</output>
@@ -540,30 +777,37 @@ const CustomerContacts = ({
         ) : null}
         {view.state === 'populated' ? (
           <div className="crm:grid crm:gap-4">
-            <ContactTable copy={copy} items={view.items} />
-            {offset > 0 || nextOffset !== null ? (
+            <ContactTable
+              copy={copy}
+              items={view.items}
+              onToggleLifecycle={onToggleLifecycle}
+              pendingContactId={pendingContactId}
+            />
+            {previousHref !== null || nextHref !== null ? (
               <nav aria-label={copy.paginationLabel} className="crm:flex crm:flex-wrap crm:gap-3">
-                {offset > 0 ? (
-                  <Button
-                    onClick={onPrevious}
+                {previousHref === null ? null : (
+                  <LinkButton
+                    as={RouterLink}
+                    href={previousHref}
                     size="sm"
                     theme="outlined"
-                    type="button"
+                    to={previousHref}
                     variant="secondary"
                   >
                     {copy.previous}
-                  </Button>
-                ) : null}
-                {nextOffset === null ? null : (
-                  <Button
-                    onClick={() => onNext(nextOffset)}
+                  </LinkButton>
+                )}
+                {nextHref === null ? null : (
+                  <LinkButton
+                    as={RouterLink}
+                    href={nextHref}
                     size="sm"
                     theme="outlined"
-                    type="button"
+                    to={nextHref}
                     variant="primary"
                   >
                     {copy.next}
-                  </Button>
+                  </LinkButton>
                 )}
               </nav>
             ) : null}
@@ -699,16 +943,19 @@ const CustomerContactsQuery = ({
   readonly customerId: string;
   readonly language: string;
 }) => {
-  const [offset, setOffset] = useState(0);
+  const queryClient = useQueryClient();
+  const search = useLocation({ select: (location) => location.searchStr });
+  const navigate = useNavigate();
+  const urlState = parseCustomerContactListSearch(search);
   const query = useQuery<ContactListResponse, ContactListClientError>({
     queryFn: () =>
       runEffectRequest(
         getContactList(
           {
             customerId,
-            filter: 'active',
+            filter: urlState.status,
             limit: CONTACT_LIST_PAGE_SIZE,
-            offset,
+            offset: urlState.offset,
           },
           {
             baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
@@ -717,11 +964,86 @@ const CustomerContactsQuery = ({
           },
         ),
       ),
-    queryKey: contactListQueryKey(customerId, offset),
+    queryKey: contactListQueryKey(customerId, urlState.status, urlState.offset),
     retry: false,
-    staleTime: Number.POSITIVE_INFINITY,
   });
+  const lifecycleMutation = useMutation<
+    Contact,
+    ContactLifecycleClientError,
+    {
+      readonly contactId: string;
+      readonly idempotencyKey: string;
+      readonly operation: 'archive' | 'unarchive';
+    }
+  >({
+    mutationFn: ({ contactId, idempotencyKey, operation }) =>
+      runEffectRequest(
+        (operation === 'archive' ? archiveContact : unarchiveContact)(
+          { contactId },
+          {
+            baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
+            correlationId: createCorrelationId(),
+            idempotencyKey,
+            locale: language,
+          },
+        ),
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: contactListQueryKey(customerId, urlState.status, urlState.offset),
+      }),
+    retry: false,
+  });
+  const lifecycleAttemptRef = useRef<{
+    readonly contactId: string;
+    readonly idempotencyKey: string;
+    readonly operation: 'archive' | 'unarchive';
+    readonly uncertain: boolean;
+  } | null>(null);
   const refetch = () => query.refetch();
+  const toggleLifecycle = (contactId: string, lifecycle: 'active' | 'archived') => {
+    const operation = lifecycle === 'active' ? 'archive' : 'unarchive';
+    const previousAttempt = lifecycleAttemptRef.current;
+    const idempotencyKey =
+      previousAttempt?.uncertain === true &&
+      previousAttempt.contactId === contactId &&
+      previousAttempt.operation === operation
+        ? previousAttempt.idempotencyKey
+        : createCorrelationId();
+    lifecycleAttemptRef.current = { contactId, idempotencyKey, operation, uncertain: false };
+
+    lifecycleMutation.mutate(
+      { contactId, idempotencyKey, operation },
+      {
+        onError: (error) => {
+          const state = classifyContactLifecycleError(error);
+          lifecycleAttemptRef.current =
+            state.state === 'unavailable'
+              ? { contactId, idempotencyKey, operation, uncertain: true }
+              : null;
+        },
+        onSuccess: () => {
+          lifecycleAttemptRef.current = null;
+        },
+      },
+    );
+  };
+  const lifecycleErrorState =
+    lifecycleMutation.isError && lifecycleMutation.error !== null
+      ? classifyContactLifecycleError(lifecycleMutation.error)
+      : null;
+  const lifecycleError =
+    lifecycleErrorState === null
+      ? null
+      : {
+          authentication_expired: copy.lifecycleAuthenticationExpired,
+          conflict: copy.lifecycleConflict,
+          forbidden: copy.lifecycleForbidden,
+          invalid: copy.lifecycleInvalid,
+          not_found: copy.lifecycleNotFound,
+          unavailable: copy.lifecycleUnavailable,
+          unexpected: copy.lifecycleUnexpected,
+        }[lifecycleErrorState.state];
   let view: ContactListViewState;
   if (query.isPending) {
     view = { state: 'loading' };
@@ -738,6 +1060,7 @@ const CustomerContactsQuery = ({
           detailHref,
           editHref: `${detailHref}/edit`,
           email: contact.email,
+          lifecycle: contact.archivedAt === null ? 'active' : 'archived',
           name: contact.name,
           phone: contact.phone,
         };
@@ -751,11 +1074,41 @@ const CustomerContactsQuery = ({
     <CustomerContacts
       copy={copy}
       createHref={`/${language}/crm/customers/${encodeURIComponent(customerId)}/contacts/new`}
-      offset={offset}
-      onNext={setOffset}
-      onPrevious={() => setOffset((current) => Math.max(0, current - CONTACT_LIST_PAGE_SIZE))}
+      lifecycleError={lifecycleError}
+      nextHref={
+        view.state === 'populated' && view.nextOffset !== null
+          ? buildCustomerContactListHref(
+              language,
+              customerId,
+              search,
+              urlState.status,
+              view.nextOffset,
+            )
+          : null
+      }
       onRetry={refetch}
+      onStatusChange={(nextStatus) =>
+        void navigate({
+          to: buildCustomerContactListHref(language, customerId, search, nextStatus, 0),
+        })
+      }
+      onToggleLifecycle={toggleLifecycle}
+      pendingContactId={
+        lifecycleMutation.isPending ? (lifecycleMutation.variables?.contactId ?? null) : null
+      }
+      previousHref={
+        urlState.offset > 0
+          ? buildCustomerContactListHref(
+              language,
+              customerId,
+              search,
+              urlState.status,
+              Math.max(0, urlState.offset - CONTACT_LIST_PAGE_SIZE),
+            )
+          : null
+      }
       retrying={query.isFetching && !query.isPending}
+      status={urlState.status}
       view={view}
     />
   );
@@ -851,15 +1204,31 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
   };
   const contactCopy: ContactListCopy = {
     actionsColumn: t('crm.pages.customerDetail.contacts.table.actions'),
+    archive: t('crm.pages.customerDetail.contacts.table.archive'),
+    archiving: t('crm.pages.customerDetail.contacts.table.archiving'),
     authenticationExpired: t('crm.pages.customerDetail.contacts.states.authenticationExpired'),
     create: t('crm.pages.contactCreate.title'),
     decode: t('crm.pages.customerDetail.contacts.states.decode'),
-    edit: t('crm.pages.contactEdit.title'),
+    edit: t('crm.pages.customerDetail.contacts.table.edit'),
     emailColumn: t('crm.pages.customerDetail.contacts.table.email'),
     empty: t('crm.pages.customerDetail.contacts.states.empty'),
+    filterActive: t('crm.pages.customerDetail.contacts.filter.active'),
+    filterAll: t('crm.pages.customerDetail.contacts.filter.all'),
+    filterArchived: t('crm.pages.customerDetail.contacts.filter.archived'),
+    filterLabel: t('crm.pages.customerDetail.contacts.filter.label'),
+    filterPlaceholder: t('crm.pages.customerDetail.contacts.filter.placeholder'),
     forbidden: t('crm.pages.customerDetail.contacts.states.forbidden'),
     heading: t('crm.pages.customerDetail.contacts.heading'),
     internal: t('crm.pages.customerDetail.contacts.states.internal'),
+    lifecycleAuthenticationExpired: t(
+      'crm.pages.customerDetail.contacts.lifecycle.authenticationExpired',
+    ),
+    lifecycleConflict: t('crm.pages.customerDetail.contacts.lifecycle.conflict'),
+    lifecycleForbidden: t('crm.pages.customerDetail.contacts.lifecycle.forbidden'),
+    lifecycleInvalid: t('crm.pages.customerDetail.contacts.lifecycle.invalid'),
+    lifecycleNotFound: t('crm.pages.customerDetail.contacts.lifecycle.notFound'),
+    lifecycleUnavailable: t('crm.pages.customerDetail.contacts.lifecycle.unavailable'),
+    lifecycleUnexpected: t('crm.pages.customerDetail.contacts.lifecycle.unexpected'),
     loading: t('crm.pages.customerDetail.contacts.states.loading'),
     nameColumn: t('crm.pages.customerDetail.contacts.table.name'),
     next: t('crm.pages.customerDetail.contacts.pagination.next'),
@@ -869,8 +1238,13 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
     previous: t('crm.pages.customerDetail.contacts.pagination.previous'),
     retry: t('crm.pages.customerDetail.contacts.states.retry'),
     retrying: t('crm.pages.customerDetail.contacts.states.retrying'),
+    statusActive: t('crm.pages.customerDetail.contacts.status.active'),
+    statusArchived: t('crm.pages.customerDetail.contacts.status.archived'),
+    statusColumn: t('crm.pages.customerDetail.contacts.table.status'),
     tableCaption: t('crm.pages.customerDetail.contacts.table.caption'),
     transport: t('crm.pages.customerDetail.contacts.states.transport'),
+    unarchive: t('crm.pages.customerDetail.contacts.table.unarchive'),
+    unarchiving: t('crm.pages.customerDetail.contacts.table.unarchiving'),
     unavailable: t('crm.pages.customerDetail.contacts.states.unavailable'),
   };
   const backHref = `/${language}/crm/customers`;

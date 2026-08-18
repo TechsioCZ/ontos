@@ -20,14 +20,23 @@ Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
 });
 
-const { getCustomerListMock, localeState, navigateMock, runEffectRequestMock, searchState } =
-  rstest.hoisted(() => ({
-    getCustomerListMock: rstest.fn(),
-    localeState: { current: 'en' as 'cs' | 'en' },
-    navigateMock: rstest.fn(() => Promise.resolve()),
-    runEffectRequestMock: rstest.fn(),
-    searchState: { current: '' },
-  }));
+const {
+  archiveCustomerMock,
+  getCustomerListMock,
+  localeState,
+  navigateMock,
+  runEffectRequestMock,
+  searchState,
+  unarchiveCustomerMock,
+} = rstest.hoisted(() => ({
+  archiveCustomerMock: rstest.fn(),
+  getCustomerListMock: rstest.fn(),
+  localeState: { current: 'en' as 'cs' | 'en' },
+  navigateMock: rstest.fn(() => Promise.resolve()),
+  runEffectRequestMock: rstest.fn(),
+  searchState: { current: '' },
+  unarchiveCustomerMock: rstest.fn(),
+}));
 
 const translations = {
   cs: {
@@ -38,6 +47,13 @@ const translations = {
     'crm.pages.customersList.filter.archived': 'Archivovaní',
     'crm.pages.customersList.filter.label': 'Stav zákazníka',
     'crm.pages.customersList.filter.placeholder': 'Vyberte stav',
+    'crm.pages.customersList.lifecycle.authenticationExpired': 'Relace vypršela.',
+    'crm.pages.customersList.lifecycle.conflict': 'Stav se změnil.',
+    'crm.pages.customersList.lifecycle.forbidden': 'Změna není povolena.',
+    'crm.pages.customersList.lifecycle.invalid': 'Požadavek není platný.',
+    'crm.pages.customersList.lifecycle.notFound': 'Zákazník nebyl nalezen.',
+    'crm.pages.customersList.lifecycle.unavailable': 'Změna není dostupná.',
+    'crm.pages.customersList.lifecycle.unexpected': 'Změna se nezdařila.',
     'crm.pages.customersList.pagination.label': 'Stránky seznamu zákazníků',
     'crm.pages.customersList.pagination.next': 'Další',
     'crm.pages.customersList.pagination.previous': 'Předchozí',
@@ -59,11 +75,15 @@ const translations = {
     'crm.pages.customersList.status.active': 'Aktivní',
     'crm.pages.customersList.status.archived': 'Archivovaný',
     'crm.pages.customersList.table.actions': 'Akce',
+    'crm.pages.customersList.table.archive': 'Archivovat',
+    'crm.pages.customersList.table.archiving': 'Archivace…',
     'crm.pages.customersList.table.caption': 'Zákazníci',
     'crm.pages.customersList.table.createdAt': 'Vytvořeno',
-    'crm.pages.customersList.table.customerId': 'ID zákazníka',
+    'crm.pages.customersList.table.edit': 'Upravit',
     'crm.pages.customersList.table.name': 'Jméno zákazníka',
     'crm.pages.customersList.table.status': 'Stav',
+    'crm.pages.customersList.table.unarchive': 'Odarchivovat',
+    'crm.pages.customersList.table.unarchiving': 'Ruším archivaci…',
     'crm.pages.customersList.table.updatedAt': 'Aktualizováno',
   },
   en: {
@@ -74,6 +94,13 @@ const translations = {
     'crm.pages.customersList.filter.archived': 'Archived',
     'crm.pages.customersList.filter.label': 'Customer status',
     'crm.pages.customersList.filter.placeholder': 'Choose a status',
+    'crm.pages.customersList.lifecycle.authenticationExpired': 'Your session expired.',
+    'crm.pages.customersList.lifecycle.conflict': 'The status changed.',
+    'crm.pages.customersList.lifecycle.forbidden': 'The change is forbidden.',
+    'crm.pages.customersList.lifecycle.invalid': 'The request is invalid.',
+    'crm.pages.customersList.lifecycle.notFound': 'The Customer was not found.',
+    'crm.pages.customersList.lifecycle.unavailable': 'The change is unavailable.',
+    'crm.pages.customersList.lifecycle.unexpected': 'The change failed.',
     'crm.pages.customersList.pagination.label': 'Customer list pages',
     'crm.pages.customersList.pagination.next': 'Next',
     'crm.pages.customersList.pagination.previous': 'Previous',
@@ -95,11 +122,15 @@ const translations = {
     'crm.pages.customersList.status.active': 'Active',
     'crm.pages.customersList.status.archived': 'Archived',
     'crm.pages.customersList.table.actions': 'Actions',
+    'crm.pages.customersList.table.archive': 'Archive',
+    'crm.pages.customersList.table.archiving': 'Archiving…',
     'crm.pages.customersList.table.caption': 'Customers',
     'crm.pages.customersList.table.createdAt': 'Created',
-    'crm.pages.customersList.table.customerId': 'Customer ID',
+    'crm.pages.customersList.table.edit': 'Edit',
     'crm.pages.customersList.table.name': 'Customer name',
     'crm.pages.customersList.table.status': 'Status',
+    'crm.pages.customersList.table.unarchive': 'Unarchive',
+    'crm.pages.customersList.table.unarchiving': 'Unarchiving…',
     'crm.pages.customersList.table.updatedAt': 'Updated',
   },
 } as const;
@@ -123,8 +154,10 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 }));
 
 rstest.mock('../../src/api/crm-client.ts', () => ({
+  archiveCustomer: archiveCustomerMock,
   getCustomerList: getCustomerListMock,
   runEffectRequest: runEffectRequestMock,
+  unarchiveCustomer: unarchiveCustomerMock,
 }));
 
 rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({
@@ -176,10 +209,12 @@ beforeEach(() => {
   localeState.current = 'en';
   searchState.current = '';
   navigateMock.mockResolvedValue();
+  archiveCustomerMock.mockReturnValue(Effect.succeed({ ...activeCustomer, archivedAt: 'now' }));
   getCustomerListMock.mockReturnValue(success());
   runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
     Effect.runPromise(effect),
   );
+  unarchiveCustomerMock.mockReturnValue(Effect.succeed({ ...archivedCustomer, archivedAt: null }));
 });
 
 afterEach(() => {
@@ -265,7 +300,10 @@ test('renders semantic Customer values, ordered rows, localized dates, badges, a
     within(table)
       .getAllByRole('columnheader')
       .map((header) => header.textContent),
-  ).toEqual(['Customer name', 'Customer ID', 'Status', 'Created', 'Updated', 'Actions']);
+  ).toEqual(['Customer name', 'Status', 'Created', 'Updated', 'Actions']);
+  expect(
+    within(table).getByRole('columnheader', { name: 'Actions' }).firstElementChild?.className,
+  ).toContain('justify-end');
   const rows = within(table).getAllByRole('row');
   expect(rows).toHaveLength(3);
   expect(
@@ -273,13 +311,12 @@ test('renders semantic Customer values, ordered rows, localized dates, badges, a
       .getByRole('link', { name: activeCustomer.name })
       .getAttribute('href'),
   ).toBe(`/en/crm/customers/${activeCustomer.customerId}`);
-  expect(
-    within(rows[1] as HTMLElement)
-      .getByRole('link', { name: 'Edit Customer' })
-      .getAttribute('href'),
-  ).toBe(`/en/crm/customers/${activeCustomer.customerId}/edit`);
+  const editLink = within(rows[1] as HTMLElement).getByRole('link', { name: 'Edit' });
+  expect(editLink.getAttribute('href')).toBe(`/en/crm/customers/${activeCustomer.customerId}/edit`);
+  expect(editLink.className).toBe(screen.getByRole('link', { name: 'Create Customer' }).className);
+  expect(editLink.parentElement?.className).toContain('justify-end');
   expect(rows[1]?.textContent).toContain('Acme Property Group');
-  expect(rows[1]?.textContent).toContain(activeCustomer.customerId);
+  expect(rows[1]?.textContent).not.toContain(activeCustomer.customerId);
   expect(rows[1]?.textContent).toContain('Active');
   expect(rows[2]?.textContent).toContain('Former Customer');
   expect(rows[2]?.textContent).toContain('Archived');
@@ -292,6 +329,41 @@ test('renders semantic Customer values, ordered rows, localized dates, badges, a
   );
 });
 
+test('archives active Customers and unarchives archived Customers through the typed BFF clients', async () => {
+  searchState.current = '?status=all';
+  const user = userEvent.setup();
+  render(<CustomersListPage />);
+
+  const archiveButton = await screen.findByRole('button', { name: 'Archive' });
+  const unarchiveButton = screen.getByRole('button', { name: 'Unarchive' });
+  expect(archiveButton.className).toContain('border-button-border-danger');
+  expect(unarchiveButton.className).toContain('border-button-border-warning');
+
+  await user.click(archiveButton);
+  expect(archiveCustomerMock).toHaveBeenCalledWith(
+    { customerId: activeCustomer.customerId },
+    {
+      baseUrl: 'http://localhost:4101/crm-api',
+      correlationId: expect.any(String),
+      idempotencyKey: expect.any(String),
+      locale: 'en',
+    },
+  );
+  await waitFor(() => expect(getCustomerListMock).toHaveBeenCalledTimes(2));
+
+  await user.click(unarchiveButton);
+  expect(unarchiveCustomerMock).toHaveBeenCalledWith(
+    { customerId: archivedCustomer.customerId },
+    {
+      baseUrl: 'http://localhost:4101/crm-api',
+      correlationId: expect.any(String),
+      idempotencyKey: expect.any(String),
+      locale: 'en',
+    },
+  );
+  await waitFor(() => expect(getCustomerListMock).toHaveBeenCalledTimes(3));
+});
+
 test('preserves the final table geometry and a polite status while loading', () => {
   getCustomerListMock.mockReturnValue(Effect.never);
   render(<CustomersListPage />);
@@ -300,7 +372,7 @@ test('preserves the final table geometry and a polite status while loading', () 
   const table = screen.getByRole('table', { name: 'Customers' });
   expect(table.getAttribute('aria-busy')).toBe('true');
   expect(within(table).getAllByRole('row')).toHaveLength(4);
-  expect(table.querySelectorAll('tbody td')).toHaveLength(18);
+  expect(table.querySelectorAll('tbody td')).toHaveLength(15);
 });
 
 test('shows the empty Customer table without data rows or a pager', async () => {
@@ -408,6 +480,7 @@ test('renders Czech-owned heading, filter, status, dates, errors, retry, and nav
   );
   expect(screen.getByRole('combobox', { name: 'Stav zákazníka' })).toBeTruthy();
   expect(await screen.findByText('Archivovaný')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Upravit' })).toBeTruthy();
   expect(screen.getByText(formatDate(archivedCustomer.createdAt, 'cs'))).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Předchozí' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Další' })).toBeTruthy();

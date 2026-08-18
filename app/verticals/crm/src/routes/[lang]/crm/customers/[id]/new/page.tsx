@@ -5,8 +5,11 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect as EffectRuntime, Random } from 'effect';
 import { useMemo, useRef, useState } from 'react';
-import { executeCustomerAresLookup } from '../../../../../../api/customer-ares-lookup-client.ts';
-import { createCustomer, runEffectRequest } from '../../../../../../api/crm-client.ts';
+import {
+  createCustomer,
+  lookupCustomerAres,
+  runEffectRequest,
+} from '../../../../../../api/crm-client.ts';
 import type { Effect } from '../../../../../../api/crm-client.ts';
 import { CustomerAresLoader } from '../../../../../../features/customers/customer-ares-loader.tsx';
 import type { CustomerAresLoaderStatus } from '../../../../../../features/customers/customer-ares-loader.tsx';
@@ -31,8 +34,8 @@ export interface CustomerCreatePageProps {
 
 type CreateCustomerClientError = Effect.Error<ReturnType<typeof createCustomer>>;
 type CreatedCustomer = Effect.Success<ReturnType<typeof createCustomer>>;
-type CustomerAresLookupClientError = Effect.Error<ReturnType<typeof executeCustomerAresLookup>>;
-type CustomerAresLookupResult = Effect.Success<ReturnType<typeof executeCustomerAresLookup>>;
+type CustomerAresLookupClientError = Effect.Error<ReturnType<typeof lookupCustomerAres>>;
+type CustomerAresLookupResult = Effect.Success<ReturnType<typeof lookupCustomerAres>>;
 
 type UnavailableReason = 'backend' | 'decode' | 'transport';
 
@@ -435,7 +438,15 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
     { readonly ico: string }
   >({
     mutationFn: ({ ico }) =>
-      runEffectRequest(executeCustomerAresLookup({ ico }, createRequestId())),
+      runEffectRequest(
+        lookupCustomerAres(
+          { ico },
+          {
+            baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
+            correlationId: createRequestId(),
+          },
+        ),
+      ),
     retry: (failureCount, error) =>
       failureCount < 1 && classifyCustomerAresLookupError(error).state === 'unavailable',
     retryDelay: 100,

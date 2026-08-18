@@ -1,6 +1,12 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Link, useLocation, useNavigate } from '@modern-js/plugin-tanstack/runtime';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import {
+  QueryClient,
+  QueryClientProvider,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link as UiLink } from '@techsio/ui-kit/atoms/link';
@@ -11,8 +17,13 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Effect as EffectRuntime, Random } from 'effect';
 import { useMemo, useRef } from 'react';
-import type { CustomerListResponse } from '../../../../../shared/api.ts';
-import { getCustomerList, runEffectRequest } from '../../../../api/crm-client.ts';
+import type { Customer, CustomerListResponse } from '../../../../../shared/api.ts';
+import {
+  archiveCustomer,
+  getCustomerList,
+  runEffectRequest,
+  unarchiveCustomer,
+} from '../../../../api/crm-client.ts';
 import type { Effect } from '../../../../api/crm-client.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 
@@ -71,6 +82,9 @@ export const buildCustomerListHref = (
 };
 
 type CustomerListClientError = Effect.Error<ReturnType<typeof getCustomerList>>;
+type CustomerLifecycleClientError =
+  | Effect.Error<ReturnType<typeof archiveCustomer>>
+  | Effect.Error<ReturnType<typeof unarchiveCustomer>>;
 type CustomerListUnavailableReason = 'backend' | 'decode' | 'internal' | 'transport';
 type CustomerListErrorState =
   | { readonly state: 'authentication_expired' }
@@ -120,6 +134,58 @@ export const classifyCustomerListError = (
   }
 };
 
+type CustomerLifecycleErrorState =
+  | { readonly state: 'authentication_expired' }
+  | { readonly state: 'conflict' }
+  | { readonly state: 'forbidden' }
+  | { readonly state: 'invalid' }
+  | { readonly state: 'not_found' }
+  | { readonly state: 'unavailable'; readonly uncertain: true }
+  | { readonly state: 'unexpected' };
+
+export const classifyCustomerLifecycleError = (
+  error: CustomerLifecycleClientError,
+): CustomerLifecycleErrorState => {
+  if (error._tag === 'HttpClientError' || error._tag === 'SchemaError') {
+    return { state: 'unavailable', uncertain: true };
+  }
+
+  switch (error._tag) {
+    case 'CrmAuthenticationProblem':
+    case 'GatewayAuthenticationRequiredProblem': {
+      return { state: 'authentication_expired' };
+    }
+    case 'CrmForbiddenProblem':
+    case 'GatewayForbiddenProblem': {
+      return { state: 'forbidden' };
+    }
+    case 'CrmInvalidRequestProblem': {
+      return { state: 'invalid' };
+    }
+    case 'CrmNotFoundProblem': {
+      return { state: 'not_found' };
+    }
+    case 'CrmConflictProblem':
+    case 'CrmPreconditionRequiredProblem': {
+      return { state: 'conflict' };
+    }
+    case 'CrmUnavailableProblem':
+    case 'GatewayRateLimitedProblem':
+    case 'GatewayUnavailableProblem': {
+      return { state: 'unavailable', uncertain: true };
+    }
+    case 'CrmInternalProblem':
+    case 'GatewayAudienceInvalidProblem':
+    case 'GatewayInternalProblem': {
+      return { state: 'unexpected' };
+    }
+    default: {
+      const unexpected: never = error;
+      return unexpected;
+    }
+  }
+};
+
 interface CustomerListRowModel {
   readonly createdAt: string;
   readonly createdAtIso: string;
@@ -149,6 +215,8 @@ type CustomersListViewState =
 
 interface CustomersListCopy {
   readonly actionsColumn: string;
+  readonly archive: string;
+  readonly archiving: string;
   readonly authenticationExpired: string;
   readonly create: string;
   readonly empty: string;
@@ -161,6 +229,13 @@ interface CustomersListCopy {
   readonly edit: string;
   readonly internal: string;
   readonly loading: string;
+  readonly lifecycleAuthenticationExpired: string;
+  readonly lifecycleConflict: string;
+  readonly lifecycleForbidden: string;
+  readonly lifecycleInvalid: string;
+  readonly lifecycleNotFound: string;
+  readonly lifecycleUnavailable: string;
+  readonly lifecycleUnexpected: string;
   readonly nameColumn: string;
   readonly next: string;
   readonly paginationLabel: string;
@@ -172,9 +247,10 @@ interface CustomersListCopy {
   readonly statusColumn: string;
   readonly tableCaption: string;
   readonly transport: string;
+  readonly unarchive: string;
+  readonly unarchiving: string;
   readonly decode: string;
   readonly unavailable: string;
-  readonly customerIdColumn: string;
   readonly createdAtColumn: string;
   readonly updatedAtColumn: string;
 }
@@ -184,6 +260,9 @@ interface CustomersListViewProps {
   readonly currentSearch: string;
   readonly language: string;
   readonly offset: number;
+  readonly lifecycleError: null | string;
+  readonly onToggleLifecycle: (customerId: string, lifecycle: 'active' | 'archived') => void;
+  readonly pendingCustomerId: null | string;
   readonly onRetry: () => Promise<unknown>;
   readonly onStatusChange: (status: CustomerArchiveFilter) => void;
   readonly retrying: boolean;
@@ -195,11 +274,12 @@ const CustomerTableHeader = ({ copy }: { readonly copy: CustomersListCopy }) => 
   <Table.Header>
     <Table.Row>
       <Table.ColumnHeader scope="col">{copy.nameColumn}</Table.ColumnHeader>
-      <Table.ColumnHeader scope="col">{copy.customerIdColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.statusColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.createdAtColumn}</Table.ColumnHeader>
       <Table.ColumnHeader scope="col">{copy.updatedAtColumn}</Table.ColumnHeader>
-      <Table.ColumnHeader scope="col">{copy.actionsColumn}</Table.ColumnHeader>
+      <Table.ColumnHeader scope="col">
+        <span className="crm:flex crm:justify-end">{copy.actionsColumn}</span>
+      </Table.ColumnHeader>
     </Table.Row>
   </Table.Header>
 );
@@ -212,7 +292,7 @@ const LoadingCustomerTable = ({ copy }: { readonly copy: CustomersListCopy }) =>
       <Table.Body>
         {Array.from({ length: 3 }, (_row, rowIndex) => (
           <Table.Row key={`loading-${rowIndex}`}>
-            {Array.from({ length: 6 }, (_cell, cellIndex) => (
+            {Array.from({ length: 5 }, (_cell, cellIndex) => (
               <Table.Cell aria-hidden="true" key={`loading-${rowIndex}-${cellIndex}`}>
                 <Skeleton.Text noOfLines={1} size="sm" />
               </Table.Cell>
@@ -227,9 +307,13 @@ const LoadingCustomerTable = ({ copy }: { readonly copy: CustomersListCopy }) =>
 const CustomerTable = ({
   copy,
   items,
+  onToggleLifecycle,
+  pendingCustomerId,
 }: {
   readonly copy: CustomersListCopy;
   readonly items: readonly CustomerListRowModel[];
+  readonly onToggleLifecycle: (customerId: string, lifecycle: 'active' | 'archived') => void;
+  readonly pendingCustomerId: null | string;
 }) => {
   const emptyDescriptionId = items.length === 0 ? 'customers-empty-description' : undefined;
 
@@ -252,7 +336,6 @@ const CustomerTable = ({
                     {customer.name}
                   </UiLink>
                 </Table.Cell>
-                <Table.Cell className="crm:whitespace-nowrap">{customer.customerId}</Table.Cell>
                 <Table.Cell>
                   <Badge variant={customer.lifecycle === 'active' ? 'success' : 'outline'}>
                     {customer.lifecycle === 'active' ? copy.statusActive : copy.statusArchived}
@@ -265,16 +348,31 @@ const CustomerTable = ({
                   <time dateTime={customer.updatedAtIso}>{customer.updatedAt}</time>
                 </Table.Cell>
                 <Table.Cell>
-                  <LinkButton
-                    as={Link}
-                    href={customer.editHref}
-                    size="sm"
-                    theme="outlined"
-                    to={customer.editHref}
-                    variant="secondary"
-                  >
-                    {copy.edit}
-                  </LinkButton>
+                  <div className="crm:flex crm:flex-wrap crm:justify-end crm:gap-2">
+                    <LinkButton
+                      as={Link}
+                      href={customer.editHref}
+                      size="sm"
+                      to={customer.editHref}
+                      variant="primary"
+                    >
+                      {copy.edit}
+                    </LinkButton>
+                    <Button
+                      disabled={pendingCustomerId !== null}
+                      isLoading={pendingCustomerId === customer.customerId}
+                      loadingText={
+                        customer.lifecycle === 'active' ? copy.archiving : copy.unarchiving
+                      }
+                      onClick={() => onToggleLifecycle(customer.customerId, customer.lifecycle)}
+                      size="sm"
+                      theme="outlined"
+                      type="button"
+                      variant={customer.lifecycle === 'active' ? 'danger' : 'warning'}
+                    >
+                      {customer.lifecycle === 'active' ? copy.archive : copy.unarchive}
+                    </Button>
+                  </div>
                 </Table.Cell>
               </Table.Row>
             ))}
@@ -294,7 +392,10 @@ export const CustomersListView = ({
   copy,
   currentSearch,
   language,
+  lifecycleError,
   offset,
+  onToggleLifecycle,
+  pendingCustomerId,
   onRetry,
   onStatusChange,
   retrying,
@@ -377,7 +478,19 @@ export const CustomersListView = ({
             <LoadingCustomerTable copy={copy} />
           </div>
         ) : null}
-        {view.state === 'empty' ? <CustomerTable copy={copy} items={[]} /> : null}
+        {lifecycleError === null ? null : (
+          <StatusText showIcon status="error">
+            <output>{lifecycleError}</output>
+          </StatusText>
+        )}
+        {view.state === 'empty' ? (
+          <CustomerTable
+            copy={copy}
+            items={[]}
+            onToggleLifecycle={onToggleLifecycle}
+            pendingCustomerId={pendingCustomerId}
+          />
+        ) : null}
         {view.state === 'forbidden' ? (
           <StatusText showIcon status="error">
             <output>{copy.forbidden}</output>
@@ -421,7 +534,12 @@ export const CustomersListView = ({
         ) : null}
         {view.state === 'populated' ? (
           <div className="crm:grid crm:gap-4">
-            <CustomerTable copy={copy} items={view.items} />
+            <CustomerTable
+              copy={copy}
+              items={view.items}
+              onToggleLifecycle={onToggleLifecycle}
+              pendingCustomerId={pendingCustomerId}
+            />
             {offset > 0 || view.nextOffset !== null ? (
               <nav aria-label={copy.paginationLabel} className="crm:flex crm:flex-wrap crm:gap-3">
                 {offset > 0 ? (
@@ -472,6 +590,7 @@ const createCorrelationId = () =>
 
 const CustomersListFeature = () => {
   const { language, t } = useModernI18n();
+  const queryClient = useQueryClient();
   const search = useLocation({ select: (location) => location.searchStr });
   const navigate = useNavigate();
   const urlState = parseCustomerListSearch(search);
@@ -494,15 +613,46 @@ const CustomersListFeature = () => {
     queryKey: customerListQueryKey(urlState),
     retry: false,
   });
+  const lifecycleMutation = useMutation<
+    Customer,
+    CustomerLifecycleClientError,
+    {
+      readonly customerId: string;
+      readonly idempotencyKey: string;
+      readonly operation: 'archive' | 'unarchive';
+    }
+  >({
+    mutationFn: ({ customerId, idempotencyKey, operation }) =>
+      runEffectRequest(
+        (operation === 'archive' ? archiveCustomer : unarchiveCustomer)(
+          { customerId },
+          {
+            baseUrl: ULTRAMODERN_CRM_API_BASE_URL,
+            correlationId: createCorrelationId(),
+            idempotencyKey,
+            locale: language,
+          },
+        ),
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: customerListQueryKey(urlState) }),
+    retry: false,
+  });
+  const lifecycleAttemptRef = useRef<{
+    readonly customerId: string;
+    readonly idempotencyKey: string;
+    readonly operation: 'archive' | 'unarchive';
+    readonly uncertain: boolean;
+  } | null>(null);
   const refetch = () => query.refetch();
   const copy: CustomersListCopy = {
     actionsColumn: t('crm.pages.customersList.table.actions'),
+    archive: t('crm.pages.customersList.table.archive'),
+    archiving: t('crm.pages.customersList.table.archiving'),
     authenticationExpired: t('crm.pages.customersList.states.authenticationExpired'),
     create: t('crm.pages.customerCreate.title'),
     createdAtColumn: t('crm.pages.customersList.table.createdAt'),
-    customerIdColumn: t('crm.pages.customersList.table.customerId'),
     decode: t('crm.pages.customersList.states.decode'),
-    edit: t('crm.pages.customerEdit.title'),
+    edit: t('crm.pages.customersList.table.edit'),
     empty: t('crm.pages.customersList.states.empty'),
     filterActive: t('crm.pages.customersList.filter.active'),
     filterAll: t('crm.pages.customersList.filter.all'),
@@ -511,6 +661,13 @@ const CustomersListFeature = () => {
     filterPlaceholder: t('crm.pages.customersList.filter.placeholder'),
     forbidden: t('crm.pages.customersList.states.forbidden'),
     internal: t('crm.pages.customersList.states.internal'),
+    lifecycleAuthenticationExpired: t('crm.pages.customersList.lifecycle.authenticationExpired'),
+    lifecycleConflict: t('crm.pages.customersList.lifecycle.conflict'),
+    lifecycleForbidden: t('crm.pages.customersList.lifecycle.forbidden'),
+    lifecycleInvalid: t('crm.pages.customersList.lifecycle.invalid'),
+    lifecycleNotFound: t('crm.pages.customersList.lifecycle.notFound'),
+    lifecycleUnavailable: t('crm.pages.customersList.lifecycle.unavailable'),
+    lifecycleUnexpected: t('crm.pages.customersList.lifecycle.unexpected'),
     loading: t('crm.pages.customersList.states.loading'),
     nameColumn: t('crm.pages.customersList.table.name'),
     next: t('crm.pages.customersList.pagination.next'),
@@ -523,9 +680,54 @@ const CustomersListFeature = () => {
     statusColumn: t('crm.pages.customersList.table.status'),
     tableCaption: t('crm.pages.customersList.table.caption'),
     transport: t('crm.pages.customersList.states.transport'),
+    unarchive: t('crm.pages.customersList.table.unarchive'),
+    unarchiving: t('crm.pages.customersList.table.unarchiving'),
     unavailable: t('crm.pages.customersList.states.unavailable'),
     updatedAtColumn: t('crm.pages.customersList.table.updatedAt'),
   };
+  const toggleLifecycle = (customerId: string, lifecycle: 'active' | 'archived') => {
+    const operation = lifecycle === 'active' ? 'archive' : 'unarchive';
+    const previousAttempt = lifecycleAttemptRef.current;
+    const idempotencyKey =
+      previousAttempt?.uncertain === true &&
+      previousAttempt.customerId === customerId &&
+      previousAttempt.operation === operation
+        ? previousAttempt.idempotencyKey
+        : createCorrelationId();
+    lifecycleAttemptRef.current = { customerId, idempotencyKey, operation, uncertain: false };
+
+    lifecycleMutation.mutate(
+      { customerId, idempotencyKey, operation },
+      {
+        onError: (error) => {
+          const state = classifyCustomerLifecycleError(error);
+          lifecycleAttemptRef.current =
+            state.state === 'unavailable'
+              ? { customerId, idempotencyKey, operation, uncertain: true }
+              : null;
+        },
+        onSuccess: () => {
+          lifecycleAttemptRef.current = null;
+        },
+      },
+    );
+  };
+  const lifecycleErrorState =
+    lifecycleMutation.isError && lifecycleMutation.error !== null
+      ? classifyCustomerLifecycleError(lifecycleMutation.error)
+      : null;
+  const lifecycleError =
+    lifecycleErrorState === null
+      ? null
+      : {
+          authentication_expired: copy.lifecycleAuthenticationExpired,
+          conflict: copy.lifecycleConflict,
+          forbidden: copy.lifecycleForbidden,
+          invalid: copy.lifecycleInvalid,
+          not_found: copy.lifecycleNotFound,
+          unavailable: copy.lifecycleUnavailable,
+          unexpected: copy.lifecycleUnexpected,
+        }[lifecycleErrorState.state];
   let view: CustomersListViewState;
   if (query.isPending) {
     view = { state: 'loading' };
@@ -559,7 +761,12 @@ const CustomersListFeature = () => {
       copy={copy}
       currentSearch={search}
       language={language}
+      lifecycleError={lifecycleError}
       offset={urlState.offset}
+      onToggleLifecycle={toggleLifecycle}
+      pendingCustomerId={
+        lifecycleMutation.isPending ? (lifecycleMutation.variables?.customerId ?? null) : null
+      }
       onRetry={refetch}
       onStatusChange={(status) =>
         void navigate({

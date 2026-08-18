@@ -350,4 +350,10 @@ test('keeps locale parity, long-value wrapping, and the generated frontend seam'
   expect(source).not.toMatch(/\bfetch\s*\(/u);
   expect(source).not.toMatch(/contact-detail-read-server|src\/db|CustomerContactPersistence/u);
   expect(source).not.toContain('HttpApiEndpoint');
+
+  const federationEntry = readFileSync(
+    new URL('../../src/federation/page-contact-detail.tsx', import.meta.url),
+    'utf-8',
+  );
+  expect(federationEntry).toContain("import '../routes/index.css';");
 });

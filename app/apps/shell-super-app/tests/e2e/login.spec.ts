@@ -676,6 +676,42 @@ test('customers keep filter and pagination in the URL without page overflow at 3
 test.describe('Customer detail flows', () => {
   test.describe.configure({ timeout: 90_000 });
 
+  test('Customer detail keeps the same layout after a full-page reload', async ({ page }) => {
+    await login(page);
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await page.goto('/en/crm/customers');
+    await page.getByRole('link', { name: e2eCustomers.active.name }).click();
+    await expect(page).toHaveURL(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+
+    const heading = page.getByRole('heading', { name: e2eCustomers.active.name });
+    await expect(heading).toBeVisible();
+    const navigatedLayout = await heading.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        left: bounds.left,
+        lineHeight: style.lineHeight,
+      };
+    });
+
+    await page.reload();
+    await expect(heading).toBeVisible();
+    const reloadedLayout = await heading.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        left: bounds.left,
+        lineHeight: style.lineHeight,
+      };
+    });
+
+    expect(reloadedLayout).toEqual(navigatedLayout);
+  });
+
   test('Customer detail stays private anonymously and renders real English and Czech BFF data', async ({
     page,
   }) => {
@@ -981,6 +1017,49 @@ test.describe('Contact create flows', () => {
 
 test.describe('Contact detail flows', () => {
   test.describe.configure({ timeout: 90_000 });
+
+  test('Contact detail keeps the same layout after a full-page reload', async ({ page }) => {
+    await login(page);
+    await page.setViewportSize({ height: 900, width: 1440 });
+    await page.goto(`/en/crm/customers/${e2eContacts.active.customerId}`);
+    await page.getByRole('link', { name: e2eContacts.active.name }).click();
+    await expect(page).toHaveURL(
+      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+    );
+
+    const heading = page.getByRole('heading', { name: e2eContacts.active.name });
+    await expect(heading).toBeVisible();
+    const navigatedLayout = await heading.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        left: bounds.left,
+        lineHeight: style.lineHeight,
+      };
+    });
+
+    await page.reload();
+    await expect(heading).toBeVisible();
+    const reloadedLayout = await heading.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        left: bounds.left,
+        lineHeight: style.lineHeight,
+      };
+    });
+
+    expect(reloadedLayout).toMatchObject({
+      fontSize: '36px',
+      fontWeight: '700',
+      lineHeight: '40px',
+    });
+    expect(reloadedLayout).toEqual(navigatedLayout);
+  });
 
   test('Contact detail stays private anonymously and renders real English and Czech BFF data', async ({
     page,

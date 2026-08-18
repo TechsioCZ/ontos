@@ -21,12 +21,14 @@ Object.assign(globalThis, {
 const {
   createCustomerMock,
   executeCustomerAresLookupMock,
+  legacyExecuteCustomerAresLookupMock,
   localeState,
   navigateMock,
   runEffectRequestMock,
 } = rstest.hoisted(() => ({
   createCustomerMock: rstest.fn(),
   executeCustomerAresLookupMock: rstest.fn(),
+  legacyExecuteCustomerAresLookupMock: rstest.fn(),
   localeState: { current: 'en' as 'cs' | 'en' },
   navigateMock: rstest.fn(() => Promise.resolve()),
   runEffectRequestMock: rstest.fn(),
@@ -71,11 +73,12 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
 
 rstest.mock('../../src/api/crm-client.ts', () => ({
   createCustomer: createCustomerMock,
+  lookupCustomerAres: executeCustomerAresLookupMock,
   runEffectRequest: runEffectRequestMock,
 }));
 
 rstest.mock('../../src/api/customer-ares-lookup-client.ts', () => ({
-  executeCustomerAresLookup: executeCustomerAresLookupMock,
+  executeCustomerAresLookup: legacyExecuteCustomerAresLookupMock,
 }));
 
 rstest.mock('../../src/routes/ultramodern-route-head.tsx', () => ({
@@ -104,7 +107,7 @@ const aresCustomer = {
   name: 'J.E.S., spol. s r.o.',
 } as const;
 
-const getAresForm = () => screen.getByRole('form', { name: 'Load Customer data from ARES' });
+const getAresForm = () => screen.getByRole('form', { name: /ARES/u });
 const getAresIco = () => within(getAresForm()).getByRole('textbox', { name: /^IČO/u });
 const getCustomerIco = () =>
   document.querySelector<HTMLInputElement>('#customer-ico') as HTMLInputElement;
@@ -128,6 +131,7 @@ beforeEach(() => {
   navigateMock.mockResolvedValue();
   createCustomerMock.mockReturnValue(Effect.succeed(createdCustomer));
   executeCustomerAresLookupMock.mockReturnValue(Effect.succeed(aresCustomer));
+  legacyExecuteCustomerAresLookupMock.mockReturnValue(Effect.succeed(aresCustomer));
   runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
     Effect.runPromise(effect),
   );
@@ -155,7 +159,7 @@ test('composes the existing form with empty localized create values and accessib
   expect(createCustomerMock).not.toHaveBeenCalled();
 });
 
-test('emits no lookup before valid loader intent and calls the generated lookup client exactly', async () => {
+test('emits no lookup before valid loader intent and calls the composed CRM client exactly', async () => {
   const user = userEvent.setup();
   renderFeature();
   const ico = getAresIco();
@@ -172,7 +176,10 @@ test('emits no lookup before valid loader intent and calls the generated lookup 
   await waitFor(() => expect(executeCustomerAresLookupMock).toHaveBeenCalledTimes(1));
   expect(executeCustomerAresLookupMock).toHaveBeenCalledWith(
     { ico: aresCustomer.ico },
-    expect.any(String),
+    {
+      baseUrl: 'http://localhost:4101/crm-api',
+      correlationId: expect.any(String),
+    },
   );
   expect(createCustomerMock).not.toHaveBeenCalled();
   expect(screen.getByRole('textbox', { name: /^Customer name/u }).getAttribute('value')).toBe(
@@ -184,6 +191,29 @@ test('emits no lookup before valid loader intent and calls the generated lookup 
       'Customer details loaded from ARES. Review and edit them before creating the Customer.',
     ),
   ).toBeTruthy();
+});
+
+test('routes ARES lookup through the composed CRM client instead of decoding the page response', async () => {
+  localeState.current = 'cs';
+  legacyExecuteCustomerAresLookupMock.mockReturnValue(
+    Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'DecodeError' } } as never),
+  );
+  const user = userEvent.setup();
+  renderFeature();
+
+  await user.type(getAresIco(), aresCustomer.ico);
+  await user.keyboard('{Enter}');
+
+  expect(await screen.findByText(/Údaje zákazníka byly načteny z ARES/u)).toBeTruthy();
+  expect(screen.queryByText('Odpověď ARES se nepodařilo přečíst. Zkuste to znovu.')).toBeNull();
+  expect(executeCustomerAresLookupMock).toHaveBeenCalledWith(
+    { ico: aresCustomer.ico },
+    {
+      baseUrl: 'http://localhost:4101/crm-api',
+      correlationId: expect.any(String),
+    },
+  );
+  expect(legacyExecuteCustomerAresLookupMock).not.toHaveBeenCalled();
 });
 
 test('replaces canonical fields, retains omitted optional values, and replaces supplied optionals', async () => {
@@ -579,8 +609,8 @@ test('retries only an uncertain lookup once with fresh correlation and clears st
 
   expect(await screen.findByText(/Customer details loaded from ARES/u)).toBeTruthy();
   expect(executeCustomerAresLookupMock).toHaveBeenCalledTimes(2);
-  expect(executeCustomerAresLookupMock.mock.calls[1]?.[1]).not.toBe(
-    executeCustomerAresLookupMock.mock.calls[0]?.[1],
+  expect(executeCustomerAresLookupMock.mock.calls[1]?.[1]?.correlationId).not.toBe(
+    executeCustomerAresLookupMock.mock.calls[0]?.[1]?.correlationId,
   );
   expect(screen.queryByText('ARES is temporarily unavailable. Try again.')).toBeNull();
 });
@@ -674,7 +704,7 @@ describe('generated boundaries and localization', () => {
     );
 
     expect(pageSource).toContain('createCustomer(');
-    expect(pageSource).toContain('executeCustomerAresLookup(');
+    expect(pageSource).toContain('lookupCustomerAres(');
     expect(pageSource).toContain('<CustomerAresLoader');
     expect(pageSource).toContain('values={formValues}');
     expect(pageSource).toContain('target={{ writable: false }}');

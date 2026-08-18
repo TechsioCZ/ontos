@@ -202,7 +202,23 @@
       "customerDetail": {
         "back": "Zpět na zákazníky",
         "contacts": {
+          "filter": {
+            "active": "Aktivní",
+            "all": "Všichni",
+            "archived": "Archivovaní",
+            "label": "Stav kontaktu",
+            "placeholder": "Vyberte stav"
+          },
           "heading": "Kontakty",
+          "lifecycle": {
+            "authenticationExpired": "Vaše relace vypršela. Přihlaste se a zkuste stav kontaktu změnit znovu.",
+            "conflict": "Stav kontaktu se před dokončením akce změnil. Obnovte seznam a zkuste to znovu.",
+            "forbidden": "Nemáte oprávnění měnit stav tohoto kontaktu.",
+            "invalid": "Stav kontaktu nebylo možné změnit, protože požadavek nebyl platný.",
+            "notFound": "Tento kontakt se nepodařilo najít.",
+            "unavailable": "Stav kontaktu nebylo možné spolehlivě změnit. Zkuste to znovu.",
+            "unexpected": "Stav kontaktu nebylo možné bezpečně změnit. Zkuste to znovu."
+          },
           "pagination": {
             "label": "Stránky kontaktů zákazníka",
             "next": "Další",
@@ -211,7 +227,7 @@
           "states": {
             "authenticationExpired": "Vaše relace vypršela. Po přihlášení načtěte kontakty znovu.",
             "decode": "Odpověď se seznamem kontaktů se nepodařilo přečíst. Zkuste to znovu.",
-            "empty": "Tento zákazník nemá žádné aktivní kontakty.",
+            "empty": "Tomuto filtru neodpovídají žádné kontakty.",
             "forbidden": "Nemáte oprávnění zobrazit kontakty tohoto zákazníka.",
             "internal": "Kontakty se nepodařilo bezpečně načíst. Zkuste to znovu.",
             "loading": "Načítání kontaktů…",
@@ -221,12 +237,22 @@
             "transport": "Kontakty nejsou dostupné. Zkontrolujte připojení a zkuste to znovu.",
             "unavailable": "Kontakty jsou dočasně nedostupné. Zkuste to znovu."
           },
+          "status": {
+            "active": "Aktivní",
+            "archived": "Archivovaný"
+          },
           "table": {
             "actions": "Akce",
-            "caption": "Aktivní kontakty zákazníka",
+            "archive": "Archivovat",
+            "archiving": "Archivuji…",
+            "caption": "Kontakty zákazníka",
+            "edit": "Upravit",
             "email": "E-mail",
             "name": "Jméno",
-            "phone": "Telefon"
+            "phone": "Telefon",
+            "status": "Stav",
+            "unarchive": "Odarchivovat",
+            "unarchiving": "Ruším archivaci…"
           }
         },
         "description": "Zobrazení aktuálních údajů a stavu tohoto zákazníka.",
@@ -320,6 +346,15 @@
           "label": "Stav zákazníka",
           "placeholder": "Vyberte stav"
         },
+        "lifecycle": {
+          "authenticationExpired": "Vaše relace vypršela. Přihlaste se a zkuste stav zákazníka změnit znovu.",
+          "conflict": "Stav zákazníka se před dokončením akce změnil. Obnovte seznam a zkuste to znovu.",
+          "forbidden": "Nemáte oprávnění měnit stav tohoto zákazníka.",
+          "invalid": "Stav zákazníka nebylo možné změnit, protože požadavek nebyl platný.",
+          "notFound": "Tohoto zákazníka se nepodařilo najít.",
+          "unavailable": "Stav zákazníka nebylo možné spolehlivě změnit. Zkuste to znovu.",
+          "unexpected": "Stav zákazníka nebylo možné bezpečně změnit. Zkuste to znovu."
+        },
         "pagination": {
           "label": "Stránky seznamu zákazníků",
           "next": "Další",
@@ -343,11 +378,15 @@
         },
         "table": {
           "actions": "Akce",
+          "archive": "Archivovat",
+          "archiving": "Archivuji…",
           "caption": "Zákazníci",
           "createdAt": "Vytvořeno",
-          "customerId": "ID zákazníka",
+          "edit": "Upravit",
           "name": "Jméno zákazníka",
           "status": "Stav",
+          "unarchive": "Odarchivovat",
+          "unarchiving": "Ruším archivaci…",
           "updatedAt": "Aktualizováno"
         },
         "title": "Zákazníci"
