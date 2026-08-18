@@ -117,7 +117,6 @@ export default function ModuleTargetPage() {
       tenantState={model.shell.tenants.state}
       tenantSwitchFailed={controls.tenantSwitchFailed}
       tenantSwitchPending={controls.tenantSwitchPending}
-      title={t('shell.moduleTarget.title')}
     >
       {controls.logoutFailed ? (
         <StatusText aria-live="polite" showIcon status="error">

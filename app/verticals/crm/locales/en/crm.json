@@ -137,8 +137,9 @@
         "title": "Edit Contact"
       },
       "crm": {
+        "customers": "Customers",
         "description": "This page is ready for implementation.",
-        "title": "New Page"
+        "title": "CRM"
       },
       "customerCreate": {
         "back": "Back to Customers",

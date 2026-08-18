@@ -137,8 +137,9 @@
         "title": "Upravit kontakt"
       },
       "crm": {
+        "customers": "Zákazníci",
         "description": "Tato stránka je připravena k implementaci.",
-        "title": "Nová stránka"
+        "title": "CRM"
       },
       "customerCreate": {
         "back": "Zpět na zákazníky",

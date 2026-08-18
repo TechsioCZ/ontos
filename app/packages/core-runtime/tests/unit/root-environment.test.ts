@@ -9,6 +9,17 @@ const appRoot = path.resolve(import.meta.dirname, '../../../..');
 const repositoryRoot = path.dirname(appRoot);
 const expectedEnvironmentPath = path.join(appRoot, '.env');
 
+test('apps contain no environment files that can override the app-root .env', () => {
+  const result = spawnSync(
+    'find',
+    [path.join(appRoot, 'apps'), '-type', 'f', '-name', '.env*', '-not', '-path', '*/node_modules/*'],
+    { encoding: 'utf-8' },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), '');
+});
+
 test('workspace discovery resolves repository, app, shell, and microvertical directories', async () => {
   const { resolveAppWorkspaceRoot } =
     await import('../../src/environment/workspace-environment.ts');

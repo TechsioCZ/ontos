@@ -55,7 +55,7 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantState: 'available' | 'unavailable';
   readonly tenantSwitchFailed: boolean;
   readonly tenantSwitchPending: boolean;
-  readonly title: string;
+  readonly title?: string;
 }
 
 export const AuthenticatedDashboardLayout = ({
@@ -294,25 +294,29 @@ export const AuthenticatedDashboardLayout = ({
       </aside>
       <main className="flex min-w-0 flex-1 flex-col">
         <Header aria-label={t('shell.dashboard.header.label')}>
-          <Header.Container position="start">
-            <h1>{title}</h1>
+          {title === undefined ? null : (
+            <Header.Container position="start">
+              <h1>{title}</h1>
+            </Header.Container>
+          )}
+          <Header.Container position="end">
+            <Header.Actions>
+              <Header.ActionItem>
+                <Menu
+                  aria-label={t('shell.dashboard.account.label')}
+                  items={accountItems}
+                  onSelect={({ value }) => {
+                    if (value === 'logout') {
+                      onLogout();
+                    }
+                  }}
+                  triggerText={identity.displayName}
+                />
+              </Header.ActionItem>
+            </Header.Actions>
           </Header.Container>
-          <Header.Actions>
-            <Header.ActionItem>
-              <Menu
-                aria-label={t('shell.dashboard.account.label')}
-                items={accountItems}
-                onSelect={({ value }) => {
-                  if (value === 'logout') {
-                    onLogout();
-                  }
-                }}
-                triggerText={identity.displayName}
-              />
-            </Header.ActionItem>
-          </Header.Actions>
         </Header>
-        <div className="min-w-0 flex-1 p-4">{children}</div>
+        <div className="min-w-0 flex-1 px-2 py-4">{children}</div>
       </main>
     </div>
   );

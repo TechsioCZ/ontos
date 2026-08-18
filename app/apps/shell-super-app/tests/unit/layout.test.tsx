@@ -195,6 +195,26 @@ test('supports an alternate title and current MicroVertical without changing chi
   );
 });
 
+test('supports module pages without a shell heading and keeps reduced horizontal content padding', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      navigation={navigation}
+      currentModuleId="testing.one"
+      identity={identity}
+      logoutPending={false}
+      onLogout={noopLogout}
+    >
+      <section>Module content</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.queryByRole('heading')).toBeNull();
+  const content = screen.getByText('Module content').parentElement;
+  expect(content?.classList.contains('px-2')).toBe(true);
+  expect(content?.classList.contains('py-4')).toBe(true);
+});
+
 test('keeps Home as the only navigation link when no active modules are supplied', () => {
   render(
     <AuthenticatedDashboardLayout
@@ -233,6 +253,7 @@ test('renders the account Menu last and dispatches only the logout command by ke
   const header = document.querySelector('header[aria-label="Dashboard header"]');
   const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
   expect(header?.lastElementChild?.contains(trigger)).toBe(true);
+  expect((header?.lastElementChild as HTMLElement | null)?.dataset.position).toBe('end');
 
   trigger.focus();
   await user.keyboard('{Enter}');
