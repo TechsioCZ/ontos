@@ -119,14 +119,12 @@ export const loader = async ({
       ),
       options,
     ).pipe(
-      Effect.map(
-        (target): ModuleTargetPageModel => ({
-          routeParams: boundedRouteParams,
-          shell,
-          state: 'resolved',
-          target,
-        }),
-      ),
+      Effect.map((target): ModuleTargetPageModel => ({
+        routeParams: boundedRouteParams,
+        shell,
+        state: 'resolved',
+        target,
+      })),
       Effect.catch((error) => Effect.succeed(safeState(error, shell))),
     ),
   );

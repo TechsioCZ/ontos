@@ -824,14 +824,13 @@ export const makeAuthenticationService = (
         : Effect.fail(new AuthenticationInternalError()),
     currentSession: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
-        Effect.map(
-          (resolved): CurrentSessionResult =>
-            resolved.state === 'anonymous'
-              ? { identity: null, setCookieHeaders: resolved.setCookieHeaders }
-              : {
-                  identity: resolved.identity,
-                  setCookieHeaders: resolved.setCookieHeaders,
-                },
+        Effect.map((resolved): CurrentSessionResult =>
+          resolved.state === 'anonymous'
+            ? { identity: null, setCookieHeaders: resolved.setCookieHeaders }
+            : {
+                identity: resolved.identity,
+                setCookieHeaders: resolved.setCookieHeaders,
+              },
         ),
       ),
     resolveShellContext: (requestHeaders) =>
@@ -847,16 +846,15 @@ export const makeAuthenticationService = (
       }),
     resolveTenantContext: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
-        Effect.map(
-          (resolved): TenantContextResult =>
-            resolved.state === 'anonymous'
-              ? { setCookieHeaders: resolved.setCookieHeaders, state: 'anonymous' }
-              : {
-                  identity: resolved.identity,
-                  principal: resolved.principal,
-                  setCookieHeaders: resolved.setCookieHeaders,
-                  state: 'authenticated',
-                },
+        Effect.map((resolved): TenantContextResult =>
+          resolved.state === 'anonymous'
+            ? { setCookieHeaders: resolved.setCookieHeaders, state: 'anonymous' }
+            : {
+                identity: resolved.identity,
+                principal: resolved.principal,
+                setCookieHeaders: resolved.setCookieHeaders,
+                state: 'authenticated',
+              },
         ),
       ),
     signIn: (email, password, requestHeaders) =>

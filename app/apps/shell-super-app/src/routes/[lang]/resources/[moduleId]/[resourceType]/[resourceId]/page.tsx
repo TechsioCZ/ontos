@@ -8,7 +8,7 @@ import { attachResourceMedia, runEffectRequest } from '../../../../../../api/aut
 import { AuthenticatedDashboardLayout } from '../../../../../shell-frame.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 
-export default function ResourcePage() {
+const ResourcePage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({
     from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
@@ -148,4 +148,6 @@ export default function ResourcePage() {
       {content}
     </AuthenticatedDashboardLayout>
   );
-}
+};
+
+export default ResourcePage;

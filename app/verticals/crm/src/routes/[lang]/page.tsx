@@ -3,7 +3,7 @@ import { Link } from '@modern-js/plugin-tanstack/runtime';
 import { ultramodernUiMarker } from '../../ultramodern-build';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 
-export default function CrmHome() {
+const CrmHome = () => {
   const { language, supportedLanguages, t } = useModernI18n();
 
   return (
@@ -35,4 +35,6 @@ export default function CrmHome() {
       </p>
     </main>
   );
-}
+};
+
+export default CrmHome;

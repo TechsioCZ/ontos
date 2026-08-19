@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { AuthenticatedDashboardLayout } from '../../shell-frame.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
-export default function SearchPage() {
+const SearchPage = () => {
   const { language, t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/search' });
   const controls = useShellControls(
@@ -92,4 +92,6 @@ export default function SearchPage() {
       {content}
     </AuthenticatedDashboardLayout>
   );
-}
+};
+
+export default SearchPage;

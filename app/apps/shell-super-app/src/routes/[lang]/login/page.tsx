@@ -34,7 +34,7 @@ const authenticationErrorMessageKey = <ErrorTag,>(errorTag: ErrorTag) => {
   return 'shell.login.error.internal';
 };
 
-export default function LoginPage() {
+const LoginPage = () => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
@@ -164,4 +164,6 @@ export default function LoginPage() {
       <Toaster />
     </>
   );
-}
+};
+
+export default LoginPage;

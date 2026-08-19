@@ -130,7 +130,9 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
   );
 };
 
-export default function ShellHome() {
+const ShellHome = () => {
   const initialModel = useLoaderData({ from: '/$lang' });
   return <HomeView initialModel={initialModel} />;
-}
+};
+
+export default ShellHome;

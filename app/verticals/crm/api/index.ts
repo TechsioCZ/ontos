@@ -316,9 +316,8 @@ const customerMutationsLive = HttpApiBuilder.group(crmApi, 'customerMutations', 
   handlers
     .handle('createCustomer', ({ headers, payload, request }) =>
       runCrmAction(createCustomerAction, payload, headers, request.headers).pipe(
-        Effect.mapError(
-          (error): CrmCreateCustomerProblem =>
-            error._tag === 'CrmNotFoundProblem' ? problem.internal() : error,
+        Effect.mapError((error): CrmCreateCustomerProblem =>
+          error._tag === 'CrmNotFoundProblem' ? problem.internal() : error,
         ),
       ),
     )

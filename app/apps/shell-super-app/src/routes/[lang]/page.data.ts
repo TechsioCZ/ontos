@@ -135,25 +135,24 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> => {
             Effect.catch((error) => Effect.succeed(tenantRead(error, session.identity.tenantId))),
           ),
         }).pipe(
-          Effect.map(
-            ({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
-              tenants.state === 'stale'
-                ? anonymousModel
-                : withOptionalProperty(
-                    {
-                      contextState: session.state,
-                      identity: session.identity,
-                      legalEntities: choices,
-                      navigation: items,
-                    },
-                    session.state === 'authenticated',
-                    'selectedLegalEntityId',
-                    session.identity.legalEntityId,
-                    {
-                      state: 'authenticated',
-                      tenants,
-                    },
-                  ),
+          Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
+            tenants.state === 'stale'
+              ? anonymousModel
+              : withOptionalProperty(
+                  {
+                    contextState: session.state,
+                    identity: session.identity,
+                    legalEntities: choices,
+                    navigation: items,
+                  },
+                  session.state === 'authenticated',
+                  'selectedLegalEntityId',
+                  session.identity.legalEntityId,
+                  {
+                    state: 'authenticated',
+                    tenants,
+                  },
+                ),
           ),
         );
       }),

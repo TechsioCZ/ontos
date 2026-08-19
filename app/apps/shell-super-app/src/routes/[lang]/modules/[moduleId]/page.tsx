@@ -67,7 +67,7 @@ const ResolvedTarget = ({
   );
 };
 
-export default function ModuleTargetPage() {
+const ModuleTargetPage = () => {
   const { t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/modules/$moduleId' });
   const controls = useShellControls(
@@ -126,4 +126,6 @@ export default function ModuleTargetPage() {
       {content}
     </AuthenticatedDashboardLayout>
   );
-}
+};
+
+export default ModuleTargetPage;
