@@ -56,8 +56,9 @@
         "title": "Create Contact"
       },
       "contactDetail": {
-        "back": "Back to Customer",
+        "back": "Back",
         "description": "View this Contact's communication details and lifecycle state.",
+        "edit": "Edit",
         "fields": {
           "contactId": "Contact ID",
           "createdAt": "Created",
@@ -90,7 +91,7 @@
         "title": "Contact detail"
       },
       "contactEdit": {
-        "back": "Back to Contact",
+        "back": "Back",
         "description": "Update this Contact's communication details.",
         "form": {
           "cancel": "Cancel",
@@ -200,7 +201,8 @@
         "title": "Create Customer"
       },
       "customerDetail": {
-        "back": "Back to Customers",
+        "back": "Back",
+        "edit": "Edit",
         "contacts": {
           "filter": {
             "active": "Active",
@@ -287,7 +289,7 @@
         "title": "Customer detail"
       },
       "customerEdit": {
-        "back": "Back to Customers",
+        "back": "Back",
         "description": "Review and update the Customer business identity details.",
         "form": {
           "cancel": "Cancel",

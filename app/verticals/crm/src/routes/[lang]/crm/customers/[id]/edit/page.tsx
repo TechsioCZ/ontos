@@ -1,5 +1,10 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link as RouterLink, useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
+import {
+  Link as RouterLink,
+  useNavigate,
+  useParams,
+  useRouter,
+} from '@modern-js/plugin-tanstack/runtime';
 import {
   QueryClient,
   QueryClientProvider,
@@ -13,6 +18,7 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect as EffectRuntime, Option, Random, Schema } from 'effect';
 import { useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { CrmUuidSchema } from '../../../../../../../shared/apis/customer-detail.ts';
 import {
   editCustomer,
@@ -357,6 +363,7 @@ const feedbackForEditError = (
 export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPageProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const customerId = decodeCustomerEditId(routeParams);
   const [feedback, setFeedback] = useState<MutationFeedback | null>(null);
@@ -456,6 +463,22 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
     retry: false,
   });
   const destination = customerListHref(language);
+  const onBackClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !router.history.canGoBack()
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    router.history.back();
+  };
   const goToCustomerList = () => {
     void navigate({ to: destination });
   };
@@ -575,7 +598,7 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
 
   return (
     <section aria-labelledby="customer-edit-heading" className="crm:grid crm:min-w-0 crm:gap-6">
-      <Link as={RouterLink} to={destination}>
+      <Link as={RouterLink} onClick={onBackClick} to={destination}>
         {copy.back}
       </Link>
       <header className="crm:grid crm:gap-2">

@@ -121,6 +121,7 @@ interface CustomerDetailCopy {
   readonly decode: string;
   readonly dic: string;
   readonly dissolvedOn: string;
+  readonly edit: string;
   readonly establishedOn: string;
   readonly forbidden: string;
   readonly ico: string;
@@ -187,6 +188,7 @@ interface ContactListCopy {
 interface CustomerDetailViewProps {
   readonly backHref: string;
   readonly copy: CustomerDetailCopy;
+  readonly editHref: string | undefined;
   readonly onRetry: () => Promise<unknown>;
   readonly retrying: boolean;
   readonly view: CustomerDetailViewState;
@@ -430,17 +432,35 @@ const LoadingCustomerDetail = ({ copy }: { readonly copy: CustomerDetailCopy }) 
 const ReadyCustomerDetail = ({
   copy,
   customer,
+  editHref,
 }: {
   readonly copy: CustomerDetailCopy;
   readonly customer: CustomerDetailReadyModel;
+  readonly editHref: string | undefined;
 }) => (
   <div className="crm:grid crm:min-w-0 crm:gap-6">
-    <h1
-      className="crm:break-words crm:text-3xl crm:font-bold crm:sm:text-4xl"
-      id="customer-detail-heading"
-    >
-      {customer.name}
-    </h1>
+    <div className="crm:flex crm:min-w-0 crm:flex-wrap crm:items-center crm:justify-between crm:gap-3">
+      <h1
+        className="crm:min-w-0 crm:break-words crm:text-3xl crm:font-bold crm:sm:text-4xl"
+        id="customer-detail-heading"
+      >
+        {customer.name}
+      </h1>
+      {editHref === undefined ? null : (
+        <div className="crm:ml-auto crm:shrink-0">
+          <LinkButton
+            as={RouterLink}
+            href={editHref}
+            size="sm"
+            theme="solid"
+            to={editHref}
+            variant="primary"
+          >
+            {copy.edit}
+          </LinkButton>
+        </div>
+      )}
+    </div>
     <dl className="crm:grid crm:min-w-0 crm:gap-x-6 crm:gap-y-4 crm:sm:grid-cols-[minmax(8rem,12rem)_minmax(0,1fr)]">
       <dt className="crm:font-medium">{copy.customerId}</dt>
       <dd className="crm:min-w-0 crm:break-all">{customer.customerId}</dd>
@@ -825,6 +845,7 @@ const CustomerContacts = ({
 export const CustomerDetailView = ({
   backHref,
   copy,
+  editHref,
   onRetry,
   retrying,
   view,
@@ -866,7 +887,7 @@ export const CustomerDetailView = ({
       <div aria-live="polite" data-testid="customer-detail-results" ref={resultsRef} tabIndex={-1}>
         {view.state === 'loading' ? <LoadingCustomerDetail copy={copy} /> : null}
         {view.state === 'ready' ? (
-          <ReadyCustomerDetail copy={copy} customer={view.customer} />
+          <ReadyCustomerDetail copy={copy} customer={view.customer} editHref={editHref} />
         ) : null}
         {view.state !== 'loading' && view.state !== 'ready' ? (
           <div className="crm:grid crm:justify-items-start crm:gap-4">
@@ -1163,6 +1184,7 @@ const CustomerDetailQuery = ({
       <CustomerDetailView
         backHref={backHref}
         copy={copy}
+        editHref={`/${language}/crm/customers/${customerId}/edit`}
         onRetry={refetch}
         retrying={query.isFetching && !query.isPending}
         view={view}
@@ -1190,6 +1212,7 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
     decode: t('crm.pages.customerDetail.states.decode'),
     dic: t('crm.pages.customerDetail.fields.dic'),
     dissolvedOn: t('crm.pages.customerDetail.fields.dissolvedOn'),
+    edit: t('crm.pages.customerDetail.edit'),
     establishedOn: t('crm.pages.customerDetail.fields.establishedOn'),
     forbidden: t('crm.pages.customerDetail.states.forbidden'),
     ico: t('crm.pages.customerDetail.fields.ico'),
@@ -1259,6 +1282,7 @@ const CustomerDetailFeature = ({ routeParams }: CustomerDetailPageProps) => {
     <CustomerDetailView
       backHref={backHref}
       copy={copy}
+      editHref={undefined}
       onRetry={() => Promise.resolve()}
       retrying={false}
       view={{ state: 'not_found' }}

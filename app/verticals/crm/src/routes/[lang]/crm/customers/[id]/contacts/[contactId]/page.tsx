@@ -3,6 +3,7 @@ import { Link as RouterLink, useParams } from '@modern-js/plugin-tanstack/runtim
 import { QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
+import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
@@ -65,6 +66,7 @@ interface ContactDetailCopy {
   readonly decode: string;
   readonly email: string;
   readonly emailLink: string;
+  readonly edit: string;
   readonly forbidden: string;
   readonly internal: string;
   readonly loading: string;
@@ -86,6 +88,7 @@ interface ContactDetailCopy {
 interface ContactDetailViewProps {
   readonly backHref: string | undefined;
   readonly copy: ContactDetailCopy;
+  readonly editHref: string | undefined;
   readonly onRetry: () => Promise<unknown>;
   readonly retrying: boolean;
   readonly saved: boolean;
@@ -206,18 +209,36 @@ const ContactValueLink = ({
 const ReadyContactDetail = ({
   contact,
   copy,
+  editHref,
 }: {
   readonly contact: ContactDetailReadyModel;
   readonly copy: ContactDetailCopy;
+  readonly editHref: string | undefined;
 }) => (
   <div className="crm:grid crm:min-w-0 crm:gap-6">
-    <h1
-      aria-label={contact.name}
-      className="crm:break-words crm:text-3xl crm:font-bold crm:sm:text-4xl"
-      id="contact-detail-heading"
-    >
-      {withSoftWrapOpportunities(contact.name)}
-    </h1>
+    <div className="crm:flex crm:min-w-0 crm:flex-wrap crm:items-center crm:justify-between crm:gap-3">
+      <h1
+        aria-label={contact.name}
+        className="crm:min-w-0 crm:break-words crm:text-3xl crm:font-bold crm:sm:text-4xl"
+        id="contact-detail-heading"
+      >
+        {withSoftWrapOpportunities(contact.name)}
+      </h1>
+      {editHref === undefined ? null : (
+        <div className="crm:ml-auto crm:shrink-0">
+          <LinkButton
+            as={RouterLink}
+            href={editHref}
+            size="sm"
+            theme="solid"
+            to={editHref}
+            variant="primary"
+          >
+            {copy.edit}
+          </LinkButton>
+        </div>
+      )}
+    </div>
     <dl className="crm:grid crm:min-w-0 crm:gap-x-6 crm:gap-y-4 crm:sm:grid-cols-[minmax(8rem,12rem)_minmax(0,1fr)]">
       <dt className="crm:font-medium">{copy.contactId}</dt>
       <dd className="crm:min-w-0 crm:break-all">{withSoftWrapOpportunities(contact.contactId)}</dd>
@@ -248,6 +269,7 @@ const ReadyContactDetail = ({
 export const ContactDetailView = ({
   backHref,
   copy,
+  editHref,
   onRetry,
   retrying,
   saved,
@@ -297,7 +319,9 @@ export const ContactDetailView = ({
           </StatusText>
         ) : null}
         {view.state === 'loading' ? <LoadingContactDetail copy={copy} /> : null}
-        {view.state === 'ready' ? <ReadyContactDetail contact={view.contact} copy={copy} /> : null}
+        {view.state === 'ready' ? (
+          <ReadyContactDetail contact={view.contact} copy={copy} editHref={editHref} />
+        ) : null}
         {view.state !== 'loading' && view.state !== 'ready' ? (
           <div className="crm:grid crm:justify-items-start crm:gap-4">
             <h1 className="crm:text-3xl crm:font-bold crm:sm:text-4xl" id="contact-detail-heading">
@@ -417,6 +441,7 @@ const ContactDetailQuery = ({
     <ContactDetailView
       backHref={backHref}
       copy={copy}
+      editHref={`/${language}/crm/customers/${customerId}/contacts/${contactId}/edit`}
       onRetry={refetch}
       retrying={query.isFetching && !query.isPending}
       saved={saved}
@@ -436,6 +461,7 @@ const ContactDetailFeature = ({ routeParams }: ContactDetailPageProps) => {
     createdAt: t('crm.pages.contactDetail.fields.createdAt'),
     customerId: t('crm.pages.contactDetail.fields.customerId'),
     decode: t('crm.pages.contactDetail.states.decode'),
+    edit: t('crm.pages.contactDetail.edit'),
     email: t('crm.pages.contactDetail.fields.email'),
     emailLink: t('crm.pages.contactDetail.links.email'),
     forbidden: t('crm.pages.contactDetail.states.forbidden'),
@@ -462,6 +488,7 @@ const ContactDetailFeature = ({ routeParams }: ContactDetailPageProps) => {
     <ContactDetailView
       backHref={backHref}
       copy={copy}
+      editHref={undefined}
       onRetry={() => Promise.resolve()}
       retrying={false}
       saved={false}

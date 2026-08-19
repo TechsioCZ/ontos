@@ -143,7 +143,7 @@ describe('Contact detail route input', () => {
       expect(runEffectRequestMock).not.toHaveBeenCalled();
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
       if (!('id' in routeParams) || routeParams.id !== customerId) {
-        expect(screen.queryByRole('link', { name: 'Back to Customer' })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Back' })).toBeNull();
       }
     },
   );
@@ -183,8 +183,11 @@ test('renders the parent link, heading, semantic overview, communication links, 
 
   const heading = await screen.findByRole('heading', { name: activeContact.name });
   expect(heading.className).toContain('crm:break-words');
-  expect(screen.getByRole('link', { name: 'Back to Customer' }).getAttribute('href')).toBe(
+  expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe(
     `/en/crm/customers/${customerId}`,
+  );
+  expect(screen.getByRole('link', { name: 'Edit' }).getAttribute('href')).toBe(
+    `/en/crm/customers/${customerId}/contacts/${contactId}/edit`,
   );
   const list = document.querySelector('dl');
   expect(list).not.toBeNull();
@@ -234,8 +237,11 @@ test('renders Czech archived data and preserves the locale and Customer ID in th
 
   expect(await screen.findByRole('heading', { name: archivedContact.name })).toBeTruthy();
   expect(screen.getByText('Archivovaný')).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Zpět na zákazníka' }).getAttribute('href')).toBe(
+  expect(screen.getByRole('link', { name: 'Zpět' }).getAttribute('href')).toBe(
     `/cs/crm/customers/${customerId}`,
+  );
+  expect(screen.getByRole('link', { name: 'Upravit' }).getAttribute('href')).toBe(
+    `/cs/crm/customers/${customerId}/contacts/${contactId}/edit`,
   );
 });
 

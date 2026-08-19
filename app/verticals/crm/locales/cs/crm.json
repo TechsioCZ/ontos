@@ -56,8 +56,9 @@
         "title": "Vytvořit kontakt"
       },
       "contactDetail": {
-        "back": "Zpět na zákazníka",
+        "back": "Zpět",
         "description": "Zobrazení komunikačních údajů a stavu tohoto kontaktu.",
+        "edit": "Upravit",
         "fields": {
           "contactId": "ID kontaktu",
           "createdAt": "Vytvořeno",
@@ -90,7 +91,7 @@
         "title": "Detail kontaktu"
       },
       "contactEdit": {
-        "back": "Zpět na kontakt",
+        "back": "Zpět",
         "description": "Upravte komunikační údaje tohoto kontaktu.",
         "form": {
           "cancel": "Zrušit",
@@ -200,7 +201,8 @@
         "title": "Vytvořit zákazníka"
       },
       "customerDetail": {
-        "back": "Zpět na zákazníky",
+        "back": "Zpět",
+        "edit": "Upravit",
         "contacts": {
           "filter": {
             "active": "Aktivní",
@@ -287,7 +289,7 @@
         "title": "Detail zákazníka"
       },
       "customerEdit": {
-        "back": "Zpět na zákazníky",
+        "back": "Zpět",
         "description": "Zkontrolujte a upravte firemní identifikační údaje zákazníka.",
         "form": {
           "cancel": "Zrušit",

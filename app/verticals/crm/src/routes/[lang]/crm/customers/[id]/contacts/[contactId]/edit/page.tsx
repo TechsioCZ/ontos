@@ -1,5 +1,10 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Link as RouterLink, useNavigate, useParams } from '@modern-js/plugin-tanstack/runtime';
+import {
+  Link as RouterLink,
+  useNavigate,
+  useParams,
+  useRouter,
+} from '@modern-js/plugin-tanstack/runtime';
 import {
   QueryClientProvider,
   skipToken,
@@ -12,6 +17,7 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
 import { useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { CrmUuidSchema } from '../../../../../../../../../shared/apis/customer-detail.ts';
 import {
   editContact,
@@ -310,6 +316,7 @@ const contactIntent = (contactId: string, values: ContactFormValues) =>
 export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const decodedRoute = decodeContactEditRoute(routeParams);
   const [feedback, setFeedback] = useState<MutationFeedback | null>(null);
@@ -424,6 +431,22 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
   }
 
   const destination = contactDetailHref(language, decodedRoute.customerId, decodedRoute.contactId);
+  const onBackClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey ||
+      !router.history.canGoBack()
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    router.history.back();
+  };
   const goToContact = () => {
     void navigate({ to: destination });
   };
@@ -560,7 +583,7 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
   return (
     <section aria-labelledby="contact-edit-heading" className="crm:grid crm:min-w-0 crm:gap-6">
       <div>
-        <Link as={RouterLink} to={destination}>
+        <Link as={RouterLink} onClick={onBackClick} to={destination}>
           {copy.back}
         </Link>
       </div>

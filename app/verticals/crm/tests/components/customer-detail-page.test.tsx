@@ -50,7 +50,7 @@ const translations = {
   cs: {
     'crm.pages.contactCreate.title': 'Vytvořit kontakt',
     'crm.pages.contactEdit.title': 'Upravit kontakt',
-    'crm.pages.customerDetail.back': 'Zpět na zákazníky',
+    'crm.pages.customerDetail.back': 'Zpět',
     'crm.pages.customerDetail.contacts.filter.active': 'Aktivní',
     'crm.pages.customerDetail.contacts.filter.all': 'Všichni',
     'crm.pages.customerDetail.contacts.filter.archived': 'Archivovaní',
@@ -98,6 +98,7 @@ const translations = {
     'crm.pages.customerDetail.contacts.table.status': 'Stav',
     'crm.pages.customerDetail.contacts.table.unarchive': 'Odarchivovat',
     'crm.pages.customerDetail.contacts.table.unarchiving': 'Ruším archivaci…',
+    'crm.pages.customerDetail.edit': 'Upravit',
     'crm.pages.customerDetail.fields.createdAt': 'Vytvořeno',
     'crm.pages.customerDetail.fields.customerId': 'ID zákazníka',
     'crm.pages.customerDetail.fields.dic': 'DIČ',
@@ -130,7 +131,7 @@ const translations = {
   en: {
     'crm.pages.contactCreate.title': 'Create Contact',
     'crm.pages.contactEdit.title': 'Edit Contact',
-    'crm.pages.customerDetail.back': 'Back to Customers',
+    'crm.pages.customerDetail.back': 'Back',
     'crm.pages.customerDetail.contacts.filter.active': 'Active',
     'crm.pages.customerDetail.contacts.filter.all': 'All',
     'crm.pages.customerDetail.contacts.filter.archived': 'Archived',
@@ -178,6 +179,7 @@ const translations = {
     'crm.pages.customerDetail.contacts.table.status': 'Status',
     'crm.pages.customerDetail.contacts.table.unarchive': 'Unarchive',
     'crm.pages.customerDetail.contacts.table.unarchiving': 'Unarchiving…',
+    'crm.pages.customerDetail.edit': 'Edit',
     'crm.pages.customerDetail.fields.createdAt': 'Created',
     'crm.pages.customerDetail.fields.customerId': 'Customer ID',
     'crm.pages.customerDetail.fields.dic': 'Tax ID',
@@ -467,9 +469,7 @@ test('renders the Customer overview followed by ordered semantic Contact rows', 
   render(<CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />);
 
   await screen.findByRole('heading', { name: completeCustomer.name });
-  expect(screen.getByRole('link', { name: 'Back to Customers' }).getAttribute('href')).toBe(
-    '/en/crm/customers',
-  );
+  expect(screen.getByRole('link', { name: 'Back' }).getAttribute('href')).toBe('/en/crm/customers');
   const list = document.querySelector('dl');
   expect(list).not.toBeNull();
   expect(within(list as HTMLElement).getByText('Customer ID')).toBeTruthy();
@@ -654,8 +654,9 @@ test('renders Czech archived data and preserves the active locale in the return 
   expect(screen.getByText('Archivovaný')).toBeTruthy();
   expect(screen.getByText('00123456')).toBeTruthy();
   expect(screen.getByText('1. 1. 2026')).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Zpět na zákazníky' }).getAttribute('href')).toBe(
-    '/cs/crm/customers',
+  expect(screen.getByRole('link', { name: 'Zpět' }).getAttribute('href')).toBe('/cs/crm/customers');
+  expect(screen.getAllByRole('link', { name: 'Upravit' })[0]?.getAttribute('href')).toBe(
+    `/cs/crm/customers/${archivedCustomer.customerId}/edit`,
   );
   expect(await screen.findByRole('heading', { name: 'Kontakty' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Vytvořit kontakt' }).getAttribute('href')).toBe(
@@ -663,7 +664,7 @@ test('renders Czech archived data and preserves the active locale in the return 
   );
   expect(screen.getByRole('combobox', { name: 'Stav kontaktu' })).toBeTruthy();
   expect(screen.getByRole('table', { name: 'Kontakty zákazníka' })).toBeTruthy();
-  expect(screen.getAllByRole('link', { name: 'Upravit' })).toHaveLength(2);
+  expect(screen.getAllByRole('link', { name: 'Upravit' })).toHaveLength(3);
   expect(screen.getAllByRole('button', { name: 'Archivovat' })).toHaveLength(2);
   expect(getContactListMock).toHaveBeenCalledWith(
     expect.any(Object),

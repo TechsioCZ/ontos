@@ -20,14 +20,23 @@ Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
 });
 
-const { editCustomerMock, getCustomerDetailMock, localeState, navigateMock, runEffectRequestMock } =
-  rstest.hoisted(() => ({
-    editCustomerMock: rstest.fn(),
-    getCustomerDetailMock: rstest.fn(),
-    localeState: { current: 'en' as 'cs' | 'en' },
-    navigateMock: rstest.fn(() => Promise.resolve()),
-    runEffectRequestMock: rstest.fn(),
-  }));
+const {
+  editCustomerMock,
+  getCustomerDetailMock,
+  historyBackMock,
+  historyCanGoBack,
+  localeState,
+  navigateMock,
+  runEffectRequestMock,
+} = rstest.hoisted(() => ({
+  editCustomerMock: rstest.fn(),
+  getCustomerDetailMock: rstest.fn(),
+  historyBackMock: rstest.fn(),
+  historyCanGoBack: { current: false },
+  localeState: { current: 'en' as 'cs' | 'en' },
+  navigateMock: rstest.fn(() => Promise.resolve()),
+  runEffectRequestMock: rstest.fn(),
+}));
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
 const translate = (language: 'cs' | 'en', key: string): string => {
@@ -63,6 +72,12 @@ rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
     </a>
   ),
   useNavigate: () => navigateMock,
+  useRouter: () => ({
+    history: {
+      back: historyBackMock,
+      canGoBack: () => historyCanGoBack.current,
+    },
+  }),
 }));
 
 rstest.mock('../../src/api/crm-client.ts', () => ({
@@ -119,6 +134,7 @@ const renderFeature = ({
 };
 
 beforeEach(() => {
+  historyCanGoBack.current = false;
   localeState.current = 'en';
   navigateMock.mockResolvedValue();
   getCustomerDetailMock.mockReturnValue(Effect.succeed(customer));
@@ -546,8 +562,11 @@ test('Back and Cancel use the localized Customers route without invoking a mutat
   const user = userEvent.setup();
   renderFeature();
 
-  const back = await screen.findByRole('link', { name: 'Zpět na zákazníky' });
+  const back = await screen.findByRole('link', { name: 'Zpět' });
   expect(back.getAttribute('href')).toBe('/cs/crm/customers');
+  historyCanGoBack.current = true;
+  await user.click(back);
+  expect(historyBackMock).toHaveBeenCalledTimes(1);
   expect(screen.getByRole('heading', { name: 'Upravit zákazníka' })).toBeTruthy();
   await user.click(await screen.findByRole('button', { name: 'Zrušit' }));
   expect(navigateMock).toHaveBeenCalledWith({ to: '/cs/crm/customers' });
