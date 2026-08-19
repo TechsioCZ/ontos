@@ -28,7 +28,9 @@ export const useShellControls = (
   const [legalEntitySwitchPending, setLegalEntitySwitchPending] = useState(false);
   const [legalEntitySwitchFailed, setLegalEntitySwitchFailed] = useState(false);
 
-  const reload = () => void navigate({ reloadDocument: true, to: '.' });
+  const reload = () => {
+    void navigate({ reloadDocument: true, to: '.' });
+  };
 
   const handleLogout = () => {
     if (logoutPending) {
@@ -110,8 +112,9 @@ export const useShellControls = (
   return {
     handleLegalEntityChange,
     handleLogout,
-    handleSearch: (query: string) =>
-      void navigate({ to: `/${language}/search?q=${encodeURIComponent(query)}` }),
+    handleSearch: (query: string) => {
+      void navigate({ to: `/${language}/search?q=${encodeURIComponent(query)}` });
+    },
     handleTenantChange,
     legalEntitySwitchFailed,
     legalEntitySwitchPending,

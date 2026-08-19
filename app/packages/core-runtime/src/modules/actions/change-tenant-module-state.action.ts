@@ -37,18 +37,16 @@ export const ChangeTenantModuleStatePayload = Schema.Struct({
   newState: TenantModuleStateSchema,
   reason: Schema.optionalKey(reasonSchema),
 });
-export type ChangeTenantModuleStatePayload = Schema.Schema.Type<
-  typeof ChangeTenantModuleStatePayload
->;
+type ChangeTenantModuleStatePayloadType = Schema.Schema.Type<typeof ChangeTenantModuleStatePayload>;
+export type { ChangeTenantModuleStatePayloadType as ChangeTenantModuleStatePayload };
 
 export const ChangeTenantModuleStateResult = Schema.Struct({
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
   previousState: Schema.NullOr(TenantModuleStateSchema),
 });
-export type ChangeTenantModuleStateResult = Schema.Schema.Type<
-  typeof ChangeTenantModuleStateResult
->;
+type ChangeTenantModuleStateResultType = Schema.Schema.Type<typeof ChangeTenantModuleStateResult>;
+export type { ChangeTenantModuleStateResultType as ChangeTenantModuleStateResult };
 
 export const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateConcurrentChangeError,
@@ -72,7 +70,7 @@ interface ChangeTenantModuleStateServices {
 }
 
 const handleChangeTenantModuleState = (
-  payload: ChangeTenantModuleStatePayload,
+  payload: ChangeTenantModuleStatePayloadType,
   context: ActionHandlerContext<
     ChangeTenantModuleStateDomainEvents,
     ChangeTenantModuleStateServices

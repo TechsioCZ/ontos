@@ -17,10 +17,13 @@ import {
 } from '../services/customer-contact-persistence.service.ts';
 import type { LookupResult } from '../services/customer-contact-persistence.service.ts';
 
+export type {
+  Contact as CreateContactResult,
+  CreateContactPayload,
+} from '../../shared/apis/contact-detail.ts';
+
 export const CreateContactPayload = CreateContactPayloadSchema;
-export type CreateContactPayload = Payload;
 export const CreateContactResult = ContactSchema;
-export type CreateContactResult = Contact;
 export const CreateContactError = Schema.Union([CrmCustomerNotFound, CrmPersistenceUnavailable]);
 
 interface Services {

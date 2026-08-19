@@ -40,12 +40,12 @@ import { OutboxPayloadSchema, outboxProducerModuleKey, outboxTopic } from '${con
 import type { OutboxPayload } from '${contractSubpath}';
 
 export const ${base}Payload = OutboxPayloadSchema;
-export type ${base}Payload = OutboxPayload;
+export type { OutboxPayload as ${base}Payload };
 export const ${base}ProducerModuleKey = outboxProducerModuleKey;
 export const ${base}Topic = outboxTopic;
 
 export const create${base}Message = (
-  payload: ${base}Payload,
+  payload: OutboxPayload,
 ): OutboxMessage => ({
   payloadJson: payload,
   producerModuleKey: ${base}ProducerModuleKey,

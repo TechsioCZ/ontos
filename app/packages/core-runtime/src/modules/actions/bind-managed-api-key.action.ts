@@ -14,16 +14,18 @@ export const BindManagedApiKeyPayload = Schema.Struct({
   principalId: uuid,
   providerSubjectId: subject,
 });
-export type BindManagedApiKeyPayload = Schema.Schema.Type<typeof BindManagedApiKeyPayload>;
+type BindManagedApiKeyPayloadType = Schema.Schema.Type<typeof BindManagedApiKeyPayload>;
+export type { BindManagedApiKeyPayloadType as BindManagedApiKeyPayload };
 export const BindManagedApiKeyResult = Schema.Struct({
   authBindingId: uuid,
   status: Schema.Literal('active'),
 });
-export type BindManagedApiKeyResult = Schema.Schema.Type<typeof BindManagedApiKeyResult>;
+type BindManagedApiKeyResultType = Schema.Schema.Type<typeof BindManagedApiKeyResult>;
+export type { BindManagedApiKeyResultType as BindManagedApiKeyResult };
 type Input = Parameters<typeof bindApiKey>[1];
 type Result = ReturnType<typeof bindApiKey>;
 const handle = (
-  payload: BindManagedApiKeyPayload,
+  payload: BindManagedApiKeyPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly bind: (input: Input) => Result }

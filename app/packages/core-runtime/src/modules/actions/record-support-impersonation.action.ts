@@ -26,18 +26,20 @@ export const RecordSupportImpersonationPayload = Schema.Union([
     sessionRef: safeSessionRef,
   }),
 ]);
-export type RecordSupportImpersonationPayload = Schema.Schema.Type<
+type RecordSupportImpersonationPayloadType = Schema.Schema.Type<
   typeof RecordSupportImpersonationPayload
 >;
+export type { RecordSupportImpersonationPayloadType as RecordSupportImpersonationPayload };
 export const RecordSupportImpersonationResult = Schema.Struct({
   checkpoint: Schema.Literals(['requested', 'started', 'stopped']),
   recorded: Schema.Literal(true),
 });
-export type RecordSupportImpersonationResult = Schema.Schema.Type<
+type RecordSupportImpersonationResultType = Schema.Schema.Type<
   typeof RecordSupportImpersonationResult
 >;
+export type { RecordSupportImpersonationResultType as RecordSupportImpersonationResult };
 const handle = (
-  payload: RecordSupportImpersonationPayload,
+  payload: RecordSupportImpersonationPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     {

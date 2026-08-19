@@ -11,16 +11,18 @@ import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 const uuid = Schema.String.check(Schema.isUUID());
 const subject = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 export const BindSelfApiKeyPayload = Schema.Struct({ providerSubjectId: subject });
-export type BindSelfApiKeyPayload = Schema.Schema.Type<typeof BindSelfApiKeyPayload>;
+type BindSelfApiKeyPayloadType = Schema.Schema.Type<typeof BindSelfApiKeyPayload>;
+export type { BindSelfApiKeyPayloadType as BindSelfApiKeyPayload };
 export const BindSelfApiKeyResult = Schema.Struct({
   authBindingId: uuid,
   status: Schema.Literal('active'),
 });
-export type BindSelfApiKeyResult = Schema.Schema.Type<typeof BindSelfApiKeyResult>;
+type BindSelfApiKeyResultType = Schema.Schema.Type<typeof BindSelfApiKeyResult>;
+export type { BindSelfApiKeyResultType as BindSelfApiKeyResult };
 type Input = Parameters<typeof bindApiKey>[1];
 type Result = ReturnType<typeof bindApiKey>;
 const handle = (
-  payload: BindSelfApiKeyPayload,
+  payload: BindSelfApiKeyPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly bind: (input: Input) => Result }

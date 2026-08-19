@@ -25,17 +25,19 @@ export const SetSelfApiKeyBindingStatusPayload = Schema.Union([
     reason,
   }),
 ]);
-export type SetSelfApiKeyBindingStatusPayload = Schema.Schema.Type<
+type SetSelfApiKeyBindingStatusPayloadType = Schema.Schema.Type<
   typeof SetSelfApiKeyBindingStatusPayload
 >;
+export type { SetSelfApiKeyBindingStatusPayloadType as SetSelfApiKeyBindingStatusPayload };
 export const SetSelfApiKeyBindingStatusResult = Schema.Struct({ previousStatus: status, status });
-export type SetSelfApiKeyBindingStatusResult = Schema.Schema.Type<
+type SetSelfApiKeyBindingStatusResultType = Schema.Schema.Type<
   typeof SetSelfApiKeyBindingStatusResult
 >;
+export type { SetSelfApiKeyBindingStatusResultType as SetSelfApiKeyBindingStatusResult };
 type Input = Parameters<typeof setApiKeyBindingStatus>[1];
 type Result = ReturnType<typeof setApiKeyBindingStatus>;
 const handle = (
-  payload: SetSelfApiKeyBindingStatusPayload,
+  payload: SetSelfApiKeyBindingStatusPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly setStatus: (input: Input) => Result }

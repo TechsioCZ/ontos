@@ -14,10 +14,13 @@ import { CrmPersistenceUnavailable } from '../../shared/apis/customer-detail.ts'
 import { editContactRecord } from '../services/customer-contact-persistence.service.ts';
 import type { LookupResult } from '../services/customer-contact-persistence.service.ts';
 
+export type {
+  Contact as EditContactResult,
+  EditContactPayload,
+} from '../../shared/apis/contact-detail.ts';
+
 export const EditContactPayload = EditContactPayloadSchema;
-export type EditContactPayload = Payload;
 export const EditContactResult = ContactSchema;
-export type EditContactResult = Contact;
 export const EditContactError = Schema.Union([CrmContactNotFound, CrmPersistenceUnavailable]);
 
 interface Services {

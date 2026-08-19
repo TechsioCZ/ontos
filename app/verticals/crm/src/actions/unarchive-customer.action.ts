@@ -18,10 +18,13 @@ import type {
 import { transitionCustomerRecord } from '../services/customer-contact-persistence.service.ts';
 import type { LifecycleResult } from '../services/customer-contact-persistence.service.ts';
 
+export type {
+  Customer as UnarchiveCustomerResult,
+  CustomerLifecyclePayload as UnarchiveCustomerPayload,
+} from '../../shared/apis/customer-detail.ts';
+
 export const UnarchiveCustomerPayload = CustomerLifecyclePayloadSchema;
-export type UnarchiveCustomerPayload = Payload;
 export const UnarchiveCustomerResult = CustomerSchema;
-export type UnarchiveCustomerResult = Customer;
 export const UnarchiveCustomerError = Schema.Union([
   CrmCustomerNotFound,
   CrmLifecycleConflict,

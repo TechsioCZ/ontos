@@ -505,7 +505,9 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
             disabled={detailQuery.isFetching}
             isLoading={detailQuery.isFetching}
             loadingText={copy.states.retrying}
-            onClick={() => void retry()}
+            onClick={() => {
+              void retry();
+            }}
             type="button"
             variant="primary"
           >

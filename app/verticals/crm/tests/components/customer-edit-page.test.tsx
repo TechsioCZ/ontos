@@ -47,7 +47,7 @@ const flattenKeys = (value: object, prefix = ''): string[] =>
       const path = prefix.length === 0 ? key : `${prefix}.${key}`;
       return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
     })
-    .sort();
+    .toSorted();
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({

@@ -69,7 +69,9 @@ export default function ResourcePage() {
             disabled={!model.resource.media.enabled || mediaState === 'pending'}
             isLoading={mediaState === 'pending'}
             loadingText={t('shell.resource.media.pending')}
-            onClick={() => void handleMediaAttachment()}
+            onClick={() => {
+              void handleMediaAttachment();
+            }}
             type="button"
           >
             {t('shell.resource.media.attach')}

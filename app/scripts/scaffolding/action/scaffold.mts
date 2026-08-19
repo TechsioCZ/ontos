@@ -49,10 +49,12 @@ import { Effect, Schema } from 'effect';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
 export const ${actionType}Payload = Schema.Struct({});
-export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}Payload>;
+type ${actionType}PayloadType = Schema.Schema.Type<typeof ${actionType}Payload>;
+export type { ${actionType}PayloadType as ${actionType}Payload };
 
 export const ${actionType}Result = Schema.Struct({});
-export type ${actionType}Result = Schema.Schema.Type<typeof ${actionType}Result>;
+type ${actionType}ResultType = Schema.Schema.Type<typeof ${actionType}Result>;
+export type { ${actionType}ResultType as ${actionType}Result };
 
 export class ${actionType}NotImplemented extends Schema.TaggedErrorClass<${actionType}NotImplemented>()(
   '${actionType}NotImplemented',
@@ -118,10 +120,12 @@ import { defineAction } from '../../actions/definition.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 export const ${actionType}Payload = Schema.Struct({});
-export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}Payload>;
+type ${actionType}PayloadType = Schema.Schema.Type<typeof ${actionType}Payload>;
+export type { ${actionType}PayloadType as ${actionType}Payload };
 
 export const ${actionType}Result = Schema.Struct({});
-export type ${actionType}Result = Schema.Schema.Type<typeof ${actionType}Result>;
+type ${actionType}ResultType = Schema.Schema.Type<typeof ${actionType}Result>;
+export type { ${actionType}ResultType as ${actionType}Result };
 
 export class ${actionType}NotImplemented extends Schema.TaggedErrorClass<${actionType}NotImplemented>()(
   '${actionType}NotImplemented',

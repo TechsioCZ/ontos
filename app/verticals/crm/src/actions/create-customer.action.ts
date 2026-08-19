@@ -16,10 +16,13 @@ import type {
 } from '../../shared/apis/customer-detail.ts';
 import { createCustomerRecord } from '../services/customer-contact-persistence.service.ts';
 
+export type {
+  CreateCustomerPayload,
+  Customer as CreateCustomerResult,
+} from '../../shared/apis/customer-detail.ts';
+
 export const CreateCustomerPayload = CreateCustomerPayloadSchema;
-export type CreateCustomerPayload = Payload;
 export const CreateCustomerResult = CustomerSchema;
-export type CreateCustomerResult = Customer;
 export const CreateCustomerError = Schema.Union([
   CrmCustomerIcoConflict,
   CrmPersistenceUnavailable,

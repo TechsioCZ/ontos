@@ -18,10 +18,13 @@ import type {
 import { editCustomerRecord } from '../services/customer-contact-persistence.service.ts';
 import type { LookupResult } from '../services/customer-contact-persistence.service.ts';
 
+export type {
+  Customer as EditCustomerResult,
+  EditCustomerPayload,
+} from '../../shared/apis/customer-detail.ts';
+
 export const EditCustomerPayload = EditCustomerPayloadSchema;
-export type EditCustomerPayload = Payload;
 export const EditCustomerResult = CustomerSchema;
-export type EditCustomerResult = Customer;
 export const EditCustomerError = Schema.Union([
   CrmCustomerIcoConflict,
   CrmCustomerNotFound,

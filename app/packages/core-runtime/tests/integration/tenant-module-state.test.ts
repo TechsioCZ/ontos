@@ -89,7 +89,7 @@ const installedContract = (moduleId: string): OntosModuleDeploymentContract => (
 const installedCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([]),
   deploymentAppIds: Object.freeze([]),
-  getByDeploymentAppId: () => void 0,
+  getByDeploymentAppId: () => {},
   getByModuleId: (moduleId: string) => installedContract(moduleId),
   moduleIds: Object.freeze([]),
   outboxSubscriptions: Object.freeze([]),

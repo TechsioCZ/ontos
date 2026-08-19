@@ -528,7 +528,9 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
             disabled={detailQuery.isFetching}
             isLoading={detailQuery.isFetching}
             loadingText={copy.states.retrying}
-            onClick={() => void detailQuery.refetch()}
+            onClick={() => {
+              void detailQuery.refetch();
+            }}
             type="button"
             variant="primary"
           >

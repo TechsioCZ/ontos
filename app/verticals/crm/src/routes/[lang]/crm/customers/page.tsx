@@ -505,7 +505,9 @@ export const CustomersListView = ({
               disabled={retrying}
               isLoading={retrying}
               loadingText={copy.retrying}
-              onClick={() => void retry()}
+              onClick={() => {
+                void retry();
+              }}
               size="sm"
               type="button"
               variant="primary"
@@ -523,7 +525,9 @@ export const CustomersListView = ({
               disabled={retrying}
               isLoading={retrying}
               loadingText={copy.retrying}
-              onClick={() => void retry()}
+              onClick={() => {
+                void retry();
+              }}
               size="sm"
               type="button"
               variant="primary"
@@ -768,11 +772,11 @@ const CustomersListFeature = () => {
         lifecycleMutation.isPending ? (lifecycleMutation.variables?.customerId ?? null) : null
       }
       onRetry={refetch}
-      onStatusChange={(status) =>
+      onStatusChange={(status) => {
         void navigate({
           to: buildCustomerListHref(language, search, status, 0),
-        })
-      }
+        });
+      }}
       retrying={query.isFetching && !query.isPending}
       status={urlState.status}
       view={view}

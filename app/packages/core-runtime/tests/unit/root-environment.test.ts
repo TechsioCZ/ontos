@@ -12,7 +12,16 @@ const expectedEnvironmentPath = path.join(appRoot, '.env');
 test('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
     'find',
-    [path.join(appRoot, 'apps'), '-type', 'f', '-name', '.env*', '-not', '-path', '*/node_modules/*'],
+    [
+      path.join(appRoot, 'apps'),
+      '-type',
+      'f',
+      '-name',
+      '.env*',
+      '-not',
+      '-path',
+      '*/node_modules/*',
+    ],
     { encoding: 'utf-8' },
   );
 

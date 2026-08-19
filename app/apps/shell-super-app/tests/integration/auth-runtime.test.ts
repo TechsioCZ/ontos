@@ -74,8 +74,8 @@ const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog 
   Object.freeze({
     contracts: Object.freeze([]),
     deploymentAppIds: Object.freeze([]),
-    getByDeploymentAppId: () => void 0,
-    getByModuleId: () => void 0,
+    getByDeploymentAppId: () => {},
+    getByModuleId: () => {},
     moduleIds: Object.freeze([...moduleIds]),
     outboxSubscriptions: Object.freeze([]),
   });

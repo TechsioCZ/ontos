@@ -311,7 +311,9 @@ export const ContactDetailView = ({
                 disabled={retrying}
                 isLoading={retrying}
                 loadingText={copy.retrying}
-                onClick={() => void retry()}
+                onClick={() => {
+                  void retry();
+                }}
                 size="sm"
                 theme="solid"
                 type="button"

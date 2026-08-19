@@ -25,13 +25,15 @@ export const ChangePrincipalStatusPayload = Schema.Union([
     reason,
   }),
 ]);
-export type ChangePrincipalStatusPayload = Schema.Schema.Type<typeof ChangePrincipalStatusPayload>;
+type ChangePrincipalStatusPayloadType = Schema.Schema.Type<typeof ChangePrincipalStatusPayload>;
+export type { ChangePrincipalStatusPayloadType as ChangePrincipalStatusPayload };
 export const ChangePrincipalStatusResult = Schema.Struct({ previousStatus: status, status });
-export type ChangePrincipalStatusResult = Schema.Schema.Type<typeof ChangePrincipalStatusResult>;
+type ChangePrincipalStatusResultType = Schema.Schema.Type<typeof ChangePrincipalStatusResult>;
+export type { ChangePrincipalStatusResultType as ChangePrincipalStatusResult };
 type Input = Parameters<typeof changePrincipalStatus>[1];
 type Result = ReturnType<typeof changePrincipalStatus>;
 const handle = (
-  payload: ChangePrincipalStatusPayload,
+  payload: ChangePrincipalStatusPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly change: (input: Input) => Result }

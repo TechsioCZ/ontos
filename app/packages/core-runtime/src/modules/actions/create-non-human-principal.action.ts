@@ -14,19 +14,17 @@ export const CreateNonHumanPrincipalPayload = Schema.Struct({
   displayName,
   kind: Schema.Literals(['service', 'integration', 'system']),
 });
-export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
-  typeof CreateNonHumanPrincipalPayload
->;
+type CreateNonHumanPrincipalPayloadType = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayload>;
+export type { CreateNonHumanPrincipalPayloadType as CreateNonHumanPrincipalPayload };
 export const CreateNonHumanPrincipalResult = Schema.Struct({
   principalId: uuid,
   status: Schema.Literal('active'),
 });
-export type CreateNonHumanPrincipalResult = Schema.Schema.Type<
-  typeof CreateNonHumanPrincipalResult
->;
+type CreateNonHumanPrincipalResultType = Schema.Schema.Type<typeof CreateNonHumanPrincipalResult>;
+export type { CreateNonHumanPrincipalResultType as CreateNonHumanPrincipalResult };
 
 const handle = (
-  payload: CreateNonHumanPrincipalPayload,
+  payload: CreateNonHumanPrincipalPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     {

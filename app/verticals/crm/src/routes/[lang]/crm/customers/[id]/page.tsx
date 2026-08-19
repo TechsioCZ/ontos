@@ -748,7 +748,9 @@ const CustomerContacts = ({
               disabled={retrying}
               isLoading={retrying}
               loadingText={copy.retrying}
-              onClick={() => void retry()}
+              onClick={() => {
+                void retry();
+              }}
               size="sm"
               type="button"
               variant="primary"
@@ -766,7 +768,9 @@ const CustomerContacts = ({
               disabled={retrying}
               isLoading={retrying}
               loadingText={copy.retrying}
-              onClick={() => void retry()}
+              onClick={() => {
+                void retry();
+              }}
               size="sm"
               type="button"
               variant="primary"
@@ -877,7 +881,9 @@ export const CustomerDetailView = ({
                 disabled={retrying}
                 isLoading={retrying}
                 loadingText={copy.retrying}
-                onClick={() => void retry()}
+                onClick={() => {
+                  void retry();
+                }}
                 size="sm"
                 type="button"
                 variant="primary"
@@ -1087,11 +1093,11 @@ const CustomerContactsQuery = ({
           : null
       }
       onRetry={refetch}
-      onStatusChange={(nextStatus) =>
+      onStatusChange={(nextStatus) => {
         void navigate({
           to: buildCustomerContactListHref(language, customerId, search, nextStatus, 0),
-        })
-      }
+        });
+      }}
       onToggleLifecycle={toggleLifecycle}
       pendingContactId={
         lifecycleMutation.isPending ? (lifecycleMutation.variables?.contactId ?? null) : null

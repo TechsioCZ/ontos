@@ -27,20 +27,22 @@ export const SetManagedApiKeyBindingStatusPayload = Schema.Union([
     reason,
   }),
 ]);
-export type SetManagedApiKeyBindingStatusPayload = Schema.Schema.Type<
+type SetManagedApiKeyBindingStatusPayloadType = Schema.Schema.Type<
   typeof SetManagedApiKeyBindingStatusPayload
 >;
+export type { SetManagedApiKeyBindingStatusPayloadType as SetManagedApiKeyBindingStatusPayload };
 export const SetManagedApiKeyBindingStatusResult = Schema.Struct({
   previousStatus: status,
   status,
 });
-export type SetManagedApiKeyBindingStatusResult = Schema.Schema.Type<
+type SetManagedApiKeyBindingStatusResultType = Schema.Schema.Type<
   typeof SetManagedApiKeyBindingStatusResult
 >;
+export type { SetManagedApiKeyBindingStatusResultType as SetManagedApiKeyBindingStatusResult };
 type Input = Parameters<typeof setApiKeyBindingStatus>[1];
 type Result = ReturnType<typeof setApiKeyBindingStatus>;
 const handle = (
-  payload: SetManagedApiKeyBindingStatusPayload,
+  payload: SetManagedApiKeyBindingStatusPayloadType,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly setStatus: (input: Input) => Result }
