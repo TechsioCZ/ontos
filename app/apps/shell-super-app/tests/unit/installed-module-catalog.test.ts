@@ -1,7 +1,7 @@
 /* eslint-disable promise/avoid-new -- The timeout fixture must wait for the injected AbortSignal. */
 // @effect-diagnostics asyncFunction:off preferSchemaOverJson:off
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import type { DeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
 import {
   installedModuleCatalog,
@@ -60,8 +60,8 @@ const contract = (appId: string, moduleId: string) => ({
 const allowlist = (entries: DeploymentAllowlist['entries']): DeploymentAllowlist =>
   Object.freeze({ entries: Object.freeze([...entries]), revision: JSON.stringify(entries) });
 
-const response = (value: unknown, init: ResponseInit = {}): Response =>
-  new Response(typeof value === 'string' ? value : JSON.stringify(value), {
+const response = <Value>(value: Value, init: ResponseInit = {}): Response =>
+  new Response(Predicate.isString(value) ? value : JSON.stringify(value), {
     headers: { 'content-type': 'application/json', ...init.headers },
     status: init.status,
   });
@@ -151,10 +151,10 @@ test.each([
 
 test('rejects oversized, timed-out, and duplicate-module snapshots without caching failures', async () => {
   let attempts = 0;
-  const one = {
+  const one: DeploymentAllowlist['entries'][number] = {
     appId: 'property-registry',
     contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
-  } as const;
+  };
   const oversized = makeInstalledModuleCatalogLoader(
     allowlist([one]),
     () => Promise.resolve(response('x'.repeat(64))),

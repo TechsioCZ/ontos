@@ -22,6 +22,19 @@ import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository, OutboxRepositoryLive } from './repository.ts';
 import type { OutboxClaim, OutboxRepositoryService } from './repository.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 export interface RunOutboxCycleInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
@@ -106,22 +119,32 @@ const validateCycleInput = <Registration extends AnyOutboxWorkerRegistration>(
     },
   });
 
-const claimAnnotations = (
-  claim: OutboxClaim,
-  outcome?: string,
-): Readonly<Record<string, string | number>> => ({
-  attempt: claim.attemptNumber,
-  claimId: claim.claimId,
-  consumerModuleKey: claim.consumerModuleKey,
-  ...(claim.correlationId === undefined ? {} : { correlationId: claim.correlationId }),
-  deliveryId: claim.deliveryId,
-  messageId: claim.messageId,
-  ...(outcome === undefined ? {} : { outcome }),
-  producerModuleKey: claim.producerModuleKey,
-  tenantId: claim.tenantId,
-  topic: claim.topic,
-  workerKey: claim.workerKey,
-});
+const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
+  withOptionalProperty(
+    withOptionalProperty(
+      {
+        attempt: claim.attemptNumber,
+        claimId: claim.claimId,
+        consumerModuleKey: claim.consumerModuleKey,
+      },
+      !(claim.correlationId === undefined),
+      'correlationId',
+      claim.correlationId,
+      {
+        deliveryId: claim.deliveryId,
+        messageId: claim.messageId,
+      },
+    ),
+    !(outcome === undefined),
+    'outcome',
+    outcome,
+    {
+      producerModuleKey: claim.producerModuleKey,
+      tenantId: claim.tenantId,
+      topic: claim.topic,
+      workerKey: claim.workerKey,
+    },
+  );
 
 const logUnexpectedPersistence = (claim?: OutboxClaim) =>
   Effect.annotateLogs(
@@ -142,19 +165,26 @@ const withOutcomeSpan = <Value, Error, Requirements>(
     }),
   );
 
-const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext => ({
-  attemptNumber: claim.attemptNumber,
-  claimId: claim.claimId,
-  ...(claim.correlationId === undefined ? {} : { correlationId: claim.correlationId }),
-  deliveryId: claim.deliveryId,
-  domainEventId: claim.domainEventId,
-  messageId: claim.messageId,
-  producerModuleKey: claim.producerModuleKey,
-  tenantId: claim.tenantId,
-  tenantSequenceNo: claim.tenantSequenceNo,
-  topic: claim.topic,
-  workerKey: claim.workerKey,
-});
+const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
+  withOptionalProperty(
+    {
+      attemptNumber: claim.attemptNumber,
+      claimId: claim.claimId,
+    },
+    !(claim.correlationId === undefined),
+    'correlationId',
+    claim.correlationId,
+    {
+      deliveryId: claim.deliveryId,
+      domainEventId: claim.domainEventId,
+      messageId: claim.messageId,
+      producerModuleKey: claim.producerModuleKey,
+      tenantId: claim.tenantId,
+      tenantSequenceNo: claim.tenantSequenceNo,
+      topic: claim.topic,
+      workerKey: claim.workerKey,
+    },
+  );
 
 const subscriptionMatchesRegistration = (
   subscription: OutboxWorkerSubscription | undefined,

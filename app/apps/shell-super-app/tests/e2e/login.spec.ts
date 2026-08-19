@@ -1,3 +1,4 @@
+import { Predicate } from 'effect';
 import { expect, test } from '@playwright/test';
 import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { Page } from '@playwright/test';
@@ -149,7 +150,7 @@ test('shows one generic error for invalid English credentials', ({ page }) =>
 
 test('logs a user in without any server-error response', async ({ page }, testInfo) => {
   const { baseURL } = testInfo.project.use;
-  if (typeof baseURL !== 'string') {
+  if (!Predicate.isString(baseURL)) {
     throw new TypeError('The login E2E test requires a configured base URL');
   }
 

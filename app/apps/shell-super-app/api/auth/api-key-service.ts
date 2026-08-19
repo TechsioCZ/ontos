@@ -4,12 +4,25 @@ import { apiKey } from '@better-auth/api-key';
 import { APIError, betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { and, asc, eq, like, lte } from 'drizzle-orm';
-import { Clock, Context, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
 import { apikey, authDatabaseSchema } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export class ApiKeyCredentialInvalidError extends Schema.TaggedErrorClass<ApiKeyCredentialInvalidError>()(
   'ApiKeyCredentialInvalidError',
@@ -58,7 +71,7 @@ export interface PendingApiKeyCleanupBatch {
   readonly providerKeyIds: readonly string[];
 }
 
-export interface ApiKeyServiceShape {
+export interface ApiKeyServiceContract {
   readonly clearPendingCleanup: (keyId: string) => Effect.Effect<void, ApiKeyProviderError>;
   readonly issue: (
     requestHeaders: Headers,
@@ -84,7 +97,7 @@ export interface ApiKeyServiceShape {
   ) => Effect.Effect<ProviderApiKeyMetadata, ApiKeyProviderError>;
   readonly verify: (rawKey: string) => Effect.Effect<VerifiedApiKey, ApiKeyProviderError>;
 }
-export class ApiKeyService extends Context.Service<ApiKeyService, ApiKeyServiceShape>()(
+export class ApiKeyService extends Context.Service<ApiKeyService, ApiKeyServiceContract>()(
   '@app/shell-super-app/api/auth/api-key-service/ApiKeyService',
 ) {}
 
@@ -103,7 +116,7 @@ const inconsistent = () =>
     code: 'api_key_state_inconsistent',
     reason: 'The API key lifecycle state is inconsistent',
   });
-const mapProviderError = (error: unknown): ApiKeyProviderError => {
+const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
   if (error instanceof APIError && error.statusCode === 429) {
     return new ApiKeyRateLimitedError({
       code: 'api_key_rate_limited',
@@ -141,16 +154,16 @@ const decodePendingBindingMarker = (metadata: null | string): PendingBindingMark
   }
   try {
     const decoded: unknown = JSON.parse(metadata);
-    return typeof decoded === 'object' &&
+    return Predicate.isObjectKeyword(decoded) &&
       decoded !== null &&
       'ontosLifecycle' in decoded &&
       decoded.ontosLifecycle === 'binding_pending_v1' &&
       'lifecycleOperationId' in decoded &&
-      typeof decoded.lifecycleOperationId === 'string' &&
+      Predicate.isString(decoded.lifecycleOperationId) &&
       'issuerPrincipalId' in decoded &&
-      typeof decoded.issuerPrincipalId === 'string' &&
+      Predicate.isString(decoded.issuerPrincipalId) &&
       'tenantId' in decoded &&
-      typeof decoded.tenantId === 'string'
+      Predicate.isString(decoded.tenantId)
       ? {
           issuerPrincipalId: decoded.issuerPrincipalId,
           lifecycleOperationId: decoded.lifecycleOperationId,
@@ -204,7 +217,7 @@ const toSafe = (value: {
 export const makeApiKeyService = (
   configuration: AuthConfigValue,
   database: AuthDatabaseExecutor,
-): ApiKeyServiceShape => {
+): ApiKeyServiceContract => {
   const auth = betterAuth({
     baseURL: configuration.baseUrl,
     database: drizzleAdapter(database, {
@@ -238,7 +251,7 @@ export const makeApiKeyService = (
         record === undefined ? Effect.fail(inconsistent()) : Effect.succeed(toSafe(record)),
       ),
     );
-  const service: ApiKeyServiceShape = {
+  const service: ApiKeyServiceContract = {
     clearPendingCleanup: (keyId) =>
       Effect.tryPromise({
         catch: unavailable,
@@ -253,13 +266,24 @@ export const makeApiKeyService = (
         catch: mapProviderError,
         try: () =>
           auth.api.createApiKey({
-            body: {
-              expiresIn: input.expiresIn ?? null,
-              ...(input.name === undefined ? {} : { name: input.name }),
-              ...(input.prefix === undefined ? {} : { prefix: input.prefix }),
-              metadata: pendingBindingMarker(input),
-              remaining: null,
-            },
+            body: withOptionalProperty(
+              withOptionalProperty(
+                {
+                  expiresIn: input.expiresIn ?? null,
+                },
+                !(input.name === undefined),
+                'name',
+                input.name,
+                {},
+              ),
+              !(input.prefix === undefined),
+              'prefix',
+              input.prefix,
+              {
+                metadata: pendingBindingMarker(input),
+                remaining: null,
+              },
+            ),
             headers: requestHeaders,
           }),
       }).pipe(Effect.map((created) => ({ ...toSafe(created), secret: created.key }))),

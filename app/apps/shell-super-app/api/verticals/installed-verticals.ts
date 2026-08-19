@@ -1,6 +1,9 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 
-declare const ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: unknown;
+type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
+const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
+
+declare const ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: JsonValue;
 
 export class InstalledVerticalTopologyError extends Schema.TaggedErrorClass<InstalledVerticalTopologyError>()(
   'InstalledVerticalTopologyError',
@@ -9,11 +12,15 @@ export class InstalledVerticalTopologyError extends Schema.TaggedErrorClass<Inst
 
 const stableAppIdPattern = /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u;
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const object = (value: JsonValue) => {
+  if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
+    throw new TypeError('expected object');
+  }
+  return Schema.decodeUnknownSync(JsonObjectSchema)(value);
+};
 
 export const deriveInstalledVerticalIds = (
-  input: unknown,
+  input: JsonValue,
 ): Effect.Effect<ReadonlySet<string>, InstalledVerticalTopologyError> =>
   Effect.try({
     catch: () =>
@@ -21,17 +28,19 @@ export const deriveInstalledVerticalIds = (
         reason: 'The authoritative installed MicroVertical topology is malformed',
       }),
     try: () => {
-      if (!isRecord(input) || !Array.isArray(input['verticals'])) {
-        throw new Error('Topology verticals are missing');
+      const topology = object(input);
+      if (!Array.isArray(topology['verticals'])) {
+        throw new TypeError('Topology verticals are missing');
       }
 
       const installedVerticalIds = new Set<string>();
-      for (const entry of input['verticals']) {
-        if (!isRecord(entry) || entry['kind'] !== 'vertical') {
+      for (const value of topology['verticals']) {
+        const entry = object(value);
+        if (entry['kind'] !== 'vertical') {
           throw new Error('Topology contains a non-vertical installed candidate');
         }
         const { id } = entry;
-        if (typeof id !== 'string' || !stableAppIdPattern.test(id)) {
+        if (!Predicate.isString(id) || !stableAppIdPattern.test(id)) {
           throw new Error('Topology contains an invalid vertical ID');
         }
         if (installedVerticalIds.has(id)) {

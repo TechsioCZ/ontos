@@ -5,25 +5,41 @@ import type {
   ActionRuntimeService,
   PrincipalManagementError,
   PrincipalResolutionError,
-  PrincipalResolverShape,
+  PrincipalResolverService,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
+  ActionRuntime,
   bindManagedApiKeyAction,
   bindSelfApiKeyAction,
   changePrincipalStatusAction,
   createNonHumanPrincipalAction,
   IdentityLifecycleConflictError,
+  PrincipalResolver,
   setManagedApiKeyBindingStatusAction,
   setSelfApiKeyBindingStatusAction,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+import { ApiKeyService } from './api-key-service.ts';
 import type {
   ApiKeyProviderError,
-  ApiKeyServiceShape,
+  ApiKeyServiceContract,
   IssuedApiKey,
   SafeApiKeyMetadata,
 } from './api-key-service.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export class IdentityLifecycleOperationError extends Schema.TaggedErrorClass<IdentityLifecycleOperationError>()(
   'IdentityLifecycleOperationError',
@@ -59,8 +75,8 @@ const publicMetadata = ({
 
 export const makeIdentityLifecycleService = (
   actionRuntime: ActionRuntimeService,
-  keys: ApiKeyServiceShape,
-  resolver: PrincipalResolverShape,
+  keys: ApiKeyServiceContract,
+  resolver: PrincipalResolverService,
 ) => {
   const reconcileProviderKey = (
     providerKeyId: string,
@@ -174,23 +190,37 @@ export const makeIdentityLifecycleService = (
       principal: input.principal,
     }).pipe(
       Effect.flatMap(() =>
-        keys.issue(input.requestHeaders, {
-          issuerPrincipalId: input.principal.principalId,
-          lifecycleOperationId: input.idempotencyKey,
-          tenantId: input.principal.tenantId,
-          ...(input.name === undefined ? {} : { name: input.name }),
-        }),
+        keys.issue(
+          input.requestHeaders,
+          withOptionalProperty(
+            {
+              issuerPrincipalId: input.principal.principalId,
+              lifecycleOperationId: input.idempotencyKey,
+              tenantId: input.principal.tenantId,
+            },
+            !(input.name === undefined),
+            'name',
+            input.name,
+            {},
+          ),
+        ),
       ),
       Effect.flatMap((issued) =>
-        bindIssued({
-          correlationId: input.correlationId,
-          idempotencyKey: input.idempotencyKey,
-          issued,
-          ...(input.managedPrincipalId === undefined
-            ? {}
-            : { managedPrincipalId: input.managedPrincipalId }),
-          principal: input.principal,
-        }),
+        bindIssued(
+          withOptionalProperty(
+            {
+              correlationId: input.correlationId,
+              idempotencyKey: input.idempotencyKey,
+              issued,
+            },
+            !(input.managedPrincipalId === undefined),
+            'managedPrincipalId',
+            input.managedPrincipalId,
+            {
+              principal: input.principal,
+            },
+          ),
+        ),
       ),
     );
   const setStatus = (input: {
@@ -215,24 +245,34 @@ export const makeIdentityLifecycleService = (
           const core = () =>
             input.managedPrincipalId === undefined
               ? actionRuntime.runAction({
-                  payload: {
-                    authBindingId: input.authBindingId,
-                    expectedStatus: input.expectedStatus,
-                    newStatus: input.newStatus,
-                    ...(input.reason === undefined ? {} : { reason: input.reason }),
-                  },
+                  payload: withOptionalProperty(
+                    {
+                      authBindingId: input.authBindingId,
+                      expectedStatus: input.expectedStatus,
+                      newStatus: input.newStatus,
+                    },
+                    !(input.reason === undefined),
+                    'reason',
+                    input.reason,
+                    {},
+                  ),
                   principal: input.principal,
                   registration: setSelfApiKeyBindingStatusAction,
                   transport: transport(input.correlationId, input.idempotencyKey),
                 })
               : actionRuntime.runAction({
-                  payload: {
-                    authBindingId: input.authBindingId,
-                    expectedStatus: input.expectedStatus,
-                    newStatus: input.newStatus,
-                    principalId: input.managedPrincipalId,
-                    ...(input.reason === undefined ? {} : { reason: input.reason }),
-                  },
+                  payload: withOptionalProperty(
+                    {
+                      authBindingId: input.authBindingId,
+                      expectedStatus: input.expectedStatus,
+                      newStatus: input.newStatus,
+                      principalId: input.managedPrincipalId,
+                    },
+                    !(input.reason === undefined),
+                    'reason',
+                    input.reason,
+                    {},
+                  ),
                   principal: input.principal,
                   registration: setManagedApiKeyBindingStatusAction,
                   transport: transport(input.correlationId, input.idempotencyKey),
@@ -305,18 +345,24 @@ export const makeIdentityLifecycleService = (
     ) =>
       issue(input).pipe(
         Effect.flatMap((replacement) =>
-          setStatus({
-            authBindingId: input.oldAuthBindingId,
-            correlationId: input.correlationId,
-            expectedStatus: 'active',
-            idempotencyKey: `${input.idempotencyKey}:old`,
-            ...(input.oldManagedPrincipalId === undefined
-              ? {}
-              : { managedPrincipalId: input.oldManagedPrincipalId }),
-            newStatus: 'revoked',
-            principal: input.principal,
-            reason: input.reason,
-          }).pipe(
+          setStatus(
+            withOptionalProperty(
+              {
+                authBindingId: input.oldAuthBindingId,
+                correlationId: input.correlationId,
+                expectedStatus: 'active',
+                idempotencyKey: `${input.idempotencyKey}:old`,
+              },
+              !(input.oldManagedPrincipalId === undefined),
+              'managedPrincipalId',
+              input.oldManagedPrincipalId,
+              {
+                newStatus: 'revoked',
+                principal: input.principal,
+                reason: input.reason,
+              },
+            ),
+          ).pipe(
             Effect.map((old) => ({ ...replacement, cleanupPending: old.cleanupPending })),
             Effect.catch((oldError) =>
               resolver
@@ -332,18 +378,24 @@ export const makeIdentityLifecycleService = (
                       oldBinding.status === 'revoked'
                         ? Effect.succeed({ ...replacement, cleanupPending: true })
                         : Effect.matchEffect(
-                            setStatus({
-                              authBindingId: replacement.authBindingId,
-                              correlationId: input.correlationId,
-                              expectedStatus: 'active',
-                              idempotencyKey: `${input.idempotencyKey}:replacement-rollback`,
-                              ...(input.managedPrincipalId === undefined
-                                ? {}
-                                : { managedPrincipalId: input.managedPrincipalId }),
-                              newStatus: 'revoked',
-                              principal: input.principal,
-                              reason: 'Replacement rollback after old binding closure failed',
-                            }),
+                            setStatus(
+                              withOptionalProperty(
+                                {
+                                  authBindingId: replacement.authBindingId,
+                                  correlationId: input.correlationId,
+                                  expectedStatus: 'active',
+                                  idempotencyKey: `${input.idempotencyKey}:replacement-rollback`,
+                                },
+                                !(input.managedPrincipalId === undefined),
+                                'managedPrincipalId',
+                                input.managedPrincipalId,
+                                {
+                                  newStatus: 'revoked',
+                                  principal: input.principal,
+                                  reason: 'Replacement rollback after old binding closure failed',
+                                },
+                              ),
+                            ),
                             {
                               onFailure: () =>
                                 resolver
@@ -381,3 +433,20 @@ export const makeIdentityLifecycleService = (
     setStatus,
   });
 };
+
+export type IdentityLifecycleService = ReturnType<typeof makeIdentityLifecycleService>;
+
+export class IdentityLifecycle extends Context.Service<
+  IdentityLifecycle,
+  IdentityLifecycleService
+>()('@app/shell-super-app/api/auth/identity-lifecycle/IdentityLifecycle') {}
+
+export const IdentityLifecycleLive = Layer.effect(
+  IdentityLifecycle,
+  Effect.gen(function* createIdentityLifecycleService() {
+    const actionRuntime = yield* ActionRuntime;
+    const apiKeys = yield* ApiKeyService;
+    const principalResolver = yield* PrincipalResolver;
+    return makeIdentityLifecycleService(actionRuntime, apiKeys, principalResolver);
+  }),
+);

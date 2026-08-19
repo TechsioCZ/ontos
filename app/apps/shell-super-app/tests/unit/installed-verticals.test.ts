@@ -1,24 +1,24 @@
 import fs from 'node:fs';
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import {
   deriveInstalledVerticalIds,
   installedVerticalIds,
 } from '../../api/verticals/installed-verticals.ts';
 
 test('derives installed vertical IDs from the injected topology without hardcoded registrations', async () => {
-  const topology = JSON.parse(
-    fs.readFileSync(
-      new URL('../../../../topology/reference-topology.json', import.meta.url),
-      'utf-8',
+  const topology = Schema.decodeUnknownSync(Schema.Json)(
+    JSON.parse(
+      fs.readFileSync(
+        new URL('../../../../topology/reference-topology.json', import.meta.url),
+        'utf-8',
+      ),
     ),
-  ) as Record<string, unknown>;
-  const expectedInstalledIds = (topology['verticals'] as readonly Record<string, unknown>[]).map(
-    (vertical) => vertical['id'],
   );
+  const expectedInstalledIds = await Effect.runPromise(deriveInstalledVerticalIds(topology));
 
-  expect(expectedInstalledIds).toEqual(['crm']);
-  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual(expectedInstalledIds);
+  expect([...expectedInstalledIds]).toEqual(['crm']);
+  expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual([...expectedInstalledIds]);
   const valid = await Effect.runPromise(
     deriveInstalledVerticalIds({
       sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],

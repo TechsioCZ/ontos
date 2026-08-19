@@ -23,8 +23,39 @@ interface SettingRow extends Record<string, unknown> {
   readonly tenant_id: string;
 }
 
-export const installOperationalScope = (
+export interface OperationalScopeTransactionService {
+  readonly delete: CoreTransaction['delete'];
+  readonly insert: CoreTransaction['insert'];
+  readonly install: (scope: OperationalScope) => Promise<void>;
+  readonly select: CoreTransaction['select'];
+  readonly update: CoreTransaction['update'];
+  readonly verify: () => Promise<SettingRow | undefined>;
+}
+
+const operationalScopeTransactionFromCoreTransaction = (
   transaction: CoreTransaction,
+): OperationalScopeTransactionService => ({
+  delete: transaction.delete.bind(transaction),
+  insert: transaction.insert.bind(transaction),
+  install: async (scope) => {
+    await transaction.execute(
+      sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
+    );
+  },
+  select: transaction.select.bind(transaction),
+  update: transaction.update.bind(transaction),
+  verify: async () => {
+    const verified = await transaction.execute<SettingRow>(sql`
+      select
+        current_setting('ontos.tenant_id', true) as tenant_id,
+        current_setting('ontos.legal_entity_id', true) as legal_entity_id
+    `);
+    return verified.rows[0];
+  },
+});
+
+export const installOperationalScopeFromTransactionService = (
+  transaction: OperationalScopeTransactionService,
   scope: OperationalScope,
 ): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
   Effect.tryPromise({
@@ -34,15 +65,8 @@ export const installOperationalScope = (
         reason: 'The database operation scope could not be installed',
       }),
     try: async () => {
-      await transaction.execute(
-        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true), set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true)`,
-      );
-      const verified = await transaction.execute<SettingRow>(sql`
-        select
-          current_setting('ontos.tenant_id', true) as tenant_id,
-          current_setting('ontos.legal_entity_id', true) as legal_entity_id
-      `);
-      const [setting] = verified.rows;
+      await transaction.install(scope);
+      const setting = await transaction.verify();
       if (
         setting?.tenant_id !== scope.tenantId ||
         setting.legal_entity_id !== (scope.legalEntityId ?? '')
@@ -58,6 +82,15 @@ export const installOperationalScope = (
       });
     },
   });
+
+export const installOperationalScope = (
+  transaction: CoreTransaction,
+  scope: OperationalScope,
+): Effect.Effect<ScopedTransactionExecutor, OperationContextUnavailable> =>
+  installOperationalScopeFromTransactionService(
+    operationalScopeTransactionFromCoreTransaction(transaction),
+    scope,
+  );
 
 /** Marks an owner table as RLS-governed while preserving its concrete Drizzle type. */
 export const enableGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table =>

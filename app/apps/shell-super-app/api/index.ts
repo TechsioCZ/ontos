@@ -16,7 +16,6 @@ import type {
 } from '@modern-js/plugin-bff/effect-edge';
 import {
   CorePersistenceLive,
-  ActionRuntime,
   ActionRuntimeLive,
   ReadRuntime,
   ContextAccessLive,
@@ -70,7 +69,7 @@ import type {
 } from '../shared/api.ts';
 import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
-import { makeIdentityLifecycleService } from './auth/identity-lifecycle.ts';
+import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import {
   SupportImpersonationService,
   SupportImpersonationServiceLive,
@@ -92,11 +91,27 @@ import {
   ShellInstalledModuleCatalogLive,
 } from './modules/installed-module-catalog.ts';
 import type { InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
-import { makeInstalledOutboxMatcherLayer } from './modules/installed-outbox-matcher.ts';
-import { ShellGovernedReads, makeShellGovernedReadsLive } from './modules/shell-governed-reads.ts';
+import { createInstalledOutboxMatcherLayer } from './modules/installed-outbox-matcher.ts';
+import {
+  ShellGovernedReads,
+  createShellGovernedReadsLayer,
+} from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import { attachShellMedia, ShellProviderUnavailableError } from './modules/shell-resources.ts';
 import type { ShellResourceContext, ShellResourceGateways } from './modules/shell-resources.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const requestHeaders = (headers: Readonly<Record<string, string | undefined>>): Headers => {
   const result = new Headers();
@@ -710,13 +725,17 @@ const legalEntityGroupLive = HttpApiBuilder.group(
           if (result.state === 'anonymous') {
             return yield* failLegalEntityProblem(tenantAuthenticationRequiredProblem());
           }
-          return {
-            legalEntities: result.availableLegalEntities,
-            ...(result.state === 'authenticated'
-              ? { selectedLegalEntityId: result.identity.legalEntityId }
-              : {}),
-            state: result.state,
-          };
+          return withOptionalProperty(
+            {
+              legalEntities: result.availableLegalEntities,
+            },
+            result.state === 'authenticated',
+            'selectedLegalEntityId',
+            result.identity.legalEntityId,
+            {
+              state: result.state,
+            },
+          );
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
@@ -870,14 +889,20 @@ const compositionGroupLive = HttpApiBuilder.group(
           }
           const governedReads = yield* ShellGovernedReads;
           return yield* governedReads
-            .moduleTarget({
-              correlationId: request.headers['x-correlation-id'] ?? 'missing',
-              ...(payload.entrypointKey === undefined
-                ? {}
-                : { entrypointKey: payload.entrypointKey }),
-              moduleId: payload.moduleId,
-              principal: session.principal,
-            })
+            .moduleTarget(
+              withOptionalProperty(
+                {
+                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                },
+                !(payload.entrypointKey === undefined),
+                'entrypointKey',
+                payload.entrypointKey,
+                {
+                  moduleId: payload.moduleId,
+                  principal: session.principal,
+                },
+              ),
+            )
             .pipe(Effect.catch((error) => failShellProblem(shellReadProblem(error))));
         }).pipe(
           Effect.catchCause((cause) =>
@@ -1064,12 +1089,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       }
       return { authentication, resolved };
     });
-  const lifecycle = Effect.gen(function* identityLifecycle() {
-    const actions = yield* ActionRuntime;
-    const keys = yield* ApiKeyService;
-    const resolver = yield* PrincipalResolver;
-    return makeIdentityLifecycleService(actions, keys, resolver);
-  });
+  const lifecycle = IdentityLifecycle;
   const correlation = (request: {
     readonly headers: Readonly<Record<string, string | undefined>>;
   }) => request.headers['x-correlation-id'] ?? 'missing';
@@ -1136,13 +1156,21 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const idempotencyKey = yield* requiredIdempotencyKey(headers);
           const service = yield* lifecycle;
           return yield* service
-            .issue({
-              correlationId: correlation(request),
-              idempotencyKey,
-              ...(payload.name === undefined ? {} : { name: payload.name }),
-              principal: resolved.principal,
-              requestHeaders: requestHeaders(request.headers),
-            })
+            .issue(
+              withOptionalProperty(
+                {
+                  correlationId: correlation(request),
+                  idempotencyKey,
+                },
+                !(payload.name === undefined),
+                'name',
+                payload.name,
+                {
+                  principal: resolved.principal,
+                  requestHeaders: requestHeaders(request.headers),
+                },
+              ),
+            )
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
         }),
       ),
@@ -1199,14 +1227,22 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const idempotencyKey = yield* requiredIdempotencyKey(headers);
           const service = yield* lifecycle;
           return yield* service
-            .issue({
-              correlationId: correlation(request),
-              idempotencyKey,
-              managedPrincipalId: payload.principalId,
-              ...(payload.name === undefined ? {} : { name: payload.name }),
-              principal: resolved.principal,
-              requestHeaders: requestHeaders(request.headers),
-            })
+            .issue(
+              withOptionalProperty(
+                {
+                  correlationId: correlation(request),
+                  idempotencyKey,
+                  managedPrincipalId: payload.principalId,
+                },
+                !(payload.name === undefined),
+                'name',
+                payload.name,
+                {
+                  principal: resolved.principal,
+                  requestHeaders: requestHeaders(request.headers),
+                },
+              ),
+            )
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
         }),
       ),
@@ -1321,15 +1357,23 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const idempotencyKey = yield* requiredIdempotencyKey(headers);
           const service = yield* lifecycle;
           return yield* service
-            .rotate({
-              correlationId: correlation(request),
-              idempotencyKey,
-              ...(payload.name === undefined ? {} : { name: payload.name }),
-              oldAuthBindingId: payload.oldAuthBindingId,
-              principal: resolved.principal,
-              reason: payload.reason,
-              requestHeaders: requestHeaders(request.headers),
-            })
+            .rotate(
+              withOptionalProperty(
+                {
+                  correlationId: correlation(request),
+                  idempotencyKey,
+                },
+                !(payload.name === undefined),
+                'name',
+                payload.name,
+                {
+                  oldAuthBindingId: payload.oldAuthBindingId,
+                  principal: resolved.principal,
+                  reason: payload.reason,
+                  requestHeaders: requestHeaders(request.headers),
+                },
+              ),
+            )
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
         }),
       ),
@@ -1342,17 +1386,25 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
           const idempotencyKey = yield* requiredIdempotencyKey(headers);
           const service = yield* lifecycle;
           return yield* service
-            .rotate({
-              correlationId: correlation(request),
-              idempotencyKey,
-              managedPrincipalId: payload.principalId,
-              ...(payload.name === undefined ? {} : { name: payload.name }),
-              oldAuthBindingId: payload.oldAuthBindingId,
-              oldManagedPrincipalId: payload.principalId,
-              principal: resolved.principal,
-              reason: payload.reason,
-              requestHeaders: requestHeaders(request.headers),
-            })
+            .rotate(
+              withOptionalProperty(
+                {
+                  correlationId: correlation(request),
+                  idempotencyKey,
+                  managedPrincipalId: payload.principalId,
+                },
+                !(payload.name === undefined),
+                'name',
+                payload.name,
+                {
+                  oldAuthBindingId: payload.oldAuthBindingId,
+                  oldManagedPrincipalId: payload.principalId,
+                  principal: resolved.principal,
+                  reason: payload.reason,
+                  requestHeaders: requestHeaders(request.headers),
+                },
+              ),
+            )
             .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
         }),
       ),
@@ -1517,14 +1569,20 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
           return yield* issueGatewayContextAssertion(
             {
               audience: payload.audience,
-              principal: {
-                authBindingId: identity.authBindingId,
-                authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-                authMethod: 'api_key',
-                ...(legalEntityId === undefined ? {} : { legalEntityId }),
-                principalId: identity.principalId,
-                tenantId: identity.tenantId,
-              },
+              principal: withOptionalProperty(
+                {
+                  authBindingId: identity.authBindingId,
+                  authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+                  authMethod: 'api_key',
+                },
+                !(legalEntityId === undefined),
+                'legalEntityId',
+                legalEntityId,
+                {
+                  principalId: identity.principalId,
+                  tenantId: identity.tenantId,
+                },
+              ),
             },
             issuerDependencies,
           ).pipe(Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)));
@@ -1557,6 +1615,9 @@ const authenticationServiceLive = AuthenticationServiceLive.pipe(
 );
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(AuthPersistenceLive), Layer.orDie);
 const actionRuntimeLive = ActionRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie);
+const identityLifecycleLive = IdentityLifecycleLive.pipe(
+  Layer.provide(Layer.mergeAll(actionRuntimeLive, apiKeyServiceLive, principalResolverLive)),
+);
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive.pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
@@ -1595,21 +1656,30 @@ export const makeShellAuthenticationApiRuntime = (
       issueGatewayContextAssertion(
         {
           audience: appId,
-          principal: {
-            authMethod: context.authMethod,
-            legalEntityId: context.legalEntityId,
-            principalId: context.principalId,
-            tenantId: context.tenantId,
-            ...(context.authBindingId === undefined
-              ? {}
-              : { authBindingId: context.authBindingId }),
-            ...(context.authContextRef === undefined
-              ? {}
-              : { authContextRef: context.authContextRef }),
-            ...(context.impersonatedByPrincipalId === undefined
-              ? {}
-              : { impersonatedByPrincipalId: context.impersonatedByPrincipalId }),
-          },
+          principal: withOptionalProperty(
+            withOptionalProperty(
+              withOptionalProperty(
+                {
+                  authMethod: context.authMethod,
+                  legalEntityId: context.legalEntityId,
+                  principalId: context.principalId,
+                  tenantId: context.tenantId,
+                },
+                !(context.authBindingId === undefined),
+                'authBindingId',
+                context.authBindingId,
+                {},
+              ),
+              !(context.authContextRef === undefined),
+              'authContextRef',
+              context.authContextRef,
+              {},
+            ),
+            !(context.impersonatedByPrincipalId === undefined),
+            'impersonatedByPrincipalId',
+            context.impersonatedByPrincipalId,
+            {},
+          ),
         },
         issuerDependencies,
       ).pipe(
@@ -1617,7 +1687,7 @@ export const makeShellAuthenticationApiRuntime = (
         Effect.mapError(() => new ShellProviderUnavailableError()),
       ),
   };
-  const shellGovernedReadsLayer = makeShellGovernedReadsLive(
+  const shellGovernedReadsLayer = createShellGovernedReadsLayer(
     resourceGateways,
     providerAssertionIssuer,
     scopedModuleStateFactory,
@@ -1640,7 +1710,7 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.orDie,
   );
   const outboxMatcherLayer = enableInstalledOutboxMatcher
-    ? makeInstalledOutboxMatcherLayer().pipe(
+    ? createInstalledOutboxMatcherLayer().pipe(
         Layer.provide(OutboxRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie)),
       )
     : Layer.empty;
@@ -1663,6 +1733,7 @@ export const makeShellAuthenticationApiRuntime = (
         AuthPersistenceLive,
         actionRuntimeLive,
         apiKeyServiceLive,
+        identityLifecycleLive,
         supportImpersonationServiceLive,
         principalResolverLive,
         legalEntityContextLive,

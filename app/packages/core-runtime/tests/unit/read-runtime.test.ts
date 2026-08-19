@@ -2,7 +2,9 @@
 /* eslint-disable require-await, promise/prefer-await-to-callbacks, unicorn/no-useless-undefined -- The fake transaction mirrors Drizzle's callback and CRUD surface. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Effect, Predicate, Schema } from 'effect';
+import { Pool } from 'pg';
 import { defineRead } from '../../src/reads/definition.ts';
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import {
@@ -13,6 +15,8 @@ import {
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
+import { coreDatabaseSchema } from '../../src/db/schema.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 const scope = Object.freeze({
   authBindingId: '00000000-0000-4000-8000-000000000005',
@@ -22,6 +26,11 @@ const scope = Object.freeze({
   principalId: '00000000-0000-4000-8000-000000000003',
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
+
+const EvidenceRowSchema = Schema.Struct({
+  queryHash: Schema.optionalKey(Schema.String),
+});
+type EvidenceRow = Schema.Schema.Type<typeof EvidenceRowSchema>;
 
 const makeHarness = (
   options: {
@@ -37,46 +46,43 @@ const makeHarness = (
   } = {},
 ) => {
   let evidence = 0;
-  const evidenceRows: Readonly<Record<string, unknown>>[] = [];
-  let execute = 0;
-  const transaction = {
-    delete: () => undefined,
-    execute: async () => {
-      execute += 1;
-      return execute % 2 === 1
-        ? { rows: [] }
-        : {
-            rows: [
-              {
-                legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
-                tenant_id: scope.tenantId,
-              },
-            ],
-          };
-    },
-    insert: () => ({
-      values: async (value: Readonly<Record<string, unknown>>) => {
-        if (options.failEvidence === true) {
-          throw new Error('private persistence detail');
+  const evidenceRows: EvidenceRow[] = [];
+  const QueryConfigSchema = Schema.Struct({ text: Schema.String });
+  const query = async <Query, Values>(queryInput: Query, values?: Values) => {
+    const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
+    if (text.includes('data_access_events')) {
+      if (options.failEvidence === true) {
+        throw new Error('private persistence detail');
+      }
+      const queryHash = Array.isArray(values)
+        ? values.find((value) => Predicate.isString(value) && /^[\da-f]{64}$/u.test(value))
+        : undefined;
+      evidenceRows.push(queryHash === undefined ? {} : { queryHash });
+      evidence += 1;
+    }
+    return text.includes('current_setting')
+      ? {
+          rows: [
+            {
+              legal_entity_id: options.resolvedScope?.legalEntityId ?? '',
+              tenant_id: scope.tenantId,
+            },
+          ],
         }
-        evidenceRows.push(value);
-        evidence += 1;
-      },
-    }),
-    query: {},
-    select: () => undefined,
-    update: () => undefined,
+      : { rows: [] };
   };
+  const pool = new Pool();
+  Object.defineProperty(pool, 'connect', {
+    value: async () => ({ query, release: () => {} }),
+  });
+  Object.defineProperty(pool, 'query', { value: query });
   const database = {
-    executor: {
-      insert: transaction.insert,
-      transaction: async (callback: (value: unknown) => Promise<unknown>) => callback(transaction),
-    },
+    executor: drizzle({ client: pool, schema: coreDatabaseSchema }),
   };
   const stages: string[] = [];
   const runtime = makeReadRuntime(
-    database as never,
-    { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) } as never,
+    database,
+    openModuleEntrypointGateway,
     { resolve: () => Effect.succeed(options.resolvedScope ?? scope) },
     {
       legalEntities: ({ legalEntityIds }) =>
@@ -270,7 +276,12 @@ test('preserves typed result-validation failure across transaction rollback', as
   const harness = makeHarness();
   const invalidRegistration = defineRead(
     registration().descriptor,
-    () => Effect.succeed({ evidence: { resultCount: 1 }, result: 42 as never }),
+    () => {
+      const result: string[] = [];
+      const handlerResult = { evidence: { resultCount: 1 }, result };
+      Object.defineProperty(handlerResult, 'result', { value: 42 });
+      return Effect.succeed(handlerResult);
+    },
     () => Effect.succeed({}),
     () => ({ kind: 'module', moduleId: 'core.shell' }),
   );

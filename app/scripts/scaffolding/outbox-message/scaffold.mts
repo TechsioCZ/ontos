@@ -39,8 +39,8 @@ const renderOutboxMessage = (
 import { OutboxPayloadSchema, outboxProducerModuleKey, outboxTopic } from '${contractSubpath}';
 import type { OutboxPayload } from '${contractSubpath}';
 
-export const ${base}Payload = OutboxPayloadSchema;
-export type { OutboxPayload as ${base}Payload };
+export const ${base}PayloadSchema = OutboxPayloadSchema;
+export type ${base}Payload = OutboxPayload;
 export const ${base}ProducerModuleKey = outboxProducerModuleKey;
 export const ${base}Topic = outboxTopic;
 
@@ -113,7 +113,7 @@ export const planOutboxScaffold = async (
   const base = `${toPascalCase(action)}${toPascalCase(topicSlug)}Outbox`;
   if (
     new RegExp(
-      `\\b(?:${base}(?:Payload|ProducerModuleKey|Topic)|create${base}Message)\\b`,
+      `\\b(?:${base}(?:Payload|PayloadSchema|ProducerModuleKey|Topic)|create${base}Message)\\b`,
       'u',
     ).test(actionContent)
   ) {
@@ -145,10 +145,11 @@ export const planOutboxScaffold = async (
   );
   const exportSource = `./${action}.${topicSlug}.outbox-message.ts`;
   const exportEntries = [
-    `export { ${base}Payload } from '${exportSource}';`,
+    `export { ${base}PayloadSchema } from '${exportSource}';`,
     `export { ${base}ProducerModuleKey } from '${exportSource}';`,
     `export { ${base}Topic } from '${exportSource}';`,
     `export { create${base}Message } from '${exportSource}';`,
+    `export type { ${base}Payload } from '${exportSource}';`,
   ];
   const patchedAction = insertSortedSlot(
     actionContent,
@@ -156,7 +157,9 @@ export const planOutboxScaffold = async (
     OUTBOX_SLOT_END,
     exportEntries,
     (candidate) =>
-      /^export \{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(candidate),
+      /^export (?:type )?\{ [A-Za-z0-9]+ \} from '\.\/[a-z0-9.-]+\.outbox-message\.ts';$/u.test(
+        candidate,
+      ),
   );
   const actionMutation = updateMutation(actionPath, actionContent, patchedAction);
   if (actionMutation === undefined) {

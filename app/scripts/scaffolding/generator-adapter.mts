@@ -14,5 +14,6 @@ export const createCodesmithGenerator = <Config, Result>(
     context: GeneratorContext,
     core: GeneratorCore,
   ): Promise<Result> {
+    // SAFETY: The CLI constructs config through a typed command `toConfig` function before Codesmith erases its type to `Record<string, any>`.
     return applyMutationPlan(core, await planner(core.outputPath, context.config as Config));
   };

@@ -263,7 +263,7 @@ interface CustomersListViewProps {
   readonly lifecycleError: null | string;
   readonly onToggleLifecycle: (customerId: string, lifecycle: 'active' | 'archived') => void;
   readonly pendingCustomerId: null | string;
-  readonly onRetry: () => Promise<unknown>;
+  readonly onRetry: () => Promise<void>;
   readonly onStatusChange: (status: CustomerArchiveFilter) => void;
   readonly retrying: boolean;
   readonly status: CustomerArchiveFilter;
@@ -771,7 +771,9 @@ const CustomersListFeature = () => {
       pendingCustomerId={
         lifecycleMutation.isPending ? (lifecycleMutation.variables?.customerId ?? null) : null
       }
-      onRetry={refetch}
+      onRetry={async () => {
+        await refetch();
+      }}
       onStatusChange={(status) => {
         void navigate({
           to: buildCustomerListHref(language, search, status, 0),

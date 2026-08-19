@@ -32,6 +32,22 @@
       ]
     },
     {
+      "id": "anti-slop",
+      "visibility": "public",
+      "repository": "https://github.com/dmmulroy/anti-slop",
+      "commit": "6d538555cb151d4121ed51a27db81890eacf8ae9",
+      "license": "MIT",
+      "licensePath": "LICENSE",
+      "install": "clone",
+      "baseline": [
+        {
+          "name": "install-anti-slop",
+          "path": ".codex/skills/install-anti-slop",
+          "reason": "Install the pinned anti-slop Oxlint plugins through the upstream-supported repository-local installer"
+        }
+      ]
+    },
+    {
       "id": "techsiocz-private",
       "visibility": "private",
       "repository": "https://github.com/TechsioCZ/skills",
@@ -100,6 +116,11 @@
       "name": "mf",
       "path": ".codex/skills/mf",
       "reason": "Module Federation docs, config inspection, type checking, shared dependency checks, and observability troubleshooting"
+    },
+    {
+      "name": "install-anti-slop",
+      "path": ".codex/skills/install-anti-slop",
+      "reason": "Install the pinned anti-slop Oxlint plugins through the upstream-supported repository-local installer"
     }
   ],
   "excludedByDefault": [

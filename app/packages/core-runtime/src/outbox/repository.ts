@@ -28,6 +28,19 @@ import {
 import type { OutboxPersistenceError } from './errors.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 const BACKGROUND_ELIGIBLE_STATES = tenantStatesAllowingAccess('background');
 
 export interface OutboxMatchResult {
@@ -100,7 +113,7 @@ const streamKeyFor = (producerModuleKey: string, topic: string): string =>
   `${producerModuleKey}:${topic}`;
 
 export const makeOutboxRepository = (
-  database: Context.Service.Shape<typeof CoreDatabase>,
+  database: (typeof CoreDatabase)['Service'],
 ): OutboxRepositoryService => ({
   matchUnmatched: (subscriptions, now) =>
     persistenceEffect(() =>
@@ -275,25 +288,29 @@ export const makeOutboxRepository = (
                 .select({ correlationId: actionInvocations.correlationId })
                 .from(actionInvocations)
                 .where(eq(actionInvocations.actionInvocationId, candidate.actionInvocationId));
-        return {
-          attemptId: attempt.attemptId,
-          attemptNumber: claimed.attemptsCount,
-          claimId,
-          consumerModuleKey: candidate.consumerModuleKey,
-          ...(invocation?.correlationId === null || invocation?.correlationId === undefined
-            ? {}
-            : { correlationId: invocation.correlationId }),
-          deliveryId: candidate.deliveryId,
-          domainEventId: candidate.domainEventId,
-          messageId: candidate.messageId,
-          payloadJson: candidate.payloadJson,
-          producerModuleKey: candidate.producerModuleKey,
-          retryPolicy: registration.descriptor.retryPolicy,
-          tenantId: candidate.tenantId,
-          tenantSequenceNo: candidate.tenantSequenceNo,
-          topic: candidate.topic,
-          workerKey: candidate.workerKey,
-        } satisfies OutboxClaim;
+        return withOptionalProperty(
+          {
+            attemptId: attempt.attemptId,
+            attemptNumber: claimed.attemptsCount,
+            claimId,
+            consumerModuleKey: candidate.consumerModuleKey,
+          },
+          !(invocation?.correlationId === null || invocation?.correlationId === undefined),
+          'correlationId',
+          invocation.correlationId,
+          {
+            deliveryId: candidate.deliveryId,
+            domainEventId: candidate.domainEventId,
+            messageId: candidate.messageId,
+            payloadJson: candidate.payloadJson,
+            producerModuleKey: candidate.producerModuleKey,
+            retryPolicy: registration.descriptor.retryPolicy,
+            tenantId: candidate.tenantId,
+            tenantSequenceNo: candidate.tenantSequenceNo,
+            topic: candidate.topic,
+            workerKey: candidate.workerKey,
+          },
+        ) satisfies OutboxClaim;
       }),
     );
   },

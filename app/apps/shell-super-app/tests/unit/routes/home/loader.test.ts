@@ -49,12 +49,9 @@ const navigation = [
   },
 ];
 const request = () =>
-  ({
-    headers: {
-      get: (name: string) => (name.toLowerCase() === 'cookie' ? 'session=test-session' : null),
-    },
-    url: 'https://shell.example.test/en',
-  }) as Request;
+  new Request('https://shell.example.test/en', {
+    headers: { cookie: 'session=test-session' },
+  });
 
 beforeEach(() => {
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));

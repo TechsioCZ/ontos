@@ -6,6 +6,19 @@ import { resourceDetail, runEffectRequest } from '../../../../../../api/auth-cli
 import { loadHomePageModel } from '../../../../page.data.ts';
 import type { HomePageModel } from '../../../../page.data.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 interface ResourceLoaderArguments {
   readonly params: ResourceRef;
   readonly request: Request;
@@ -31,10 +44,15 @@ export const loader = async ({ params, request }: ResourceLoaderArguments) => {
     } as const;
   }
   const cookie = request.headers.get('cookie');
-  const options = {
-    baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    ...(cookie === null ? {} : { cookie }),
-  };
+  const options = withOptionalProperty(
+    {
+      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
+    },
+    !(cookie === null),
+    'cookie',
+    cookie,
+    {},
+  );
   return runEffectRequest(
     resourceDetail(params, options).pipe(
       Effect.map((resource): ResourcePageModel => ({ resource, shell, state: 'ready' })),

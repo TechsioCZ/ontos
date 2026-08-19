@@ -1,6 +1,10 @@
 // @effect-diagnostics asyncFunction:off
 import { expect, test } from '@rstest/core';
-import { IdentityTargetInvalidError, PrincipalBindingMissingError } from '@app/core-runtime';
+import {
+  ActionTransactionError,
+  IdentityTargetInvalidError,
+  PrincipalBindingMissingError,
+} from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   ApiKeyProviderUnavailableError,
@@ -8,6 +12,17 @@ import {
   classifyPendingApiKeyCleanup,
 } from '../../api/auth/api-key-service.ts';
 import { makeIdentityLifecycleService } from '../../api/auth/identity-lifecycle.ts';
+import {
+  actionCoreFailure,
+  actionDefect,
+  actionDomainFailure,
+  actionSuccess,
+  makeActionRuntimeDouble,
+} from '../support/action-runtime-double.ts';
+import {
+  makeApiKeyServiceDouble,
+  makePrincipalResolverDouble,
+} from '../support/identity-service-doubles.ts';
 
 const principal = {
   authBindingId: '00000000-0000-4000-8000-000000000002',
@@ -25,10 +40,12 @@ const issued = {
   secret: 'ontos-secret',
   start: 'onto',
 };
-const resolver = {
+const resolver = makePrincipalResolverDouble({
   loadApiKeyBindingForAdministration: () =>
-    Effect.succeed({ providerSubjectId: 'old-provider-key-id', status: 'active' as const }),
-};
+    Effect.succeed({ providerSubjectId: 'old-provider-key-id', status: 'active' }),
+});
+const actionTransactionFailure = (reason: string) =>
+  new ActionTransactionError({ code: 'action_transaction_failed', reason });
 const pendingMetadata = (
   lifecycleOperationId: string,
   scope: { readonly issuerPrincipalId?: string; readonly tenantId?: string } = {},
@@ -47,17 +64,17 @@ test('compensates a failed Core bind and never exposes the provider key identifi
     reason: 'The requested binding target is invalid',
   });
   const service = makeIdentityLifecycleService(
-    { runAction: () => Effect.fail(bindFailure) } as never,
-    {
+    makeActionRuntimeDouble([actionDomainFailure(bindFailure)]).runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
-      setEnabled: (keyId: string) => {
+      setEnabled: (keyId) => {
         disabled.push(keyId);
         return Effect.succeed({ ...issued, providerKeyId: keyId });
       },
-    } as never,
-    resolver as never,
+    }),
+    resolver,
   );
 
   const failure = await Effect.runPromise(
@@ -78,11 +95,11 @@ test('compensates a failed Core bind and never exposes the provider key identifi
 test('preserves resolver lifecycle failures instead of rewriting them as an outage', async () => {
   const resolverFailure = new PrincipalBindingMissingError();
   const service = makeIdentityLifecycleService(
-    { runAction: () => Effect.die('must not run') } as never,
-    {} as never,
-    {
+    makeActionRuntimeDouble([actionDefect('must not run')]).runtime,
+    makeApiKeyServiceDouble(),
+    makePrincipalResolverDouble({
       loadApiKeyBindingForAdministration: () => Effect.fail(resolverFailure),
-    } as never,
+    }),
   );
 
   const failure = await Effect.runPromise(
@@ -109,14 +126,14 @@ test('preserves a typed Core status-transition failure before touching provider 
   });
   let providerCalls = 0;
   const service = makeIdentityLifecycleService(
-    { runAction: () => Effect.fail(actionFailure) } as never,
-    {
+    makeActionRuntimeDouble([actionDomainFailure(actionFailure)]).runtime,
+    makeApiKeyServiceDouble({
       setEnabled: () => {
         providerCalls += 1;
         return Effect.succeed(issued);
       },
-    } as never,
-    resolver as never,
+    }),
+    resolver,
   );
 
   const failure = await Effect.runPromise(
@@ -184,20 +201,19 @@ test('reconciles only expired pending leases in the trusted tenant and issuer sc
 
 test('returns a secret only after bind succeeds and strips the private provider key identifier', async () => {
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () =>
-        Effect.succeed({
-          authBindingId: '00000000-0000-4000-8000-000000000004',
-          status: 'active',
-        }),
-    } as never,
-    {
+    makeActionRuntimeDouble([
+      actionSuccess({
+        authBindingId: '00000000-0000-4000-8000-000000000004',
+        status: 'active',
+      }),
+    ]).runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: () => Effect.succeed(issued),
-    } as never,
-    resolver as never,
+    }),
+    resolver,
   );
 
   const result = await Effect.runPromise(
@@ -213,33 +229,30 @@ test('returns a secret only after bind succeeds and strips the private provider 
 });
 
 test('revokes the replacement before failing when closing the old Core binding fails', async () => {
-  let calls = 0;
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({
+      authBindingId: '00000000-0000-4000-8000-000000000004',
+      status: 'active',
+    }),
+    actionCoreFailure(actionTransactionFailure('old binding unavailable')),
+    actionSuccess({ previousStatus: 'active', status: 'revoked' }),
+  ]);
   const disabled: string[] = [];
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () => {
-        calls += 1;
-        return calls === 1 || calls === 3
-          ? Effect.succeed({
-              authBindingId: '00000000-0000-4000-8000-000000000004',
-              status: 'active',
-            })
-          : Effect.fail(new Error('old binding unavailable'));
-      },
-    } as never,
-    {
+    actionRuntime.runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       metadata: () => Effect.succeed(issued),
       pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
-      setEnabled: (keyId: string, enabled: boolean) => {
+      setEnabled: (keyId, enabled) => {
         if (!enabled) {
           disabled.push(keyId);
         }
         return Effect.succeed({ ...issued, providerKeyId: keyId });
       },
-    } as never,
-    resolver as never,
+    }),
+    resolver,
   );
 
   await expect(
@@ -254,30 +267,27 @@ test('revokes the replacement before failing when closing the old Core binding f
       }),
     ),
   ).rejects.toBeDefined();
-  expect(calls).toBe(3);
+  expect(actionRuntime.invocationCount()).toBe(3);
   expect(disabled).toEqual(['old-provider-key-id']);
 });
 
 test('returns the replacement secret when both old closure and replacement rollback are unavailable', async () => {
-  let calls = 0;
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({
+      authBindingId: '00000000-0000-4000-8000-000000000004',
+      status: 'active',
+    }),
+    actionCoreFailure(actionTransactionFailure('Core unavailable')),
+    actionCoreFailure(actionTransactionFailure('Core unavailable')),
+  ]);
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () => {
-        calls += 1;
-        return calls === 1
-          ? Effect.succeed({
-              authBindingId: '00000000-0000-4000-8000-000000000004',
-              status: 'active',
-            })
-          : Effect.fail(new Error('Core unavailable'));
-      },
-    } as never,
-    {
+    actionRuntime.runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
-    } as never,
-    resolver as never,
+    }),
+    resolver,
   );
 
   const result = await Effect.runPromise(
@@ -292,49 +302,43 @@ test('returns the replacement secret when both old closure and replacement rollb
   );
   expect(result.secret).toBe('ontos-secret');
   expect(result.cleanupPending).toBe(true);
-  expect(calls).toBe(3);
+  expect(actionRuntime.invocationCount()).toBe(3);
 });
 
 test('returns the replacement secret when old Core closure committed but provider state is unavailable', async () => {
-  let actionCalls = 0;
   let resolverCalls = 0;
   const providerUnavailable = new ApiKeyProviderUnavailableError({
     code: 'api_key_provider_unavailable',
     reason: 'The provider is unavailable',
   });
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({
+      authBindingId: '00000000-0000-4000-8000-000000000004',
+      status: 'active',
+    }),
+    actionSuccess({ previousStatus: 'active', status: 'revoked' }),
+  ]);
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () => {
-        actionCalls += 1;
-        return Effect.succeed(
-          actionCalls === 1
-            ? {
-                authBindingId: '00000000-0000-4000-8000-000000000004',
-                status: 'active',
-              }
-            : { status: 'revoked' },
-        );
-      },
-    } as never,
-    {
+    actionRuntime.runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       metadata: () => Effect.fail(providerUnavailable),
       pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
-      setEnabled: (keyId: string, enabled: boolean) =>
+      setEnabled: (keyId, enabled) =>
         keyId === 'old-provider-key-id' && !enabled
           ? Effect.fail(providerUnavailable)
           : Effect.succeed({ ...issued, providerKeyId: keyId }),
-    } as never,
-    {
+    }),
+    makePrincipalResolverDouble({
       loadApiKeyBindingForAdministration: () => {
         resolverCalls += 1;
         return Effect.succeed({
           providerSubjectId: 'old-provider-key-id',
-          status: resolverCalls === 1 ? ('active' as const) : ('revoked' as const),
+          status: resolverCalls === 1 ? 'active' : 'revoked',
         });
       },
-    } as never,
+    }),
   );
 
   const result = await Effect.runPromise(
@@ -350,12 +354,11 @@ test('returns the replacement secret when old Core closure committed but provide
 
   expect(result.secret).toBe('ontos-secret');
   expect(result.cleanupPending).toBe(true);
-  expect(actionCalls).toBe(2);
+  expect(actionRuntime.invocationCount()).toBe(2);
   expect(resolverCalls).toBe(2);
 });
 
 test('does not return a replacement secret after rollback definitely revoked its Core binding', async () => {
-  let actionCalls = 0;
   let replacementReads = 0;
   const providerUnavailable = new ApiKeyProviderUnavailableError({
     code: 'api_key_provider_unavailable',
@@ -365,41 +368,38 @@ test('does not return a replacement secret after rollback definitely revoked its
     code: 'identity_target_invalid',
     reason: 'The old binding could not be closed',
   });
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({
+      authBindingId: '00000000-0000-4000-8000-000000000004',
+      status: 'active',
+    }),
+    actionDomainFailure(oldFailure),
+    actionSuccess({ previousStatus: 'active', status: 'revoked' }),
+  ]);
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () => {
-        actionCalls += 1;
-        if (actionCalls === 1) {
-          return Effect.succeed({
-            authBindingId: '00000000-0000-4000-8000-000000000004',
-            status: 'active',
-          });
-        }
-        return actionCalls === 2 ? Effect.fail(oldFailure) : Effect.succeed({ status: 'revoked' });
-      },
-    } as never,
-    {
+    actionRuntime.runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => Effect.succeed(issued),
       metadata: () => Effect.fail(providerUnavailable),
       pendingCleanup: () => Effect.succeed({ hasMore: false, providerKeyIds: [] }),
       setEnabled: () => Effect.fail(providerUnavailable),
-    } as never,
-    {
-      loadApiKeyBindingForAdministration: (input: { readonly authBindingId: string }) => {
+    }),
+    makePrincipalResolverDouble({
+      loadApiKeyBindingForAdministration: (input) => {
         if (input.authBindingId === '00000000-0000-4000-8000-000000000004') {
           replacementReads += 1;
           return Effect.succeed({
             providerSubjectId: 'replacement-provider-key-id',
-            status: replacementReads === 1 ? ('active' as const) : ('revoked' as const),
+            status: replacementReads === 1 ? 'active' : 'revoked',
           });
         }
         return Effect.succeed({
           providerSubjectId: 'old-provider-key-id',
-          status: 'active' as const,
+          status: 'active',
         });
       },
-    } as never,
+    }),
   );
 
   const failure = await Effect.runPromise(
@@ -416,7 +416,7 @@ test('does not return a replacement secret after rollback definitely revoked its
   );
 
   expect(failure).toBe(oldFailure);
-  expect(actionCalls).toBe(3);
+  expect(actionRuntime.invocationCount()).toBe(3);
   expect(replacementReads).toBe(2);
 });
 
@@ -424,24 +424,24 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
   const disabled: string[] = [];
   let issueCalls = 0;
   const service = makeIdentityLifecycleService(
-    { runAction: () => Effect.die('must not bind') } as never,
-    {
+    makeActionRuntimeDouble([actionDefect('must not bind')]).runtime,
+    makeApiKeyServiceDouble({
       clearPendingCleanup: () => Effect.void,
       issue: () => {
         issueCalls += 1;
         return Effect.succeed(issued);
       },
       pendingCleanup: () => Effect.succeed({ hasMore: true, providerKeyIds: ['bounded-orphan'] }),
-      setEnabled: (keyId: string, enabled: boolean) => {
+      setEnabled: (keyId, enabled) => {
         if (!enabled) {
           disabled.push(keyId);
         }
         return Effect.succeed({ ...issued, providerKeyId: keyId });
       },
-    } as never,
-    {
+    }),
+    makePrincipalResolverDouble({
       resolveBetterAuthApiKey: () => Effect.fail(new PrincipalBindingMissingError()),
-    } as never,
+    }),
   );
 
   const failure = await Effect.runPromise(
@@ -461,22 +461,17 @@ test('cleans one bounded pending batch and requires a retry before issuing anoth
 });
 
 test('retries provider cleanup without repeating an already committed Core transition', async () => {
-  let actionCalls = 0;
+  const actionRuntime = makeActionRuntimeDouble([actionDefect(new Error('must not run'))]);
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () => {
-        actionCalls += 1;
-        return Effect.fail(new Error('must not run'));
-      },
-    } as never,
-    {
+    actionRuntime.runtime,
+    makeApiKeyServiceDouble({
       metadata: () => Effect.succeed({ ...issued, enabled: false }),
       setEnabled: () => Effect.succeed({ ...issued, enabled: false }),
-    } as never,
-    {
+    }),
+    makePrincipalResolverDouble({
       loadApiKeyBindingForAdministration: () =>
         Effect.succeed({ providerSubjectId: 'old-provider-key-id', status: 'revoked' }),
-    } as never,
+    }),
   );
 
   const result = await Effect.runPromise(
@@ -491,7 +486,7 @@ test('retries provider cleanup without repeating an already committed Core trans
     }),
   );
   expect(result.cleanupPending).toBe(false);
-  expect(actionCalls).toBe(0);
+  expect(actionRuntime.invocationCount()).toBe(0);
 });
 
 test('preserves provider metadata failure after a safe Core disable instead of fabricating state', async () => {
@@ -499,15 +494,12 @@ test('preserves provider metadata failure after a safe Core disable instead of f
     code: 'api_key_state_inconsistent',
     reason: 'The provider key row is missing',
   });
-  let actionCalls = 0;
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ previousStatus: 'active', status: 'disabled' }),
+  ]);
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () => {
-        actionCalls += 1;
-        return Effect.succeed({ status: 'disabled' });
-      },
-    } as never,
-    {
+    actionRuntime.runtime,
+    makeApiKeyServiceDouble({
       metadata: () => Effect.fail(metadataFailure),
       setEnabled: () =>
         Effect.fail(
@@ -516,8 +508,8 @@ test('preserves provider metadata failure after a safe Core disable instead of f
             reason: 'The provider is unavailable',
           }),
         ),
-    } as never,
-    resolver as never,
+    }),
+    resolver,
   );
 
   const failure = await Effect.runPromise(
@@ -535,38 +527,37 @@ test('preserves provider metadata failure after a safe Core disable instead of f
   );
 
   expect(failure).toBe(metadataFailure);
-  expect(actionCalls).toBe(1);
+  expect(actionRuntime.invocationCount()).toBe(1);
 });
 
 test('reconciles a provider key left pending by failed bind compensation before retrying issue', async () => {
   const disabled: string[] = [];
   const cleared: string[] = [];
   const service = makeIdentityLifecycleService(
-    {
-      runAction: () =>
-        Effect.succeed({
-          authBindingId: '00000000-0000-4000-8000-000000000004',
-          status: 'active',
-        }),
-    } as never,
-    {
-      clearPendingCleanup: (keyId: string) => {
+    makeActionRuntimeDouble([
+      actionSuccess({
+        authBindingId: '00000000-0000-4000-8000-000000000004',
+        status: 'active',
+      }),
+    ]).runtime,
+    makeApiKeyServiceDouble({
+      clearPendingCleanup: (keyId) => {
         cleared.push(keyId);
         return Effect.void;
       },
       issue: () => Effect.succeed(issued),
       pendingCleanup: () =>
         Effect.succeed({ hasMore: false, providerKeyIds: ['orphan-provider-key-id'] }),
-      setEnabled: (keyId: string, enabled: boolean) => {
+      setEnabled: (keyId, enabled) => {
         if (!enabled) {
           disabled.push(keyId);
         }
         return Effect.succeed({ ...issued, providerKeyId: keyId });
       },
-    } as never,
-    {
-      resolveBetterAuthApiKey: () => Effect.fail({ _tag: 'PrincipalBindingMissingError' as const }),
-    } as never,
+    }),
+    makePrincipalResolverDouble({
+      resolveBetterAuthApiKey: () => Effect.fail(new PrincipalBindingMissingError()),
+    }),
   );
 
   const result = await Effect.runPromise(

@@ -16,10 +16,9 @@ export class IdentityPersistenceUnavailableError extends Schema.TaggedErrorClass
   { code: Schema.Literal('identity_persistence_unavailable'), reason: Schema.String },
 ) {}
 
-export const PrincipalManagementError = Schema.Union([
+export const PrincipalManagementErrorSchema = Schema.Union([
   IdentityLifecycleConflictError,
   IdentityTargetInvalidError,
   IdentityPersistenceUnavailableError,
 ]);
-type PrincipalManagementErrorType = Schema.Schema.Type<typeof PrincipalManagementError>;
-export type { PrincipalManagementErrorType as PrincipalManagementError };
+export type PrincipalManagementError = Schema.Schema.Type<typeof PrincipalManagementErrorSchema>;

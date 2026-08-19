@@ -8,6 +8,7 @@ import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { flattenCatalogKeys, translateCatalog } from '../support/locale-catalog.ts';
 import {
   CustomerEditFeature,
   classifyCustomerDetailError,
@@ -15,6 +16,10 @@ import {
   customerDetailQueryKey,
   decodeCustomerEditId,
 } from '../../src/routes/[lang]/crm/customers/[id]/edit/page.tsx';
+
+interface LocaleState {
+  current: 'cs' | 'en';
+}
 
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
@@ -28,35 +33,23 @@ const {
   localeState,
   navigateMock,
   runEffectRequestMock,
-} = rstest.hoisted(() => ({
-  editCustomerMock: rstest.fn(),
-  getCustomerDetailMock: rstest.fn(),
-  historyBackMock: rstest.fn(),
-  historyCanGoBack: { current: false },
-  localeState: { current: 'en' as 'cs' | 'en' },
-  navigateMock: rstest.fn(() => Promise.resolve()),
-  runEffectRequestMock: rstest.fn(),
-}));
+} = rstest.hoisted(() => {
+  const state: LocaleState = { current: 'en' };
+  return {
+    editCustomerMock: rstest.fn(),
+    getCustomerDetailMock: rstest.fn(),
+    historyBackMock: rstest.fn(),
+    historyCanGoBack: { current: false },
+    localeState: state,
+    navigateMock: rstest.fn(() => Promise.resolve()),
+    runEffectRequestMock: rstest.fn(),
+  };
+});
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
-const translate = (language: 'cs' | 'en', key: string): string => {
-  let current: unknown = catalogs[language];
-  for (const segment of key.split('.')) {
-    current =
-      typeof current === 'object' && current !== null
-        ? (current as Record<string, unknown>)[segment]
-        : undefined;
-  }
-  return typeof current === 'string' ? current : key;
-};
-
-const flattenKeys = (value: object, prefix = ''): string[] =>
-  Object.entries(value)
-    .flatMap(([key, child]) => {
-      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-      return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
-    })
-    .toSorted();
+const translate = (language: 'cs' | 'en', key: string): string =>
+  translateCatalog(catalogs[language], key);
+const flattenKeys = flattenCatalogKeys;
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -131,6 +124,14 @@ const renderFeature = ({
     </QueryClientProvider>,
   );
   return queryClient;
+};
+
+const getInput = (selector: string): HTMLInputElement => {
+  const input = document.querySelector(selector);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Expected ${selector} to resolve to an input`);
+  }
+  return input;
 };
 
 beforeEach(() => {
@@ -218,7 +219,7 @@ test.each([
   ['CustomerDetailForbiddenProblem', 'You do not have permission to view this Customer.', false],
   ['CustomerDetailAuthenticationProblem', 'Your session has expired. Sign in and try again.', true],
 ] as const)('renders the explicit %s detail state', async (tag, message, retryable) => {
-  getCustomerDetailMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+  getCustomerDetailMock.mockReturnValue(Effect.fail({ _tag: tag }));
   renderFeature();
 
   expect(await screen.findByText(message)).toBeTruthy();
@@ -226,9 +227,7 @@ test.each([
 });
 
 test('bounds automatic temporary retries and exposes a semantic retry action', async () => {
-  getCustomerDetailMock.mockReturnValue(
-    Effect.fail({ _tag: 'CustomerDetailUnavailableProblem' } as never),
-  );
+  getCustomerDetailMock.mockReturnValue(Effect.fail({ _tag: 'CustomerDetailUnavailableProblem' }));
   renderFeature();
 
   expect(
@@ -243,21 +242,21 @@ test('maps transport, decode, backend, and unexpected detail failures without re
     classifyCustomerDetailError({
       _tag: 'HttpClientError',
       reason: { _tag: 'TransportError' },
-    } as never),
+    }),
   ).toEqual({ reason: 'transport', state: 'unavailable' });
-  expect(classifyCustomerDetailError({ _tag: 'SchemaError' } as never)).toEqual({
+  expect(classifyCustomerDetailError({ _tag: 'SchemaError' })).toEqual({
     reason: 'decode',
     state: 'unavailable',
   });
-  expect(classifyCustomerDetailError({ _tag: 'GatewayUnavailableProblem' } as never)).toEqual({
+  expect(classifyCustomerDetailError({ _tag: 'GatewayUnavailableProblem' })).toEqual({
     reason: 'backend',
     state: 'unavailable',
   });
-  expect(classifyCustomerDetailError({ _tag: 'GatewayInternalProblem' } as never)).toEqual({
+  expect(classifyCustomerDetailError({ _tag: 'GatewayInternalProblem' })).toEqual({
     reason: 'unexpected',
     state: 'unavailable',
   });
-  expect(classifyCustomerDetailError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
+  expect(classifyCustomerDetailError({ _tag: 'GatewayForbiddenProblem' })).toEqual({
     state: 'forbidden',
   });
 });
@@ -293,15 +292,14 @@ test.each([
     const user = userEvent.setup();
     renderFeature();
     await screen.findByRole('textbox', { name: /^Customer name/u });
-    const input = document.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input).not.toBeNull();
-    await user.clear(input as HTMLInputElement);
-    await user.type(input as HTMLInputElement, value);
+    const input = getInput(`#${id}`);
+    await user.clear(input);
+    await user.type(input, value);
 
     await user.click(screen.getByRole('button', { name: 'Save changes' }));
 
     expect(await screen.findByText(message)).toBeTruthy();
-    expect((input as HTMLInputElement).getAttribute('aria-invalid')).toBe('true');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(editCustomerMock).not.toHaveBeenCalled();
   },
 );
@@ -342,21 +340,16 @@ test('normalizes explicitly cleared optional fields to null in the exact edit pa
   const name = await screen.findByRole('textbox', { name: /^Customer name/u });
   await user.clear(name);
   await user.type(name, 'Cleared Customer');
-  const ico = document.querySelector<HTMLInputElement>('#customer-ico');
-  const dic = document.querySelector<HTMLInputElement>('#customer-dic');
-  const legalFormCode = document.querySelector<HTMLInputElement>('#customer-legal-form-code');
-  const establishedOn = document.querySelector<HTMLInputElement>('#customer-established-on');
-  const dissolvedOn = document.querySelector<HTMLInputElement>('#customer-dissolved-on');
-  expect(ico).not.toBeNull();
-  expect(dic).not.toBeNull();
-  expect(legalFormCode).not.toBeNull();
-  expect(establishedOn).not.toBeNull();
-  expect(dissolvedOn).not.toBeNull();
-  await user.clear(ico as HTMLInputElement);
-  await user.clear(dic as HTMLInputElement);
-  await user.clear(legalFormCode as HTMLInputElement);
-  await user.clear(establishedOn as HTMLInputElement);
-  await user.clear(dissolvedOn as HTMLInputElement);
+  const ico = getInput('#customer-ico');
+  const dic = getInput('#customer-dic');
+  const legalFormCode = getInput('#customer-legal-form-code');
+  const establishedOn = getInput('#customer-established-on');
+  const dissolvedOn = getInput('#customer-dissolved-on');
+  await user.clear(ico);
+  await user.clear(dic);
+  await user.clear(legalFormCode);
+  await user.clear(establishedOn);
+  await user.clear(dissolvedOn);
 
   await user.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(editCustomerMock).toHaveBeenCalledTimes(1));
@@ -375,7 +368,7 @@ test('normalizes explicitly cleared optional fields to null in the exact edit pa
 test('reuses an idempotency key only for an uncertain retry of the same intent', async () => {
   editCustomerMock
     .mockReturnValueOnce(
-      Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } } as never),
+      Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } }),
     )
     .mockReturnValueOnce(Effect.succeed(updatedCustomer));
   const user = userEvent.setup();
@@ -398,7 +391,7 @@ test('reuses an idempotency key only for an uncertain retry of the same intent',
 });
 
 test('creates a new idempotency key after the user changes the failed intent', async () => {
-  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' }));
   const user = userEvent.setup();
   renderFeature();
   const name = await screen.findByRole('textbox', { name: /^Customer name/u });
@@ -415,16 +408,15 @@ test('creates a new idempotency key after the user changes the failed intent', a
 });
 
 test('creates a new idempotency key when an optional field is cleared after an uncertain failure', async () => {
-  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' }));
   const user = userEvent.setup();
   renderFeature();
   await screen.findByRole('textbox', { name: /^Customer name/u });
 
   await user.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText('The Customer service is temporarily unavailable. Try again.');
-  const ico = document.querySelector<HTMLInputElement>('#customer-ico');
-  expect(ico).not.toBeNull();
-  await user.clear(ico as HTMLInputElement);
+  const ico = getInput('#customer-ico');
+  await user.clear(ico);
   await user.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(editCustomerMock).toHaveBeenCalledTimes(2));
 
@@ -435,22 +427,21 @@ test('creates a new idempotency key when an optional field is cleared after an u
 });
 
 test('preserves the complete unsaved draft after a retryable mutation failure', async () => {
-  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' }));
   const user = userEvent.setup();
   renderFeature();
   const name = await screen.findByRole('textbox', { name: /^Customer name/u });
-  const ico = document.querySelector<HTMLInputElement>('#customer-ico');
-  expect(ico).not.toBeNull();
+  const ico = getInput('#customer-ico');
   await user.clear(name);
   await user.type(name, 'Unsaved draft');
-  await user.clear(ico as HTMLInputElement);
-  await user.type(ico as HTMLInputElement, '87654321');
+  await user.clear(ico);
+  await user.type(ico, '87654321');
 
   await user.click(screen.getByRole('button', { name: 'Save changes' }));
   await screen.findByText('The Customer service is temporarily unavailable. Try again.');
 
   expect(name.getAttribute('value')).toBe('Unsaved draft');
-  expect((ico as HTMLInputElement).value).toBe('87654321');
+  expect(ico.value).toBe('87654321');
   expect(navigateMock).not.toHaveBeenCalled();
 });
 
@@ -498,7 +489,7 @@ test.each([
   ],
   ['CrmInternalProblem', 'The Customer could not be saved safely. Try again.'],
 ] as const)('maps the %s mutation failure into the form', async (tag, message) => {
-  editCustomerMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: tag }));
   const user = userEvent.setup();
   renderFeature();
   await screen.findByRole('textbox', { name: /^Customer name/u });
@@ -510,7 +501,7 @@ test.each([
 
 test('maps duplicate IČO to a distinct safe and actionable warning', async () => {
   editCustomerMock.mockReturnValue(
-    Effect.fail({ _tag: 'CrmConflictProblem', code: 'crm_customer_ico_conflict' } as never),
+    Effect.fail({ _tag: 'CrmConflictProblem', code: 'crm_customer_ico_conflict' }),
   );
   const user = userEvent.setup();
   renderFeature();
@@ -527,32 +518,32 @@ test('maps duplicate IČO to a distinct safe and actionable warning', async () =
 });
 
 test('maps all mutation failure families to a closed presentation vocabulary', () => {
-  expect(classifyEditCustomerError({ _tag: 'CrmInvalidRequestProblem' } as never)).toEqual({
+  expect(classifyEditCustomerError({ _tag: 'CrmInvalidRequestProblem' })).toEqual({
     state: 'invalid',
   });
-  expect(classifyEditCustomerError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
+  expect(classifyEditCustomerError({ _tag: 'GatewayForbiddenProblem' })).toEqual({
     state: 'forbidden',
   });
-  expect(
-    classifyEditCustomerError({ _tag: 'CrmConflictProblem', code: 'crm_conflict' } as never),
-  ).toEqual({ state: 'conflict' });
+  expect(classifyEditCustomerError({ _tag: 'CrmConflictProblem', code: 'crm_conflict' })).toEqual({
+    state: 'conflict',
+  });
   expect(
     classifyEditCustomerError({
       _tag: 'CrmConflictProblem',
       code: 'crm_customer_ico_conflict',
-    } as never),
+    }),
   ).toEqual({ state: 'ico_conflict' });
-  expect(classifyEditCustomerError({ _tag: 'SchemaError' } as never)).toEqual({
+  expect(classifyEditCustomerError({ _tag: 'SchemaError' })).toEqual({
     reason: 'decode',
     state: 'unavailable',
     uncertain: true,
   });
-  expect(classifyEditCustomerError({ _tag: 'GatewayUnavailableProblem' } as never)).toEqual({
+  expect(classifyEditCustomerError({ _tag: 'GatewayUnavailableProblem' })).toEqual({
     reason: 'backend',
     state: 'unavailable',
     uncertain: true,
   });
-  expect(classifyEditCustomerError({ _tag: 'GatewayAudienceInvalidProblem' } as never)).toEqual({
+  expect(classifyEditCustomerError({ _tag: 'GatewayAudienceInvalidProblem' })).toEqual({
     state: 'unexpected',
   });
 });

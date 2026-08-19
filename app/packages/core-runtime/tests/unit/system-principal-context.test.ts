@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
 import {
-  makeSystemPrincipalContextResolver,
   registerSystemWorkload,
+  systemPrincipalContextResolverFromRepository,
 } from '../../src/auth/system-principal-context.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { decodeTrustedPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
@@ -17,16 +17,8 @@ const resolverFor = (record: {
   readonly principalStatus: 'active' | 'disabled';
   readonly tenantStatus: 'active' | 'suspended';
 }) =>
-  makeSystemPrincipalContextResolver({
-    executor: {
-      select: () => ({
-        from: () => ({
-          innerJoin: () => ({
-            where: () => ({ limit: () => Promise.resolve([record]) }),
-          }),
-        }),
-      }),
-    } as never,
+  systemPrincipalContextResolverFromRepository({
+    load: () => Promise.resolve(record),
   });
 
 test('constructs one immutable trusted system context from a branded registration', async () => {

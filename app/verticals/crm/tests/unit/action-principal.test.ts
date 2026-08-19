@@ -17,9 +17,24 @@ const principal = {
   tenantId: 'a3000000-0000-4000-8000-000000000001',
 };
 
-const makeAssertion = async (audience: string = ACTION_GATEWAY_AUDIENCE) => {
+const makeAssertion = async (
+  audience: string = ACTION_GATEWAY_AUDIENCE,
+  includePrivateKeyMaterial = false,
+) => {
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
-  const publicJwk = await exportJWK(publicKey);
+  const publicJwk = {
+    ...(await exportJWK(publicKey)),
+    alg: 'EdDSA',
+    ext: true,
+    kid: 'crm-test',
+    use: 'sig',
+    x5t: 'public-sha1-thumbprint',
+    'x5t#S256': 'public-sha256-thumbprint',
+    x5u: 'https://shell.ontos.test/certificates/crm-test.pem',
+  };
+  if (includePrivateKeyMaterial) {
+    Object.assign(publicJwk, { d: 'private-key-material-must-not-cross-the-boundary' });
+  }
   const token = await new SignJWT({ principal, ver: 1 })
     .setProtectedHeader({ alg: 'EdDSA', kid: 'crm-test', typ: 'JWT' })
     .setIssuer(issuer)
@@ -32,9 +47,7 @@ const makeAssertion = async (audience: string = ACTION_GATEWAY_AUDIENCE) => {
   return {
     environment: {
       ONTOS_GATEWAY_ISSUER: issuer,
-      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-        keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'crm-test', use: 'sig' }],
-      }),
+      ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
     },
     token,
   };
@@ -51,6 +64,30 @@ test('verifies a signed CRM-audience assertion into trusted principal context', 
     ),
     principal,
   );
+});
+
+test('accepts public JWK metadata while rejecting private key material', async () => {
+  const publicAssertion = await makeAssertion();
+  assert.deepEqual(
+    await Effect.runPromise(
+      verifyActionPrincipal(`Bearer ${publicAssertion.token}`, {
+        currentTimeSeconds: Effect.succeed(now + 1),
+        environment: publicAssertion.environment,
+      }),
+    ),
+    principal,
+  );
+
+  const privateAssertion = await makeAssertion(ACTION_GATEWAY_AUDIENCE, true);
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      verifyActionPrincipal(`Bearer ${privateAssertion.token}`, {
+        currentTimeSeconds: Effect.succeed(now + 1),
+        environment: privateAssertion.environment,
+      }),
+    ),
+  );
+  assert.equal(failure._tag, 'ActionPrincipalConfigurationError');
 });
 
 test('sanitizes missing, wrong-audience, and malformed assertion failures', async () => {

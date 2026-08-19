@@ -35,13 +35,13 @@ export interface InstalledModuleCatalog {
   readonly getByModuleId: (moduleId: OntosModuleId) => OntosModuleDeploymentContract | undefined;
 }
 
-export interface InstalledModuleCatalogServiceShape {
+export interface InstalledModuleCatalogServiceContract {
   readonly load: Effect.Effect<InstalledModuleCatalog, TenantModuleStateValidationUnavailableError>;
 }
 
 export class InstalledModuleCatalogService extends Context.Service<
   InstalledModuleCatalogService,
-  InstalledModuleCatalogServiceShape
+  InstalledModuleCatalogServiceContract
 >()('@app/core-runtime/modules/catalog/InstalledModuleCatalogService') {}
 
 const invalid = (reason: string): OntosModuleCatalogValidationError =>

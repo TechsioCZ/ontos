@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
-import { defineRead } from '../../src/reads/definition.ts';
+import { defineRead, validateReadDescriptorInput } from '../../src/reads/definition.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 const modulePermissionTarget = () => ({ kind: 'module', moduleId: 'core.shell' }) as const;
@@ -39,29 +39,16 @@ test('defines immutable read metadata while keeping handler and service factory 
 
 test('requires an explicit valid owner-scoped read entrypoint', () => {
   assert.throws(() =>
-    defineRead(
-      {
-        accessKind: 'detail',
-        entrypoint: defineSystemModuleEntrypoint({
-          access: 'read',
-          entrypointKey: 'core.foreign.detail',
-          moduleKey: 'core.foreign',
-          role: 'api',
-        }),
-        evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.detail.v1' },
-        inputSchema: Schema.Void,
-        legalEntityScope: 'forbidden',
-        owningModuleKey: 'core.shell',
-        permissionTarget: 'resource',
-        policies: [],
-        readKey: 'core.shell.detail',
-        resultSchema: Schema.Void,
-        schemaVersion: '1',
-      } as never,
-      () => Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
-      () => Effect.succeed({}),
-      modulePermissionTarget,
-    ),
+    validateReadDescriptorInput({
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'read',
+        entrypointKey: 'core.foreign.detail',
+        moduleKey: 'core.foreign',
+        role: 'api',
+      }),
+      legalEntityScope: 'forbidden',
+      owningModuleKey: 'core.shell',
+    }),
   );
 });
 
@@ -98,37 +85,16 @@ test('supports every governed access kind and rejects forged scope metadata', ()
     );
   }
   assert.throws(() =>
-    defineRead(
-      {
-        ...defineRead(
-          {
-            accessKind: 'detail',
-            entrypoint: defineSystemModuleEntrypoint({
-              access: 'read',
-              entrypointKey: 'core.shell.valid',
-              moduleKey: 'core.shell',
-              role: 'api',
-            }),
-            evidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.shell.valid.v1' },
-            inputSchema: Schema.Void,
-            legalEntityScope: 'forbidden',
-            owningModuleKey: 'core.shell',
-            permissionTarget: 'module',
-            policies: [],
-            readKey: 'core.shell.valid',
-            resultSchema: Schema.Void,
-            schemaVersion: '1',
-          },
-          () => Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
-          () => Effect.succeed({}),
-          modulePermissionTarget,
-        ).descriptor,
-        legalEntityScope: 'implicit',
-      } as never,
-      () => Effect.succeed({ evidence: { resultCount: 0 }, result: undefined }),
-      () => Effect.succeed({}),
-      modulePermissionTarget,
-    ),
+    validateReadDescriptorInput({
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'read',
+        entrypointKey: 'core.shell.valid',
+        moduleKey: 'core.shell',
+        role: 'api',
+      }),
+      legalEntityScope: 'implicit',
+      owningModuleKey: 'core.shell',
+    }),
   );
 });
 

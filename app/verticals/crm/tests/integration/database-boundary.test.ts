@@ -21,18 +21,21 @@ const contactA1 = 'c3000000-0000-4000-8000-000000000001';
 const contactA2 = 'c3000000-0000-4000-8000-000000000002';
 const fixtureTenants = [tenantA, tenantB] as const;
 
-const hasPostgreSqlCode =
-  (expected: string) =>
-  (error: unknown): boolean => {
-    let current = error;
-    while (typeof current === 'object' && current !== null) {
-      if ('code' in current && current.code === expected) {
-        return true;
-      }
-      current = 'cause' in current ? current.cause : undefined;
+const isRuntimeObject = <Value>(value: Value): value is Value & object =>
+  value !== null && Object(value) === value;
+
+const hasPostgreSqlCode = (expected: string) => {
+  const matches = <ErrorValue>(error: ErrorValue): boolean => {
+    if (!isRuntimeObject(error)) {
+      return false;
     }
-    return false;
+    if ('code' in error && error.code === expected) {
+      return true;
+    }
+    return 'cause' in error && matches(error.cause);
   };
+  return matches;
+};
 
 test('enforces CRM constraints, tenant RLS, parent integrity, and durable archiving', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());

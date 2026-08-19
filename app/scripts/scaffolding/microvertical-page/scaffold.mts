@@ -395,11 +395,16 @@ export default ${federatedComponentName};
 `;
 };
 
+interface PageOwnerWiring {
+  readonly manifest: string;
+  readonly registration: string;
+}
+
 const patchPageWiring = (
   vertical: PageVerticalMetadata,
   page: string,
   route: PageRoute,
-): { readonly manifest: string; readonly registration: string } => {
+): PageOwnerWiring => {
   const wiring = pageWiring(vertical, page, route);
   let manifest = insertSortedSlot(
     vertical.manifestContent,
@@ -869,7 +874,7 @@ const generatedWiringMatches = async (
     }),
   );
   const shellRouteEntries = await readdir(shellRouteDirectory, { withFileTypes: true });
-  const shellRouteShapeMatches =
+  const shellRouteInventoryMatches =
     shellRouteEntries.length === expectedShellFiles.length &&
     shellRouteEntries.every(
       (entry) =>
@@ -945,7 +950,7 @@ const generatedWiringMatches = async (
       new RegExp(`\\bcomponentKey\\s*:\\s*["']${vertical.moduleId}\\.page-${page}["']`, 'u'),
     ) &&
     shellRouteMatches.every(Boolean) &&
-    shellRouteShapeMatches
+    shellRouteInventoryMatches
   );
 };
 

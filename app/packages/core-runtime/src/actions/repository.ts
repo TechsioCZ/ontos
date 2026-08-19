@@ -4,7 +4,7 @@
 // keep the exported repository operations in typed Effect error channels.
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { Context, Effect, Layer } from 'effect';
+import { Cause, Context, Effect, Layer, Predicate } from 'effect';
 import {
   actionInvocations,
   auditEvents,
@@ -24,6 +24,19 @@ import {
   ActionTransactionError,
 } from './errors.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export interface ActionRequestHashInput {
   readonly actionKey: string;
@@ -58,23 +71,23 @@ const compareCodeUnits = (left: string, right: string): number => {
   return 0;
 };
 
-const normalizeForHash = (value: unknown, seen: WeakSet<object>): CanonicalValue => {
+const normalizeForHash = <Value>(value: Value, seen: WeakSet<object>): CanonicalValue => {
   if (value === undefined) {
     return ['undefined'];
   }
   if (value === null) {
     return ['null'];
   }
-  if (typeof value === 'boolean') {
+  if (Predicate.isBoolean(value)) {
     return ['boolean', value];
   }
-  if (typeof value === 'string') {
+  if (Predicate.isString(value)) {
     return ['string', value];
   }
-  if (typeof value === 'number') {
+  if (Predicate.isNumber(value)) {
     return ['number', Object.is(value, -0) ? '-0' : String(value)];
   }
-  if (typeof value === 'bigint') {
+  if (Predicate.isBigInt(value)) {
     return ['bigint', value.toString(10)];
   }
   if (value instanceof Date) {
@@ -89,11 +102,11 @@ const normalizeForHash = (value: unknown, seen: WeakSet<object>): CanonicalValue
     seen.delete(value);
     return ['array', normalized];
   }
-  if (typeof value === 'object') {
+  if (Predicate.isObjectKeyword(value)) {
     if (seen.has(value)) {
       throw new TypeError('Action payloads must not contain cyclic values');
     }
-    const prototype = Object.getPrototypeOf(value) as unknown;
+    const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) {
       throw new TypeError('Action payloads must contain only canonical data values');
     }
@@ -104,7 +117,8 @@ const normalizeForHash = (value: unknown, seen: WeakSet<object>): CanonicalValue
     seen.delete(value);
     return ['object', entries];
   }
-  throw new TypeError(`Action payloads cannot contain ${typeof value} values`);
+  const unsupportedKind = Predicate.isFunction(value) ? 'function' : 'symbol';
+  throw new TypeError(`Action payloads cannot contain ${unsupportedKind} values`);
 };
 
 export const computeActionRequestHash = (input: ActionRequestHashInput): string => {
@@ -127,7 +141,7 @@ export const computeActionRequestHash = (input: ActionRequestHashInput): string 
   return createHash('sha256').update(JSON.stringify(canonicalEnvelope)).digest('hex');
 };
 
-export const computeCanonicalValueHash = (value?: unknown): string =>
+export const computeCanonicalValueHash = <Value>(value?: Value): string =>
   createHash('sha256')
     .update(JSON.stringify(normalizeForHash(value, new WeakSet())))
     .digest('hex');
@@ -233,7 +247,7 @@ const invocationSelection = {
 
 const invocationPersistenceFailureCauses = new WeakMap<ActionInvocationPersistenceError, unknown>();
 
-const persistenceFailure = (reason: string, cause?: unknown) => {
+const persistenceFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
   const failure = new ActionInvocationPersistenceError({
     code: 'action_invocation_persistence_failed',
     reason,
@@ -244,14 +258,30 @@ const persistenceFailure = (reason: string, cause?: unknown) => {
   return failure;
 };
 
-/** Internal bridge used by the runtime to log a sanitized invocation failure's full cause. */
+/** Internal bridge used by the transaction boundary to preserve the original defect. */
 export const getActionInvocationPersistenceFailureCause = (
   failure: ActionInvocationPersistenceError,
-): unknown | undefined => invocationPersistenceFailureCauses.get(failure);
+): Cause.Cause<never> | undefined => {
+  const cause = invocationPersistenceFailureCauses.get(failure);
+  return cause === undefined ? undefined : Cause.die(cause);
+};
+
+export const logActionInvocationPersistenceFailureCause = (
+  failure: ActionInvocationPersistenceError,
+  annotations: Readonly<Record<string, string>>,
+): Effect.Effect<void> => {
+  const cause = invocationPersistenceFailureCauses.get(failure);
+  return cause === undefined
+    ? Effect.void
+    : Effect.annotateLogs(
+        Effect.logError('Unexpected Action invocation persistence failure', cause),
+        annotations,
+      );
+};
 
 const transactionFailureCauses = new WeakMap<ActionTransactionError, unknown>();
 
-const transactionFailure = (reason: string, cause?: unknown) => {
+const transactionFailure = <FailureCause>(reason: string, cause?: FailureCause) => {
   const failure = new ActionTransactionError({
     code: 'action_transaction_failed',
     reason,
@@ -270,10 +300,24 @@ class PermissionDenialRollbackSignal {
   }
 }
 
-/** Internal bridge used by the runtime to log a sanitized persistence failure's full cause. */
+/** Internal bridge used by the transaction boundary to preserve the original defect. */
 export const getActionTransactionFailureCause = (
   failure: ActionTransactionError,
-): unknown | undefined => transactionFailureCauses.get(failure);
+): Cause.Cause<never> | undefined => {
+  const cause = transactionFailureCauses.get(failure);
+  return cause === undefined ? undefined : Cause.die(cause);
+};
+
+export const logActionTransactionFailureCause = (
+  failure: ActionTransactionError,
+  message: string,
+  annotations: Readonly<Record<string, string>>,
+): Effect.Effect<void> => {
+  const cause = transactionFailureCauses.get(failure);
+  return cause === undefined
+    ? Effect.void
+    : Effect.annotateLogs(Effect.logError(message, cause), annotations);
+};
 
 export const makeActionRepository = (): ActionRepositoryService => {
   const createOrResolveInvocation: ActionRepositoryService['createOrResolveInvocation'] = (
@@ -524,14 +568,18 @@ export const makeActionRepository = (): ActionRepositoryService => {
             throw new Error('The Action invocation is no longer open for Policy rejection');
           }
 
-          const policyEvidence = {
-            actionKey: input.actionKey,
-            ...(input.policy.owningModuleKey === undefined
-              ? {}
-              : { owningModuleKey: input.policy.owningModuleKey }),
-            policyKey: input.policy.policyKey,
-            policyScope: input.policy.scope,
-          };
+          const policyEvidence = withOptionalProperty(
+            {
+              actionKey: input.actionKey,
+            },
+            !(input.policy.owningModuleKey === undefined),
+            'owningModuleKey',
+            input.policy.owningModuleKey,
+            {
+              policyKey: input.policy.policyKey,
+              policyScope: input.policy.scope,
+            },
+          );
           await transaction.insert(auditEvents).values([
             {
               actionInvocationId: input.actionInvocationId,
@@ -603,14 +651,18 @@ export const makeActionRepository = (): ActionRepositoryService => {
               authContextRef: input.principal.authContextRef,
               authMethod: input.principal.authMethod,
               eventType: 'action.policy_checked',
-              evidenceJson: {
-                actionKey: input.actionKey,
-                ...(policy.owningModuleKey === undefined
-                  ? {}
-                  : { owningModuleKey: policy.owningModuleKey }),
-                policyKey: policy.policyKey,
-                policyScope: policy.scope,
-              },
+              evidenceJson: withOptionalProperty(
+                {
+                  actionKey: input.actionKey,
+                },
+                !(policy.owningModuleKey === undefined),
+                'owningModuleKey',
+                policy.owningModuleKey,
+                {
+                  policyKey: policy.policyKey,
+                  policyScope: policy.scope,
+                },
+              ),
               impersonatedByPrincipalId: input.principal.impersonatedByPrincipalId,
               legalEntityId: input.principal.legalEntityId,
               outcome: 'allowed',

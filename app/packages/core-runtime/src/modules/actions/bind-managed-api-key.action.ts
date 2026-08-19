@@ -4,28 +4,29 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import { bindApiKey } from '../../auth/principal-management.ts';
-import { PrincipalManagementError } from '../../auth/principal-management-errors.ts';
+import {
+  bindApiKey,
+  principalManagementRepositoryFromTransaction,
+} from '../../auth/principal-management.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const subject = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const BindManagedApiKeyPayload = Schema.Struct({
+export const BindManagedApiKeyPayloadSchema = Schema.Struct({
   principalId: uuid,
   providerSubjectId: subject,
 });
-type BindManagedApiKeyPayloadType = Schema.Schema.Type<typeof BindManagedApiKeyPayload>;
-export type { BindManagedApiKeyPayloadType as BindManagedApiKeyPayload };
-export const BindManagedApiKeyResult = Schema.Struct({
+export type BindManagedApiKeyPayload = Schema.Schema.Type<typeof BindManagedApiKeyPayloadSchema>;
+export const BindManagedApiKeyResultSchema = Schema.Struct({
   authBindingId: uuid,
   status: Schema.Literal('active'),
 });
-type BindManagedApiKeyResultType = Schema.Schema.Type<typeof BindManagedApiKeyResult>;
-export type { BindManagedApiKeyResultType as BindManagedApiKeyResult };
+export type BindManagedApiKeyResult = Schema.Schema.Type<typeof BindManagedApiKeyResultSchema>;
 type Input = Parameters<typeof bindApiKey>[1];
 type Result = ReturnType<typeof bindApiKey>;
 const handle = (
-  payload: BindManagedApiKeyPayloadType,
+  payload: BindManagedApiKeyPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly bind: (input: Input) => Result }
@@ -57,7 +58,7 @@ export const bindManagedApiKeyAction = defineAction(
     },
     actionKey: 'core.identity.bind-managed-api-key',
     auditProfile: 'sensitive',
-    domainErrorSchema: PrincipalManagementError,
+    domainErrorSchema: PrincipalManagementErrorSchema,
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
@@ -68,12 +69,15 @@ export const bindManagedApiKeyAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    payloadSchema: BindManagedApiKeyPayload,
+    payloadSchema: BindManagedApiKeyPayloadSchema,
     policies: [],
-    resultSchema: BindManagedApiKeyResult,
+    resultSchema: BindManagedApiKeyResultSchema,
     schemaVersion: '1',
     tenantPermission: () => 'manage_identity',
   },
   handle,
-  (transaction) => Effect.succeed({ bind: (input) => bindApiKey(transaction, input) }),
+  (transaction) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction);
+    return Effect.succeed({ bind: (input) => bindApiKey(repository, input) });
+  },
 );

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off
 /* eslint-disable promise/prefer-await-to-callbacks -- Node assertions intentionally receive synchronous callbacks. */
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import {
   defineOutboxWorker,
   getOutboxWorkerHandler,
@@ -36,7 +36,7 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
       topic: 'producer.message-created',
       workerKey,
     },
-    (payload) => Effect.sync(() => assert.equal(typeof payload.messageKey, 'string')),
+    (payload) => Effect.sync(() => assert.equal(Predicate.isString(payload.messageKey), true)),
   );
 
 test('defines an exact immutable registration while keeping the handler opaque', async () => {
@@ -142,7 +142,7 @@ test('rejects invalid identities, retry policies, and lease policies', () => {
 
   for (const descriptor of invalidDescriptors) {
     assert.throws(
-      () => defineOutboxWorker(descriptor as typeof valid, () => Effect.void),
+      () => defineOutboxWorker(descriptor, () => Effect.void),
       (error: { readonly _tag?: string }) => error._tag === 'OutboxWorkerDescriptorError',
     );
   }

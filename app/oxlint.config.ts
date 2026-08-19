@@ -10,12 +10,41 @@ const reactRules = Object.fromEntries(
   Object.entries(react.rules ?? {}).filter(([name]) => name !== 'react/react-compiler'),
 );
 
+const antiSlopRules = {
+  'anti-slop/no-chained-type-assertions': 'error',
+  'anti-slop/no-conditional-empty-object-spread': 'error',
+  'anti-slop/no-known-value-widening': 'error',
+  'anti-slop/no-module-mocking': 'error',
+  'anti-slop/no-object-parameters': 'error',
+  'anti-slop/no-reflect-apply': 'error',
+  'anti-slop/no-reflect-get': 'error',
+  'anti-slop/no-runtime-typeof': 'error',
+  'anti-slop/no-shape-in-symbol-names': 'error',
+  'anti-slop/no-unknown-parameters': 'error',
+  'anti-slop/no-unknown-returns': 'error',
+  'anti-slop/no-unknown-type-aliases': 'error',
+  'anti-slop/no-unsafe-dictionary-type': 'error',
+  'anti-slop/no-widen-then-assert': 'error',
+  'anti-slop/require-safety-comment-for-type-assertion': 'error',
+};
+
+const antiSlopEffectRules = {
+  'anti-slop-effect/no-service-constructor-imports': 'error',
+};
+
 export default defineConfig({
   env: {
     browser: true,
     node: true,
   },
   extends: [core, { ...react, rules: reactRules }],
+  jsPlugins: [
+    { name: 'anti-slop', specifier: './tools/oxlint/anti-slop/index.ts' },
+    {
+      name: 'anti-slop-effect',
+      specifier: './tools/oxlint/anti-slop/effect/index.ts',
+    },
+  ],
   rules: {
     // React Compiler correctness rules — the recommended set from the
     // oxc.rs 2026-08-18 announcement, pinned explicitly to match the
@@ -32,6 +61,8 @@ export default defineConfig({
     'react/static-components': 'error',
     'react/use-memo': 'error',
     'react/void-use-memo': 'error',
+    ...antiSlopRules,
+    ...antiSlopEffectRules,
   },
   ignorePatterns: [
     '.agents',
@@ -44,5 +75,6 @@ export default defineConfig({
     '.modernjs',
     '**/modern-tanstack/**',
     '**/routeTree.gen.*',
+    'tools/oxlint/anti-slop/**',
   ],
 });

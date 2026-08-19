@@ -5,9 +5,14 @@ import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
 import { CrmPage } from '../../src/routes/[lang]/crm/page.tsx';
 
-const { localeState } = rstest.hoisted(() => ({
-  localeState: { current: 'en' as 'cs' | 'en' },
-}));
+interface LocaleState {
+  current: 'cs' | 'en';
+}
+
+const { localeState } = rstest.hoisted(() => {
+  const state: LocaleState = { current: 'en' };
+  return { localeState: state };
+});
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
 

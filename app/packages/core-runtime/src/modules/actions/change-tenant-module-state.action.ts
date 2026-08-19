@@ -28,25 +28,40 @@ import type { TenantModuleStateTransitionError } from '../tenant-module-state-er
 import { InstalledModuleCatalogService } from '../catalog.ts';
 import { OntosModuleIdSchema } from '../manifest.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 const moduleKeySchema = OntosModuleIdSchema.check(Schema.isMaxLength(128));
 const reasonSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 
-export const ChangeTenantModuleStatePayload = Schema.Struct({
+export const ChangeTenantModuleStatePayloadSchema = Schema.Struct({
   expectedState: Schema.optionalKey(TenantModuleStateSchema),
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
   reason: Schema.optionalKey(reasonSchema),
 });
-type ChangeTenantModuleStatePayloadType = Schema.Schema.Type<typeof ChangeTenantModuleStatePayload>;
-export type { ChangeTenantModuleStatePayloadType as ChangeTenantModuleStatePayload };
+export type ChangeTenantModuleStatePayload = Schema.Schema.Type<
+  typeof ChangeTenantModuleStatePayloadSchema
+>;
 
-export const ChangeTenantModuleStateResult = Schema.Struct({
+export const ChangeTenantModuleStateResultSchema = Schema.Struct({
   moduleKey: moduleKeySchema,
   newState: TenantModuleStateSchema,
   previousState: Schema.NullOr(TenantModuleStateSchema),
 });
-type ChangeTenantModuleStateResultType = Schema.Schema.Type<typeof ChangeTenantModuleStateResult>;
-export type { ChangeTenantModuleStateResultType as ChangeTenantModuleStateResult };
+export type ChangeTenantModuleStateResult = Schema.Schema.Type<
+  typeof ChangeTenantModuleStateResultSchema
+>;
 
 export const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateConcurrentChangeError,
@@ -70,7 +85,7 @@ interface ChangeTenantModuleStateServices {
 }
 
 const handleChangeTenantModuleState = (
-  payload: ChangeTenantModuleStatePayloadType,
+  payload: ChangeTenantModuleStatePayload,
   context: ActionHandlerContext<
     ChangeTenantModuleStateDomainEvents,
     ChangeTenantModuleStateServices
@@ -80,16 +95,30 @@ const handleChangeTenantModuleState = (
     const installedCatalog = yield* InstalledModuleCatalogService;
     const catalog = yield* installedCatalog.load;
     yield* validateTenantModuleStateTransition(catalog, payload.moduleKey, payload.newState);
-    const result = yield* context.services.persist({
-      actionInvocationId: context.actionInvocationId,
-      authMethod: context.scope.authMethod,
-      ...(payload.expectedState === undefined ? {} : { expectedState: payload.expectedState }),
-      moduleKey: payload.moduleKey,
-      newState: payload.newState,
-      principalId: context.scope.principalId,
-      ...(payload.reason === undefined ? {} : { reason: payload.reason }),
-      tenantId: context.scope.tenantId,
-    });
+    const result = yield* context.services.persist(
+      withOptionalProperty(
+        withOptionalProperty(
+          {
+            actionInvocationId: context.actionInvocationId,
+            authMethod: context.scope.authMethod,
+          },
+          !(payload.expectedState === undefined),
+          'expectedState',
+          payload.expectedState,
+          {
+            moduleKey: payload.moduleKey,
+            newState: payload.newState,
+            principalId: context.scope.principalId,
+          },
+        ),
+        !(payload.reason === undefined),
+        'reason',
+        payload.reason,
+        {
+          tenantId: context.scope.tenantId,
+        },
+      ),
+    );
 
     yield* context.recordDataAccess({
       accessKind: 'read',
@@ -123,9 +152,9 @@ export const changeTenantModuleStateAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'forbidden',
     owningModuleKey: 'core.modules',
-    payloadSchema: ChangeTenantModuleStatePayload,
+    payloadSchema: ChangeTenantModuleStatePayloadSchema,
     policies: [],
-    resultSchema: ChangeTenantModuleStateResult,
+    resultSchema: ChangeTenantModuleStateResultSchema,
     schemaVersion: '1',
   },
   handleChangeTenantModuleState,

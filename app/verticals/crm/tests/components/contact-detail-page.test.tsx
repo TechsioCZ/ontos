@@ -7,6 +7,7 @@ import { Effect } from 'effect';
 import type { AnchorHTMLAttributes } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { flattenCatalogKeys, translateCatalog } from '../support/locale-catalog.ts';
 import { getCrmQueryClient } from '../../src/crm-query-client.ts';
 import {
   ContactDetailPage,
@@ -16,27 +17,33 @@ import {
   toContactDetailReadyModel,
 } from '../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.tsx';
 
+interface LocaleState {
+  current: 'cs' | 'en';
+}
+
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
 });
 
-const { getContactMock, localeState, runEffectRequestMock } = rstest.hoisted(() => ({
-  getContactMock: rstest.fn(),
-  localeState: { current: 'en' as 'cs' | 'en' },
-  runEffectRequestMock: rstest.fn(),
-}));
+const { getContactMock, localeState, runEffectRequestMock } = rstest.hoisted(() => {
+  const state: LocaleState = { current: 'en' };
+  return {
+    getContactMock: rstest.fn(),
+    localeState: state,
+    runEffectRequestMock: rstest.fn(),
+  };
+});
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
-const translate = (language: 'cs' | 'en', key: string): string => {
-  let value: unknown = catalogs[language];
-  for (const segment of key.split('.')) {
-    if (typeof value !== 'object' || value === null || !(segment in value)) {
-      return key;
-    }
-    value = (value as Record<string, unknown>)[segment];
+const getDescriptionList = (): HTMLElement => {
+  const list = document.querySelector('dl');
+  if (list === null) {
+    throw new Error('Expected Contact details description list');
   }
-  return typeof value === 'string' ? value : key;
+  return list;
 };
+const translate = (language: 'cs' | 'en', key: string): string =>
+  translateCatalog(catalogs[language], key);
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -86,13 +93,7 @@ const archivedContact = {
   name: 'Archivovaný kontakt s úmyslně velmi dlouhým jménem',
 } as const;
 
-const flattenKeys = (value: object, prefix = ''): string[] =>
-  Object.entries(value)
-    .flatMap(([key, child]) => {
-      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-      return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
-    })
-    .toSorted();
+const flattenKeys = flattenCatalogKeys;
 
 beforeEach(() => {
   getCrmQueryClient().clear();
@@ -189,9 +190,8 @@ test('renders the parent link, heading, semantic overview, communication links, 
   expect(screen.getByRole('link', { name: 'Edit' }).getAttribute('href')).toBe(
     `/en/crm/customers/${customerId}/contacts/${contactId}/edit`,
   );
-  const list = document.querySelector('dl');
-  expect(list).not.toBeNull();
-  expect(within(list as HTMLElement).getByText('Contact ID')).toBeTruthy();
+  const list = getDescriptionList();
+  expect(within(list).getByText('Contact ID')).toBeTruthy();
   expect(list?.textContent).toContain(contactId);
   expect(list?.textContent).toContain(customerId);
   expect(
@@ -200,7 +200,7 @@ test('renders the parent link, heading, semantic overview, communication links, 
   expect(screen.getByRole('link', { name: 'Call this Contact' }).getAttribute('href')).toBe(
     `tel:${activeContact.phone}`,
   );
-  expect(within(list as HTMLElement).getByText('Active')).toBeTruthy();
+  expect(within(list).getByText('Active')).toBeTruthy();
   const times = list?.querySelectorAll('time');
   expect(times).toHaveLength(2);
   expect(times?.[0]?.getAttribute('datetime')).toBe(activeContact.createdAt);
@@ -259,7 +259,7 @@ test.each([
   ],
   ['ContactDetailUnavailableProblem', 'The Contact is temporarily unavailable. Try again.', true],
 ] as const)('maps %s to its explicit presentation state', async (tag, message, retryable) => {
-  getContactMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+  getContactMock.mockReturnValue(Effect.fail({ _tag: tag }));
   render(<ContactDetailPage routeParams={{ contactId, id: customerId }} />);
 
   expect(await screen.findByText(message)).toBeTruthy();
@@ -269,7 +269,7 @@ test.each([
 
 test('retries an unavailable request from the keyboard and restores focus after completion', async () => {
   getContactMock
-    .mockReturnValueOnce(Effect.fail({ _tag: 'ContactDetailUnavailableProblem' } as never))
+    .mockReturnValueOnce(Effect.fail({ _tag: 'ContactDetailUnavailableProblem' }))
     .mockReturnValueOnce(Effect.succeed(activeContact));
   const user = userEvent.setup();
   render(<ContactDetailPage routeParams={{ contactId, id: customerId }} />);
@@ -285,16 +285,16 @@ test('retries an unavailable request from the keyboard and restores focus after 
 });
 
 test('maps the complete remaining client failure families without exposing raw errors', () => {
-  expect(classifyContactDetailError({ _tag: 'ContactDetailInvalidProblem' } as never)).toEqual({
+  expect(classifyContactDetailError({ _tag: 'ContactDetailInvalidProblem' })).toEqual({
     state: 'not_found',
   });
-  expect(classifyContactDetailError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
+  expect(classifyContactDetailError({ _tag: 'GatewayForbiddenProblem' })).toEqual({
     state: 'forbidden',
   });
-  expect(
-    classifyContactDetailError({ _tag: 'GatewayAuthenticationRequiredProblem' } as never),
-  ).toEqual({ state: 'authentication_expired' });
-  expect(classifyContactDetailError({ _tag: 'SchemaError' } as never)).toEqual({
+  expect(classifyContactDetailError({ _tag: 'GatewayAuthenticationRequiredProblem' })).toEqual({
+    state: 'authentication_expired',
+  });
+  expect(classifyContactDetailError({ _tag: 'SchemaError' })).toEqual({
     reason: 'decode',
     state: 'unavailable',
   });
@@ -302,14 +302,14 @@ test('maps the complete remaining client failure families without exposing raw e
     classifyContactDetailError({
       _tag: 'HttpClientError',
       reason: { _tag: 'TransportError' },
-    } as never),
+    }),
   ).toEqual({ reason: 'transport', state: 'unavailable' });
   for (const tag of [
     'ContactDetailUnavailableProblem',
     'GatewayRateLimitedProblem',
     'GatewayUnavailableProblem',
   ] as const) {
-    expect(classifyContactDetailError({ _tag: tag } as never)).toEqual({
+    expect(classifyContactDetailError({ _tag: tag })).toEqual({
       reason: 'backend',
       state: 'unavailable',
     });
@@ -319,7 +319,7 @@ test('maps the complete remaining client failure families without exposing raw e
     'GatewayAudienceInvalidProblem',
     'GatewayInternalProblem',
   ] as const) {
-    expect(classifyContactDetailError({ _tag: tag } as never)).toEqual({
+    expect(classifyContactDetailError({ _tag: tag })).toEqual({
       reason: 'internal',
       state: 'unavailable',
     });

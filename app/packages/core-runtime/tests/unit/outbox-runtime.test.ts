@@ -31,7 +31,7 @@ const retryPolicy = {
   multiplier: 1,
 } as const;
 
-const claim = (attemptNumber = 1, payloadJson?: unknown): OutboxClaim => ({
+const claim = (attemptNumber = 1, payloadJson?: OutboxClaim['payloadJson']): OutboxClaim => ({
   attemptId: `attempt-${attemptNumber}`,
   attemptNumber,
   claimId: `runtime:claim-${attemptNumber}`,
@@ -76,6 +76,11 @@ interface RepositoryProbe {
   readonly failed: { readonly claim: OutboxClaim; readonly message: string }[];
 }
 
+interface ControlledRepository {
+  readonly probe: RepositoryProbe;
+  readonly service: OutboxRepositoryService;
+}
+
 const repository = (
   options: {
     readonly claims?: readonly OutboxClaim[];
@@ -83,7 +88,7 @@ const repository = (
     readonly failureStatuses?: readonly OutboxFailureStatus[];
     readonly match?: { readonly deliveriesCreated: number; readonly messagesMatched: number };
   } = {},
-): { readonly probe: RepositoryProbe; readonly service: OutboxRepositoryService } => {
+): ControlledRepository => {
   const claims = [...(options.claims ?? [])];
   const failureStatuses = [...(options.failureStatuses ?? [])];
   const probe: RepositoryProbe = { completed: [], failed: [] };
@@ -115,6 +120,13 @@ type NoRequirementsWorker = OutboxWorkerRegistration<
   unknown,
   never
 >;
+
+interface WorkerInvocation {
+  readonly context: Parameters<
+    OutboxWorkerHandler<{ readonly messageKey: string }, never, never>
+  >[1];
+  readonly payload: { readonly messageKey: string };
+}
 
 const run = (
   service: OutboxRepositoryService,
@@ -205,7 +217,7 @@ test('rejects deployed owner descriptors without a matching local worker registr
 test('decodes a published payload, supplies exact context, and completes success', async () => {
   const selected = claim();
   const controlled = repository({ claims: [selected] });
-  let observed: unknown;
+  let observed: WorkerInvocation | undefined;
   const registration = worker((payload, context) =>
     Effect.sync(() => {
       observed = { context, payload };

@@ -10,17 +10,22 @@ import {
 import type { CustomerRecord } from '../../src/db/schema.ts';
 
 type CustomerTransaction = Parameters<typeof findCustomerRecord>[0];
+type CustomerCreateTransaction = Parameters<typeof createCustomerRecord>[0];
+type CustomerEditTransaction = Parameters<typeof editCustomerRecord>[0];
+type CustomerCreateValues = Parameters<
+  ReturnType<CustomerCreateTransaction['insert']>['values']
+>[0];
+type CustomerEditValues = Parameters<ReturnType<CustomerEditTransaction['update']>['set']>[0];
 
-const transactionReturning = (row: CustomerRecord): CustomerTransaction =>
-  ({
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: () => Promise.resolve([row]),
-        }),
+const transactionReturning = (row: CustomerRecord): CustomerTransaction => ({
+  select: () => ({
+    from: () => ({
+      where: () => ({
+        limit: () => Promise.resolve([row]),
       }),
     }),
-  }) as unknown as CustomerTransaction;
+  }),
+});
 
 const baseRow = {
   archivedAt: null,
@@ -39,22 +44,21 @@ const completeBusinessFields = {
   legalFormCode: '112',
 } as const;
 
-const rejectingTransaction = (constraint: string) =>
-  ({
-    insert: () => ({
-      values: () => ({
-        returning: () =>
-          Promise.reject(
-            new Error('Drizzle query failed', {
-              cause: Object.assign(new Error('duplicate key'), {
-                code: '23505',
-                constraint,
-              }),
+const rejectingTransaction = (constraint: string): CustomerCreateTransaction => ({
+  insert: () => ({
+    values: () => ({
+      returning: () =>
+        Promise.reject(
+          new Error('Drizzle query failed', {
+            cause: Object.assign(new Error('duplicate key'), {
+              code: '23505',
+              constraint,
             }),
-          ),
-      }),
+          }),
+        ),
     }),
-  }) as unknown as Parameters<typeof createCustomerRecord>[0];
+  }),
+});
 
 test('maps complete persisted Customer business fields to flat date-only DTO values', async () => {
   const result = await Effect.runPromise(
@@ -86,10 +90,10 @@ test('maps complete persisted Customer business fields to flat date-only DTO val
 });
 
 test('persists every Customer business field on create and edit', async () => {
-  let inserted: Record<string, unknown> | undefined;
-  const createTransaction = {
+  let inserted: CustomerCreateValues | undefined;
+  const createTransaction: CustomerCreateTransaction = {
     insert: () => ({
-      values: (value: Record<string, unknown>) => {
+      values: (value) => {
         inserted = value;
         return {
           returning: () =>
@@ -97,7 +101,7 @@ test('persists every Customer business field on create and edit', async () => {
         };
       },
     }),
-  } as unknown as Parameters<typeof createCustomerRecord>[0];
+  };
   const created = await Effect.runPromise(
     createCustomerRecord(createTransaction, baseRow.tenantId, {
       ...completeBusinessFields,
@@ -121,10 +125,10 @@ test('persists every Customer business field on create and edit', async () => {
     { ...completeBusinessFields, name: 'Created' },
   );
 
-  let updated: Record<string, unknown> | undefined;
-  const editTransaction = {
+  let updated: CustomerEditValues | undefined;
+  const editTransaction: CustomerEditTransaction = {
     update: () => ({
-      set: (value: Record<string, unknown>) => {
+      set: (value) => {
         updated = value;
         return {
           where: () => ({
@@ -138,14 +142,14 @@ test('persists every Customer business field on create and edit', async () => {
                   ico: null,
                   legalFormCode: null,
                   name: 'Cleared',
-                  updatedAt: value['updatedAt'],
+                  updatedAt: value.updatedAt,
                 },
               ]),
           }),
         };
       },
     }),
-  } as unknown as Parameters<typeof editCustomerRecord>[0];
+  };
   const edited = await Effect.runPromise(
     editCustomerRecord(editTransaction, baseRow.tenantId, {
       customerId: baseRow.customerId,
@@ -159,12 +163,12 @@ test('persists every Customer business field on create and edit', async () => {
   );
   assert.deepEqual(
     {
-      dic: updated?.['dic'],
-      dissolvedOn: updated?.['dissolvedOn'],
-      establishedOn: updated?.['establishedOn'],
-      ico: updated?.['ico'],
-      legalFormCode: updated?.['legalFormCode'],
-      name: updated?.['name'],
+      dic: updated?.dic,
+      dissolvedOn: updated?.dissolvedOn,
+      establishedOn: updated?.establishedOn,
+      ico: updated?.ico,
+      legalFormCode: updated?.legalFormCode,
+      name: updated?.name,
     },
     {
       dic: null,

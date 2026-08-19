@@ -6,7 +6,7 @@ import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { Pool } from 'pg';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
@@ -38,6 +38,8 @@ import {
   makeOperationalScopeResolver,
 } from '../../src/operations/context.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { openModuleStateGate } from '../support/open-module-state-gate.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -48,6 +50,19 @@ import {
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const relationship = (
   resourceType: string,
@@ -105,11 +120,11 @@ test('runs identity mutations and tenant-isolated administration through live Ac
     makeActionRepository(),
     actionPermission,
     operationalScope,
-    { contextAccess },
+    { ...openActionRuntimeOptions, contextAccess },
   );
   const readRuntime = makeReadRuntime(
     { executor: runtimeDatabase },
-    { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) } as never,
+    openModuleStateGate,
     operationalScope,
     contextAccess,
   );
@@ -453,13 +468,19 @@ test('runs identity mutations and tenant-isolated administration through live Ac
     for (const checkpoint of ['requested', 'started'] as const) {
       await Effect.runPromise(
         actionRuntime.runAction({
-          payload: {
-            checkpoint,
-            originalPrincipalId: administratorPrincipalId,
-            reason: supportReason,
-            ...(checkpoint === 'started' ? { sessionRef: supportSessionRef } : {}),
-            targetPrincipalId: supportTargetPrincipalId,
-          },
+          payload: withOptionalProperty(
+            {
+              checkpoint,
+              originalPrincipalId: administratorPrincipalId,
+              reason: supportReason,
+            },
+            checkpoint === 'started',
+            'sessionRef',
+            supportSessionRef,
+            {
+              targetPrincipalId: supportTargetPrincipalId,
+            },
+          ),
           principal,
           registration: recordSupportImpersonationAction,
           transport: {
@@ -529,11 +550,11 @@ test('runs identity mutations and tenant-isolated administration through live Ac
     assert.deepEqual(
       supportAudits
         .map(({ evidence }) =>
-          typeof evidence === 'object' && evidence !== null && 'checkpoint' in evidence
+          Predicate.isObjectKeyword(evidence) && evidence !== null && 'checkpoint' in evidence
             ? evidence.checkpoint
             : undefined,
         )
-        .filter((checkpoint): checkpoint is string => typeof checkpoint === 'string')
+        .filter((checkpoint): checkpoint is string => Predicate.isString(checkpoint))
         .toSorted(),
       ['requested', 'started', 'stopped'],
     );

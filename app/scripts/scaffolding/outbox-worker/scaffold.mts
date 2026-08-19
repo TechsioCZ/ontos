@@ -27,7 +27,7 @@ import {
   updateMutation,
 } from '../shared.mts';
 import type {
-  JsonObject,
+  MutableJsonObject,
   Mutation,
   OutboxWorkerScaffoldConfig,
   OutboxWorkerScaffoldResult,
@@ -191,11 +191,10 @@ const patchConsumerPackage = (
   producer: OntosVerticalMetadata,
 ): string => {
   const dependenciesValue = consumer.packageJson['dependencies'];
-  const dependencies = {
-    ...(dependenciesValue === undefined
+  const dependencies: MutableJsonObject =
+    dependenciesValue === undefined
       ? {}
-      : asJsonObject(dependenciesValue, `vertical ${consumer.slug} dependencies`)),
-  };
+      : { ...asJsonObject(dependenciesValue, `vertical ${consumer.slug} dependencies`) };
   for (const [name, version] of [
     ['@app/core-runtime', 'workspace:*'],
     [producer.packageName, 'workspace:*'],
@@ -264,7 +263,7 @@ const patchConsumerTsconfig = (
   const patched = [...references, { path: producerReference }].toSorted((left, right) =>
     String(left['path']).localeCompare(String(right['path'])),
   );
-  return patchJsonObjectProperty(content, [], 'references', patched as readonly JsonObject[]);
+  return patchJsonObjectProperty(content, [], 'references', patched);
 };
 
 export const planOutboxWorkerScaffold = async (

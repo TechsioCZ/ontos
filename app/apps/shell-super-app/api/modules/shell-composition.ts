@@ -1,15 +1,28 @@
 // @effect-diagnostics anyUnknownInErrorContext:off
 /* eslint-disable max-classes-per-file, prefer-destructuring -- Shell composition owns one closed safe-failure vocabulary and keeps correlation access explicit. */
 import type {
-  ContextAccessShape,
+  ContextAccessService,
   InstalledModuleCatalog,
   ModuleEntrypointAccess,
   OntosShellContributions,
   TenantModuleState,
-  TenantModuleStateServiceShape,
+  TenantModuleStateServiceContract,
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 type ShellPageContribution = OntosShellContributions['pages'][number];
 
@@ -56,11 +69,12 @@ export type ShellTargetResolution =
 
 export interface ShellCompositionDependencies {
   readonly catalog: Effect.Effect<InstalledModuleCatalog, unknown>;
-  readonly contextAccess: ContextAccessShape;
-  readonly moduleStates: Pick<TenantModuleStateServiceShape, 'getTenantModuleStates'>;
+  readonly contextAccess: ContextAccessService;
+  readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 
-const visibleStates = new Set<TenantModuleState>(['active', 'deprecated', 'read_only']);
+const isVisibleState = (state: TenantModuleState): state is ShellNavigationItem['state'] =>
+  state === 'active' || state === 'deprecated' || state === 'read_only';
 
 const loadCatalog = (
   dependencies: ShellCompositionDependencies,
@@ -119,7 +133,7 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
         const permission = permissionByModule.get(moduleId);
         if (
           state === undefined ||
-          !visibleStates.has(state) ||
+          !isVisibleState(state) ||
           permission === undefined ||
           permission === 'denied'
         ) {
@@ -129,18 +143,24 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
           (contribution): ShellNavigationItem => {
             const page = pages.get(contribution.pageKey);
             const unavailable = permission === 'unavailable' || page === undefined;
-            return {
-              appId: contract.deployment.appId,
-              enabled: !unavailable,
-              groupKey: contribution.groupKey,
-              ...(unavailable ? {} : { href: page.routePath }),
-              label: contract.manifest.module.displayName,
-              moduleId,
-              order: contribution.order,
-              state: state as ShellNavigationItem['state'],
-              unavailable,
-              writable: state === 'active',
-            };
+            return withOptionalProperty(
+              {
+                appId: contract.deployment.appId,
+                enabled: !unavailable,
+                groupKey: contribution.groupKey,
+              },
+              !unavailable,
+              'href',
+              page.routePath,
+              {
+                label: contract.manifest.module.displayName,
+                moduleId,
+                order: contribution.order,
+                state,
+                unavailable,
+                writable: state === 'active',
+              },
+            );
           },
         );
       });
@@ -226,3 +246,17 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
 
   return Object.freeze({ compose, resolveModuleTarget });
 };
+
+export interface ShellCompositionFactoryService {
+  readonly create: typeof makeShellComposition;
+}
+
+export class ShellCompositionFactory extends Context.Service<
+  ShellCompositionFactory,
+  ShellCompositionFactoryService
+>()('@app/shell-super-app/api/modules/shell-composition/ShellCompositionFactory') {}
+
+export const ShellCompositionFactoryLive = Layer.succeed(
+  ShellCompositionFactory,
+  Object.freeze({ create: makeShellComposition }),
+);

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getTableName, isTable } from 'drizzle-orm';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
-import type { PgTable } from 'drizzle-orm/pg-core';
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -23,9 +22,7 @@ const getColumn = (name: string) => {
 };
 
 test('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
-  const exportedTables = (Object.values(schemaExports) as unknown[]).filter(
-    (value): value is PgTable => isTable(value),
-  );
+  const exportedTables = Object.values(schemaExports).filter(isTable);
   const qualifiedNames = exportedTables
     .map((table) => {
       const config = getTableConfig(table);

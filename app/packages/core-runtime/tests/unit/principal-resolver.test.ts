@@ -8,7 +8,7 @@ import {
   classifyApiKeyPrincipal,
   classifyDefaultPrincipal,
   classifySelectedPrincipal,
-  makePrincipalResolver,
+  listAvailableTenantsFromRepository,
 } from '../../src/auth/principal-resolver.ts';
 import type { PrincipalResolutionRecord } from '../../src/auth/principal-resolver.ts';
 import type { PrincipalResolutionError } from '../../src/auth/principal-resolver-errors.ts';
@@ -212,14 +212,16 @@ test('fails closed for empty, inactive, and duplicate eligible resolver states',
 });
 
 test('types database failures as resolver unavailability', async () => {
-  const resolver = makePrincipalResolver({
-    executor: {
-      select: () => {
-        throw new Error('secret database error');
-      },
-    } as never,
-  });
-  const error = await Effect.runPromise(Effect.flip(resolver.listAvailableTenants('subject')));
+  const error = await Effect.runPromise(
+    Effect.flip(
+      listAvailableTenantsFromRepository(
+        {
+          load: () => Promise.reject(new Error('secret database error')),
+        },
+        'subject',
+      ),
+    ),
+  );
   assert.equal(error._tag, 'PrincipalResolverUnavailableError');
   assert.doesNotMatch(error.reason, /secret database error/u);
 });

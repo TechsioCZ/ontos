@@ -134,7 +134,7 @@ export const classifySelectedLegalEntity = (
     };
   });
 
-export interface LegalEntityContextShape {
+export interface LegalEntityContextService {
   readonly listActiveForTenant: (
     tenantId: string,
   ) => Effect.Effect<readonly SafeLegalEntity[], LegalEntityContextError>;
@@ -146,12 +146,39 @@ export interface LegalEntityContextShape {
 
 export class LegalEntityContext extends Context.Service<
   LegalEntityContext,
-  LegalEntityContextShape
+  LegalEntityContextService
 >()('@app/core-runtime/auth/legal-entity-context/LegalEntityContext') {}
 
-export const makeLegalEntityContext = (
-  database: Context.Service.Shape<typeof CoreDatabase>,
-): LegalEntityContextShape => {
+export interface LegalEntityContextRepositoryService {
+  readonly load: (
+    tenantId: string,
+    legalEntityId?: string,
+  ) => Promise<readonly LegalEntityContextRecord[]>;
+}
+
+const legalEntityContextRepositoryFromDatabase = (
+  database: (typeof CoreDatabase)['Service'],
+): LegalEntityContextRepositoryService => ({
+  load: (tenantId, legalEntityId) =>
+    database.executor
+      .select({
+        legalEntityId: legalEntities.legalEntityId,
+        legalName: legalEntities.legalName,
+        status: legalEntities.status,
+        tenantId: legalEntities.tenantId,
+      })
+      .from(legalEntities)
+      .where(
+        and(
+          eq(legalEntities.tenantId, tenantId),
+          ...(legalEntityId === undefined ? [] : [eq(legalEntities.legalEntityId, legalEntityId)]),
+        ),
+      ),
+});
+
+export const legalEntityContextFromRepository = (
+  repository: LegalEntityContextRepositoryService,
+): LegalEntityContextService => {
   const loadRecords = (
     tenantId: string,
     legalEntityId?: string,
@@ -161,23 +188,7 @@ export const makeLegalEntityContext = (
         new LegalEntityContextUnavailableError({
           reason: 'Unable to resolve the legal-entity context',
         }),
-      try: () =>
-        database.executor
-          .select({
-            legalEntityId: legalEntities.legalEntityId,
-            legalName: legalEntities.legalName,
-            status: legalEntities.status,
-            tenantId: legalEntities.tenantId,
-          })
-          .from(legalEntities)
-          .where(
-            and(
-              eq(legalEntities.tenantId, tenantId),
-              ...(legalEntityId === undefined
-                ? []
-                : [eq(legalEntities.legalEntityId, legalEntityId)]),
-            ),
-          ),
+      try: () => repository.load(tenantId, legalEntityId),
     });
 
   return {
@@ -191,6 +202,11 @@ export const makeLegalEntityContext = (
       ),
   };
 };
+
+export const makeLegalEntityContext = (
+  database: (typeof CoreDatabase)['Service'],
+): LegalEntityContextService =>
+  legalEntityContextFromRepository(legalEntityContextRepositoryFromDatabase(database));
 
 export const LegalEntityContextLive = Layer.effect(
   LegalEntityContext,

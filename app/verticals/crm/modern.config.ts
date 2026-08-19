@@ -14,6 +14,10 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import { crmCorsAllowedHeaders, crmCorsAllowedMethods, crmCorsAllowedOrigins } from './shared/cors';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 
+const localisedUrls = Object.fromEntries(
+  Object.entries(ultramodernLocalisedUrls).map(([language, routes]) => [language, { ...routes }]),
+);
+
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 const rootEnvironmentPath = fileURLToPath(new URL('../../.env', import.meta.url));
@@ -117,6 +121,65 @@ if (
   );
 }
 
+const whenEnabled = <const Configuration>(enabled: boolean, configuration: Configuration) =>
+  enabled ? configuration : undefined;
+
+const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
+  deploy: {
+    worker: {
+      compatibilityDate: '2026-06-02',
+      name: cloudflareWorkerName,
+      security: {
+        contentSecurityPolicy: {
+          directives: {
+            'base-uri': ["'self'"],
+            'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
+            'default-src': ["'self'"],
+            'font-src': ["'self'", 'data:', 'https:', 'http:'],
+            'form-action': ["'self'"],
+            'frame-ancestors': ["'self'"],
+            'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+            'manifest-src': ["'self'", 'https:', 'http:'],
+            'object-src': ["'none'"],
+            'script-src': [
+              "'self'",
+              "'unsafe-inline'",
+              "'unsafe-eval'",
+              'https:',
+              'http:',
+              'blob:',
+            ],
+            'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
+            'worker-src': ["'self'", 'blob:'],
+          },
+          mode: 'report-only',
+          reason:
+            'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
+        },
+        cors: {
+          allowedHeaders: [...crmCorsAllowedHeaders],
+          allowedMethods: [...crmCorsAllowedMethods],
+          allowedOrigins: crmCorsAllowedOrigins(moduleFederationDevServerOrigin),
+          assets: true,
+          reason: 'Allow the configured Shell to load CRM assets and invoke its BFF.',
+        },
+        enabled: true,
+        headers: {
+          contentTypeOptions: 'nosniff',
+          permissionsPolicy: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
+          referrerPolicy: 'strict-origin-when-cross-origin',
+        },
+        noindex: {
+          localhost: true,
+          previewHostnames: [],
+          workersDev: true,
+        },
+      },
+      ssr: true,
+    },
+  },
+});
+
 export default defineConfig(
   presetUltramodern(
     {
@@ -133,64 +196,7 @@ export default defineConfig(
         runtimeFramework: 'effect',
       },
       builderPlugins: [pluginTailwindcss()],
-      ...(cloudflareDeployEnabled
-        ? {
-            deploy: {
-              worker: {
-                compatibilityDate: '2026-06-02',
-                name: cloudflareWorkerName,
-                security: {
-                  contentSecurityPolicy: {
-                    directives: {
-                      'base-uri': ["'self'"],
-                      'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                      'default-src': ["'self'"],
-                      'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                      'form-action': ["'self'"],
-                      'frame-ancestors': ["'self'"],
-                      'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                      'manifest-src': ["'self'", 'https:', 'http:'],
-                      'object-src': ["'none'"],
-                      'script-src': [
-                        "'self'",
-                        "'unsafe-inline'",
-                        "'unsafe-eval'",
-                        'https:',
-                        'http:',
-                        'blob:',
-                      ],
-                      'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
-                      'worker-src': ["'self'", 'blob:'],
-                    },
-                    mode: 'report-only',
-                    reason:
-                      'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
-                  },
-                  cors: {
-                    allowedHeaders: [...crmCorsAllowedHeaders],
-                    allowedMethods: [...crmCorsAllowedMethods],
-                    allowedOrigins: crmCorsAllowedOrigins(moduleFederationDevServerOrigin),
-                    assets: true,
-                    reason: 'Allow the configured Shell to load CRM assets and invoke its BFF.',
-                  },
-                  enabled: true,
-                  headers: {
-                    contentTypeOptions: 'nosniff',
-                    permissionsPolicy:
-                      'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-                    referrerPolicy: 'strict-origin-when-cross-origin',
-                  },
-                  noindex: {
-                    localhost: true,
-                    previewHostnames: [],
-                    workersDev: true,
-                  },
-                },
-                ssr: true,
-              },
-            },
-          }
-        : {}),
+      ...cloudflareDeployment,
       dev: {
         // Remote dev manifests must publish an absolute publicPath so host
         // shells load remoteEntry.js and exposed chunks from this dev server.
@@ -264,7 +270,7 @@ export default defineConfig(
             ],
             languages: ['en', 'cs'],
             localePathRedirect: true,
-            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,
+            localisedUrls,
           },
           reactI18next: false,
         }),

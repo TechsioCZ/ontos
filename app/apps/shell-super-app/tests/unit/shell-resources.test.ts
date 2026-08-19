@@ -3,7 +3,7 @@ import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import type {
   ContextAccessDecision,
-  ContextAccessShape,
+  ContextAccessService,
   InstalledModuleCatalog,
   TenantModuleState,
 } from '@app/core-runtime';
@@ -152,7 +152,7 @@ const access = (
   moduleDecision: ContextAccessDecision = 'allowed',
   resourceDecision: ContextAccessDecision = 'allowed',
   resourceWriteDecision: ContextAccessDecision = resourceDecision,
-): ContextAccessShape => ({
+): ContextAccessService => ({
   legalEntities: () => Effect.succeed([]),
   modules: ({ moduleIds }) =>
     Effect.succeed(moduleIds.map((key) => ({ decision: moduleDecision, key }))),

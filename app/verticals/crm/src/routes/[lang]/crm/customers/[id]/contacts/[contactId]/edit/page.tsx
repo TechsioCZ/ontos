@@ -40,6 +40,11 @@ import { UltramodernRouteHead } from '../../../../../../../ultramodern-route-hea
 
 export type ContactEditPageRouteParams = Readonly<Partial<Record<'id' | 'contactId', string>>>;
 
+interface MutableContactEditPageRouteParams {
+  contactId?: string;
+  id?: string;
+}
+
 export interface ContactEditPageTarget {
   readonly writable: boolean;
 }
@@ -624,16 +629,15 @@ export const ContactEditPage = ({ routeParams, target }: ContactEditPageProps) =
 
 const StandaloneContactEditPage = () => {
   const routeParams = useParams({ strict: false });
+  const contactRouteParams: MutableContactEditPageRouteParams = {};
+  if (routeParams.contactId !== undefined) {
+    contactRouteParams.contactId = routeParams.contactId;
+  }
+  if (routeParams.id !== undefined) {
+    contactRouteParams.id = routeParams.id;
+  }
 
-  return (
-    <ContactEditPage
-      routeParams={{
-        ...(routeParams.contactId === undefined ? {} : { contactId: routeParams.contactId }),
-        ...(routeParams.id === undefined ? {} : { id: routeParams.id }),
-      }}
-      target={{ writable: false }}
-    />
-  );
+  return <ContactEditPage routeParams={contactRouteParams} target={{ writable: false }} />;
 };
 
 export default StandaloneContactEditPage;

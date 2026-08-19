@@ -96,6 +96,15 @@ test('decodes only exact eight-digit input and flat Customer-compatible output',
   ]);
 });
 
+interface CustomerAresProblemFixture {
+  _tag: string;
+  detail: string;
+  retryable?: boolean;
+  status: number;
+  title: string;
+  type: string;
+}
+
 test('declares only the required status-matched Problem Details union', () => {
   const fixtures = [
     [CustomerAresLookupInvalidProblemSchema, 'CustomerAresLookupInvalidProblem', 400],
@@ -106,14 +115,17 @@ test('declares only the required status-matched Problem Details union', () => {
     [CustomerAresLookupInternalProblemSchema, 'CustomerAresLookupInternalProblem', 500],
   ] as const;
   for (const [schema, tag, status] of fixtures) {
-    const decoded = Schema.decodeUnknownSync(schema)({
+    const problem: CustomerAresProblemFixture = {
       _tag: tag,
       detail: 'safe detail',
-      ...(status === 503 ? { retryable: true } : {}),
       status,
       title: 'safe title',
       type: 'https://ontos.dev/problems/test',
-    });
+    };
+    if (status === 503) {
+      problem.retryable = true;
+    }
+    const decoded = Schema.decodeUnknownSync(schema)(problem);
     assert.equal(decoded.status, status);
   }
 });
@@ -234,8 +246,14 @@ test('publishes the generated API and private client registration without an ARE
     /'customer-ares-lookup': \(\) => import\('\.\/src\/api\/customer-ares-lookup-client\.ts'\),/u,
   );
   const clientModule = await import('../../src/api/customer-ares-lookup-client.ts');
-  assert.equal(typeof clientModule.executeCustomerAresLookup, 'function');
-  assert.equal(typeof clientModule.executeCustomerAresLookupWithAuthorization, 'function');
+  assert.equal(
+    Object.prototype.toString.call(clientModule.executeCustomerAresLookup),
+    '[object Function]',
+  );
+  assert.equal(
+    Object.prototype.toString.call(clientModule.executeCustomerAresLookupWithAuthorization),
+    '[object Function]',
+  );
   const actionFiles = await readdir(new URL('../../src/actions/', import.meta.url));
   assert.equal(
     actionFiles.some((name) => name.includes('ares')),

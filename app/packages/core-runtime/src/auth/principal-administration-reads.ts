@@ -96,13 +96,16 @@ const services = (
           )
           .limit(limit + 1)
           .offset(offset);
-        const eligible = rows.filter((row) => row.kind === 'service' || row.kind === 'integration');
+        const eligible = rows.filter(
+          (row): row is typeof row & { readonly kind: 'integration' | 'service' } =>
+            row.kind === 'service' || row.kind === 'integration',
+        );
         return {
           items: eligible.slice(0, limit).map((row) => ({
             ...row,
             bindingCreatedAt: row.bindingCreatedAt?.toISOString() ?? null,
             bindingRevokedAt: row.bindingRevokedAt?.toISOString() ?? null,
-            kind: row.kind as 'integration' | 'service',
+            kind: row.kind,
           })),
           nextOffset: rows.length > limit ? offset + limit : null,
         };

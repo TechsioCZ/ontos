@@ -1,7 +1,20 @@
 // @effect-diagnostics processEnv:off
 import { config as loadDotenv } from 'dotenv';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { ROOT_ENV_PATH } from './config.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export class GatewayIssuerConfigError extends Schema.TaggedErrorClass<GatewayIssuerConfigError>()(
   'GatewayIssuerConfigError',
@@ -26,27 +39,26 @@ export interface GatewayIssuerConfigValue {
   readonly privateJwk: Ed25519PrivateJwk;
 }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const PrivateJwkInputSchema = Schema.Struct({
+  alg: Schema.Literal('EdDSA'),
+  crv: Schema.Literal('Ed25519'),
+  d: Schema.String,
+  key_ops: Schema.optional(Schema.Array(Schema.String)),
+  kid: Schema.String,
+  kty: Schema.Literal('OKP'),
+  use: Schema.Literal('sig'),
+  x: Schema.String,
+});
 
-const isBase64Url = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && /^[A-Za-z0-9_-]+$/u.test(value);
+const isBase64Url = <Value>(value: Value): value is Value & string =>
+  Predicate.isString(value) && value.length > 0 && /^[A-Za-z0-9_-]+$/u.test(value);
 
 const parsePrivateJwk = (encoded: string): Ed25519PrivateJwk => {
-  const parsed: unknown = JSON.parse(encoded);
-  if (
-    !isRecord(parsed) ||
-    parsed['kty'] !== 'OKP' ||
-    parsed['crv'] !== 'Ed25519' ||
-    parsed['alg'] !== 'EdDSA' ||
-    parsed['use'] !== 'sig' ||
-    !isBase64Url(parsed['kid']) ||
-    !isBase64Url(parsed['x']) ||
-    !isBase64Url(parsed['d'])
-  ) {
+  const parsed = Schema.decodeUnknownSync(PrivateJwkInputSchema)(JSON.parse(encoded));
+  if (!isBase64Url(parsed.kid) || !isBase64Url(parsed.x) || !isBase64Url(parsed.d)) {
     throw new Error('Private JWK is not a signing Ed25519 key');
   }
-  const keyOperations = parsed['key_ops'];
+  const keyOperations = parsed.key_ops;
   if (
     keyOperations !== undefined &&
     (!Array.isArray(keyOperations) || keyOperations.length !== 1 || keyOperations[0] !== 'sign')
@@ -54,16 +66,22 @@ const parsePrivateJwk = (encoded: string): Ed25519PrivateJwk => {
     throw new Error('Private JWK key_ops must contain only sign');
   }
 
-  return {
-    alg: 'EdDSA',
-    crv: 'Ed25519',
-    d: parsed['d'],
-    ...(keyOperations === undefined ? {} : { key_ops: ['sign'] }),
-    kid: parsed['kid'],
-    kty: 'OKP',
-    use: 'sig',
-    x: parsed['x'],
-  };
+  return withOptionalProperty(
+    {
+      alg: 'EdDSA',
+      crv: 'Ed25519',
+      d: parsed['d'],
+    },
+    !(keyOperations === undefined),
+    'key_ops',
+    ['sign'],
+    {
+      kid: parsed['kid'],
+      kty: 'OKP',
+      use: 'sig',
+      x: parsed['x'],
+    },
+  );
 };
 
 export const parseGatewayIssuerConfig = (

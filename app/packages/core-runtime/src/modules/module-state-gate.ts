@@ -14,13 +14,14 @@ import {
 } from './module-state-gate-errors.ts';
 import type { ModuleStateGateError } from './module-state-gate-errors.ts';
 import {
+  TENANT_MODULE_STATES,
   TenantModuleStateSchema,
   TenantModuleStateService,
   TenantModuleStateServiceLive,
 } from './tenant-module-state-service.ts';
 import type {
   TenantModuleState,
-  TenantModuleStateServiceShape,
+  TenantModuleStateServiceContract,
 } from './tenant-module-state-service.ts';
 
 export type ModuleStateDecision = 'allow' | 'deny';
@@ -47,7 +48,7 @@ export const tenantStatesAllowingAccess = (
   access: ModuleEntrypointAccess,
 ): readonly TenantModuleState[] =>
   Object.freeze(
-    (Object.entries(allowedAccessByState) as readonly [TenantModuleState, ReadonlySet<string>][])
+    TENANT_MODULE_STATES.map((state) => [state, allowedAccessByState[state]] as const)
       .filter(([, accesses]) => accesses.has(access))
       .map(([state]) => state)
       .toSorted(),
@@ -118,7 +119,9 @@ export const makeModuleStateSnapshot = (
   return snapshot;
 };
 
-const annotateCurrentSpan = (attributes: Readonly<Record<string, unknown>>) =>
+type ModuleStateSpanAttributes = Readonly<Record<string, boolean | number | string>>;
+
+const annotateCurrentSpan = (attributes: ModuleStateSpanAttributes) =>
   Effect.currentSpan.pipe(
     Effect.tap((span) =>
       Effect.sync(() => {
@@ -147,7 +150,7 @@ const recordAcquisitionTelemetry = (
   });
 
 export const prepareModuleStateSnapshot = (
-  stateService: TenantModuleStateServiceShape,
+  stateService: TenantModuleStateServiceContract,
   tenantId: string,
   entrypoints: readonly ModuleEntrypointDescriptor[],
 ): Effect.Effect<ModuleStateSnapshot, ModuleStateCheckUnavailableError> => {
@@ -246,7 +249,7 @@ export const checkModuleEntrypoint = (
   );
 };
 
-export interface ModuleStateGateShape {
+export interface ModuleStateGateService {
   readonly check: (
     snapshot: ModuleStateSnapshot,
     entrypoint: ModuleEntrypointDescriptor,
@@ -263,8 +266,8 @@ export interface ModuleStateGateShape {
 }
 
 export const makeModuleStateGate = (
-  stateService: TenantModuleStateServiceShape,
-): ModuleStateGateShape => ({
+  stateService: TenantModuleStateServiceContract,
+): ModuleStateGateService => ({
   check: checkModuleEntrypoint,
   prepareSnapshot: (tenantId, entrypoints) =>
     prepareModuleStateSnapshot(stateService, tenantId, entrypoints),
@@ -319,7 +322,7 @@ export const makeModuleStateGate = (
   },
 });
 
-export class ModuleStateGate extends Context.Service<ModuleStateGate, ModuleStateGateShape>()(
+export class ModuleStateGate extends Context.Service<ModuleStateGate, ModuleStateGateService>()(
   '@app/core-runtime/modules/module-state-gate/ModuleStateGate',
 ) {}
 

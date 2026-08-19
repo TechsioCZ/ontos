@@ -68,6 +68,7 @@
     "@modern-js/codesmith": "2.6.9",
     "@modern-js/create": "npm:@bleedingdev/modern-js-create@3.5.0-ultramodern.96",
     "@modern-js/plugin-bff": "npm:@bleedingdev/modern-js-plugin-bff@3.5.0-ultramodern.96",
+    "@oxlint/plugins": "1.79.0",
     "@types/node": "20.19.43",
     "@types/pg": "8.20.0",
     "@typescript/native": "npm:typescript@7.0.2",

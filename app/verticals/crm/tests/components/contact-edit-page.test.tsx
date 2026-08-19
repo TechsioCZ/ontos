@@ -8,6 +8,7 @@ import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { flattenCatalogKeys, translateCatalog } from '../support/locale-catalog.ts';
 import { consumeContactEditSuccess, getCrmQueryClient } from '../../src/crm-query-client.ts';
 import {
   ContactEditPage,
@@ -19,6 +20,10 @@ import {
   decodeContactEditRoute,
 } from '../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/edit/page.tsx';
 import { ContactDetailPage } from '../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.tsx';
+
+interface LocaleState {
+  current: 'cs' | 'en';
+}
 
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
@@ -32,35 +37,23 @@ const {
   localeState,
   navigateMock,
   runEffectRequestMock,
-} = rstest.hoisted(() => ({
-  editContactMock: rstest.fn(),
-  getContactMock: rstest.fn(),
-  historyBackMock: rstest.fn(),
-  historyCanGoBack: { current: false },
-  localeState: { current: 'en' as 'cs' | 'en' },
-  navigateMock: rstest.fn(() => Promise.resolve()),
-  runEffectRequestMock: rstest.fn(),
-}));
+} = rstest.hoisted(() => {
+  const state: LocaleState = { current: 'en' };
+  return {
+    editContactMock: rstest.fn(),
+    getContactMock: rstest.fn(),
+    historyBackMock: rstest.fn(),
+    historyCanGoBack: { current: false },
+    localeState: state,
+    navigateMock: rstest.fn(() => Promise.resolve()),
+    runEffectRequestMock: rstest.fn(),
+  };
+});
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
-const translate = (language: 'cs' | 'en', key: string): string => {
-  let current: unknown = catalogs[language];
-  for (const segment of key.split('.')) {
-    current =
-      typeof current === 'object' && current !== null
-        ? (current as Record<string, unknown>)[segment]
-        : undefined;
-  }
-  return typeof current === 'string' ? current : key;
-};
-
-const flattenKeys = (value: object, prefix = ''): string[] =>
-  Object.entries(value)
-    .flatMap(([key, child]) => {
-      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-      return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
-    })
-    .toSorted();
+const translate = (language: 'cs' | 'en', key: string): string =>
+  translateCatalog(catalogs[language], key);
+const flattenKeys = flattenCatalogKeys;
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -122,6 +115,11 @@ const updatedContact = {
   updatedAt: '2026-08-16T10:00:00.000Z',
 } as const;
 
+interface MutableContactEditRouteParams {
+  contactId?: string;
+  id?: string;
+}
+
 const renderFeature = (
   options: {
     readonly contactId?: string | undefined;
@@ -134,13 +132,17 @@ const renderFeature = (
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
+  const routeParams: MutableContactEditRouteParams = {};
+  if (routeContactId !== undefined) {
+    routeParams.contactId = routeContactId;
+  }
+  if (routeCustomerId !== undefined) {
+    routeParams.id = routeCustomerId;
+  }
   render(
     <QueryClientProvider client={queryClient}>
       <ContactEditFeature
-        routeParams={{
-          ...(routeContactId === undefined ? {} : { contactId: routeContactId }),
-          ...(routeCustomerId === undefined ? {} : { id: routeCustomerId }),
-        }}
+        routeParams={routeParams}
         target={{ writable: options.writable ?? true }}
       />
     </QueryClientProvider>,
@@ -278,7 +280,7 @@ describe('ContactEdit query states', () => {
     ],
     ['ContactDetailInternalProblem', 'The Contact could not be loaded safely. Try again.', true],
   ] as const)('renders the explicit %s state', async (tag, message, retryable) => {
-    getContactMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+    getContactMock.mockReturnValue(Effect.fail({ _tag: tag }));
     renderFeature();
 
     expect(await screen.findByText(message)).toBeTruthy();
@@ -286,9 +288,7 @@ describe('ContactEdit query states', () => {
   });
 
   test('bounds automatic retry for safe temporary read failures', async () => {
-    getContactMock.mockReturnValue(
-      Effect.fail({ _tag: 'ContactDetailUnavailableProblem' } as never),
-    );
+    getContactMock.mockReturnValue(Effect.fail({ _tag: 'ContactDetailUnavailableProblem' }));
     renderFeature();
 
     expect(
@@ -299,7 +299,7 @@ describe('ContactEdit query states', () => {
 
   test('retries from the keyboard and restores focus after a manual retry', async () => {
     getContactMock
-      .mockReturnValueOnce(Effect.fail({ _tag: 'ContactDetailInternalProblem' } as never))
+      .mockReturnValueOnce(Effect.fail({ _tag: 'ContactDetailInternalProblem' }))
       .mockReturnValueOnce(Effect.succeed(activeContact));
     const user = userEvent.setup();
     renderFeature();
@@ -314,18 +314,16 @@ describe('ContactEdit query states', () => {
   });
 
   test('maps the complete typed query failure union without exposing raw errors', () => {
-    expect(
-      classifyContactEditDetailError({ _tag: 'ContactDetailInvalidProblem' } as never),
-    ).toEqual({
+    expect(classifyContactEditDetailError({ _tag: 'ContactDetailInvalidProblem' })).toEqual({
       state: 'not_found',
     });
-    expect(classifyContactEditDetailError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
+    expect(classifyContactEditDetailError({ _tag: 'GatewayForbiddenProblem' })).toEqual({
       state: 'forbidden',
     });
     expect(
-      classifyContactEditDetailError({ _tag: 'GatewayAuthenticationRequiredProblem' } as never),
+      classifyContactEditDetailError({ _tag: 'GatewayAuthenticationRequiredProblem' }),
     ).toEqual({ state: 'authentication_expired' });
-    expect(classifyContactEditDetailError({ _tag: 'SchemaError' } as never)).toEqual({
+    expect(classifyContactEditDetailError({ _tag: 'SchemaError' })).toEqual({
       reason: 'decode',
       state: 'unavailable',
     });
@@ -333,14 +331,14 @@ describe('ContactEdit query states', () => {
       classifyContactEditDetailError({
         _tag: 'HttpClientError',
         reason: { _tag: 'TransportError' },
-      } as never),
+      }),
     ).toEqual({ reason: 'transport', state: 'unavailable' });
     for (const tag of [
       'ContactDetailUnavailableProblem',
       'GatewayRateLimitedProblem',
       'GatewayUnavailableProblem',
     ] as const) {
-      expect(classifyContactEditDetailError({ _tag: tag } as never)).toEqual({
+      expect(classifyContactEditDetailError({ _tag: tag })).toEqual({
         reason: 'backend',
         state: 'unavailable',
       });
@@ -350,7 +348,7 @@ describe('ContactEdit query states', () => {
       'GatewayAudienceInvalidProblem',
       'GatewayInternalProblem',
     ] as const) {
-      expect(classifyContactEditDetailError({ _tag: tag } as never)).toEqual({
+      expect(classifyContactEditDetailError({ _tag: tag })).toEqual({
         reason: 'internal',
         state: 'unavailable',
       });
@@ -472,7 +470,7 @@ describe('ContactEdit presentation and mutation', () => {
   test('reuses an idempotency key only after an uncertain unchanged retry', async () => {
     editContactMock
       .mockReturnValueOnce(
-        Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } } as never),
+        Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } }),
       )
       .mockReturnValueOnce(Effect.succeed(updatedContact));
     const user = userEvent.setup();
@@ -491,7 +489,7 @@ describe('ContactEdit presentation and mutation', () => {
   });
 
   test('creates a new key after the uncertain intent changes', async () => {
-    editContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+    editContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' }));
     const user = userEvent.setup();
     renderFeature();
     const name = await screen.findByRole('textbox', { name: /^Contact name/u });
@@ -507,7 +505,7 @@ describe('ContactEdit presentation and mutation', () => {
   });
 
   test('creates a new key after a definite failure with unchanged values', async () => {
-    editContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmForbiddenProblem' } as never));
+    editContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmForbiddenProblem' }));
     const user = userEvent.setup();
     renderFeature();
     await screen.findByRole('textbox', { name: /^Contact name/u });
@@ -529,7 +527,7 @@ describe('ContactEdit presentation and mutation', () => {
     ['CrmConflictProblem', 'The Contact changed while you were editing it.'],
     ['CrmInternalProblem', 'The Contact could not be saved safely.'],
   ] as const)('maps %s, retains values, and does not navigate', async (tag, message) => {
-    editContactMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+    editContactMock.mockReturnValue(Effect.fail({ _tag: tag }));
     const user = userEvent.setup();
     renderFeature();
     const name = await screen.findByRole('textbox', { name: /^Contact name/u });
@@ -565,21 +563,21 @@ describe('ContactEdit presentation and mutation', () => {
   );
 
   test('maps every mutation failure family to a closed presentation vocabulary', () => {
-    expect(classifyEditContactError({ _tag: 'CrmInvalidRequestProblem' } as never)).toEqual({
+    expect(classifyEditContactError({ _tag: 'CrmInvalidRequestProblem' })).toEqual({
       state: 'invalid_form',
     });
-    expect(classifyEditContactError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
+    expect(classifyEditContactError({ _tag: 'GatewayForbiddenProblem' })).toEqual({
       state: 'forbidden',
     });
-    expect(classifyEditContactError({ _tag: 'CrmPreconditionRequiredProblem' } as never)).toEqual({
+    expect(classifyEditContactError({ _tag: 'CrmPreconditionRequiredProblem' })).toEqual({
       state: 'conflict',
     });
-    expect(classifyEditContactError({ _tag: 'SchemaError' } as never)).toEqual({
+    expect(classifyEditContactError({ _tag: 'SchemaError' })).toEqual({
       reason: 'decode',
       state: 'unavailable',
       uncertain: true,
     });
-    expect(classifyEditContactError({ _tag: 'GatewayRateLimitedProblem' } as never)).toEqual({
+    expect(classifyEditContactError({ _tag: 'GatewayRateLimitedProblem' })).toEqual({
       reason: 'backend',
       state: 'unavailable',
       uncertain: true,
@@ -588,14 +586,14 @@ describe('ContactEdit presentation and mutation', () => {
       classifyEditContactError({
         _tag: 'HttpClientError',
         reason: { _tag: 'EmptyBodyError' },
-      } as never),
+      }),
     ).toEqual({ reason: 'decode', state: 'unavailable', uncertain: true });
     for (const tag of [
       'CrmInternalProblem',
       'GatewayAudienceInvalidProblem',
       'GatewayInternalProblem',
     ] as const) {
-      expect(classifyEditContactError({ _tag: tag } as never)).toEqual({ state: 'unexpected' });
+      expect(classifyEditContactError({ _tag: tag })).toEqual({ state: 'unexpected' });
     }
   });
 });

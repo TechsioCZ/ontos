@@ -12,7 +12,7 @@ export const GENERATED_OWNER = {
   slug: 'isolation-owner',
 } as const;
 
-const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+const json = <Value>(value: Value): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 
 const writeFixtureFile = async (

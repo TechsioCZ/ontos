@@ -110,22 +110,39 @@ export const parseOutboxPollingConfig = ({
 const hasActivity = (result: OutboxCycleResult): boolean =>
   result.messagesMatched > 0 || result.deliveriesCreated > 0 || result.claimed > 0;
 
-export const runOutboxPollingLoop = <
+export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration>(
+  input: RunOutboxPollingLoopInput<Registration>,
+): Effect.Effect<void, never, OutboxRuntime | OutboxWorkerRequirements<Registration>>;
+export function runOutboxPollingLoop<
   Registration extends AnyOutboxWorkerRegistration,
-  RunnerRequirements = OutboxRuntime,
+  RunnerRequirements,
 >(
   input: RunOutboxPollingLoopInput<Registration>,
-  runCycle: OutboxCycleRunner<
-    Registration,
-    RunnerRequirements
-  > = runOutboxCycle as OutboxCycleRunner<Registration, RunnerRequirements>,
-): Effect.Effect<void, never, RunnerRequirements | OutboxWorkerRequirements<Registration>> => {
-  const tick = runCycle({
+  runCycle: OutboxCycleRunner<Registration, RunnerRequirements>,
+): Effect.Effect<void, never, RunnerRequirements | OutboxWorkerRequirements<Registration>>;
+export function runOutboxPollingLoop<
+  Registration extends AnyOutboxWorkerRegistration,
+  RunnerRequirements,
+>(
+  input: RunOutboxPollingLoopInput<Registration>,
+  runCycle?: OutboxCycleRunner<Registration, RunnerRequirements>,
+): Effect.Effect<
+  void,
+  never,
+  OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>
+> {
+  const cycleInput = {
     claimOwner: input.config.claimOwner,
     maxDeliveries: input.config.maxDeliveries,
     registrations: input.registrations,
     subscriptions: input.subscriptions,
-  }).pipe(
+  };
+  const cycle: Effect.Effect<
+    OutboxCycleResult,
+    OutboxCycleError,
+    OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>
+  > = runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+  const tick = cycle.pipe(
     Effect.tap((result) =>
       hasActivity(result)
         ? Effect.annotateLogs(Effect.logInfo('Outbox polling cycle completed'), {
@@ -150,4 +167,4 @@ export const runOutboxPollingLoop = <
     Effect.repeat(Schedule.spaced(Duration.millis(input.config.pollIntervalMs))),
     Effect.asVoid,
   );
-};
+}

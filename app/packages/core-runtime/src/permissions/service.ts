@@ -1,6 +1,6 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed callback combinators are not Promise callback chains. */
 import { v1 } from '@authzed/authzed-node';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Effect, Layer, Predicate } from 'effect';
 import type { Scope } from 'effect';
 import { ActionPermissionCheckError } from '../actions/errors.ts';
 import { loadSpiceDbConfig } from './config.ts';
@@ -41,7 +41,7 @@ export interface ActionPermissionService {
 export interface PermissionCheckClient {
   readonly checkPermission: (
     request: v1.CheckPermissionRequest,
-  ) => Promise<v1.CheckPermissionResponse>;
+  ) => Promise<v1.CheckPermissionResponse | undefined>;
   readonly close: () => void;
 }
 
@@ -98,10 +98,14 @@ const executionRequest = (actionKey: string, principalId: string) =>
     subject: principalReference(principalId),
   });
 
-const classifyPermissionship = (
-  response: unknown,
+const classifyPermissionship = <Response>(
+  response: Response,
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> => {
-  if (typeof response !== 'object' || response === null || !('permissionship' in response)) {
+  if (
+    !Predicate.isObjectKeyword(response) ||
+    response === null ||
+    !('permissionship' in response)
+  ) {
     return Effect.fail(checkFailure());
   }
 

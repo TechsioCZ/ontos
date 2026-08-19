@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
+import { ActionResultValidationError, ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
 import { Effect, Layer } from '@modern-js/plugin-bff/effect-edge';
+import { Schema } from 'effect';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeCrmApiRuntime } from '../../api/index.ts';
@@ -23,6 +24,9 @@ import type {
   AresSubjectError,
   AresSubjectLookup,
 } from '../../src/integrations/ares/ares-subject.service.ts';
+import { parseJsonObject } from '../support/json-value.ts';
+import type { JsonObject } from '../support/json-value.ts';
+import { appendRequestChunk, webRequestInit } from '../support/node-http.ts';
 
 const principal = {
   authBindingId: 'b1000000-0000-4000-8000-000000000001',
@@ -48,7 +52,7 @@ const startServer = async (
   const server = createServer(async (request, response) => {
     const chunks: Uint8Array[] = [];
     for await (const chunk of request) {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+      appendRequestChunk(chunks, chunk);
     }
     const url = `http://${request.headers.host ?? '127.0.0.1'}${request.url ?? '/'}`;
     if (new URL(url).pathname === '/auth/gateway-context') {
@@ -60,11 +64,7 @@ const startServer = async (
       return;
     }
     const webResponse = await handler.handler(
-      new Request(url, {
-        ...(chunks.length === 0 ? {} : { body: Buffer.concat(chunks) }),
-        headers: request.headers as HeadersInit,
-        method: request.method ?? 'GET',
-      }),
+      new Request(url, webRequestInit(chunks, request.headers, request.method)),
     );
     response.statusCode = webResponse.status;
     for (const [key, value] of webResponse.headers) {
@@ -74,7 +74,7 @@ const startServer = async (
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  assert.ok(address !== null && typeof address === 'object');
+  assert.ok(address instanceof Object);
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     close: () =>
@@ -114,8 +114,8 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
   let permissionDecision: 'allowed' | 'denied' = 'allowed';
   let aresResult: Effect.Effect<AresSubject, AresSubjectError> = Effect.succeed(subject);
   const aresCalls: AresSubjectLookup[] = [];
-  const evidenceRows: Readonly<Record<string, unknown>>[] = [];
-  const actionCalls: Readonly<Record<string, unknown>>[] = [];
+  const evidenceRows: JsonObject[] = [];
+  const actionCalls: JsonObject[] = [];
   let executeCount = 0;
   const transaction = {
     delete: () => {},
@@ -133,7 +133,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
           };
     },
     insert: () => ({
-      values: async (value: Readonly<Record<string, unknown>>) => {
+      values: async (value: JsonObject) => {
         evidenceRows.push(value);
       },
     }),
@@ -144,16 +144,17 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
   const database = {
     executor: {
       insert: transaction.insert,
-      transaction: async (callback: (value: unknown) => Promise<unknown>) => callback(transaction),
+      transaction: <Result>(callback: (value: typeof transaction) => Promise<Result>) =>
+        callback(transaction),
     },
   };
   const readRuntime = makeReadRuntime(
-    database as never,
-    { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) } as never,
+    database,
+    { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) },
     {
       resolve: ({ correlationId }: { readonly correlationId: string }) =>
         Effect.succeed({ ...principal, correlationId }),
-    } as never,
+    },
     {
       legalEntities: () => Effect.succeed([]),
       modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
@@ -162,27 +163,33 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
       tenants: () => Effect.succeed([]),
     },
   );
-  const actionRuntime = {
+  const actionRuntime: ActionRuntimeService = {
     resolveActionCommit: () => Effect.die('Action commit resolution is not used by this test'),
-    runAction: (input: {
-      readonly payload: Readonly<Record<string, unknown>>;
-      readonly registration: { readonly descriptor: { readonly actionKey: string } };
-      readonly transport: Readonly<Record<string, unknown>>;
-    }) => {
+    runAction: (input) => {
+      const payload = parseJsonObject(input.payload);
+      const transport = parseJsonObject(input.transport);
       actionCalls.push({
         actionKey: input.registration.descriptor.actionKey,
-        payload: input.payload,
-        transport: input.transport,
+        payload,
+        transport,
       });
-      return Effect.succeed({
-        ...input.payload,
+      return Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)({
+        ...payload,
         archivedAt: null,
         createdAt: '2026-08-17T10:00:00.000Z',
         customerId: 'b5000000-0000-4000-8000-000000000001',
         updatedAt: '2026-08-17T10:00:00.000Z',
-      });
+      }).pipe(
+        Effect.mapError(
+          () =>
+            new ActionResultValidationError({
+              code: 'action_result_invalid',
+              reason: 'The Action fixture result does not match its declared schema',
+            }),
+        ),
+      );
     },
-  } as unknown as ActionRuntimeService;
+  };
   const aresService = {
     subject: (input: AresSubjectLookup) => {
       aresCalls.push(input);
@@ -258,7 +265,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
         },
       },
     ]);
-    const createPayload = actionCalls[0]?.['payload'] as Readonly<Record<string, unknown>>;
+    const createPayload = parseJsonObject(actionCalls[0]?.['payload']);
     assert.equal(Object.hasOwn(createPayload, 'address'), false);
     assert.equal(Object.hasOwn(createPayload, 'ares'), false);
     assert.equal(Object.hasOwn(createPayload, 'source'), false);
@@ -297,10 +304,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
     const forbidden = await Effect.runPromise(
       Effect.flip(lookupCustomerAres({ ico: subject.ico }, options)),
     );
-    assert.equal(
-      (forbidden as { readonly _tag: string })._tag,
-      'CustomerAresLookupForbiddenProblem',
-    );
+    assert.equal(parseJsonObject(forbidden)['_tag'], 'CustomerAresLookupForbiddenProblem');
     assert.equal(aresCalls.length, callsBeforeForbidden);
     assert.equal(evidenceRows.at(-1)?.['outcome'], 'denied');
     permissionDecision = 'allowed';
@@ -314,17 +318,14 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
     const notFound = await Effect.runPromise(
       Effect.flip(lookupCustomerAres({ ico: subject.ico }, options)),
     );
-    assert.equal((notFound as { readonly _tag: string })._tag, 'CustomerAresLookupNotFoundProblem');
+    assert.equal(parseJsonObject(notFound)['_tag'], 'CustomerAresLookupNotFoundProblem');
 
     const assertUnavailable = async (failure: AresSubjectError) => {
       aresResult = Effect.fail(failure);
       const unavailable = await Effect.runPromise(
         Effect.flip(lookupCustomerAres({ ico: subject.ico }, options)),
       );
-      assert.equal(
-        (unavailable as { readonly _tag: string })._tag,
-        'CustomerAresLookupUnavailableProblem',
-      );
+      assert.equal(parseJsonObject(unavailable)['_tag'], 'CustomerAresLookupUnavailableProblem');
       assert.equal(JSON.stringify(unavailable).includes('secret'), false);
     };
     await assertUnavailable(
@@ -349,7 +350,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
     const internal = await Effect.runPromise(
       Effect.flip(lookupCustomerAres({ ico: subject.ico }, options)),
     );
-    assert.equal((internal as { readonly _tag: string })._tag, 'CustomerAresLookupInternalProblem');
+    assert.equal(parseJsonObject(internal)['_tag'], 'CustomerAresLookupInternalProblem');
     assert.equal(JSON.stringify(internal).includes('secret'), false);
   } finally {
     await server.close();

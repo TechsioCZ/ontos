@@ -108,13 +108,13 @@ export interface AresSubjectLookup {
   readonly ico: string;
 }
 
-export interface AresSubjectServiceShape {
+export interface AresSubjectServiceContract {
   readonly subject: (input: AresSubjectLookup) => Effect.Effect<AresSubject, AresSubjectError>;
 }
 
 export class AresSubjectService extends Context.Service<
   AresSubjectService,
-  AresSubjectServiceShape
+  AresSubjectServiceContract
 >()('@app/crm/integrations/ares/ares-subject.service/AresSubjectService') {}
 
 const invalidIco = (): AresSubjectInvalidIco =>
@@ -282,7 +282,7 @@ const makeAresSubjectService = Effect.gen(function* makeAresSubjectServiceEffect
         }),
         Effect.withSpan('CRM.ARES.subject'),
       ),
-  } satisfies AresSubjectServiceShape;
+  } satisfies AresSubjectServiceContract;
 });
 
 export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresSubjectService);

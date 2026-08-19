@@ -33,7 +33,17 @@ export interface ContactFormStatus {
   readonly status: 'default' | 'error' | 'success' | 'warning';
 }
 
-export type ContactFormFieldErrors = Readonly<Partial<Record<keyof ContactFormValues, string>>>;
+export interface ContactFormFieldErrors {
+  readonly email?: string;
+  readonly name?: string;
+  readonly phone?: string;
+}
+
+interface MutableContactFormFieldErrors {
+  email?: string;
+  name?: string;
+  phone?: string;
+}
 
 export interface ContactFormProps {
   readonly copy: ContactFormCopy;
@@ -61,7 +71,7 @@ const normalizeValues = (values: ContactFormValues): ContactFormValues => ({
 });
 
 const localErrors = (values: ContactFormValues, copy: ContactFormCopy): ContactFormFieldErrors => {
-  const errors: Partial<Record<keyof ContactFormValues, string>> = {};
+  const errors: MutableContactFormFieldErrors = {};
   if (values.name.length === 0) {
     errors.name = copy.nameRequired;
   } else if (values.name.length > 200) {
@@ -88,7 +98,10 @@ const displayedErrors = (
   dismissed: boolean,
   fieldErrors: ContactFormFieldErrors | undefined,
   validationErrors: ContactFormFieldErrors,
-) => ({ ...(dismissed ? {} : fieldErrors), ...validationErrors });
+) =>
+  dismissed || fieldErrors === undefined
+    ? validationErrors
+    : { ...fieldErrors, ...validationErrors };
 
 const displayedFormStatus = (dismissed: boolean, formStatus: ContactFormStatus | undefined) =>
   dismissed ? undefined : formStatus;

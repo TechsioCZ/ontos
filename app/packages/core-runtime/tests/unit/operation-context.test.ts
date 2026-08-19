@@ -4,10 +4,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
 import {
-  makeSystemPrincipalContextResolver,
   registerSystemWorkload,
+  systemPrincipalContextResolverFromRepository,
 } from '../../src/auth/system-principal-context.ts';
-import { makeSupportRecoveryPrincipalContextResolver } from '../../src/auth/support-recovery-principal-context.ts';
+import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
@@ -111,21 +111,13 @@ test('rejects stale tenant, principal, revoked auth binding, and cross-tenant en
 
 test('preserves resolver-issued system provenance across operational scope construction', async () => {
   const systemContext = await Effect.runPromise(
-    makeSystemPrincipalContextResolver({
-      executor: {
-        select: () => ({
-          from: () => ({
-            innerJoin: () => ({
-              where: () => ({
-                limit: () =>
-                  Promise.resolve([
-                    { kind: 'system', principalStatus: 'active', tenantStatus: 'active' },
-                  ]),
-              }),
-            }),
-          }),
+    systemPrincipalContextResolverFromRepository({
+      load: () =>
+        Promise.resolve({
+          kind: 'system',
+          principalStatus: 'active',
+          tenantStatus: 'active',
         }),
-      } as never,
     }).resolve({
       principalId: principal.principalId,
       registration: registerSystemWorkload({ jobKey: 'operation-scope-test' }),
@@ -166,29 +158,15 @@ test('preserves resolver-issued system provenance across operational scope const
 
 test('permits only a resolver-branded support-stop recovery through inactive historical scope', async () => {
   const recoveryPrincipal = await Effect.runPromise(
-    makeSupportRecoveryPrincipalContextResolver({
-      executor: {
-        select: () => ({
-          from: () => {
-            const query = {
-              innerJoin: () => query,
-              where: () => ({
-                limit: () =>
-                  Promise.resolve([
-                    {
-                      bindingPrincipalId: principal.principalId,
-                      bindingTenantId: principal.tenantId,
-                      principalKind: 'human',
-                      principalTenantId: principal.tenantId,
-                      tenantId: principal.tenantId,
-                    },
-                  ]),
-              }),
-            };
-            return query;
-          },
+    supportRecoveryPrincipalContextResolverFromRepository({
+      load: () =>
+        Promise.resolve({
+          bindingPrincipalId: principal.principalId,
+          bindingTenantId: principal.tenantId,
+          principalKind: 'human',
+          principalTenantId: principal.tenantId,
+          tenantId: principal.tenantId,
         }),
-      } as never,
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,

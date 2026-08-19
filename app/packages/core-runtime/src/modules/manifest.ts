@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Schema, Predicate } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
@@ -175,7 +175,7 @@ export type OntosModuleDeploymentContract = typeof OntosModuleDeploymentContract
 export type OntosManifestActionValue = AnyActionRegistration;
 
 /** V0 accepts directly callable React-style component values. */
-export type OntosManifestComponentValue = (...arguments_: never[]) => unknown;
+export type OntosManifestComponentValue = (...arguments_: never[]) => void;
 
 export interface OntosAuthoredPublicEvent<
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never> = Schema.ConstraintDecoder<
@@ -206,15 +206,19 @@ export interface OntosModuleManifestInput {
 export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> =
   Readonly<Input>;
 
-const exactDecode = <S extends Schema.ConstraintDecoder<unknown, never>>(
+const exactDecode = <S extends Schema.ConstraintDecoder<unknown, never>, Value>(
   schema: S,
-  value: unknown,
+  value: Value,
 ): S['Type'] => Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(value);
 
-const assertExactKeys = (value: object, keys: readonly string[], label: string): void => {
+const assertExactKeys = <Value extends object>(
+  value: Value,
+  keys: readonly string[],
+  label: string,
+): void => {
   const allowed = new Set(keys);
   for (const key of Reflect.ownKeys(value)) {
-    if (typeof key !== 'string' || !allowed.has(key)) {
+    if (!Predicate.isString(key) || !allowed.has(key)) {
       throw new TypeError(`${label} contains unsupported private field ${String(key)}`);
     }
   }
@@ -224,12 +228,12 @@ const freezePlain = <Value extends object>(value: Value): Readonly<Value> => {
   for (const nested of Object.values(value)) {
     if (Array.isArray(nested)) {
       for (const item of nested) {
-        if (typeof item === 'object' && item !== null) {
+        if (Predicate.isObjectKeyword(item) && item !== null) {
           freezePlain(item);
         }
       }
       Object.freeze(nested);
-    } else if (typeof nested === 'object' && nested !== null) {
+    } else if (Predicate.isObjectKeyword(nested) && nested !== null) {
       freezePlain(nested);
     }
   }
@@ -252,16 +256,16 @@ const assertOwner = (owner: string, expected: string, label: string): void => {
   }
 };
 
-/**
- * Defines the owner-authored contract. Executable values remain direct references in this
- * in-process value and are never part of the serializable deployment contract.
- */
-export const defineOntosModuleManifest = <const Input extends OntosModuleManifestInput>(
+export const validateOntosModuleManifestFields = <
+  Input extends object,
+  PublicSurface extends object,
+>(
   input: Input,
-): OntosModuleManifest<Input> => {
+  publicSurface: PublicSurface,
+): void => {
   assertExactKeys(input, ['activation', 'module', 'publicSurface'], 'manifest');
   assertExactKeys(
-    input.publicSurface,
+    publicSurface,
     [
       'actions',
       'api',
@@ -274,6 +278,48 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     ],
     'manifest public surface',
   );
+};
+
+export const validateOntosModuleExecutableReferences = <
+  ActionValue,
+  ApiValue,
+  ComponentValue,
+  EventPayloadSchema,
+>(
+  actions: readonly ActionValue[],
+  apiValues: readonly ApiValue[],
+  componentValues: readonly ComponentValue[],
+  eventPayloadSchemas: readonly EventPayloadSchema[],
+  moduleId: string,
+): void => {
+  for (const action of actions) {
+    if (!isActionRegistration(action)) {
+      throw new TypeError('manifest Actions must be real values created by defineAction');
+    }
+    assertOwner(action.descriptor.owningModuleKey, moduleId, 'Action');
+    if (!action.descriptor.actionKey.startsWith(`${moduleId}.`)) {
+      throw new TypeError('Action key must be prefixed by its owning module ID');
+    }
+  }
+  if (apiValues.some((value) => !HttpApi.isHttpApi(value))) {
+    throw new TypeError('public API entries must reference real Effect HttpApi values');
+  }
+  if (componentValues.some((value) => !Predicate.isFunction(value))) {
+    throw new TypeError('public component entries must reference callable component values');
+  }
+  if (eventPayloadSchemas.some((value) => !Schema.isSchema(value))) {
+    throw new TypeError('public event payloadSchema must be an Effect Schema value');
+  }
+};
+
+/**
+ * Defines the owner-authored contract. Executable values remain direct references in this
+ * in-process value and are never part of the serializable deployment contract.
+ */
+export const defineOntosModuleManifest = <const Input extends OntosModuleManifestInput>(
+  input: Input,
+): OntosModuleManifest<Input> => {
+  validateOntosModuleManifestFields(input, input.publicSurface);
   exactDecode(OntosModuleIdentitySchema, input.module);
   exactDecode(OntosModuleActivationSchema, input.activation);
   if (input.module.kind !== 'business_module') {
@@ -284,17 +330,15 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   }
   assertUnique(input.activation.supportedStates, 'activation state');
 
+  validateOntosModuleExecutableReferences(
+    input.publicSurface.actions,
+    Object.values(input.publicSurface.api),
+    Object.values(input.publicSurface.components),
+    input.publicSurface.events.map(({ payloadSchema }) => payloadSchema),
+    input.module.id,
+  );
   const actionKeys = input.publicSurface.actions.map(({ descriptor }) => descriptor.actionKey);
   assertUnique(actionKeys, 'Action key');
-  for (const action of input.publicSurface.actions) {
-    if (!isActionRegistration(action)) {
-      throw new TypeError('manifest Actions must be real values created by defineAction');
-    }
-    assertOwner(action.descriptor.owningModuleKey, input.module.id, 'Action');
-    if (!action.descriptor.actionKey.startsWith(`${input.module.id}.`)) {
-      throw new TypeError('Action key must be prefixed by its owning module ID');
-    }
-  }
 
   const resources = input.publicSurface.resourceTypes.map((resource) =>
     exactDecode(OntosResourceTypeSchema, resource),
@@ -325,9 +369,6 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       if (!resourceSet.has(resourceType)) {
         throw new TypeError(`public event references undeclared resource type ${resourceType}`);
       }
-    }
-    if (!Schema.isSchema(event.payloadSchema)) {
-      throw new TypeError('public event payloadSchema must be an Effect Schema value');
     }
     return Object.freeze({
       ...event,
@@ -375,12 +416,6 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
 
   assertUnique(Object.keys(input.publicSurface.api), 'API key');
   assertUnique(Object.keys(input.publicSurface.components), 'component key');
-  if (Object.values(input.publicSurface.api).some((value) => !HttpApi.isHttpApi(value))) {
-    throw new TypeError('public API entries must reference real Effect HttpApi values');
-  }
-  if (Object.values(input.publicSurface.components).some((value) => typeof value !== 'function')) {
-    throw new TypeError('public component entries must reference callable component values');
-  }
   const componentKeys = new Set(
     Object.keys(input.publicSurface.components).map((key) => `${input.module.id}.${key}`),
   );
@@ -398,12 +433,14 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   });
 
   const manifest = {
+    ...input,
     activation: freezePlain({
       ...input.activation,
       supportedStates: [...input.activation.supportedStates],
     }),
     module: freezePlain({ ...input.module }),
-    publicSurface: Object.freeze({
+    publicSurface: {
+      ...input.publicSurface,
       actions: Object.freeze([...input.publicSurface.actions]),
       api: Object.freeze({ ...input.publicSurface.api }),
       components: Object.freeze({ ...input.publicSurface.components }),
@@ -433,11 +470,11 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
         search: [...shellContributions.search],
         timelines: [...shellContributions.timelines],
       }),
-    }),
-  } as unknown as Input;
+    },
+  };
   return Object.freeze(manifest);
 };
 
-export const decodeOntosModuleDeploymentContract = (
-  value: unknown,
+export const decodeOntosModuleDeploymentContract = <Value>(
+  value: Value,
 ): OntosModuleDeploymentContract => exactDecode(OntosModuleDeploymentContractSchema, value);

@@ -43,7 +43,7 @@ const makeClient = (
       if (result instanceof Error) {
         return Promise.reject(result);
       }
-      return Promise.resolve(result as v1.CheckPermissionResponse);
+      return Promise.resolve(result);
     },
     close: () => {},
   };

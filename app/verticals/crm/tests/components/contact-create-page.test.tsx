@@ -8,6 +8,7 @@ import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { flattenCatalogKeys, translateCatalog } from '../support/locale-catalog.ts';
 import {
   ContactCreateFeature,
   classifyCreateContactError,
@@ -15,38 +16,30 @@ import {
   decodeContactCreateId,
 } from '../../src/routes/[lang]/crm/customers/[id]/contacts/new/page.tsx';
 
+interface LocaleState {
+  current: 'cs' | 'en';
+}
+
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
 });
 
 const { createContactMock, localeState, navigateMock, runEffectRequestMock } = rstest.hoisted(
-  () => ({
-    createContactMock: rstest.fn(),
-    localeState: { current: 'en' as 'cs' | 'en' },
-    navigateMock: rstest.fn(() => Promise.resolve()),
-    runEffectRequestMock: rstest.fn(),
-  }),
+  () => {
+    const state: LocaleState = { current: 'en' };
+    return {
+      createContactMock: rstest.fn(),
+      localeState: state,
+      navigateMock: rstest.fn(() => Promise.resolve()),
+      runEffectRequestMock: rstest.fn(),
+    };
+  },
 );
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
-const translate = (language: 'cs' | 'en', key: string): string => {
-  let current: unknown = catalogs[language];
-  for (const segment of key.split('.')) {
-    current =
-      typeof current === 'object' && current !== null
-        ? (current as Record<string, unknown>)[segment]
-        : undefined;
-  }
-  return typeof current === 'string' ? current : key;
-};
-
-const flattenKeys = (value: object, prefix = ''): string[] =>
-  Object.entries(value)
-    .flatMap(([key, child]) => {
-      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-      return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
-    })
-    .toSorted();
+const translate = (language: 'cs' | 'en', key: string): string =>
+  translateCatalog(catalogs[language], key);
+const flattenKeys = flattenCatalogKeys;
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -237,7 +230,7 @@ test('shows the pending state and permits only one semantic mutation', async () 
 test('reuses an idempotency key only for an uncertain unchanged retry and refreshes correlation', async () => {
   createContactMock
     .mockReturnValueOnce(
-      Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } } as never),
+      Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } }),
     )
     .mockReturnValueOnce(Effect.succeed(contact));
   renderFeature();
@@ -255,7 +248,7 @@ test('reuses an idempotency key only for an uncertain unchanged retry and refres
 });
 
 test('creates a new key after an uncertain intent changes', async () => {
-  createContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  createContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' }));
   renderFeature();
   const user = await fillForm();
 
@@ -274,7 +267,7 @@ test('creates a new key after an uncertain intent changes', async () => {
 });
 
 test('creates a new key when the parent Customer changes after an uncertain failure', async () => {
-  createContactMock.mockReturnValue(Effect.fail({ _tag: 'GatewayUnavailableProblem' } as never));
+  createContactMock.mockReturnValue(Effect.fail({ _tag: 'GatewayUnavailableProblem' }));
   const view = renderFeature();
   const user = await fillForm();
   await user.click(screen.getByRole('button', { name: 'Create Contact' }));
@@ -291,7 +284,7 @@ test('creates a new key when the parent Customer changes after an uncertain fail
 });
 
 test('creates a fresh key after a definite failure without changing values', async () => {
-  createContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmForbiddenProblem' } as never));
+  createContactMock.mockReturnValue(Effect.fail({ _tag: 'CrmForbiddenProblem' }));
   renderFeature();
   const user = await fillForm();
   await user.click(screen.getByRole('button', { name: 'Create Contact' }));
@@ -312,7 +305,7 @@ test.each([
   ['CrmConflictProblem', 'The Contact could not be created because the request conflicts'],
   ['CrmInternalProblem', 'The Contact could not be created safely.'],
 ] as const)('maps the %s failure, retains values, and does not navigate', async (tag, message) => {
-  createContactMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+  createContactMock.mockReturnValue(Effect.fail({ _tag: tag }));
   renderFeature();
   const user = await fillForm();
 
@@ -326,36 +319,34 @@ test.each([
 });
 
 test('maps the complete typed client error union to a closed presentation vocabulary', () => {
-  expect(classifyCreateContactError({ _tag: 'CrmInvalidRequestProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'CrmInvalidRequestProblem' })).toEqual({
     state: 'invalid_form',
   });
-  expect(
-    classifyCreateContactError({ _tag: 'GatewayAuthenticationRequiredProblem' } as never),
-  ).toEqual({
+  expect(classifyCreateContactError({ _tag: 'GatewayAuthenticationRequiredProblem' })).toEqual({
     state: 'authentication_expired',
   });
-  expect(classifyCreateContactError({ _tag: 'GatewayForbiddenProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'GatewayForbiddenProblem' })).toEqual({
     state: 'forbidden',
   });
-  expect(classifyCreateContactError({ _tag: 'CrmForbiddenProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'CrmForbiddenProblem' })).toEqual({
     state: 'forbidden',
   });
-  expect(classifyCreateContactError({ _tag: 'CrmNotFoundProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'CrmNotFoundProblem' })).toEqual({
     state: 'not_found',
   });
-  expect(classifyCreateContactError({ _tag: 'CrmPreconditionRequiredProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'CrmPreconditionRequiredProblem' })).toEqual({
     state: 'conflict',
   });
-  expect(classifyCreateContactError({ _tag: 'CrmConflictProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'CrmConflictProblem' })).toEqual({
     state: 'conflict',
   });
-  expect(classifyCreateContactError({ _tag: 'GatewayRateLimitedProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'GatewayRateLimitedProblem' })).toEqual({
     reason: 'backend',
     state: 'unavailable',
     uncertain: true,
   });
   for (const tag of ['CrmUnavailableProblem', 'GatewayUnavailableProblem'] as const) {
-    expect(classifyCreateContactError({ _tag: tag } as never)).toEqual({
+    expect(classifyCreateContactError({ _tag: tag })).toEqual({
       reason: 'backend',
       state: 'unavailable',
       uncertain: true,
@@ -365,36 +356,36 @@ test('maps the complete typed client error union to a closed presentation vocabu
     classifyCreateContactError({
       _tag: 'HttpClientError',
       reason: { _tag: 'TransportError' },
-    } as never),
+    }),
   ).toEqual({ reason: 'transport', state: 'unavailable', uncertain: true });
   expect(
     classifyCreateContactError({
       _tag: 'HttpClientError',
       reason: { _tag: 'EmptyBodyError' },
-    } as never),
+    }),
   ).toEqual({ reason: 'decode', state: 'unavailable', uncertain: true });
   expect(
     classifyCreateContactError({
       _tag: 'HttpClientError',
       reason: { _tag: 'DecodeError' },
-    } as never),
+    }),
   ).toEqual({ reason: 'decode', state: 'unavailable', uncertain: true });
-  expect(classifyCreateContactError({ _tag: 'SchemaError' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'SchemaError' })).toEqual({
     reason: 'decode',
     state: 'unavailable',
     uncertain: true,
   });
-  expect(classifyCreateContactError({ _tag: 'GatewayAudienceInvalidProblem' } as never)).toEqual({
+  expect(classifyCreateContactError({ _tag: 'GatewayAudienceInvalidProblem' })).toEqual({
     state: 'unexpected',
   });
   for (const tag of ['CrmInternalProblem', 'GatewayInternalProblem'] as const) {
-    expect(classifyCreateContactError({ _tag: tag } as never)).toEqual({ state: 'unexpected' });
+    expect(classifyCreateContactError({ _tag: tag })).toEqual({ state: 'unexpected' });
   }
   expect(
     classifyCreateContactError({
       _tag: 'HttpClientError',
       reason: { _tag: 'UnexpectedError' },
-    } as never),
+    }),
   ).toEqual({ state: 'unexpected' });
 });
 

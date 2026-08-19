@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
@@ -20,16 +20,19 @@ export const trustResolvedSystemPrincipalContext = <Context extends TrustedPrinc
   return context;
 };
 
-export const isTrustedSystemPrincipalContext = (context: unknown): boolean =>
-  typeof context === 'object' &&
+export const isTrustedSystemPrincipalContext = <Context>(context: Context): boolean =>
+  Predicate.isObjectKeyword(context) &&
   context !== null &&
   trustedSystemContexts.has(context) &&
   'authMethod' in context &&
   context.authMethod === 'system';
 
-export const trustSupportRecoveryPrincipalContext = <Context extends TrustedPrincipalContext>(
+export const trustSupportRecoveryPrincipalContext = <
+  Context extends TrustedPrincipalContext,
+  Registration extends object,
+>(
   context: Context,
-  actionRegistration: object,
+  actionRegistration: Registration,
 ): Context => {
   if (context.authMethod !== 'session') {
     throw new TypeError('Only resolved session contexts can carry support recovery provenance');
@@ -38,11 +41,14 @@ export const trustSupportRecoveryPrincipalContext = <Context extends TrustedPrin
   return context;
 };
 
-export const isTrustedSupportRecoveryPrincipalContext = (
-  context: unknown,
-  actionRegistration?: object,
+export const isTrustedSupportRecoveryPrincipalContext = <
+  Context,
+  Registration extends object = object,
+>(
+  context: Context,
+  actionRegistration?: Registration,
 ): boolean => {
-  if (typeof context !== 'object' || context === null) {
+  if (!Predicate.isObjectKeyword(context) || context === null) {
     return false;
   }
   const trustedActionRegistration = trustedSupportRecoveryContexts.get(context);
@@ -54,14 +60,17 @@ export const isTrustedSupportRecoveryPrincipalContext = (
   );
 };
 
-export const preserveSystemPrincipalContextTrust = <Context extends TrustedPrincipalContext>(
-  source: unknown,
+export const preserveSystemPrincipalContextTrust = <
+  Source,
+  Context extends TrustedPrincipalContext,
+>(
+  source: Source,
   context: Context,
 ): Context => {
   if (isTrustedSystemPrincipalContext(source)) {
     return trustResolvedSystemPrincipalContext(context);
   }
-  if (typeof source === 'object' && source !== null) {
+  if (Predicate.isObjectKeyword(source) && source !== null) {
     const recoveryActionRegistration = trustedSupportRecoveryContexts.get(source);
     if (recoveryActionRegistration !== undefined) {
       return trustSupportRecoveryPrincipalContext(context, recoveryActionRegistration);
@@ -70,11 +79,11 @@ export const preserveSystemPrincipalContextTrust = <Context extends TrustedPrinc
   return context;
 };
 
-export const decodeTrustedPrincipalContext = (
-  input: unknown,
+export const decodeTrustedPrincipalContext = <Input>(
+  input: Input,
 ): Effect.Effect<TrustedPrincipalContext, TrustedPrincipalContextDecodeError> => {
   if (
-    typeof input === 'object' &&
+    Predicate.isObjectKeyword(input) &&
     input !== null &&
     'authMethod' in input &&
     input.authMethod === 'system' &&

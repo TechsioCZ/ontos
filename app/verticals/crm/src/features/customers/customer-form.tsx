@@ -152,11 +152,12 @@ export const CustomerForm = ({
       if ([...fieldsToClear].every((candidate) => current[candidate] === undefined)) {
         return current;
       }
-      return Object.fromEntries(
-        Object.entries(current).filter(
-          ([key]) => !fieldsToClear.has(key as keyof CustomerFormValues),
-        ),
-      );
+      if (field === 'establishedOn' || field === 'dissolvedOn') {
+        const { dissolvedOn: _dissolvedOn, establishedOn: _establishedOn, ...next } = current;
+        return next;
+      }
+      const { [field]: _fieldError, ...next } = current;
+      return next;
     });
     onValuesChange({ ...values, [field]: value });
   };

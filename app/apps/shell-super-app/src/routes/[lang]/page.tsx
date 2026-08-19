@@ -131,6 +131,6 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
 };
 
 export default function ShellHome() {
-  const initialModel = useLoaderData({ strict: false }) as HomePageModel;
+  const initialModel = useLoaderData({ from: '/$lang' });
   return <HomeView initialModel={initialModel} />;
 }

@@ -1,5 +1,5 @@
 /* eslint-disable max-classes-per-file -- The typed Outbox runtime error union is intentionally co-located. */
-import { Schema } from 'effect';
+import { Cause, Schema } from 'effect';
 
 const reason = { reason: Schema.String } as const;
 
@@ -49,7 +49,9 @@ export type OutboxWorkerError =
 
 const persistenceCauses = new WeakMap<OutboxPersistenceError, unknown>();
 
-export const outboxPersistenceError = (cause: unknown): OutboxPersistenceError => {
+export const outboxPersistenceError = <FailureCause>(
+  cause: FailureCause,
+): OutboxPersistenceError => {
   const failure = new OutboxPersistenceError({
     code: 'outbox_persistence_failed',
     reason: 'The Outbox Worker persistence operation failed',
@@ -58,8 +60,12 @@ export const outboxPersistenceError = (cause: unknown): OutboxPersistenceError =
   return failure;
 };
 
-export const getOutboxPersistenceCause = (failure: OutboxPersistenceError): unknown =>
-  persistenceCauses.get(failure);
+export const getOutboxPersistenceCause = (
+  failure: OutboxPersistenceError,
+): Cause.Cause<never> | undefined => {
+  const cause = persistenceCauses.get(failure);
+  return cause === undefined ? undefined : Cause.die(cause);
+};
 
 export const sanitizeOutboxErrorMessage = (message: string): string =>
   message

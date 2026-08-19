@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from '@rstest/core';
-import type { ContextAccessShape, LegalEntityContextShape } from '@app/core-runtime';
+import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   resolveAuthorizedLegalEntities,
@@ -18,7 +18,7 @@ const beta = {
   legalName: 'Beta',
 };
 
-const context = (entities = [alpha, beta] as const): LegalEntityContextShape => ({
+const context = (entities = [alpha, beta] as const): LegalEntityContextService => ({
   listActiveForTenant: () => Effect.succeed(entities),
   validateSelection: (_tenantId, legalEntityId) => {
     const selected = entities.find((entity) => entity.legalEntityId === legalEntityId);
@@ -28,7 +28,7 @@ const context = (entities = [alpha, beta] as const): LegalEntityContextShape => 
 
 const access = (
   decisions: Readonly<Record<string, 'allowed' | 'denied' | 'unavailable'>>,
-): ContextAccessShape => ({
+): ContextAccessService => ({
   legalEntities: ({ legalEntityIds }) =>
     Effect.succeed(legalEntityIds.map((key) => ({ decision: decisions[key] ?? 'denied', key }))),
   modules: ({ moduleIds }) =>

@@ -19,6 +19,7 @@ import {
   makeSystemPrincipalContextResolver,
   registerSystemWorkload,
 } from '../../src/auth/system-principal-context.ts';
+import { openModuleStateGate } from '../support/open-module-state-gate.ts';
 
 test('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
   const config = getTableConfig(dataAccessEvents);
@@ -87,7 +88,7 @@ test('commits live allowed evidence before releasing a governed read result', as
     );
     const runtime = makeReadRuntime(
       { executor: runtimeDatabase },
-      { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) } as never,
+      openModuleStateGate,
       makeOperationalScopeResolver(
         makeOperationalScopeRepository({ executor: runtimeDatabase }),
         contextAccess,

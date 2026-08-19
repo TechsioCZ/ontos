@@ -1,15 +1,32 @@
 // @effect-diagnostics asyncFunction:off
 /* eslint-disable no-await-in-loop -- Each typed checkpoint failure is asserted in isolation. */
 import { expect, test } from '@rstest/core';
+import type { SupportRecoveryPrincipalContextResolverService } from '@app/core-runtime';
 import {
   ActionAlreadyCommitted,
   ActionPermissionDenied,
+  ActionTransactionError,
   IdentityTargetInvalidError,
 } from '@app/core-runtime';
 import { makeSignature } from 'better-auth/crypto';
 import { Effect } from 'effect';
-import { session, supportImpersonationRecovery } from '../../api/auth/db/schema.ts';
+import type {
+  SupportAuthProvider,
+  SupportRecoveryRecord,
+} from '../../api/auth/impersonation-service.ts';
 import { makeSupportImpersonationService } from '../../api/auth/impersonation-service.ts';
+import {
+  actionCoreFailure,
+  actionDomainFailure,
+  actionSuccess,
+  makeActionRuntimeDouble,
+} from '../support/action-runtime-double.ts';
+import { makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
+import {
+  makeAuthenticationServiceDouble,
+  makeSupportAuthProviderDouble,
+  makeSupportImpersonationStoreDouble,
+} from '../support/impersonation-service-doubles.ts';
 
 const originalAuthBindingId = '10000000-0000-4000-8000-000000000001';
 const originalPrincipalId = '20000000-0000-4000-8000-000000000001';
@@ -26,7 +43,7 @@ const configuration = {
   supportUserIds: ['original-provider-user'],
   trustedOrigins: ['http://localhost:3000'],
 };
-const supportRecoveryPrincipal = {
+const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService = {
   resolveStoppedImpersonation: (input: {
     readonly originalAuthBindingId: string;
     readonly originalPrincipalId: string;
@@ -36,13 +53,13 @@ const supportRecoveryPrincipal = {
     Effect.succeed({
       authBindingId: input.originalAuthBindingId,
       authContextRef: `better-auth-session:${input.originalSessionId}`,
-      authMethod: 'session' as const,
+      authMethod: 'session',
       principalId: input.originalPrincipalId,
       tenantId: input.tenantId,
     }),
 };
 
-const provider = (impersonated: boolean) => ({
+const provider = (impersonated: boolean): SupportAuthProvider => ({
   api: {
     getSession: () =>
       Promise.resolve({
@@ -90,12 +107,16 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
       code: 'action_already_committed',
       reason: 'The requested checkpoint was already committed',
     }),
-  ] as const;
+  ];
   for (const failure of failures) {
     let providerCalls = 0;
+    const outcome =
+      failure._tag === 'IdentityTargetInvalidError'
+        ? actionDomainFailure(failure)
+        : actionCoreFailure(failure);
     const service = makeSupportImpersonationService({
-      actionRuntime: { runAction: () => Effect.fail(failure) } as never,
-      authentication: {
+      actionRuntime: makeActionRuntimeDouble([outcome]).runtime,
+      authentication: makeAuthenticationServiceDouble({
         resolveTenantContext: () =>
           Effect.succeed({
             principal: {
@@ -107,21 +128,19 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
             },
             state: 'authenticated',
           }),
-      } as never,
+      }),
       configuration,
-      database: {} as never,
-      provider: {
-        api: {
-          impersonateUser: () => {
-            providerCalls += 1;
-            return Promise.reject(new Error('must not create a session'));
-          },
+      provider: makeSupportAuthProviderDouble({
+        impersonateUser: () => {
+          providerCalls += 1;
+          return Promise.reject(new Error('must not create a session'));
         },
-      } as never,
-      resolver: {
+      }),
+      resolver: makePrincipalResolverDouble({
         resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
-      } as never,
-      supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+      }),
+      store: makeSupportImpersonationStoreDouble(),
+      supportRecoveryPrincipal,
     });
 
     const actual = await Effect.runPromise(
@@ -147,17 +166,13 @@ test('removes the provider session and recovery when started evidence cannot com
     reason: 'The started checkpoint was denied',
   });
   const deletedTables: string[] = [];
-  let checkpointCalls = 0;
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'requested', recorded: true }),
+    actionCoreFailure(startedFailure),
+  ]);
   const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: () => {
-        checkpointCalls += 1;
-        return checkpointCalls === 1
-          ? Effect.succeed({ checkpoint: 'requested', recorded: true })
-          : Effect.fail(startedFailure);
-      },
-    } as never,
-    authentication: {
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble({
       resolveTenantContext: () =>
         Effect.succeed({
           principal: {
@@ -169,31 +184,31 @@ test('removes the provider session and recovery when started evidence cannot com
           },
           state: 'authenticated',
         }),
-    } as never,
+    }),
     configuration,
-    database: {
-      delete: () => ({
-        where: () => {
-          deletedTables.push('deleted');
-          return Promise.resolve();
-        },
-      }),
-      insert: () => ({ values: () => ({ onConflictDoNothing: () => Promise.resolve() }) }),
-      update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
-    } as never,
-    provider: {
-      api: {
-        impersonateUser: () =>
-          Promise.resolve({
-            headers: new Headers(),
-            response: { session: { id: impersonationSessionId } },
-          }),
-      },
-    } as never,
-    resolver: {
+    provider: makeSupportAuthProviderDouble({
+      impersonateUser: () =>
+        Promise.resolve({
+          headers: new Headers(),
+          response: { session: { id: impersonationSessionId } },
+        }),
+    }),
+    resolver: makePrincipalResolverDouble({
       resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
-    } as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    }),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
+        deletedTables.push('deleted');
+        return Promise.resolve();
+      },
+      deleteSession: () => {
+        deletedTables.push('deleted');
+        return Promise.resolve();
+      },
+      insertRecovery: () => Promise.resolve(),
+      updateImpersonationSession: () => Promise.resolve(),
+    }),
+    supportRecoveryPrincipal,
   });
 
   const failure = await Effect.runPromise(
@@ -209,34 +224,36 @@ test('removes the provider session and recovery when started evidence cannot com
   );
 
   expect(failure).toBe(startedFailure);
-  expect(checkpointCalls).toBe(2);
+  expect(actionRuntime.invocationCount()).toBe(2);
   expect(deletedTables).toHaveLength(2);
 });
 
 test('persists stop recovery before provider restoration and returns restored cookies on evidence failure', async () => {
-  let recovery: Record<string, unknown> | undefined;
+  let recovery: SupportRecoveryRecord | undefined;
   let resolverCalled = false;
-  const database = {
-    insert: () => ({
-      values: (value: Record<string, unknown>) => {
-        recovery = value;
-        return { onConflictDoNothing: () => Promise.resolve() };
-      },
-    }),
-  };
+  const transactionFailure = new ActionTransactionError({
+    code: 'action_transaction_failed',
+    reason: 'The stopped checkpoint transaction failed',
+  });
   const service = makeSupportImpersonationService({
-    actionRuntime: { runAction: () => Effect.fail({ _tag: 'ActionTransactionError' }) } as never,
-    authentication: {} as never,
+    actionRuntime: makeActionRuntimeDouble([actionCoreFailure(transactionFailure)]).runtime,
+    authentication: makeAuthenticationServiceDouble(),
     configuration,
-    database: database as never,
-    provider: provider(true) as never,
-    resolver: {
+    provider: provider(true),
+    resolver: makePrincipalResolverDouble({
       resolveBetterAuthUserForTenant: () => {
         resolverCalled = true;
-        return Effect.fail(new Error('disabled principal'));
+        return Effect.die('disabled principal');
       },
-    } as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    }),
+    store: makeSupportImpersonationStoreDouble({
+      deleteSession: () => Promise.resolve(),
+      insertRecovery: (value) => {
+        recovery = value;
+        return Promise.resolve();
+      },
+    }),
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -275,41 +292,27 @@ test('terminates the target session before retrying stopped evidence from the re
   };
   let recoveryDeleted = false;
   let targetSessionActive = true;
-  let checkpointPayload: unknown;
-  const query = {
-    orderBy: () => Promise.resolve([recovery]),
-    where: () => query,
-  };
-  const database = {
-    delete: (table: unknown) => ({
-      where: () => {
-        if (table === session) {
-          targetSessionActive = false;
-        }
-        if (table === supportImpersonationRecovery) {
-          recoveryDeleted = true;
-        }
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeSupportImpersonationService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: provider(false),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
+        recoveryDeleted = true;
         return Promise.resolve();
       },
-    }),
-    select: () => ({ from: () => query }),
-  };
-  const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: (input: { readonly payload: unknown }) => {
-        if (targetSessionActive) {
-          return Effect.fail(new Error('target session remained active'));
-        }
-        checkpointPayload = input.payload;
-        return Effect.succeed({ checkpoint: 'stopped', recorded: true });
+      deleteSession: () => {
+        targetSessionActive = false;
+        return Promise.resolve();
       },
-    } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: provider(false) as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+      loadRecoveries: () => Promise.resolve([recovery]),
+    }),
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -320,7 +323,7 @@ test('terminates the target session before retrying stopped evidence from the re
     }),
   );
 
-  expect(checkpointPayload).toEqual({
+  expect(actionRuntime.payloads[0]).toEqual({
     checkpoint: 'stopped',
     originalPrincipalId,
     reason: 'Investigate support request',
@@ -358,34 +361,29 @@ test('completes every pending checkpoint correlated to the restored session', as
       tenantId,
     },
   ];
-  const checkpointSessionRefs: string[] = [];
   let deleteCount = 0;
-  const query = {
-    orderBy: () => Promise.resolve(recoveries),
-    where: () => query,
-  };
-  const database = {
-    delete: () => ({
-      where: () => {
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeSupportImpersonationService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: provider(false),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
         deleteCount += 1;
         return Promise.resolve();
       },
-    }),
-    select: () => ({ from: () => query }),
-  };
-  const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: (input: { readonly payload: { readonly sessionRef: string } }) => {
-        checkpointSessionRefs.push(input.payload.sessionRef);
-        return Effect.succeed({ checkpoint: 'stopped', recorded: true });
+      deleteSession: () => {
+        deleteCount += 1;
+        return Promise.resolve();
       },
-    } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: provider(false) as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+      loadRecoveries: () => Promise.resolve(recoveries),
+    }),
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -396,9 +394,9 @@ test('completes every pending checkpoint correlated to the restored session', as
     }),
   );
 
-  expect(checkpointSessionRefs).toEqual([
-    `better-auth-session:${impersonationSessionId}`,
-    `better-auth-session:${secondImpersonationSessionId}`,
+  expect(actionRuntime.payloads).toEqual([
+    expect.objectContaining({ sessionRef: `better-auth-session:${impersonationSessionId}` }),
+    expect.objectContaining({ sessionRef: `better-auth-session:${secondImpersonationSessionId}` }),
   ]);
   expect(result.checkpointPending).toBe(false);
   expect(deleteCount).toBe(4);
@@ -409,58 +407,45 @@ test('persists and completes stopped evidence on the first stop after impersonat
   const signedToken = encodeURIComponent(
     `${expiredToken}.${await makeSignature(expiredToken, configuration.secret)}`,
   );
-  let persistedRecovery: Record<string, unknown> | undefined;
+  let persistedRecovery: SupportRecoveryRecord | undefined;
   let deleteCalls = 0;
-  let checkpointPayload: unknown;
-  const database = {
-    delete: () => ({
-      where: () => {
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeSupportImpersonationService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: makeSupportAuthProviderDouble({
+      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+    }),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
         deleteCalls += 1;
         return Promise.resolve();
       },
-    }),
-    insert: () => ({
-      values: (value: Record<string, unknown>) => {
+      deleteSession: () => {
+        deleteCalls += 1;
+        return Promise.resolve();
+      },
+      insertRecovery: (value) => {
         persistedRecovery = value;
-        return { onConflictDoNothing: () => Promise.resolve() };
+        return Promise.resolve();
       },
-    }),
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: () =>
-            Promise.resolve([
-              {
-                actionId: 'expired-impersonation-action',
-                impersonatedBy: 'original-provider-user',
-                impersonationSessionId,
-                originalAuthBindingId,
-                originalPrincipalId,
-                originalSessionId: restoredSessionId,
-                reason: 'Investigate support request',
-                targetPrincipalId,
-                tenantId,
-              },
-            ]),
+      loadExpiredRecovery: () =>
+        Promise.resolve({
+          actionId: 'expired-impersonation-action',
+          impersonationSessionId,
+          originalAuthBindingId,
+          originalPrincipalId,
+          originalSessionId: restoredSessionId,
+          reason: 'Investigate support request',
+          targetPrincipalId,
+          tenantId,
         }),
-      }),
     }),
-  };
-  const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: (input: { readonly payload: unknown }) => {
-        checkpointPayload = input.payload;
-        return Effect.succeed({ checkpoint: 'stopped', recorded: true });
-      },
-    } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: {
-      api: { getSession: () => Promise.resolve({ headers: new Headers(), response: null }) },
-    } as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -480,7 +465,7 @@ test('persists and completes stopped evidence on the first stop after impersonat
       originalSessionId: restoredSessionId,
     }),
   );
-  expect(checkpointPayload).toEqual({
+  expect(actionRuntime.payloads[0]).toEqual({
     checkpoint: 'stopped',
     originalPrincipalId,
     reason: 'Investigate support request',
@@ -512,57 +497,32 @@ test('restores the original session and stopped checkpoint after the provider re
     targetPrincipalId,
     tenantId,
   };
-  let selectCall = 0;
-  let checkpointed = false;
   let deleted = false;
-  const database = {
-    delete: () => ({
-      where: () => {
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeSupportImpersonationService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: makeSupportAuthProviderDouble({
+      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+    }),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
         deleted = true;
         return Promise.resolve();
       },
+      deleteSession: () => Promise.resolve(),
+      loadOriginalSession: () =>
+        Promise.resolve({
+          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          id: restoredSessionId,
+        }),
+      loadRecoveries: () => Promise.resolve([recovery]),
     }),
-    select: () => {
-      selectCall += 1;
-      if (selectCall === 1) {
-        return {
-          from: () => ({
-            where: () => ({
-              limit: () =>
-                Promise.resolve([
-                  {
-                    expiresAt: new Date('2099-01-01T00:00:00.000Z'),
-                    id: restoredSessionId,
-                  },
-                ]),
-            }),
-          }),
-        };
-      }
-      const query = {
-        orderBy: () => Promise.resolve([recovery]),
-        where: () => query,
-      };
-      return { from: () => query };
-    },
-  };
-  const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: () => {
-        checkpointed = true;
-        return Effect.succeed({ checkpoint: 'stopped', recorded: true });
-      },
-    } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: {
-      api: {
-        getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
-      },
-    } as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -575,7 +535,7 @@ test('restores the original session and stopped checkpoint after the provider re
 
   expect(result.active).toBe(false);
   expect(result.checkpointPending).toBe(false);
-  expect(checkpointed).toBe(true);
+  expect(actionRuntime.invocationCount()).toBe(1);
   expect(deleted).toBe(true);
   const restoredSessionCookie = result.setCookieHeaders.find((header) =>
     header.startsWith('better-auth.session_token='),
@@ -611,54 +571,32 @@ test('completes stopped recovery when a lost response leaves only an expired ori
     targetPrincipalId,
     tenantId,
   };
-  let selectCall = 0;
-  let checkpointed = false;
   let deleted = false;
-  const query = {
-    orderBy: () => Promise.resolve([recovery]),
-    where: () => query,
-  };
-  const database = {
-    delete: () => ({
-      where: () => {
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeSupportImpersonationService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: makeSupportAuthProviderDouble({
+      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+    }),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
         deleted = true;
         return Promise.resolve();
       },
+      deleteSession: () => Promise.resolve(),
+      loadOriginalSession: () =>
+        Promise.resolve({
+          expiresAt: new Date('2000-01-01T00:00:00.000Z'),
+          id: restoredSessionId,
+        }),
+      loadRecoveries: () => Promise.resolve([recovery]),
     }),
-    select: () => {
-      selectCall += 1;
-      return selectCall === 1
-        ? {
-            from: () => ({
-              where: () => ({
-                limit: () =>
-                  Promise.resolve([
-                    {
-                      expiresAt: new Date('2000-01-01T00:00:00.000Z'),
-                      id: restoredSessionId,
-                    },
-                  ]),
-              }),
-            }),
-          }
-        : { from: () => query };
-    },
-  };
-  const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: () => {
-        checkpointed = true;
-        return Effect.succeed({ checkpoint: 'stopped', recorded: true });
-      },
-    } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: {
-      api: { getSession: () => Promise.resolve({ headers: new Headers(), response: null }) },
-    } as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -673,45 +611,40 @@ test('completes stopped recovery when a lost response leaves only an expired ori
 
   expect(result.active).toBe(false);
   expect(result.checkpointPending).toBe(false);
-  expect(checkpointed).toBe(true);
+  expect(actionRuntime.invocationCount()).toBe(1);
   expect(deleted).toBe(true);
   expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
 });
 
 test('clears a mismatched restored session and completes recovery from the recorded original', async () => {
-  let checkpointed = false;
   let deleted = false;
-  const database = {
-    delete: () => ({
-      where: () => {
+  const actionRuntime = makeActionRuntimeDouble([
+    actionSuccess({ checkpoint: 'stopped', recorded: true }),
+  ]);
+  const service = makeSupportImpersonationService({
+    actionRuntime: actionRuntime.runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: makeSupportAuthProviderDouble({
+      ...provider(true).api,
+      stopImpersonating: () => {
+        const headers = new Headers();
+        headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
+        return Promise.resolve({
+          headers,
+          response: { session: { id: 'unexpected-restored-session' } },
+        });
+      },
+    }),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteRecovery: () => {
         deleted = true;
         return Promise.resolve();
       },
+      insertRecovery: () => Promise.resolve(),
     }),
-    insert: () => ({ values: () => ({ onConflictDoNothing: () => Promise.resolve() }) }),
-  };
-  const mismatchedProvider = provider(true);
-  mismatchedProvider.api.stopImpersonating = () => {
-    const headers = new Headers();
-    headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
-    return Promise.resolve({
-      headers,
-      response: { session: { id: 'unexpected-restored-session' } },
-    });
-  };
-  const service = makeSupportImpersonationService({
-    actionRuntime: {
-      runAction: () => {
-        checkpointed = true;
-        return Effect.succeed({ checkpoint: 'stopped', recorded: true });
-      },
-    } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: mismatchedProvider as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(
@@ -723,7 +656,7 @@ test('clears a mismatched restored session and completes recovery from the recor
   );
 
   expect(result.checkpointPending).toBe(false);
-  expect(checkpointed).toBe(true);
+  expect(actionRuntime.invocationCount()).toBe(1);
   expect(deleted).toBe(true);
   expect(result.setCookieHeaders.every((header) => header.includes('Max-Age=0'))).toBe(true);
   expect(result.setCookieHeaders.some((header) => header.includes('unexpected'))).toBe(false);
@@ -731,27 +664,27 @@ test('clears a mismatched restored session and completes recovery from the recor
 
 test('deletes the impersonation session and clears cookies when original restoration fails', async () => {
   let deleteCalls = 0;
-  const database = {
-    delete: () => ({
-      where: () => {
+  const checkpointFailure = new ActionPermissionDenied({
+    code: 'action_permission_denied',
+    reason: 'The stopped checkpoint was denied',
+  });
+  const service = makeSupportImpersonationService({
+    actionRuntime: makeActionRuntimeDouble([actionCoreFailure(checkpointFailure)]).runtime,
+    authentication: makeAuthenticationServiceDouble(),
+    configuration,
+    provider: makeSupportAuthProviderDouble({
+      ...provider(true).api,
+      stopImpersonating: () => Promise.reject(new Error('admin session expired')),
+    }),
+    resolver: makePrincipalResolverDouble(),
+    store: makeSupportImpersonationStoreDouble({
+      deleteSession: () => {
         deleteCalls += 1;
         return Promise.resolve();
       },
+      insertRecovery: () => Promise.resolve(),
     }),
-    insert: () => ({
-      values: () => ({ onConflictDoNothing: () => Promise.resolve() }),
-    }),
-  };
-  const failingProvider = provider(true);
-  failingProvider.api.stopImpersonating = () => Promise.reject(new Error('admin session expired'));
-  const service = makeSupportImpersonationService({
-    actionRuntime: { runAction: () => Effect.fail({ _tag: 'OperationContextDenied' }) } as never,
-    authentication: {} as never,
-    configuration,
-    database: database as never,
-    provider: failingProvider as never,
-    resolver: {} as never,
-    supportRecoveryPrincipal: supportRecoveryPrincipal as never,
+    supportRecoveryPrincipal,
   });
 
   const result = await Effect.runPromise(

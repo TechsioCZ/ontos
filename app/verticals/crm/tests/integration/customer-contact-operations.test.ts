@@ -38,6 +38,7 @@ import type { CreateCustomerPayload } from '../../shared/apis/customer-detail.ts
 import { customers } from '../../src/db/schema.ts';
 import { AresSubjectService } from '../../src/integrations/ares/ares-subject.service.ts';
 import type { AresSubjectLookup } from '../../src/integrations/ares/ares-subject.service.ts';
+import type { JsonObject } from '../support/json-value.ts';
 
 const tenantId = randomUUID();
 const principalId = randomUUID();
@@ -60,10 +61,10 @@ const otherPrincipal = {
   tenantId: otherTenantId,
 };
 
-const transport = (idempotencyKey?: string) => ({
-  correlationId: randomUUID(),
-  ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-});
+const transport = (idempotencyKey?: string) =>
+  idempotencyKey === undefined
+    ? { correlationId: randomUUID() }
+    : { correlationId: randomUUID(), idempotencyKey };
 
 const customerPayload = (
   name: string,
@@ -101,46 +102,23 @@ const contextAccess = {
     ),
 };
 
-const failingEvidenceDatabase = (database: { readonly executor: any }) => ({
-  executor: new Proxy(database.executor, {
-    get(target, property) {
-      const value = Reflect.get(target, property, target) as unknown;
-      if (property !== 'transaction' || typeof value !== 'function') {
-        return typeof value === 'function' ? value.bind(target) : value;
-      }
-      return (callback: (transaction: any) => PromiseLike<unknown>) =>
-        (value as (callback: (transaction: any) => PromiseLike<unknown>) => Promise<unknown>).call(
-          target,
-          (transaction) =>
-            callback(
-              new Proxy(transaction, {
-                get(transactionTarget, operation) {
-                  const transactionValue = Reflect.get(
-                    transactionTarget,
-                    operation,
-                    transactionTarget,
-                  ) as unknown;
-                  if (operation === 'insert' && typeof transactionValue === 'function') {
-                    return (table: unknown) => {
-                      if (table === dataAccessEvents) {
-                        throw new Error('Injected CRM evidence persistence failure');
-                      }
-                      return (transactionValue as (targetTable: unknown) => unknown).call(
-                        transactionTarget,
-                        table,
-                      );
-                    };
-                  }
-                  return typeof transactionValue === 'function'
-                    ? transactionValue.bind(transactionTarget)
-                    : transactionValue;
-                },
-              }),
-            ),
-        );
-    },
-  }),
-});
+type OperationsDatabase = Effect.Success<ReturnType<typeof makeCoreDatabase>>;
+
+const failingEvidenceDatabase = (database: OperationsDatabase): OperationsDatabase => {
+  const executeTransaction = database.executor.transaction.bind(database.executor);
+  database.executor.transaction = (callback, configuration) =>
+    executeTransaction((transaction) => {
+      const insert = transaction.insert.bind(transaction);
+      transaction.insert = (table) => {
+        if (table === dataAccessEvents) {
+          throw new Error('Injected CRM evidence persistence failure');
+        }
+        return insert(table);
+      };
+      return callback(transaction);
+    }, configuration);
+  return database;
+};
 
 test('runs CRM writes and reads through the governed runtimes with durable evidence', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
@@ -226,7 +204,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
             {
               moduleEntrypointGateway: moduleGateway,
               moduleStateGate,
-              resolveServiceFactory: (() => (transaction: any, scope: any) =>
+              resolveServiceFactory: () => (transaction, scope) =>
                 Effect.succeed({
                   create: (payload: CreateCustomerPayload) =>
                     Effect.tryPromise({
@@ -250,7 +228,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
                         ),
                       ),
                     ),
-                })) as never,
+                }),
             },
           );
           const reads = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess);
@@ -924,15 +902,15 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
 
           const evidenceFailingDatabase = failingEvidenceDatabase(database);
           const failingGate = makeModuleStateGate(
-            makeTenantModuleStateService(evidenceFailingDatabase as never),
+            makeTenantModuleStateService(evidenceFailingDatabase),
           );
           const failingGateway = makeModuleEntrypointGateway(failingGate);
           const failingScopeResolver = makeOperationalScopeResolver(
-            makeOperationalScopeRepository(evidenceFailingDatabase as never),
+            makeOperationalScopeRepository(evidenceFailingDatabase),
             contextAccess,
           );
           const evidenceFailingReads = makeReadRuntime(
-            evidenceFailingDatabase as never,
+            evidenceFailingDatabase,
             failingGateway,
             failingScopeResolver,
             contextAccess,
@@ -1108,7 +1086,7 @@ test('runs CRM writes and reads through the governed runtimes with durable evide
           );
           assert.equal(editedAresCustomer.ico, '04803910');
           const persistedAresCustomer = yield* Effect.promise(() =>
-            adminPool.query<{ record: Readonly<Record<string, unknown>> }>(
+            adminPool.query<{ record: JsonObject }>(
               `select to_jsonb(customer) as record
                from crm.customers as customer
                where tenant_id = $1 and customer_id = $2`,

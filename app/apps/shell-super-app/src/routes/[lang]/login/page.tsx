@@ -1,3 +1,4 @@
+import { Predicate } from 'effect';
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
@@ -20,7 +21,7 @@ const validLogin: LoginValidation = {
   passwordMissing: false,
 };
 
-const authenticationErrorMessageKey = (errorTag: unknown) => {
+const authenticationErrorMessageKey = <ErrorTag,>(errorTag: ErrorTag) => {
   if (errorTag === 'InvalidCredentialsProblem') {
     return 'shell.login.error.invalid';
   }
@@ -52,8 +53,8 @@ export default function LoginPage() {
     const formData = new FormData(event.currentTarget);
     const login = formData.get('login');
     const password = formData.get('password');
-    const loginValue = typeof login === 'string' ? login : '';
-    const passwordValue = typeof password === 'string' ? password : '';
+    const loginValue = Predicate.isString(login) ? login : '';
+    const passwordValue = Predicate.isString(password) ? password : '';
     const nextValidation = {
       loginMissing: loginValue.trim().length === 0,
       passwordMissing: passwordValue.length === 0,
@@ -88,9 +89,9 @@ export default function LoginPage() {
       ),
     )
       .then(() => navigate({ to: `/${language}/` }))
-      .catch((error: unknown) => {
+      .catch(<Failure,>(error: Failure) => {
         const errorTag =
-          typeof error === 'object' && error !== null && '_tag' in error
+          Predicate.isObjectKeyword(error) && error !== null && '_tag' in error
             ? error._tag
             : 'AuthenticationInternalProblem';
         const messageKey = authenticationErrorMessageKey(errorTag);

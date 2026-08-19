@@ -19,17 +19,19 @@ const { navigateMock, runEffectRequestMock, signInMock } = rstest.hoisted(() => 
   signInMock: rstest.fn(() => ({ operation: 'signIn' })),
 }));
 
-const translations: Record<string, string> = {
-  'shell.login.back': '← Back to the home page',
-  'shell.login.field.login': 'Login',
-  'shell.login.field.password': 'Password',
-  'shell.login.required.login': 'Enter your login.',
-  'shell.login.required.password': 'Enter your password.',
-  'shell.login.submit': 'Login',
-  'shell.login.title': 'Login',
-  'shell.login.toast.description': 'Fill in both required fields.',
-  'shell.login.toast.title': 'Login details are incomplete',
-};
+const translations = new Map(
+  Object.entries({
+    'shell.login.back': '← Back to the home page',
+    'shell.login.field.login': 'Login',
+    'shell.login.field.password': 'Password',
+    'shell.login.required.login': 'Enter your login.',
+    'shell.login.required.password': 'Enter your password.',
+    'shell.login.submit': 'Login',
+    'shell.login.title': 'Login',
+    'shell.login.toast.description': 'Fill in both required fields.',
+    'shell.login.toast.title': 'Login details are incomplete',
+  }),
+);
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useLocalizedLocation: () => ({
@@ -41,7 +43,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   }),
   useModernI18n: () => ({
     language: 'en',
-    t: (key: string) => translations[key] ?? key,
+    t: (key: string) => translations.get(key) ?? key,
   }),
 }));
 

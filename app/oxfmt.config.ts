@@ -15,6 +15,7 @@ export default defineConfig({
     '.modernjs',
     '**/modern-tanstack/**',
     '**/routeTree.gen.*',
+    'tools/oxlint/anti-slop/**',
   ],
   singleQuote: true,
 });

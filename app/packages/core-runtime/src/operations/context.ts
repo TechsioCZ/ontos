@@ -1,9 +1,11 @@
 // @effect-diagnostics asyncFunction:off
 /* eslint-disable complexity -- The resolver intentionally keeps the fail-closed gate order visible. */
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect } from 'effect';
+import { Context, Effect, Layer } from 'effect';
 import { alias } from 'drizzle-orm/pg-core';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
+import { CoreDatabase } from '../db/client.ts';
+import { ContextAccess } from '../permissions/context-access.ts';
 import {
   isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
@@ -18,6 +20,19 @@ import {
   OperationContextUnavailable,
 } from './errors.ts';
 import type { OperationContextError } from './errors.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export const LEGAL_ENTITY_SCOPES = ['required', 'optional', 'forbidden'] as const;
 export type LegalEntityScope = (typeof LEGAL_ENTITY_SCOPES)[number];
@@ -71,7 +86,7 @@ export interface ResolveOperationalScopeInput {
   readonly traceId?: string;
 }
 
-export interface OperationalScopeResolverShape {
+export interface OperationalScopeResolverService {
   readonly resolve: (
     input: ResolveOperationalScopeInput,
   ) => Effect.Effect<OperationalScope, OperationContextError>;
@@ -79,7 +94,7 @@ export interface OperationalScopeResolverShape {
 
 export class OperationalScopeResolver extends Context.Service<
   OperationalScopeResolver,
-  OperationalScopeResolverShape
+  OperationalScopeResolverService
 >()('@app/core-runtime/operations/context/OperationalScopeResolver') {}
 
 export const makeOperationalScopeRepository = (database: {
@@ -170,7 +185,7 @@ export const makeOperationalScopeRepository = (database: {
 export const makeOperationalScopeResolver = (
   repository: OperationalScopeRepository,
   contextAccess: LegalEntityScopeAccess,
-): OperationalScopeResolverShape => ({
+): OperationalScopeResolverService => ({
   resolve: (input) =>
     Effect.gen(function* resolveOperationalScope() {
       const { principal } = input;
@@ -296,11 +311,27 @@ export const makeOperationalScopeResolver = (
       }
       return preserveSystemPrincipalContextTrust(
         principal,
-        Object.freeze({
-          ...principal,
-          correlationId: input.correlationId,
-          ...(input.traceId === undefined ? {} : { traceId: input.traceId }),
-        }),
+        Object.freeze(
+          withOptionalProperty(
+            {
+              ...principal,
+              correlationId: input.correlationId,
+            },
+            !(input.traceId === undefined),
+            'traceId',
+            input.traceId,
+            {},
+          ),
+        ),
       );
     }),
 });
+
+export const OperationalScopeResolverLive = Layer.effect(
+  OperationalScopeResolver,
+  Effect.gen(function* createOperationalScopeResolverService() {
+    const database = yield* CoreDatabase;
+    const contextAccess = yield* ContextAccess;
+    return makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess);
+  }),
+);

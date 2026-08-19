@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 // @effect-diagnostics asyncFunction:off
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import {
   decodeActionPayload,
   decodeActionResult,
   defineAction,
+  validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
 import {
@@ -227,17 +228,17 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
       () => Effect.void,
     ),
   );
-  assert.equal(typeof compileOnlyInvalidReferences, 'function');
+  assert.equal(Predicate.isFunction(compileOnlyInvalidReferences), true);
   assert.throws(() =>
-    defineAction(
-      { ...descriptor, policies: ['inventory.stock.available.v1'] } as never,
-      () => Effect.void,
-    ),
+    validateActionDescriptorInput({
+      ...descriptor,
+      policies: ['inventory.stock.available.v1'],
+    }),
   );
   assert.throws(() =>
-    defineAction({ ...descriptor, policies: [{ ...foreignPolicy }] } as never, () => Effect.void),
+    validateActionDescriptorInput({ ...descriptor, policies: [{ ...foreignPolicy }] }),
   );
-  assert.throws(() => defineAction(descriptor as never, () => Effect.void));
+  assert.throws(() => validateActionDescriptorInput(descriptor));
 });
 
 test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
@@ -265,62 +266,49 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
     () => Effect.void,
   );
   assert.throws(() =>
-    defineAction(
-      {
-        ...registration.descriptor,
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'write',
-          entrypointKey: 'billing.invoice.reserve',
-          moduleKey: 'billing.invoice',
-          role: 'action',
-        }),
-      } as never,
-      () => Effect.void,
-    ),
+    validateActionDescriptorInput({
+      ...registration.descriptor,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'billing.invoice.reserve',
+        moduleKey: 'billing.invoice',
+        role: 'action',
+      }),
+    }),
   );
   assert.throws(() =>
-    defineAction(
-      {
-        ...registration.descriptor,
-        entrypoint: defineSystemModuleEntrypoint({
-          access: 'write',
-          entrypointKey: 'inventory.stock.reserve',
-          moduleKey: 'inventory.stock',
-          role: 'action',
-        }),
-      } as never,
-      () => Effect.void,
-    ),
+    validateActionDescriptorInput({
+      ...registration.descriptor,
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'inventory.stock.reserve',
+        moduleKey: 'inventory.stock',
+        role: 'action',
+      }),
+    }),
   );
   assert.throws(() =>
-    defineAction(
-      {
-        ...registration.descriptor,
-        actionKey: 'core.modules.change-state',
-        entrypoint: defineTenantModuleEntrypoint({
-          access: 'write',
-          entrypointKey: 'core.modules.change-state',
-          moduleKey: 'core.modules',
-          role: 'action',
-        }),
-        owningModuleKey: 'core.modules',
-      } as never,
-      () => Effect.void,
-    ),
+    validateActionDescriptorInput({
+      ...registration.descriptor,
+      entrypoint: defineTenantModuleEntrypoint({
+        access: 'write',
+        entrypointKey: 'core.modules.change-state',
+        moduleKey: 'core.modules',
+        role: 'action',
+      }),
+      owningModuleKey: 'core.modules',
+    }),
   );
   assert.throws(() =>
-    defineAction(
-      {
-        ...registration.descriptor,
-        entrypoint: { ...registration.descriptor.entrypoint },
-      } as never,
-      () => Effect.void,
-    ),
+    validateActionDescriptorInput({
+      ...registration.descriptor,
+      entrypoint: { ...registration.descriptor.entrypoint },
+    }),
   );
   assert.throws(() =>
-    defineAction(
-      { ...registration.descriptor, legalEntityScope: 'implicit' } as never,
-      () => Effect.void,
-    ),
+    validateActionDescriptorInput({
+      ...registration.descriptor,
+      legalEntityScope: 'implicit',
+    }),
   );
 });

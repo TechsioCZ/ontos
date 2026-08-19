@@ -2,7 +2,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import type { AddressInfo } from 'node:net';
 import test from 'node:test';
 import {
   defineAction,
@@ -14,7 +13,7 @@ import {
   getVerticalRuntimeActions,
   getVerticalRuntimeOutboxWorkers,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import { makeEffectHttpApiClient } from '@modern-js/plugin-bff/effect-client';
 import { deriveDeploymentAllowlist } from '../../api/modules/deployment-allowlist.ts';
@@ -186,7 +185,7 @@ const propertyRuntimeRegistration = defineVerticalRuntimeRegistration({
 
 const propertySafeRuntime = extractVerticalRuntimeSafeDescriptors(propertyRuntimeRegistration);
 
-const serve = async (document: unknown) => {
+const serve = async <Document>(document: Document) => {
   let requests = 0;
   const server = createServer((_request, response) => {
     requests += 1;
@@ -195,7 +194,11 @@ const serve = async (document: unknown) => {
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  const { port } = server.address() as AddressInfo;
+  const address = server.address();
+  if (address === null || Predicate.isString(address)) {
+    throw new TypeError('Test catalog server did not expose a TCP address');
+  }
+  const { port } = address;
   return {
     close: async () => {
       const closed = once(server, 'close');

@@ -77,6 +77,7 @@ interface CustomerDetailReadyModel {
   readonly customerId: string;
   readonly dic: string;
   readonly dissolvedOn: string;
+  readonly edit: string;
   readonly dissolvedOnIso: null | string;
   readonly establishedOn: string;
   readonly establishedOnIso: null | string;
@@ -121,7 +122,6 @@ interface CustomerDetailCopy {
   readonly decode: string;
   readonly dic: string;
   readonly dissolvedOn: string;
-  readonly edit: string;
   readonly establishedOn: string;
   readonly forbidden: string;
   readonly ico: string;
@@ -189,7 +189,7 @@ interface CustomerDetailViewProps {
   readonly backHref: string;
   readonly copy: CustomerDetailCopy;
   readonly editHref: string | undefined;
-  readonly onRetry: () => Promise<unknown>;
+  readonly onRetry: () => Promise<void>;
   readonly retrying: boolean;
   readonly view: CustomerDetailViewState;
 }
@@ -633,7 +633,7 @@ interface CustomerContactsProps {
   readonly createHref: string;
   readonly lifecycleError: null | string;
   readonly nextHref: null | string;
-  readonly onRetry: () => Promise<unknown>;
+  readonly onRetry: () => Promise<void>;
   readonly onStatusChange: (status: ContactArchiveFilter) => void;
   readonly onToggleLifecycle: (contactId: string, lifecycle: 'active' | 'archived') => void;
   readonly pendingContactId: null | string;
@@ -1113,7 +1113,9 @@ const CustomerContactsQuery = ({
             )
           : null
       }
-      onRetry={refetch}
+      onRetry={async () => {
+        await refetch();
+      }}
       onStatusChange={(nextStatus) => {
         void navigate({
           to: buildCustomerContactListHref(language, customerId, search, nextStatus, 0),
@@ -1185,7 +1187,9 @@ const CustomerDetailQuery = ({
         backHref={backHref}
         copy={copy}
         editHref={`/${language}/crm/customers/${customerId}/edit`}
-        onRetry={refetch}
+        onRetry={async () => {
+          await refetch();
+        }}
         retrying={query.isFetching && !query.isPending}
         view={view}
       />

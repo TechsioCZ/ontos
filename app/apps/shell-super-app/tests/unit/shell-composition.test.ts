@@ -3,7 +3,7 @@ import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import type {
   ContextAccessDecision,
-  ContextAccessShape,
+  ContextAccessService,
   InstalledModuleCatalog,
   TenantModuleState,
 } from '@app/core-runtime';
@@ -138,7 +138,7 @@ const catalogWithSecondPropertyPage = (): InstalledModuleCatalog => {
 const contextAccess = (
   decisions: Readonly<Record<string, ContextAccessDecision>>,
   onBatch?: (moduleIds: readonly string[]) => void,
-): ContextAccessShape => ({
+): ContextAccessService => ({
   legalEntities: () => Effect.succeed([]),
   modules: ({ moduleIds }) => {
     onBatch?.(moduleIds);

@@ -1,24 +1,41 @@
+import { Predicate, Schema } from 'effect';
+
 const contractPath = '/.well-known/ontos-module-manifest.json';
 
 type EnvironmentReader = (name: string) => string | undefined;
+type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
+type JsonObject = Readonly<Record<string, JsonValue>>;
+const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
 export interface ModuleDeploymentAllowlistBuildInput {
   readonly cloudflareDeployEnabled: boolean;
-  readonly developmentOverlay: unknown;
+  readonly developmentOverlay: JsonValue;
   readonly readEnvironment: EnvironmentReader;
-  readonly topology: unknown;
+  readonly topology: JsonValue;
 }
 
-const object = (value: unknown, label: string): Readonly<Record<string, unknown>> => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+export type ModuleDeploymentAllowlistBuildOutput =
+  | {
+      readonly environment: 'development';
+      readonly overlay: JsonValue;
+      readonly topology: JsonValue;
+    }
+  | {
+      readonly environment: string;
+      readonly ontosModuleManifests: Readonly<Record<string, string>>;
+      readonly topology: JsonValue;
+    };
+
+const object = (value: JsonValue, label: string): JsonObject => {
+  if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
     throw new TypeError(`${label} must be an object`);
   }
-  return value as Readonly<Record<string, unknown>>;
+  return Schema.decodeUnknownSync(JsonObjectSchema)(value);
 };
 
-const publicUrlEnvironmentName = (vertical: Readonly<Record<string, unknown>>): string => {
+const publicUrlEnvironmentName = (vertical: JsonObject): string => {
   const direct = object(vertical['cloudflare'], 'vertical cloudflare metadata')['publicUrlEnv'];
-  if (typeof direct !== 'string' || direct.length === 0) {
+  if (!Predicate.isString(direct) || direct.length === 0) {
     throw new TypeError('vertical Cloudflare public URL environment name is missing');
   }
   return direct;
@@ -30,7 +47,7 @@ export const createModuleDeploymentAllowlistBuildInput = ({
   developmentOverlay,
   readEnvironment,
   topology,
-}: ModuleDeploymentAllowlistBuildInput): Readonly<Record<string, unknown>> => {
+}: ModuleDeploymentAllowlistBuildInput): ModuleDeploymentAllowlistBuildOutput => {
   const configuredEnvironment = readEnvironment('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')?.trim();
   let environment = cloudflareDeployEnabled ? 'production' : 'development';
   if (configuredEnvironment !== undefined && configuredEnvironment.length > 0) {
@@ -53,7 +70,7 @@ export const createModuleDeploymentAllowlistBuildInput = ({
     verticals.map((value) => {
       const vertical = object(value, 'topology vertical');
       const appId = vertical['id'];
-      if (typeof appId !== 'string' || appId.length === 0) {
+      if (!Predicate.isString(appId) || appId.length === 0) {
         throw new TypeError('topology vertical app ID is missing');
       }
       const environmentName = publicUrlEnvironmentName(vertical);

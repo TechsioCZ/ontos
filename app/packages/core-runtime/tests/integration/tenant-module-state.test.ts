@@ -4,11 +4,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { Cause, Effect, Exit } from 'effect';
+import { Cause, Effect, Exit, Predicate } from 'effect';
 import type { InstalledModuleCatalog, OntosModuleDeploymentContract } from '../../src/index.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import {
@@ -36,7 +37,7 @@ const bindingOne = randomUUID();
 const bindingTwo = randomUUID();
 const tenantIds = [tenantOne, tenantTwo] as const;
 
-type DatabaseShape = Parameters<typeof makeActionRuntime>[0];
+type DatabaseService = Parameters<typeof makeActionRuntime>[0];
 
 const installedContract = (moduleId: string): OntosModuleDeploymentContract => ({
   deployment: { appId: 'test-module', buildMarker: 'test-build' },
@@ -86,10 +87,13 @@ const installedContract = (moduleId: string): OntosModuleDeploymentContract => (
   schemaVersion: '2',
 });
 
+const noInstalledContracts: readonly OntosModuleDeploymentContract[] = Object.freeze([]);
+
 const installedCatalog: InstalledModuleCatalog = Object.freeze({
-  contracts: Object.freeze([]),
+  contracts: noInstalledContracts,
   deploymentAppIds: Object.freeze([]),
-  getByDeploymentAppId: () => {},
+  getByDeploymentAppId: (appId: string) =>
+    noInstalledContracts.find(({ deployment }) => deployment.appId === appId),
   getByModuleId: (moduleId: string) => installedContract(moduleId),
   moduleIds: Object.freeze([]),
   outboxSubscriptions: Object.freeze([]),
@@ -112,7 +116,7 @@ const catalogFrom = (
 
 const withDatabase = <Value, Error>(
   operation: (
-    database: DatabaseShape,
+    database: DatabaseService,
   ) => Effect.Effect<Value, Error, InstalledModuleCatalogService | TenantModuleStateService>,
 ) =>
   Effect.scoped(
@@ -129,7 +133,7 @@ const withDatabase = <Value, Error>(
   );
 
 const databasePromise = <Value>(
-  operation: (database: DatabaseShape) => PromiseLike<Value>,
+  operation: (database: DatabaseService) => PromiseLike<Value>,
 ): Promise<Value> =>
   Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
@@ -257,7 +261,7 @@ const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined 
   }
   const failure = Cause.findErrorOption(exit.cause);
   return failure._tag === 'Some' &&
-    typeof failure.value === 'object' &&
+    Predicate.isObjectKeyword(failure.value) &&
     failure.value !== null &&
     '_tag' in failure.value
     ? String(failure.value._tag)
@@ -302,6 +306,7 @@ test('atomically creates and transitions state with truthful Action history and 
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return Effect.gen(function* transitionSequence() {
         const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
@@ -411,6 +416,7 @@ test('supports every declared state independently of other installed module stat
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       const withCatalog = <Value, Error, Requirements>(
         effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
@@ -474,6 +480,7 @@ test('idempotent replay and same-state rejection create no duplicate history or 
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return runtime.runAction(input);
     }),
@@ -485,6 +492,7 @@ test('idempotent replay and same-state rejection create no duplicate history or 
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return Effect.exit(runtime.runAction(input));
     }),
@@ -498,6 +506,7 @@ test('idempotent replay and same-state rejection create no duplicate history or 
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'same-state')));
     }),
@@ -529,45 +538,28 @@ test('idempotent replay and same-state rejection create no duplicate history or 
   });
 });
 
-const withTenantStateWriteFailure = (database: DatabaseShape): DatabaseShape => ({
-  executor: new Proxy(database.executor, {
-    get(target, property) {
-      if (property !== 'transaction') {
-        const value = Reflect.get(target, property, target) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
-      }
-      const transaction = target.transaction as unknown as (
-        callback: (executor: object) => PromiseLike<unknown>,
-      ) => Promise<unknown>;
-      return (callback: (executor: object) => PromiseLike<unknown>) =>
-        transaction.call(target, (executor) =>
-          callback(
-            new Proxy(executor, {
-              get(transactionTarget, operation) {
-                const value = Reflect.get(
-                  transactionTarget,
-                  operation,
-                  transactionTarget,
-                ) as unknown;
-                if (operation === 'insert' && typeof value === 'function') {
-                  return (table: unknown) => {
-                    if (table === tenantModuleStates) {
-                      throw new Error('Injected current-state persistence failure');
-                    }
-                    return (value as (targetTable: unknown) => unknown).call(
-                      transactionTarget,
-                      table,
-                    );
-                  };
-                }
-                return typeof value === 'function' ? value.bind(transactionTarget) : value;
-              },
-            }),
-          ),
-        );
-    },
-  }),
-});
+const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService => {
+  const transactionOverride = {
+    transaction: (callback, configuration) =>
+      database.executor.transaction((transaction) => {
+        const insert: typeof transaction.insert = (table) => {
+          if (Object.is(table, tenantModuleStates)) {
+            throw new Error('Injected current-state persistence failure');
+          }
+          return transaction.insert(table);
+        };
+        const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
+          insert,
+        });
+        return callback(faultingTransaction);
+      }, configuration),
+  } satisfies Pick<DatabaseService['executor'], 'transaction'>;
+  const executor: DatabaseService['executor'] = Object.assign(
+    Object.create(database.executor),
+    transactionOverride,
+  );
+  return { executor };
+};
 
 test('rolls back history and Action evidence when current-state persistence fails', async () => {
   const moduleKey = testModuleKey('rollback', tenantOne);
@@ -578,6 +570,7 @@ test('rolls back history and Action evidence when current-state persistence fail
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
     }),
@@ -617,16 +610,19 @@ test('serializes concurrent transitions into one truthful history chain', async 
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return runtime.runAction(actionInput(moduleKey, 'inactive', 'concurrent-initial'));
     }),
   );
 
   const exits = await Promise.all(
-    [
-      ['active', 'concurrent-active'],
-      ['suspended', 'concurrent-suspended'],
-    ].map(([state, key]) =>
+    (
+      [
+        ['active', 'concurrent-active'],
+        ['suspended', 'concurrent-suspended'],
+      ] as const
+    ).map(([state, key]) =>
       Effect.runPromise(
         withDatabase((database) => {
           const runtime = makeActionRuntime(
@@ -634,12 +630,9 @@ test('serializes concurrent transitions into one truthful history chain', async 
             makeActionRepository(),
             unconfiguredPermission,
             testOperationalScopeResolver,
+            openActionRuntimeOptions,
           );
-          return Effect.exit(
-            runtime.runAction(
-              actionInput(moduleKey, state as 'active' | 'suspended', key ?? 'missing-key'),
-            ),
-          );
+          return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
         }),
       ),
     ),
@@ -685,6 +678,7 @@ test('derives tenant scope only from the trusted principal', async () => {
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       return runtime.runAction(actionInput(moduleKey, 'suspended', 'tenant-isolation'));
     }),

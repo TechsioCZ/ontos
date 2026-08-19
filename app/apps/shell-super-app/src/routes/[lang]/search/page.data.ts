@@ -6,6 +6,19 @@ import { runEffectRequest, searchResources } from '../../../api/auth-client.ts';
 import { loadHomePageModel } from '../page.data.ts';
 import type { HomePageModel } from '../page.data.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 interface SearchLoaderArguments {
   readonly request: Request;
 }
@@ -46,10 +59,15 @@ export const loader = async ({ request }: SearchLoaderArguments): Promise<Search
     };
   }
   const cookie = request.headers.get('cookie');
-  const options = {
-    baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    ...(cookie === null ? {} : { cookie }),
-  };
+  const options = withOptionalProperty(
+    {
+      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
+    },
+    !(cookie === null),
+    'cookie',
+    cookie,
+    {},
+  );
   return runEffectRequest(
     searchResources({ query }, options).pipe(
       Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),

@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
 import type { ActionCollectorError } from './errors.ts';
@@ -12,8 +12,10 @@ import type { OperationalScope, LegalEntityScope } from '../operations/context.t
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
-const actionHandlers = new WeakMap<object, unknown>();
-const actionServiceFactories = new WeakMap<object, unknown>();
+const actionHandler: unique symbol = Symbol('@app/core-runtime/actions/registration/handler');
+const actionServiceFactory: unique symbol = Symbol(
+  '@app/core-runtime/actions/registration/service-factory',
+);
 
 export type ActionIdempotencyRule = 'optional' | 'required';
 export type ActionAuditProfile = 'minimal' | 'sensitive' | 'standard';
@@ -76,6 +78,11 @@ export type ActionServiceFactory<Services, Requirements = never> = (
   scope: OperationalScope,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
+type EmptyActionServices = Readonly<Record<string, never>>;
+const emptyActionServices: EmptyActionServices = Object.freeze({});
+const emptyActionServiceFactory: ActionServiceFactory<EmptyActionServices> = () =>
+  Effect.succeed(emptyActionServices);
+
 export interface ActionRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
@@ -86,6 +93,15 @@ export interface ActionRegistration<
   HandlerRequirements = never,
 > {
   readonly [actionRegistration]: true;
+  readonly [actionHandler]: ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    HandlerRequirements
+  >;
+  readonly [actionServiceFactory]: ActionServiceFactory<Services, HandlerRequirements>;
   readonly descriptor: Readonly<
     ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>
   >;
@@ -131,7 +147,71 @@ export type ActionRequirements<Registration> =
     ? Requirements
     : never;
 
-export const defineAction = <
+export interface ActionDescriptorValidationInput<Policy> {
+  readonly entrypoint: ModuleEntrypointDescriptor;
+  readonly legalEntityScope: string;
+  readonly owningModuleKey: string;
+  readonly policies?: readonly Policy[];
+}
+
+export const validateActionDescriptorInput = <Policy>(
+  descriptor: ActionDescriptorValidationInput<Policy>,
+): void => {
+  if (
+    descriptor.entrypoint.role !== 'action' ||
+    descriptor.entrypoint.access !== 'write' ||
+    descriptor.entrypoint.moduleKey !== descriptor.owningModuleKey ||
+    descriptor.entrypoint.scope !==
+      (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
+    !Object.isFrozen(descriptor.entrypoint)
+  ) {
+    throw new TypeError(
+      'Action entrypoint must be an immutable action/write descriptor with the required owner scope',
+    );
+  }
+  if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
+    throw new TypeError('Action legal-entity scope must be required, optional, or forbidden');
+  }
+  if (!Array.isArray(descriptor.policies)) {
+    throw new TypeError('Action policies must be an explicit readonly array of Policy references');
+  }
+  for (const policy of descriptor.policies) {
+    if (!isActionPolicy(policy)) {
+      throw new TypeError('Action policies must contain direct Policy object references');
+    }
+    if (policy.scope === 'microvertical' && policy.owningModuleKey !== descriptor.owningModuleKey) {
+      throw new TypeError('A MicroVertical Policy must be owned by the Action owning module');
+    }
+  }
+};
+
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  HandlerRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  handler: ActionHandler<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    EmptyActionServices,
+    HandlerRequirements
+  >,
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  EmptyActionServices,
+  HandlerRequirements
+>;
+export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
@@ -149,7 +229,7 @@ export const defineAction = <
     Services,
     HandlerRequirements
   >,
-  serviceFactory?: ActionServiceFactory<Services, HandlerRequirements>,
+  serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
 ): ActionRegistration<
   PayloadSchema,
   ResultSchema,
@@ -158,65 +238,73 @@ export const defineAction = <
   Owner,
   Services,
   HandlerRequirements
-> => {
-  if (
-    descriptor.entrypoint.role !== 'action' ||
-    descriptor.entrypoint.access !== 'write' ||
-    descriptor.entrypoint.moduleKey !== descriptor.owningModuleKey ||
-    descriptor.entrypoint.scope !==
-      (descriptor.owningModuleKey.startsWith('core.') ? 'system' : 'tenant') ||
-    !Object.isFrozen(descriptor.entrypoint)
-  ) {
-    throw new TypeError(
-      'Action entrypoint must be an immutable action/write descriptor with the required owner scope',
-    );
-  }
-  if (!LEGAL_ENTITY_SCOPES.includes(descriptor.legalEntityScope)) {
-    throw new TypeError('Action legal-entity scope must be required, optional, or forbidden');
-  }
-  if (!Array.isArray(descriptor.policies)) {
-    throw new TypeError('Action policies must be an explicit readonly array of Policy references');
-  }
-  for (const policy of descriptor.policies) {
-    if (!isActionPolicy(policy)) {
-      throw new TypeError('Action policies must contain direct Policy object references');
-    }
-    if (policy.scope === 'microvertical' && policy.owningModuleKey !== descriptor.owningModuleKey) {
-      throw new TypeError('A MicroVertical Policy must be owned by the Action owning module');
-    }
-  }
+>;
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition:
+    | readonly [
+        handler: ActionHandler<
+          PayloadSchema,
+          ResultSchema,
+          DomainErrorSchema,
+          DomainEvents,
+          EmptyActionServices,
+          HandlerRequirements
+        >,
+      ]
+    | readonly [
+        handler: ActionHandler<
+          PayloadSchema,
+          ResultSchema,
+          DomainErrorSchema,
+          DomainEvents,
+          Services,
+          HandlerRequirements
+        >,
+        serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+      ]
+) {
+  validateActionDescriptorInput(descriptor);
 
-  const registration: ActionRegistration<
-    PayloadSchema,
-    ResultSchema,
-    DomainErrorSchema,
-    DomainEvents,
-    Owner,
-    Services,
-    HandlerRequirements
-  > = Object.freeze({
-    [actionRegistration]: true as const,
-    descriptor: Object.freeze({
-      ...descriptor,
-      accessEvidencePolicy: Object.freeze({ ...descriptor.accessEvidencePolicy }),
-      domainEvents: Object.freeze({ ...descriptor.domainEvents }),
-      entrypoint: descriptor.entrypoint,
-      policies: Object.freeze([...descriptor.policies]),
-    }),
+  const frozenDescriptor = Object.freeze({
+    ...descriptor,
+    accessEvidencePolicy: Object.freeze({ ...descriptor.accessEvidencePolicy }),
+    domainEvents: Object.freeze({ ...descriptor.domainEvents }),
+    entrypoint: descriptor.entrypoint,
+    policies: Object.freeze([...descriptor.policies]),
   });
-  actionHandlers.set(registration, handler);
-  actionServiceFactories.set(
-    registration,
-    serviceFactory ?? (() => Effect.succeed(Object.freeze({}) as Services)),
-  );
-  return registration;
-};
+  if (definition.length === 1) {
+    const [handler] = definition;
+    return Object.freeze({
+      [actionHandler]: handler,
+      [actionRegistration]: true as const,
+      [actionServiceFactory]: emptyActionServiceFactory,
+      descriptor: frozenDescriptor,
+    });
+  }
+  const [handler, serviceFactory] = definition;
+  return Object.freeze({
+    [actionHandler]: handler,
+    [actionRegistration]: true as const,
+    [actionServiceFactory]: serviceFactory,
+    descriptor: frozenDescriptor,
+  });
+}
 
 /** Runtime guard for the opaque value created by defineAction. */
-export const isActionRegistration = (value: unknown): value is AnyActionRegistration =>
-  typeof value === 'object' &&
+export const isActionRegistration = <Value>(value: Value): value is Value & AnyActionRegistration =>
+  Predicate.isObjectKeyword(value) &&
   value !== null &&
-  actionHandlers.has(value) &&
+  actionHandler in value &&
+  actionServiceFactory in value &&
   actionRegistration in value &&
   value[actionRegistration] === true;
 
@@ -246,20 +334,7 @@ export const getActionHandler = <
   DomainEvents,
   Services,
   HandlerRequirements
-> => {
-  const handler = actionHandlers.get(registration);
-  if (typeof handler !== 'function') {
-    throw new TypeError('Action registration was not created by defineAction');
-  }
-  return handler as ActionHandler<
-    PayloadSchema,
-    ResultSchema,
-    DomainErrorSchema,
-    DomainEvents,
-    Services,
-    HandlerRequirements
-  >;
-};
+> => registration[actionHandler];
 
 export const getActionServiceFactory = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
@@ -279,17 +354,14 @@ export const getActionServiceFactory = <
     Services,
     HandlerRequirements
   >,
-): ActionServiceFactory<Services, HandlerRequirements> => {
-  const factory = actionServiceFactories.get(registration);
-  if (typeof factory !== 'function') {
-    throw new TypeError('Action registration was not created by defineAction');
-  }
-  return factory as ActionServiceFactory<Services, HandlerRequirements>;
-};
+): ActionServiceFactory<Services, HandlerRequirements> => registration[actionServiceFactory];
 
-export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecoder<unknown, never>>(
+export const decodeActionPayload = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
+  Payload,
+>(
   schema: PayloadSchema,
-  payload: unknown,
+  payload: Payload,
 ): Effect.Effect<PayloadSchema['Type'], ActionPayloadValidationError> => {
   if (Object.is(schema, Schema.Void) && payload !== undefined) {
     return Effect.fail(
@@ -311,9 +383,12 @@ export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecod
   );
 };
 
-export const decodeActionResult = <ResultSchema extends Schema.ConstraintDecoder<unknown, never>>(
+export const decodeActionResult = <
+  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  Result,
+>(
   schema: ResultSchema,
-  result: unknown,
+  result: Result,
 ): Effect.Effect<ResultSchema['Type'], ActionResultValidationError> =>
   Schema.decodeUnknownEffect(schema)(result).pipe(
     Effect.mapError(
