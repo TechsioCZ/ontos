@@ -1,22 +1,22 @@
 # C4 model
 
-This document uses C4 as a thinking structure, not as a rigid drawing format. The key correction is that the main runtime is not split conceptually into “web app” and “BFF” containers. UltraModern.js MicroVerticals intentionally include UI and backend behavior together inside one jointly deployable application runtime, and OntOS Business Modules normally use that implementation shape.
+This document uses C4 as a thinking structure, not as a rigid drawing format. UltraModern.js MicroVerticals intentionally include UI and backend behavior together while preserving strict independent deployment seams. OntOS Business Modules normally use that implementation shape; local and network Adapters preserve the same published interface.
 
 Mermaid Markdown diagrams are in `diagrams/`. The prose below is authoritative; diagrams are support artifacts.
 
 ## Level 1 — System Context
 
-OntOS is an ERP and operational ontology system used by internal operator users, customer users, accountants, administrators, and later external operational roles. V0 focuses on ERP delivery for multi-company property/rental operations and accounting handoff. The same foundations support internal dogfooding and later e-commerce/manufacturing extensions.
+OntOS is the encompassing modular business product used by internal operators, customer users, accountants, administrators, customers, and external operational roles. ERP and Commerce are Application Compositions of OntOS Foundational and Business Modules. Commerce is first configured for Akros and then N1.
 
-The external systems around OntOS are accounting software, bank statement sources, the customer’s reservation website, object storage, e-shop systems, and future specialist systems such as Pulsar Solutions for machine/predictive maintenance signals.
+The external systems around OntOS include Symmy, accounting software behind Symmy, bank statement sources, customer reservation websites, object storage, payment and delivery providers, and specialist systems such as Pulsar Solutions.
 
-The system boundary is important. OntOS owns operational context, workflows, documents, relationships, audit, billing drafts/issued invoices, and ERP reporting. It does not replace statutory accounting software, e-commerce storefronts, or specialist machine-prediction platforms.
+The system boundary is important. OntOS owns Core, reusable business capabilities, the back office, and the canonical facts assigned to its modules. It does not automatically replace statutory accounting software, Storefront Channel Applications, Symmy, or specialist machine-prediction platforms.
 
 ## Level 2 — Containers
 
-### OntOS Application Runtime
+### OntOS Shell and MicroVertical delivery units
 
-This is the main jointly deployable application. It hosts the application shell, all active MicroVertical UI, all MicroVertical actions and command handlers, and Core runtime capabilities. In implementation it may expose HTTP routes, pages, server functions, API endpoints, or framework-specific handlers, but those are implementation surfaces inside the same application container.
+The Shell composes installed, authorized Business Module contributions. Each MicroVertical delivery unit contains one Business Module's UI, Actions, handlers, schema, and private runtime registration and remains independently deployable. Co-location is a Deployment Topology choice, not a change in logical ownership.
 
 This container is where the MicroVertical implementation concept lives. Each OntOS Business Module contributes UI, actions, backend behavior, domain model declarations, migrations, tests, and public descriptors. Its public activation and cross-module contract is declared through the OntOS Module Manifest.
 
@@ -42,7 +42,7 @@ Object storage stores file blobs. OntOS keeps media metadata, links, permissions
 
 ### External Systems
 
-External systems include accounting software, banks/statement files, reservation web, e-shop/Medusa/Helios bridge, and future Pulsar integration. Integrations should normally be mediated by outbox/import/export workers rather than inline calls in user-facing command handlers.
+External systems include Symmy, accounting software, banks/statement files, reservation websites, payment/delivery providers, and future Pulsar integration. OntOS reaches provider systems through the Symmy Connector; provider-specific routes such as Symmy–POHODA Integration stay downstream. Integrations should normally be mediated by outbox/import/export workers rather than inline calls in user-facing handlers.
 
 ## Level 3 — OntOS Application Runtime components
 
@@ -52,7 +52,7 @@ The shell provides navigation, layout, tenant/legal-entity context selection, Mi
 
 ### Module Runtime
 
-The runtime discovers known OntOS Module Manifests, validates dependencies, checks activation state per tenant, and exposes public APIs, public components, resource contracts, search, and reports. In V0, available MicroVertical code is part of the deployable application. Activation of an installed module should be runtime-configurable; adding new code still requires deployment.
+The runtime discovers allowlisted OntOS Module Manifests, validates the active Application Composition DAG, checks activation state per Tenant, and exposes public Actions, APIs, components, resource contracts, search, and reports. Deployment installation and Tenant activation remain separate. Adding new code requires a new module delivery-unit build and deployment.
 
 ### Core Runtime Services
 
@@ -60,7 +60,7 @@ Core runtime services include BetterAuth binding, principal context, authorizati
 
 ### MicroVertical Packages
 
-Each MicroVertical package contains the implementation for one business capability: UI, state, routes, actions, command handlers, domain tables, resource/link implementation, permissions, migrations, report/search implementation, fixtures, and tests. The OntOS Module Manifest exposes only the public subset needed by Core, activation logic, tooling, and other modules: APIs, component exports, resource contracts, events, search, and reports.
+Each MicroVertical package contains the implementation for one business capability: UI, state, routes, Actions, handlers, domain tables, resource/link implementation, permissions, migrations, report/search implementation, fixtures, and tests. The OntOS Module Manifest serializes only safe public descriptors. Other modules call published typed clients or consume outbox schemas; they never import private implementations or access another module's database.
 
 ### Action Execution Pipeline
 

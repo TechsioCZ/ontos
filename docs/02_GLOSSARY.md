@@ -4,7 +4,7 @@ This glossary is part of the architecture. Terms should not be treated as cosmet
 
 ## OntOS
 
-OntOS is the canonical name for the system. In V0 it is a delivery-bound ERP with platform-shaped foundations. In the long-term vision it becomes a temporal company ontology system with ERP MicroVerticals as the first application layer.
+OntOS is the canonical name for the encompassing modular product. It contains Core, the Shell and operational runtimes, and reusable Foundational and Business Modules. ERP and Commerce are Application Compositions inside OntOS, not sibling products or forks of Core.
 
 ## OntOS Core
 
@@ -14,11 +14,11 @@ Core is not meant to be disabled per tenant in the same way business modules can
 
 ## UltraModern.js MicroVertical
 
-An UltraModern.js MicroVertical is a framework-level unified vertical slice inside the jointly deployable application. It keeps frontend and backend parts of a capability together: routes, screens, components, state, actions, command handlers, domain model, migrations, tests, fixtures, public resource descriptors, permissions, report descriptors, search descriptors, and projection descriptors.
+An UltraModern.js MicroVertical is a framework-level full-stack vertical slice behind a strict independently deployable seam. It keeps frontend and backend parts of a capability together: routes, screens, components, state, Actions, handlers, domain model, migrations, tests, fixtures, public resource descriptors, permissions, report descriptors, search descriptors, and projection descriptors.
 
 The framework concept does not define an OntOS manifest by itself. OntOS uses MicroVerticals as the likely implementation shape for business modules in V0.
 
-An UltraModern.js MicroVertical is not a microservice in V0. It is a module boundary inside a modular monolith. Its purpose is to keep domain slices cohesive and independently understandable without introducing distributed-system overhead.
+A MicroVertical may be co-located with other deployments, but it must remain deployable to another server or process through configuration or Adapter selection only. Its purpose is to keep domain slices cohesive and independently understandable while preserving a real failure and deployment seam. It is not a separate OntOS product.
 
 Examples: `internal.delivery`, `property.registry`, `property.long_term_rental`, `property.short_term_rental`, `billing.core`, `accounting.office`, `documents.center`, `facility.basic`.
 
@@ -32,6 +32,26 @@ A Foundational Module is an OntOS Business Module that models shared business re
 
 Example: `organization.registry`.
 
+## Application Composition
+
+An Application Composition is a named, reusable, versioned, dependency-closed directed acyclic graph of OntOS Foundational and Business Modules serving a coherent business purpose. It defines required modules, permitted optional modules, and dependency rules. Core validates and gates the graph generically. Commerce is one Application Composition shared by Akros, N1, and later commerce customers.
+
+## Customer Configuration
+
+A Customer Configuration is a declarative customer-specific configuration of an Application Composition. It may select permitted optional modules and define policies, settings, branding, locales, Connectors, and integration participation. It must not fork Core, alter shared module contracts, or create customer-specific module implementations. Akros and N1 are Customer Configurations of Commerce.
+
+## Environment
+
+An Environment is a topology-neutral lifecycle context for a Customer Configuration, such as Production, Staging, or Development. It does not imply geography, data residency, customer isolation, or shared multi-tenancy.
+
+## Deployment Topology
+
+Deployment Topology is the physical mapping of Customer Configurations, Environments, Tenants, modules, data stores, workers, and Channel Applications onto infrastructure. It owns isolation, multi-tenancy, placement, and regional/residency choices without changing the logical composition.
+
+## Channel Application
+
+A Channel Application is a customer- or partner-facing application that composes public Business Module contracts, such as a commerce Storefront. It may share the OntOS monorepo and deploy separately, but owns presentation and journeys rather than canonical business facts.
+
 ## System Module
 
 A System Module is a Core-owned capability described with an OntOS Module Manifest or a narrower system-module variant for consistency, but it is not an ordinary business module. Examples include `core.identity`, `core.authz`, `core.modules`, `core.audit`, `core.events`, `core.outbox`, and `core.search`.
@@ -44,7 +64,7 @@ The manifest is not part of the standard UltraModern.js MicroVertical concept, a
 
 ## OntOS Application Runtime
 
-The OntOS Application Runtime is the main deployable application container. It includes the app shell, MicroVertical UI, server-side module actions, command handlers, Core services, and HTTP/API entrypoints. It should not be modeled as a separate Web App plus BFF for architecture purposes, because MicroVerticals intentionally combine frontend and backend concerns into a single vertical slice.
+The OntOS Application Runtime is a logical composition of the Shell, Core capabilities, and installed MicroVertical delivery units. MicroVerticals intentionally combine frontend and backend concerns into one business slice while preserving independent deployment. The logical runtime does not require one physical process or one customer deployment.
 
 ## OntOS Worker Runtime
 
@@ -123,6 +143,14 @@ A Principal is an actor that can authenticate, invoke actions, or appear in audi
 ## External Operator
 
 An External Operator is a Party outside the tenant's managed legal-entity structure that receives scoped operational access, such as an external property manager or external accountant.
+
+## Symmy Connector
+
+The Symmy Connector is the single OntOS-to-Symmy integration seam. OntOS Business Modules publish provider-neutral business handoff contracts; the Connector adapts those contracts without owning their business facts or lifecycle authority. It is outside Core.
+
+## Symmy–Provider Integration
+
+A Symmy–Provider Integration is a provider-specific integration operated downstream through Symmy, such as Symmy–POHODA Integration or Symmy–ABRA Integration. N1's current direct POHODA integration is legacy and migration evidence, not the target OntOS architecture.
 
 ## Ownership Assignment
 

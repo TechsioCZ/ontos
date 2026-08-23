@@ -1,6 +1,6 @@
 # ADR-0002: V0 uses a modular monolith, not microservices
 
-Status: Proposed
+Status: Superseded on 2026-08-23 by the independently deployable MicroVertical contract in `app/docs/architecture/MICROVERTICALS.md`. Co-location remains allowed as Deployment Topology, but it is not a module-interface constraint.
 
 ## Context
 
