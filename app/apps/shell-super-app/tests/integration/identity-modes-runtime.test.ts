@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { and, eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
@@ -407,8 +407,8 @@ test('verifies provider keys and completes live support impersonation with durab
       .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
       .limit(1);
     assert.ok(impersonationSession);
-    assert.equal(typeof impersonationSession.actionId, 'string');
-    if (typeof impersonationSession.actionId !== 'string') {
+    assert.equal(Predicate.isString(impersonationSession.actionId), true);
+    if (!Predicate.isString(impersonationSession.actionId)) {
       throw new TypeError('The approved support start did not persist its Action correlation');
     }
     await authDatabase
@@ -473,10 +473,10 @@ test('verifies provider keys and completes live support impersonation with durab
     assert.deepEqual(
       checkpoints
         .flatMap(({ evidence }) =>
-          typeof evidence === 'object' &&
+          Predicate.isObjectKeyword(evidence) &&
           evidence !== null &&
           'checkpoint' in evidence &&
-          typeof evidence.checkpoint === 'string'
+          Predicate.isString(evidence.checkpoint)
             ? [evidence.checkpoint]
             : [],
         )

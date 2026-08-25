@@ -36,13 +36,13 @@ export class ${adapterType}NotImplemented extends Schema.TaggedErrorClass<${adap
   },
 ) {}
 
-export interface ${adapterType}ServiceShape {
+export interface ${adapterType}ServiceContract {
   readonly ${operationMethod}: () => Effect.Effect<never, ${adapterType}NotImplemented>;
 }
 
 export class ${adapterType}Service extends Context.Service<
   ${adapterType}Service,
-  ${adapterType}ServiceShape
+  ${adapterType}ServiceContract
 >()('${packageName}/integrations/${provider}/${provider}-${operation}/${adapterType}Service') {}
 
 const make${adapterType}Service = Effect.gen(function* () {
@@ -57,7 +57,7 @@ const make${adapterType}Service = Effect.gen(function* () {
         }),
       );
     },
-  } satisfies ${adapterType}ServiceShape;
+  } satisfies ${adapterType}ServiceContract;
 });
 
 export const ${adapterType}ServiceLive = Layer.effect(

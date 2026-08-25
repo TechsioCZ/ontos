@@ -4,27 +4,32 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import { createNonHumanPrincipal } from '../../auth/principal-management.ts';
-import { PrincipalManagementError } from '../../auth/principal-management-errors.ts';
+import {
+  createNonHumanPrincipal,
+  principalManagementRepositoryFromTransaction,
+} from '../../auth/principal-management.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const displayName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200));
-export const CreateNonHumanPrincipalPayload = Schema.Struct({
+export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName,
   kind: Schema.Literals(['service', 'integration', 'system']),
 });
-type CreateNonHumanPrincipalPayloadType = Schema.Schema.Type<typeof CreateNonHumanPrincipalPayload>;
-export type { CreateNonHumanPrincipalPayloadType as CreateNonHumanPrincipalPayload };
-export const CreateNonHumanPrincipalResult = Schema.Struct({
+export type CreateNonHumanPrincipalPayload = Schema.Schema.Type<
+  typeof CreateNonHumanPrincipalPayloadSchema
+>;
+export const CreateNonHumanPrincipalResultSchema = Schema.Struct({
   principalId: uuid,
   status: Schema.Literal('active'),
 });
-type CreateNonHumanPrincipalResultType = Schema.Schema.Type<typeof CreateNonHumanPrincipalResult>;
-export type { CreateNonHumanPrincipalResultType as CreateNonHumanPrincipalResult };
+export type CreateNonHumanPrincipalResult = Schema.Schema.Type<
+  typeof CreateNonHumanPrincipalResultSchema
+>;
 
 const handle = (
-  payload: CreateNonHumanPrincipalPayloadType,
+  payload: CreateNonHumanPrincipalPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     {
@@ -45,7 +50,7 @@ export const createNonHumanPrincipalAction = defineAction(
     },
     actionKey: 'core.identity.create-non-human-principal',
     auditProfile: 'sensitive',
-    domainErrorSchema: PrincipalManagementError,
+    domainErrorSchema: PrincipalManagementErrorSchema,
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
@@ -56,13 +61,15 @@ export const createNonHumanPrincipalAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    payloadSchema: CreateNonHumanPrincipalPayload,
+    payloadSchema: CreateNonHumanPrincipalPayloadSchema,
     policies: [],
-    resultSchema: CreateNonHumanPrincipalResult,
+    resultSchema: CreateNonHumanPrincipalResultSchema,
     schemaVersion: '1',
     tenantPermission: () => 'manage_identity',
   },
   handle,
-  (transaction) =>
-    Effect.succeed({ create: (input) => createNonHumanPrincipal(transaction, input) }),
+  (transaction) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction);
+    return Effect.succeed({ create: (input) => createNonHumanPrincipal(repository, input) });
+  },
 );

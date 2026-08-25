@@ -4,7 +4,7 @@ This document distinguishes the UltraModern.js MicroVertical implementation conc
 
 ## Definition
 
-An UltraModern.js MicroVertical is a unified vertical slice inside one jointly deployable application. It owns both user-facing and server-side behavior for a bounded capability. It is designed to keep code that changes together in one understandable slice.
+An UltraModern.js MicroVertical is a full-stack vertical slice behind a strict independently deployable seam. It owns both user-facing and server-side behavior for a bounded capability. It is designed to keep code that changes together in one understandable slice while allowing placement to change through configuration or Adapter selection only.
 
 An OntOS Business Module is the ERP/product concept built on top of that implementation shape. In V0, ordinary business modules should normally be implemented as UltraModern.js MicroVerticals, but OntOS adds a public Effect Schema-defined Module Manifest that UltraModern.js itself does not define.
 
@@ -26,7 +26,7 @@ An OntOS Business Module implemented as a MicroVertical should normally contain:
 
 ## What MicroVerticals are not
 
-They are not separate microservices in V0. They are not only UI modules. They are not only backend bounded contexts. They are not arbitrary plugins loaded from untrusted code at runtime. They are not a way to bypass Core. The UltraModern.js MicroVertical concept also does not imply the OntOS Module Manifest; the manifest is an OntOS ERP runtime contract.
+They are not separate products, frontend-only modules, backend-only bounded contexts, or arbitrary plugins loaded from untrusted code. Independent deployability does not require every module to run on a separate host, and co-location does not permit private imports, shared repositories, or shared business transactions. They are not a way to bypass Core. The UltraModern.js MicroVertical concept also does not imply the OntOS Module Manifest; the manifest is an OntOS runtime contract.
 
 ## Why this model matters
 
@@ -44,11 +44,13 @@ Examples of MicroVertical concerns: what a reservation means, how a lease contra
 
 Each MicroVertical that owns persistent domain data must own a dedicated Postgres schema. Module-owned tables live in that schema, not in `public` and not in another vertical's schema. Cross-module data access must go through public module contracts, ResourceRefs, Actions, or explicit Core-mediated read/query surfaces rather than direct table coupling.
 
-## Runtime activation
+## Runtime activation and composition
 
-In V0, MicroVertical code is part of the application deployment. A module can be inactive, active, read-only, suspended, quarantined, deprecated, or archived per tenant without restarting the server. Legal-entity-specific setup belongs in the owning module's settings tables. Runtime activation controls whether UI contributions appear, whether actions are invokable, whether public resources are enabled, and how historical data is displayed.
+Each MicroVertical is installed through an allowlisted deployment contract. A module can be inactive, active, read-only, suspended, quarantined, deprecated, or archived per Tenant. Legal-entity-specific setup belongs in the owning module's settings tables. Runtime activation controls whether UI contributions appear, whether Actions are invokable, whether public resources are enabled, and how historical data is displayed.
 
-Adding a brand-new MicroVertical with new code requires deployment in V0. Later versions may support generated/schema-defined modules or sandboxed modules, but that is explicitly not a V0 requirement.
+Adding a new MicroVertical requires building and deploying its delivery unit. Later versions may support generated/schema-defined or sandboxed modules, but that is not a launch requirement.
+
+An Application Composition owns a versioned, dependency-closed DAG of Foundational and Business Modules. Core validates installation and activation closure. A module activates only when its required dependencies are installed, compatible, and active. A dependency outage degrades affected entrypoints explicitly without rewriting or cascading stored module states; unrelated modules continue operating.
 
 All module entrypoints must be invoked through Shell/Core gateways. Direct entrypoint loading is forbidden: modules should not bypass Shell/Core by directly loading Module Federation remotes, private routes, public components, Action handlers, or worker handlers. This keeps tenant module state enforcement at the boundary before module code is loaded or dispatched.
 
@@ -84,7 +86,7 @@ The first draft Effect Schema-defined manifest shape is described in `14_ONTOS_M
 
 OntOS Business Modules may depend on Core and on explicit public contracts of other business modules. They may import public manifest values, Action descriptors, public API clients, public component values, and public resource/event/search/report descriptors. They should not import another module's runtime registration, internal tables, command handlers, private routes, UI internals, migrations, fixtures, tests, or private utilities. Cross-module writes should go through Actions or explicit Core-mediated mechanisms. Cross-module reads should use declared read models, ResourceRefs, or public query surfaces.
 
-This matters because the long-term product depends on being able to add, replace, suspend, or generate modules without making the entire codebase a single implicit dependency graph.
+This matters because the long-term product depends on being able to add, replace, suspend, or generate modules while keeping the explicit Application Composition DAG distinct from hidden implementation coupling.
 
 Public component reuse across modules still goes through the Shell/Core component gateway. A module may depend on another module's public component contract, but it must not directly call Module Federation or hard-code remote specifier strings. Shell/Core should represent module component loads as structured entrypoints, not ad hoc import paths.
 

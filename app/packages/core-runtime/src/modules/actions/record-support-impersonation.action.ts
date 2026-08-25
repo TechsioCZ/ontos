@@ -4,10 +4,13 @@
 import { Effect, Schema } from 'effect';
 import { defineAction } from '../../actions/definition.ts';
 import type { ActionHandlerContext } from '../../actions/context.ts';
-import { validateSupportImpersonation } from '../../auth/principal-management.ts';
+import {
+  principalManagementRepositoryFromTransaction,
+  validateSupportImpersonation,
+} from '../../auth/principal-management.ts';
 import {
   IdentityTargetInvalidError,
-  PrincipalManagementError,
+  PrincipalManagementErrorSchema,
 } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
@@ -18,7 +21,7 @@ const safeSessionRef = Schema.String.check(
   Schema.isMaxLength(300),
 );
 const checkpointFields = { originalPrincipalId: uuid, reason, targetPrincipalId: uuid };
-export const RecordSupportImpersonationPayload = Schema.Union([
+export const RecordSupportImpersonationPayloadSchema = Schema.Union([
   Schema.Struct({ ...checkpointFields, checkpoint: Schema.Literal('requested') }),
   Schema.Struct({
     ...checkpointFields,
@@ -26,20 +29,18 @@ export const RecordSupportImpersonationPayload = Schema.Union([
     sessionRef: safeSessionRef,
   }),
 ]);
-type RecordSupportImpersonationPayloadType = Schema.Schema.Type<
-  typeof RecordSupportImpersonationPayload
+export type RecordSupportImpersonationPayload = Schema.Schema.Type<
+  typeof RecordSupportImpersonationPayloadSchema
 >;
-export type { RecordSupportImpersonationPayloadType as RecordSupportImpersonationPayload };
-export const RecordSupportImpersonationResult = Schema.Struct({
+export const RecordSupportImpersonationResultSchema = Schema.Struct({
   checkpoint: Schema.Literals(['requested', 'started', 'stopped']),
   recorded: Schema.Literal(true),
 });
-type RecordSupportImpersonationResultType = Schema.Schema.Type<
-  typeof RecordSupportImpersonationResult
+export type RecordSupportImpersonationResult = Schema.Schema.Type<
+  typeof RecordSupportImpersonationResultSchema
 >;
-export type { RecordSupportImpersonationResultType as RecordSupportImpersonationResult };
 const handle = (
-  payload: RecordSupportImpersonationPayloadType,
+  payload: RecordSupportImpersonationPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     {
@@ -86,13 +87,20 @@ const handle = (
       targetResourceId: payload.targetPrincipalId,
       targetResourceType: 'principal',
     });
-    yield* context.recordAuditEvidence({
-      checkpoint: payload.checkpoint,
-      originalPrincipalId: payload.originalPrincipalId,
-      reason: payload.reason,
-      ...('sessionRef' in payload ? { sessionRef: payload.sessionRef } : {}),
-      targetPrincipalId: payload.targetPrincipalId,
-    });
+    yield* payload.checkpoint === 'requested'
+      ? context.recordAuditEvidence({
+          checkpoint: payload.checkpoint,
+          originalPrincipalId: payload.originalPrincipalId,
+          reason: payload.reason,
+          targetPrincipalId: payload.targetPrincipalId,
+        })
+      : context.recordAuditEvidence({
+          checkpoint: payload.checkpoint,
+          originalPrincipalId: payload.originalPrincipalId,
+          reason: payload.reason,
+          sessionRef: payload.sessionRef,
+          targetPrincipalId: payload.targetPrincipalId,
+        });
     return { checkpoint: payload.checkpoint, recorded: true as const };
   });
 export const recordSupportImpersonationAction = defineAction(
@@ -102,9 +110,9 @@ export const recordSupportImpersonationAction = defineAction(
       policyKey: 'core.identity.record-support-impersonation.access.v1',
     },
     actionKey: 'core.identity.record-support-impersonation',
-    auditEvidenceSchema: RecordSupportImpersonationPayload,
+    auditEvidenceSchema: RecordSupportImpersonationPayloadSchema,
     auditProfile: 'sensitive',
-    domainErrorSchema: PrincipalManagementError,
+    domainErrorSchema: PrincipalManagementErrorSchema,
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
@@ -115,15 +123,17 @@ export const recordSupportImpersonationAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    payloadSchema: RecordSupportImpersonationPayload,
+    payloadSchema: RecordSupportImpersonationPayloadSchema,
     policies: [],
-    resultSchema: RecordSupportImpersonationResult,
+    resultSchema: RecordSupportImpersonationResultSchema,
     schemaVersion: '1',
     tenantPermission: (payload) => (payload.checkpoint === 'stopped' ? undefined : 'impersonate'),
   },
   handle,
-  (transaction) =>
-    Effect.succeed({
-      validate: (input) => validateSupportImpersonation(transaction, input),
-    }),
+  (transaction) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction);
+    return Effect.succeed({
+      validate: (input) => validateSupportImpersonation(repository, input),
+    });
+  },
 );

@@ -83,12 +83,18 @@ export const OutboxMessageSchema = Schema.Struct({
 
 export type OutboxMessage = Schema.Schema.Type<typeof OutboxMessageSchema>;
 
-declare const domainEventReferenceBrand: unique symbol;
+const domainEventReferenceBrand: unique symbol = Symbol(
+  '@app/core-runtime/actions/events/DomainEventReference',
+);
 
 /** Opaque reference produced only by one execution's Domain Event collector. */
 export interface DomainEventReference {
   readonly [domainEventReferenceBrand]: true;
 }
+
+/** Internal owner factory; references remain valid only in their creating collector. */
+export const createDomainEventReference = (): DomainEventReference =>
+  Object.freeze({ [domainEventReferenceBrand]: true as const });
 
 export interface CollectedOutboxMessage {
   readonly domainEventIndex: number;

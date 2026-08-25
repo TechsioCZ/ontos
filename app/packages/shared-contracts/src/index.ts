@@ -1,3 +1,6 @@
+import { Predicate } from 'effect';
+import type { Schema } from 'effect';
+
 export {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
@@ -122,10 +125,14 @@ export const ultramodernWorkspaceEventNames = {
 export type UltramodernWorkspaceEventName =
   (typeof ultramodernWorkspaceEventNames)[keyof typeof ultramodernWorkspaceEventNames];
 
+export type UltramodernWorkspaceJsonObject = Readonly<
+  Record<string, Schema.Schema.Type<typeof Schema.Json>>
+>;
+
 export interface UltramodernNavigatePayload {
   to: string;
   replace?: boolean;
-  state?: Record<string, unknown>;
+  state?: UltramodernWorkspaceJsonObject;
 }
 
 export interface UltramodernRouteSettledPayload {
@@ -145,7 +152,7 @@ export interface UltramodernPerformanceSignalPayload {
   signalId: UltramodernPerformanceReadinessSignalId;
   status: UltramodernPerformanceReadinessSignalStatus;
   durationMs?: number;
-  detail?: Record<string, unknown>;
+  detail?: UltramodernWorkspaceJsonObject;
 }
 
 export interface UltramodernWorkspaceEventPayloadMap {
@@ -155,34 +162,35 @@ export interface UltramodernWorkspaceEventPayloadMap {
   'ultramodern:route-settled': UltramodernRouteSettledPayload;
 }
 
-export class UltramodernWorkspaceEventValidationError {
+export class UltramodernWorkspaceEventValidationError<Payload = never> {
   readonly message: string;
   readonly name = 'UltramodernWorkspaceEventValidationError';
   readonly eventName: UltramodernWorkspaceEventName;
-  readonly payload: unknown;
+  readonly payload: Payload;
 
-  constructor(eventName: UltramodernWorkspaceEventName, payload: unknown) {
+  constructor(eventName: UltramodernWorkspaceEventName, payload: Payload) {
     this.message = `Invalid payload for UltraModern workspace event "${eventName}"`;
     this.eventName = eventName;
     this.payload = payload;
   }
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = <Value>(value: Value): value is Value & object =>
+  Predicate.isObjectKeyword(value) && value !== null && !Array.isArray(value);
 
-const isNonEmptyString = (value: unknown): value is string =>
-  typeof value === 'string' && value.trim().length > 0;
+const isNonEmptyString = <Value>(value: Value): value is Value & string =>
+  Predicate.isString(value) && value.trim().length > 0;
 
-const isNonNegativeNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const isNonNegativeNumber = <Value>(value: Value): value is Value & number =>
+  Predicate.isNumber(value) && Number.isFinite(value) && value >= 0;
 
-const isUltramodernWorkspaceLocale = (value: unknown): value is UltramodernWorkspaceLocale =>
-  value === 'en' || value === 'cs';
+const isUltramodernWorkspaceLocale = <Value>(
+  value: Value,
+): value is Value & UltramodernWorkspaceLocale => value === 'en' || value === 'cs';
 
-const isPerformanceReadinessSignalId = (
-  value: unknown,
-): value is UltramodernPerformanceReadinessSignalId =>
+const isPerformanceReadinessSignalId = <Value>(
+  value: Value,
+): value is Value & UltramodernPerformanceReadinessSignalId =>
   value === 'bfcache' ||
   value === 'core-web-vitals-rum' ||
   value === 'duplicate-prefetch-warmup' ||
@@ -190,81 +198,117 @@ const isPerformanceReadinessSignalId = (
   value === 'save-data-behavior' ||
   value === 'cloudflare-ssr-cache-hints';
 
-const isPerformanceReadinessSignalStatus = (
-  value: unknown,
-): value is UltramodernPerformanceReadinessSignalStatus =>
+const isPerformanceReadinessSignalStatus = <Value>(
+  value: Value,
+): value is Value & UltramodernPerformanceReadinessSignalStatus =>
   value === 'pass' || value === 'warn' || value === 'fail';
 
-const hasOptionalString = (value: Record<string, unknown>, key: string) =>
-  value[key] === undefined || isNonEmptyString(value[key]);
+const optionalProperty = <Value extends object, Key extends string>(
+  value: Value,
+  key: Key,
+): { readonly present: false } | { readonly present: true; readonly value: unknown } => {
+  const entry = Object.entries(value).find(([entryKey]) => entryKey === key);
+  return entry === undefined ? { present: false } : { present: true, value: entry[1] };
+};
 
-const hasOptionalBoolean = (value: Record<string, unknown>, key: string) =>
-  value[key] === undefined || typeof value[key] === 'boolean';
+const hasOptionalString = <Value extends object, Key extends string>(value: Value, key: Key) => {
+  const property = optionalProperty(value, key);
+  return !property.present || property.value === undefined || isNonEmptyString(property.value);
+};
 
-const hasOptionalRecord = (value: Record<string, unknown>, key: string) =>
-  value[key] === undefined || isRecord(value[key]);
+const hasOptionalBoolean = <Value extends object, Key extends string>(value: Value, key: Key) => {
+  const property = optionalProperty(value, key);
+  return !property.present || property.value === undefined || Predicate.isBoolean(property.value);
+};
 
-const hasOptionalNonNegativeNumber = (value: Record<string, unknown>, key: string) =>
-  value[key] === undefined || isNonNegativeNumber(value[key]);
+const hasOptionalRecord = <Value extends object, Key extends string>(value: Value, key: Key) => {
+  const property = optionalProperty(value, key);
+  return !property.present || property.value === undefined || isRecord(property.value);
+};
 
-const hasOptionalLocale = (value: Record<string, unknown>, key: string) =>
-  value[key] === undefined || isUltramodernWorkspaceLocale(value[key]);
+const hasOptionalNonNegativeNumber = <Value extends object, Key extends string>(
+  value: Value,
+  key: Key,
+) => {
+  const property = optionalProperty(value, key);
+  return !property.present || property.value === undefined || isNonNegativeNumber(property.value);
+};
 
-export const isUltramodernNavigatePayload = (
-  payload: unknown,
-): payload is UltramodernNavigatePayload =>
+const hasOptionalLocale = <Value extends object, Key extends string>(value: Value, key: Key) => {
+  const property = optionalProperty(value, key);
+  return (
+    !property.present ||
+    property.value === undefined ||
+    isUltramodernWorkspaceLocale(property.value)
+  );
+};
+
+export const isUltramodernNavigatePayload = <Payload>(
+  payload: Payload,
+): payload is Payload & UltramodernNavigatePayload =>
   isRecord(payload) &&
-  isNonEmptyString(payload['to']) &&
+  'to' in payload &&
+  isNonEmptyString(payload.to) &&
   hasOptionalBoolean(payload, 'replace') &&
   hasOptionalRecord(payload, 'state');
 
-export const isUltramodernRouteSettledPayload = (
-  payload: unknown,
-): payload is UltramodernRouteSettledPayload =>
+export const isUltramodernRouteSettledPayload = <Payload>(
+  payload: Payload,
+): payload is Payload & UltramodernRouteSettledPayload =>
   isRecord(payload) &&
-  isNonEmptyString(payload['pathname']) &&
+  'pathname' in payload &&
+  isNonEmptyString(payload.pathname) &&
   hasOptionalLocale(payload, 'locale') &&
   hasOptionalString(payload, 'title');
 
-export const isUltramodernRemoteReadyPayload = (
-  payload: unknown,
-): payload is UltramodernRemoteReadyPayload =>
+export const isUltramodernRemoteReadyPayload = <Payload>(
+  payload: Payload,
+): payload is Payload & UltramodernRemoteReadyPayload =>
   isRecord(payload) &&
-  isNonEmptyString(payload['appId']) &&
+  'appId' in payload &&
+  isNonEmptyString(payload.appId) &&
   hasOptionalString(payload, 'build') &&
   hasOptionalString(payload, 'surface') &&
   hasOptionalString(payload, 'version');
 
-export const isUltramodernPerformanceSignalPayload = (
-  payload: unknown,
-): payload is UltramodernPerformanceSignalPayload =>
+export const isUltramodernPerformanceSignalPayload = <Payload>(
+  payload: Payload,
+): payload is Payload & UltramodernPerformanceSignalPayload =>
   isRecord(payload) &&
-  isPerformanceReadinessSignalId(payload['signalId']) &&
-  isPerformanceReadinessSignalStatus(payload['status']) &&
+  'signalId' in payload &&
+  isPerformanceReadinessSignalId(payload.signalId) &&
+  'status' in payload &&
+  isPerformanceReadinessSignalStatus(payload.status) &&
   hasOptionalNonNegativeNumber(payload, 'durationMs') &&
   hasOptionalRecord(payload, 'detail');
 
-const ultramodernWorkspaceEventValidators: {
-  [Name in UltramodernWorkspaceEventName]: (
-    payload: unknown,
-  ) => payload is UltramodernWorkspaceEventPayloadMap[Name];
-} = {
+const ultramodernWorkspaceEventValidators = {
   [ultramodernWorkspaceEventNames.navigate]: isUltramodernNavigatePayload,
   [ultramodernWorkspaceEventNames.performanceSignal]: isUltramodernPerformanceSignalPayload,
   [ultramodernWorkspaceEventNames.remoteReady]: isUltramodernRemoteReadyPayload,
   [ultramodernWorkspaceEventNames.routeSettled]: isUltramodernRouteSettledPayload,
+} satisfies {
+  [Name in UltramodernWorkspaceEventName]: <Payload>(
+    payload: Payload,
+  ) => payload is Payload & UltramodernWorkspaceEventPayloadMap[Name];
 };
 
-export const isUltramodernWorkspaceEventPayload = <Name extends UltramodernWorkspaceEventName>(
+export const isUltramodernWorkspaceEventPayload = <
+  Name extends UltramodernWorkspaceEventName,
+  Payload,
+>(
   eventName: Name,
-  payload: unknown,
-): payload is UltramodernWorkspaceEventPayloadMap[Name] =>
+  payload: Payload,
+): payload is Payload & UltramodernWorkspaceEventPayloadMap[Name] =>
   ultramodernWorkspaceEventValidators[eventName](payload);
 
-export const assertUltramodernWorkspaceEventPayload = <Name extends UltramodernWorkspaceEventName>(
+export const assertUltramodernWorkspaceEventPayload = <
+  Name extends UltramodernWorkspaceEventName,
+  Payload,
+>(
   eventName: Name,
-  payload: unknown,
-): UltramodernWorkspaceEventPayloadMap[Name] => {
+  payload: Payload,
+): Payload & UltramodernWorkspaceEventPayloadMap[Name] => {
   if (!isUltramodernWorkspaceEventPayload(eventName, payload)) {
     throw new UltramodernWorkspaceEventValidationError(eventName, payload);
   }
@@ -288,6 +332,15 @@ export const dispatchUltramodernWorkspaceEvent = <Name extends UltramodernWorksp
   payload: UltramodernWorkspaceEventPayloadMap[Name],
 ) => target.dispatchEvent(createUltramodernWorkspaceEvent(eventName, payload));
 
+const isUltramodernWorkspaceCustomEvent = <Name extends UltramodernWorkspaceEventName>(
+  eventName: Name,
+  event: Event,
+): event is CustomEvent<UltramodernWorkspaceEventPayloadMap[Name]> =>
+  'detail' in event &&
+  'initCustomEvent' in event &&
+  Predicate.isFunction(event.initCustomEvent) &&
+  isUltramodernWorkspaceEventPayload(eventName, event.detail);
+
 export const onUltramodernWorkspaceEvent = <Name extends UltramodernWorkspaceEventName>(
   target: EventTarget,
   eventName: Name,
@@ -300,12 +353,11 @@ export const onUltramodernWorkspaceEvent = <Name extends UltramodernWorkspaceEve
     if (!('detail' in event)) {
       throw new UltramodernWorkspaceEventValidationError(eventName, undefined);
     }
+    if (!isUltramodernWorkspaceCustomEvent(eventName, event)) {
+      throw new UltramodernWorkspaceEventValidationError(eventName, event.detail);
+    }
 
-    const customEvent = event as CustomEvent<unknown>;
-    handler(
-      assertUltramodernWorkspaceEventPayload(eventName, customEvent.detail),
-      customEvent as CustomEvent<UltramodernWorkspaceEventPayloadMap[Name]>,
-    );
+    handler(event.detail, event);
   };
 
   target.addEventListener(eventName, listener);

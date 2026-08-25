@@ -12,6 +12,19 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 import { createModuleDeploymentAllowlistBuildInput } from './module-deployment-allowlist.config.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
@@ -109,176 +122,178 @@ if (
 
 export default defineConfig(
   presetUltramodern(
-    {
-      bff: {
-        effect: {
-          entry: './api/index',
-          openapi: {
-            path: '/openapi.json',
-          },
-          strictEffectApproach: true,
-        },
-        prefix: '/shell-super-app-api',
-        runtimeFramework: 'effect',
-      },
-      builderPlugins: [pluginTailwindcss()],
-      ...(cloudflareDeployEnabled
-        ? {
-            deploy: {
-              worker: {
-                compatibilityDate: '2026-06-02',
-                name: cloudflareWorkerName,
-                security: {
-                  contentSecurityPolicy: {
-                    directives: {
-                      'base-uri': ["'self'"],
-                      'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-                      'default-src': ["'self'"],
-                      'font-src': ["'self'", 'data:', 'https:', 'http:'],
-                      'form-action': ["'self'"],
-                      'frame-ancestors': ["'self'"],
-                      'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-                      'manifest-src': ["'self'", 'https:', 'http:'],
-                      'object-src': ["'none'"],
-                      'script-src': [
-                        "'self'",
-                        "'unsafe-inline'",
-                        "'unsafe-eval'",
-                        'https:',
-                        'http:',
-                        'blob:',
-                      ],
-                      'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
-                      'worker-src': ["'self'", 'blob:'],
-                    },
-                    mode: 'report-only',
-                    reason:
-                      'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
-                  },
-                  enabled: true,
-                  headers: {
-                    contentTypeOptions: 'nosniff',
-                    permissionsPolicy:
-                      'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-                    referrerPolicy: 'strict-origin-when-cross-origin',
-                  },
-                  noindex: {
-                    localhost: true,
-                    previewHostnames: [],
-                    workersDev: true,
-                  },
-                },
-                ssr: true,
-              },
+    withOptionalProperty(
+      {
+        bff: {
+          effect: {
+            entry: './api/index',
+            openapi: {
+              path: '/openapi.json',
             },
-          }
-        : {}),
-      dev: {
-        // Keep shell dev assets origin-relative so the shell works through
-        // tunnels and local previews without rewriting its own chunks.
-        assetPrefix: '/',
-      },
-      html: {
-        outputStructure: 'flat',
-      },
-      output: {
-        assetPrefix,
-        disableTsChecker: false,
-        distPath: {
-          html: './',
-          root: buildOutputRoot,
+            strictEffectApproach: true,
+          },
+          prefix: '/shell-super-app-api',
+          runtimeFramework: 'effect',
         },
-        polyfill: 'off',
-        splitRouteChunks: true,
-        tempDir: buildTempDirectory,
+        builderPlugins: [pluginTailwindcss()],
       },
-      performance: {
-        buildCache: {
-          cacheDigest: [appId, buildTarget],
-          cacheDirectory: buildCacheDirectory,
-        },
-        rsdoctor: {
-          disableClientServer: true,
-          enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
-        },
-      },
-      plugins: [
-        appTools(),
-        bffPlugin(),
-        tanstackRouterPlugin(),
-        i18nPlugin({
-          backend: {
+      cloudflareDeployEnabled,
+      'deploy',
+      {
+        worker: {
+          compatibilityDate: '2026-06-02',
+          name: cloudflareWorkerName,
+          security: {
+            contentSecurityPolicy: {
+              directives: {
+                'base-uri': ["'self'"],
+                'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
+                'default-src': ["'self'"],
+                'font-src': ["'self'", 'data:', 'https:', 'http:'],
+                'form-action': ["'self'"],
+                'frame-ancestors': ["'self'"],
+                'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
+                'manifest-src': ["'self'", 'https:', 'http:'],
+                'object-src': ["'none'"],
+                'script-src': [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "'unsafe-eval'",
+                  'https:',
+                  'http:',
+                  'blob:',
+                ],
+                'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
+                'worker-src': ["'self'", 'blob:'],
+              },
+              mode: 'report-only',
+              reason:
+                'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
+            },
             enabled: true,
-            loadPath: '/locales/{{lng}}/{{ns}}.json',
+            headers: {
+              contentTypeOptions: 'nosniff',
+              permissionsPolicy: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
+              referrerPolicy: 'strict-origin-when-cross-origin',
+            },
+            noindex: {
+              localhost: true,
+              previewHostnames: [],
+              workersDev: true,
+            },
           },
-          localeDetection: {
-            fallbackLanguage: 'en',
-            ignoreRedirectRoutes: [
-              '/@mf-types',
-              '/assets',
-              '/bundles',
-              '/shell-super-app-api',
-              '/locales',
-              '/mf-manifest.json',
-              '/mf-stats.json',
-              '/remoteEntry.js',
-              '/robots.txt',
-              '/site.webmanifest',
-              '/sitemap.xml',
-              '/static',
-              '/zephyr-manifest.json',
-            ],
-            languages: ['en', 'cs'],
-            localePathRedirect: true,
-            localisedUrls: ultramodernLocalisedUrls as Record<string, Record<string, string>>,
+          ssr: true,
+        },
+      },
+      {
+        dev: {
+          // Keep shell dev assets origin-relative so the shell works through
+          // tunnels and local previews without rewriting its own chunks.
+          assetPrefix: '/',
+        },
+        html: {
+          outputStructure: 'flat',
+        },
+        output: {
+          assetPrefix,
+          disableTsChecker: false,
+          distPath: {
+            html: './',
+            root: buildOutputRoot,
           },
-          reactI18next: false,
-        }),
-        moduleFederationPlugin({
-          configPath: moduleFederationConfigPath,
-        }),
-        zephyrRspackPlugin(),
-      ],
-      server: {
-        port,
-        publicDir: ['./locales', './assets'],
-        ssr: {
-          mode: 'stream',
-          moduleFederationAppSSR: true,
+          polyfill: 'off',
+          splitRouteChunks: true,
+          tempDir: buildTempDirectory,
         },
-      },
-      source: {
-        alias: {
-          '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
-        },
-        globalVars: {
-          ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
-          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
-          ULTRAMODERN_SITE_URL: siteUrl,
-        },
-        mainEntryName: 'index',
-      },
-      splitChunks: {
-        chunks: 'async',
-      },
-      tools: {
-        autoprefixer: {
-          overrideBrowserslist: ['defaults'],
-        },
-        bundlerChain: (chain) => {
-          chain.output
-            .uniqueName('shellSuperApp')
-            .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
-        },
-        devServer: {
-          headers: {
-            'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
+        performance: {
+          buildCache: {
+            cacheDigest: [appId, buildTarget],
+            cacheDirectory: buildCacheDirectory,
+          },
+          rsdoctor: {
+            disableClientServer: true,
+            enabled: getBuildConfigEnvironment('ULTRAMODERN_RSDOCTOR') === 'true',
           },
         },
+        plugins: [
+          appTools(),
+          bffPlugin(),
+          tanstackRouterPlugin(),
+          i18nPlugin({
+            backend: {
+              enabled: true,
+              loadPath: '/locales/{{lng}}/{{ns}}.json',
+            },
+            localeDetection: {
+              fallbackLanguage: 'en',
+              ignoreRedirectRoutes: [
+                '/@mf-types',
+                '/assets',
+                '/bundles',
+                '/shell-super-app-api',
+                '/locales',
+                '/mf-manifest.json',
+                '/mf-stats.json',
+                '/remoteEntry.js',
+                '/robots.txt',
+                '/site.webmanifest',
+                '/sitemap.xml',
+                '/static',
+                '/zephyr-manifest.json',
+              ],
+              languages: ['en', 'cs'],
+              localePathRedirect: true,
+              localisedUrls: ultramodernLocalisedUrls,
+            },
+            reactI18next: false,
+          }),
+          moduleFederationPlugin({
+            configPath: moduleFederationConfigPath,
+          }),
+          zephyrRspackPlugin(),
+        ],
+        server: {
+          port,
+          publicDir: ['./locales', './assets'],
+          ssr: {
+            mode: 'stream',
+            moduleFederationAppSSR: true,
+          },
+        },
+        source: {
+          alias: {
+            '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
+          },
+          globalVars: {
+            ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
+            ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
+            ULTRAMODERN_SITE_URL: siteUrl,
+          },
+          mainEntryName: 'index',
+        },
+        splitChunks: {
+          chunks: 'async',
+        },
+        tools: {
+          autoprefixer: {
+            overrideBrowserslist: ['defaults'],
+          },
+          bundlerChain: (chain) => {
+            chain.output
+              .uniqueName('shellSuperApp')
+              .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
+          },
+          devServer: {
+            headers: {
+              'Access-Control-Allow-Headers':
+                'Accept, Authorization, Content-Type, X-Requested-With',
+              'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+              'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
+            },
+          },
+        },
       },
-    },
+    ),
     {
       appId,
       deliveryUnit: {

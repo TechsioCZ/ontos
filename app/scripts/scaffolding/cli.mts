@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CodeSmith, FsMaterial, GeneratorCore } from '@modern-js/codesmith';
 import type { GeneratorContext } from '@modern-js/codesmith';
+import { Predicate } from 'effect';
 import actionGenerator from './action/scaffold.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
@@ -96,6 +97,25 @@ export interface RunScaffoldOptions {
   readonly workspaceRoot?: string;
 }
 
+interface ParsedScaffoldFlags {
+  readonly action: string | undefined;
+  readonly 'legal-entity-scope': string | undefined;
+  readonly module: string | undefined;
+  readonly name: string | undefined;
+  readonly operation: string | undefined;
+  readonly page: string | undefined;
+  readonly policy: string | undefined;
+  readonly producer: string | undefined;
+  readonly provider: string | undefined;
+  readonly resource: string | undefined;
+  readonly scope: string | undefined;
+  readonly service: string | undefined;
+  readonly topic: string | undefined;
+  readonly url: string | undefined;
+  readonly vertical: string | undefined;
+  readonly worker: string | undefined;
+}
+
 interface CommandDefinition {
   readonly afterGenerate?: (
     result: GeneratorResult,
@@ -106,7 +126,7 @@ interface CommandDefinition {
   readonly generator: LocalGenerator<GeneratorResult>;
   readonly help: string;
   readonly requiredFlags: readonly string[];
-  readonly toConfig: (flags: Readonly<Record<string, string>>) => GeneratorConfig;
+  readonly toConfig: (flags: ParsedScaffoldFlags) => GeneratorConfig;
 }
 
 export type RunScaffoldResult =
@@ -126,8 +146,13 @@ const defaultRouteRefresh: RouteRefreshExecutor = ({ appId, workspaceRoot }) => 
   }
 };
 
+const isLegalEntityScope = (
+  value: string | undefined,
+): value is ActionScaffoldConfig['legalEntityScope'] =>
+  value === 'required' || value === 'optional' || value === 'forbidden';
+
 // eslint-disable-next-line sort-keys -- Preserve the established user-facing command order.
-const commandDefinitions: Readonly<Record<ScaffoldCommand, CommandDefinition>> = {
+const commandDefinitions = {
   action: {
     flags: ['action', 'legal-entity-scope', 'module', 'scope', 'vertical'],
     generator: actionGenerator,
@@ -152,7 +177,7 @@ Options:
     toConfig: (flags) => {
       const action = flags['action'] ?? '';
       const legalEntityScope = flags['legal-entity-scope'];
-      if (!['required', 'optional', 'forbidden'].includes(legalEntityScope ?? '')) {
+      if (!isLegalEntityScope(legalEntityScope)) {
         throw new Error('--legal-entity-scope must be required, optional, or forbidden');
       }
       const { module, scope, vertical } = flags;
@@ -162,7 +187,7 @@ Options:
         }
         return {
           action,
-          legalEntityScope: legalEntityScope as 'forbidden' | 'optional' | 'required',
+          legalEntityScope,
           vertical,
         };
       }
@@ -174,7 +199,7 @@ Options:
       }
       return {
         action,
-        legalEntityScope: legalEntityScope as 'forbidden' | 'optional' | 'required',
+        legalEntityScope,
         module,
         scope,
       };
@@ -243,9 +268,11 @@ Options:
   },
   'microvertical-page': {
     afterGenerate: async (result, options, workspaceRoot) => {
-      const pageResult = result as PageScaffoldResult;
+      if (!('appId' in result) || !Predicate.isString(result.appId)) {
+        throw new Error('microvertical-page generator returned an invalid result');
+      }
       const refresh = options.routeRefresh ?? defaultRouteRefresh;
-      await refresh({ appId: pageResult.appId, workspaceRoot });
+      await refresh({ appId: result.appId, workspaceRoot });
       await refresh({ appId: 'shell-super-app', workspaceRoot });
     },
     flags: ['page', 'url', 'vertical'],
@@ -266,11 +293,12 @@ Example:
   mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit
 `,
     requiredFlags: ['page', 'vertical'],
-    toConfig: (flags) => ({
-      page: flags['page'] ?? '',
-      ...(flags['url'] === undefined ? {} : { url: flags['url'] }),
-      vertical: flags['vertical'] ?? '',
-    }),
+    toConfig: (flags) => {
+      const page = flags['page'] ?? '';
+      const vertical = flags['vertical'] ?? '';
+      const { url } = flags;
+      return url === undefined ? { page, vertical } : { page, url, vertical };
+    },
   },
   'module-contract': {
     flags: ['module', 'vertical'],
@@ -378,11 +406,8 @@ Options:
       if (scope !== 'global' && scope !== 'microvertical') {
         throw new Error('--scope must be global or microvertical');
       }
-      return {
-        policy: flags['policy'] ?? '',
-        scope,
-        ...(vertical === undefined ? {} : { vertical }),
-      };
+      const policy = flags['policy'] ?? '';
+      return vertical === undefined ? { policy, scope } : { policy, scope, vertical };
     },
   },
   'public-component': {
@@ -446,7 +471,7 @@ Options:
       vertical: flags['vertical'] ?? '',
     }),
   },
-};
+} satisfies Readonly<Record<ScaffoldCommand, CommandDefinition>>;
 
 export const isScaffoldCommand = (value: string): value is ScaffoldCommand =>
   Object.hasOwn(commandDefinitions, value);
@@ -463,10 +488,10 @@ const normalizeForwardedArguments = (arguments_: readonly string[]): readonly st
 const parseFlags = (
   command: ScaffoldCommand,
   arguments_: readonly string[],
-): Readonly<Record<string, string>> => {
+): ParsedScaffoldFlags => {
   const definition = commandDefinitions[command];
   const allowed = new Set(definition.flags);
-  const parsed: Record<string, string> = {};
+  const parsed = new Map<string, string>();
   for (let index = 0; index < arguments_.length; index += 2) {
     const flag = arguments_[index];
     const value = arguments_[index + 1];
@@ -477,20 +502,37 @@ const parseFlags = (
     if (!allowed.has(name)) {
       throw new Error(`unknown flag --${name} for scaffold:${command}`);
     }
-    if (parsed[name] !== undefined) {
+    if (parsed.has(name)) {
       throw new Error(`flag --${name} may be supplied only once`);
     }
     if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
       throw new Error(`flag --${name} requires one non-empty value`);
     }
-    parsed[name] = value;
+    parsed.set(name, value);
   }
   for (const required of definition.requiredFlags) {
-    if (parsed[required] === undefined) {
+    if (!parsed.has(required)) {
       throw new Error(`missing required flag --${required}`);
     }
   }
-  return parsed;
+  return {
+    action: parsed.get('action'),
+    'legal-entity-scope': parsed.get('legal-entity-scope'),
+    module: parsed.get('module'),
+    name: parsed.get('name'),
+    operation: parsed.get('operation'),
+    page: parsed.get('page'),
+    policy: parsed.get('policy'),
+    producer: parsed.get('producer'),
+    provider: parsed.get('provider'),
+    resource: parsed.get('resource'),
+    scope: parsed.get('scope'),
+    service: parsed.get('service'),
+    topic: parsed.get('topic'),
+    url: parsed.get('url'),
+    vertical: parsed.get('vertical'),
+    worker: parsed.get('worker'),
+  };
 };
 
 const runCodesmithGenerator = async (
@@ -536,7 +578,7 @@ export const runScaffold = async (
   return { kind: 'generated', result };
 };
 
-const errorMessage = (error: unknown): string =>
+const errorMessage = <ErrorValue,>(error: ErrorValue): string =>
   error instanceof Error ? error.message : 'Unknown scaffolding failure';
 
 const [, entryPath, commandArgument] = process.argv;

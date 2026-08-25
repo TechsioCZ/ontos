@@ -20,6 +20,19 @@ import type { TenantModuleStateTransitionError } from './tenant-module-state-err
 import type { InstalledModuleCatalog } from './catalog.ts';
 import type { OntosModuleId } from './manifest.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 export const TENANT_MODULE_STATES = [
   'inactive',
   'active',
@@ -118,7 +131,7 @@ export const rejectUnchangedTenantModuleState = (
       )
     : Effect.void;
 
-export interface TenantModuleStateServiceShape {
+export interface TenantModuleStateServiceContract {
   readonly getTenantModuleStates: (
     tenantId: string,
     moduleKeys: readonly string[],
@@ -133,7 +146,7 @@ export interface TenantModuleStateServiceShape {
 
 export class TenantModuleStateService extends Context.Service<
   TenantModuleStateService,
-  TenantModuleStateServiceShape
+  TenantModuleStateServiceContract
 >()('@app/core-runtime/modules/tenant-module-state-service/TenantModuleStateService') {}
 
 const tenantModuleStateReadUnavailable = () =>
@@ -144,7 +157,7 @@ const tenantModuleStateReadUnavailable = () =>
 
 export const makeTenantModuleStateService = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}): TenantModuleStateServiceShape => {
+}): TenantModuleStateServiceContract => {
   const decodeRows = (rows: readonly { readonly moduleKey: string; readonly state: unknown }[]) =>
     Effect.forEach((row: (typeof rows)[number]) =>
       Schema.decodeUnknownEffect(TenantModuleStateSchema)(row.state).pipe(
@@ -298,17 +311,25 @@ export const persistTenantModuleStateChange = (
       try: () =>
         transaction
           .insert(tenantModuleStateChanges)
-          .values({
-            actionInvocationId: input.actionInvocationId,
-            changeSource,
-            changedByPrincipalId: input.principalId,
-            moduleKey: input.moduleKey,
-            newState: input.newState,
-            occurredAt: changedAt,
-            previousState,
-            ...(input.reason === undefined ? {} : { reason: input.reason }),
-            tenantId: input.tenantId,
-          })
+          .values(
+            withOptionalProperty(
+              {
+                actionInvocationId: input.actionInvocationId,
+                changeSource,
+                changedByPrincipalId: input.principalId,
+                moduleKey: input.moduleKey,
+                newState: input.newState,
+                occurredAt: changedAt,
+                previousState,
+              },
+              !(input.reason === undefined),
+              'reason',
+              input.reason,
+              {
+                tenantId: input.tenantId,
+              },
+            ),
+          )
           .returning({ moduleStateChangeId: tenantModuleStateChanges.moduleStateChangeId }),
     });
     const [history] = historyRows;

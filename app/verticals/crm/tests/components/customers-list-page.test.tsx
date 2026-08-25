@@ -7,6 +7,7 @@ import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { flattenCatalogKeys } from '../support/locale-catalog.ts';
 import {
   CUSTOMER_LIST_PAGE_SIZE,
   CustomersListPage,
@@ -15,6 +16,10 @@ import {
   customerListQueryKey,
   parseCustomerListSearch,
 } from '../../src/routes/[lang]/crm/customers/page.tsx';
+
+interface LocaleState {
+  current: 'cs' | 'en';
+}
 
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
@@ -28,15 +33,26 @@ const {
   runEffectRequestMock,
   searchState,
   unarchiveCustomerMock,
-} = rstest.hoisted(() => ({
-  archiveCustomerMock: rstest.fn(),
-  getCustomerListMock: rstest.fn(),
-  localeState: { current: 'en' as 'cs' | 'en' },
-  navigateMock: rstest.fn(() => Promise.resolve()),
-  runEffectRequestMock: rstest.fn(),
-  searchState: { current: '' },
-  unarchiveCustomerMock: rstest.fn(),
-}));
+} = rstest.hoisted(() => {
+  const state: LocaleState = { current: 'en' };
+  return {
+    archiveCustomerMock: rstest.fn(),
+    getCustomerListMock: rstest.fn(),
+    localeState: state,
+    navigateMock: rstest.fn(() => Promise.resolve()),
+    runEffectRequestMock: rstest.fn(),
+    searchState: { current: '' },
+    unarchiveCustomerMock: rstest.fn(),
+  };
+});
+
+const requireRow = (rows: readonly HTMLElement[], index: number): HTMLElement => {
+  const row = rows[index];
+  if (row === undefined) {
+    throw new Error(`Expected table row ${index}`);
+  }
+  return row;
+};
 
 const translations = {
   cs: {
@@ -197,13 +213,7 @@ const formatDate = (value: string, language: string) =>
     new Date(value),
   );
 
-const flattenKeys = (value: object, prefix = ''): string[] =>
-  Object.entries(value)
-    .flatMap(([key, child]) => {
-      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-      return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
-    })
-    .toSorted();
+const flattenKeys = flattenCatalogKeys;
 
 beforeEach(() => {
   localeState.current = 'en';
@@ -306,12 +316,11 @@ test('renders semantic Customer values, ordered rows, localized dates, badges, a
   ).toContain('justify-end');
   const rows = within(table).getAllByRole('row');
   expect(rows).toHaveLength(3);
+  const activeRow = requireRow(rows, 1);
   expect(
-    within(rows[1] as HTMLElement)
-      .getByRole('link', { name: activeCustomer.name })
-      .getAttribute('href'),
+    within(activeRow).getByRole('link', { name: activeCustomer.name }).getAttribute('href'),
   ).toBe(`/en/crm/customers/${activeCustomer.customerId}`);
-  const editLink = within(rows[1] as HTMLElement).getByRole('link', { name: 'Edit' });
+  const editLink = within(activeRow).getByRole('link', { name: 'Edit' });
   expect(editLink.getAttribute('href')).toBe(`/en/crm/customers/${activeCustomer.customerId}/edit`);
   expect(editLink.className).toBe(screen.getByRole('link', { name: 'Create Customer' }).className);
   expect(editLink.parentElement?.className).toContain('justify-end');
@@ -395,9 +404,7 @@ test('shows the empty Customer table without data rows or a pager', async () => 
 });
 
 test('shows a definite forbidden state without suggesting retry', async () => {
-  getCustomerListMock.mockReturnValue(
-    Effect.fail({ _tag: 'CustomerListForbiddenProblem' } as never),
-  );
+  getCustomerListMock.mockReturnValue(Effect.fail({ _tag: 'CustomerListForbiddenProblem' }));
   render(<CustomersListPage />);
 
   await screen.findByText('You do not have permission to view Customers.');
@@ -409,7 +416,7 @@ test('shows a definite forbidden state without suggesting retry', async () => {
 
 test('retries one unavailable request by keyboard and restores focus after success', async () => {
   getCustomerListMock
-    .mockReturnValueOnce(Effect.fail({ _tag: 'CustomerListUnavailableProblem' } as never))
+    .mockReturnValueOnce(Effect.fail({ _tag: 'CustomerListUnavailableProblem' }))
     .mockReturnValueOnce(success([activeCustomer], null));
   const user = userEvent.setup();
   render(<CustomersListPage />);
@@ -434,9 +441,7 @@ test.each([
   'renders the localized %s failure and retries through the query seam',
   async (_reason, reasonTag, expectedCopy) => {
     getCustomerListMock
-      .mockReturnValueOnce(
-        Effect.fail({ _tag: 'HttpClientError', reason: { _tag: reasonTag } } as never),
-      )
+      .mockReturnValueOnce(Effect.fail({ _tag: 'HttpClientError', reason: { _tag: reasonTag } }))
       .mockReturnValueOnce(success([activeCustomer], null));
     const user = userEvent.setup();
     render(<CustomersListPage />);
@@ -487,7 +492,7 @@ test('renders Czech-owned heading, filter, status, dates, errors, retry, and nav
 
   cleanup();
   getCustomerListMock.mockReturnValue(
-    Effect.fail({ _tag: 'GatewayAuthenticationRequiredProblem' } as never),
+    Effect.fail({ _tag: 'GatewayAuthenticationRequiredProblem' }),
   );
   render(<CustomersListPage />);
   await screen.findByText('Vaše relace vypršela. Po přihlášení to zkuste znovu.');
@@ -498,33 +503,33 @@ test('renders Czech-owned heading, filter, status, dates, errors, retry, and nav
 });
 
 test('maps every public failure family into a closed presentation state', () => {
-  expect(classifyCustomerListError({ _tag: 'CustomerListForbiddenProblem' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'CustomerListForbiddenProblem' })).toEqual({
     state: 'forbidden',
   });
-  expect(classifyCustomerListError({ _tag: 'CustomerListAuthenticationProblem' } as never)).toEqual(
-    { state: 'authentication_expired' },
-  );
-  expect(classifyCustomerListError({ _tag: 'CustomerListUnavailableProblem' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'CustomerListAuthenticationProblem' })).toEqual({
+    state: 'authentication_expired',
+  });
+  expect(classifyCustomerListError({ _tag: 'CustomerListUnavailableProblem' })).toEqual({
     reason: 'backend',
     state: 'unavailable',
   });
-  expect(classifyCustomerListError({ _tag: 'SchemaError' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'SchemaError' })).toEqual({
     reason: 'decode',
     state: 'unavailable',
   });
-  expect(classifyCustomerListError({ _tag: 'CustomerListInternalProblem' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'CustomerListInternalProblem' })).toEqual({
     reason: 'internal',
     state: 'unavailable',
   });
-  expect(classifyCustomerListError({ _tag: 'CustomerListInvalidProblem' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'CustomerListInvalidProblem' })).toEqual({
     reason: 'internal',
     state: 'unavailable',
   });
-  expect(classifyCustomerListError({ _tag: 'GatewayAudienceInvalidProblem' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'GatewayAudienceInvalidProblem' })).toEqual({
     reason: 'internal',
     state: 'unavailable',
   });
-  expect(classifyCustomerListError({ _tag: 'GatewayInternalProblem' } as never)).toEqual({
+  expect(classifyCustomerListError({ _tag: 'GatewayInternalProblem' })).toEqual({
     reason: 'internal',
     state: 'unavailable',
   });

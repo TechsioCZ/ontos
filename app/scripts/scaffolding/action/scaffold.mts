@@ -48,13 +48,11 @@ const renderAction = (
 import { Effect, Schema } from 'effect';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
-export const ${actionType}Payload = Schema.Struct({});
-type ${actionType}PayloadType = Schema.Schema.Type<typeof ${actionType}Payload>;
-export type { ${actionType}PayloadType as ${actionType}Payload };
+export const ${actionType}PayloadSchema = Schema.Struct({});
+export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}PayloadSchema>;
 
-export const ${actionType}Result = Schema.Struct({});
-type ${actionType}ResultType = Schema.Schema.Type<typeof ${actionType}Result>;
-export type { ${actionType}ResultType as ${actionType}Result };
+export const ${actionType}ResultSchema = Schema.Struct({});
+export type ${actionType}Result = Schema.Schema.Type<typeof ${actionType}ResultSchema>;
 
 export class ${actionType}NotImplemented extends Schema.TaggedErrorClass<${actionType}NotImplemented>()(
   '${actionType}NotImplemented',
@@ -91,9 +89,9 @@ export const ${actionValue} = defineAction(
     idempotency: 'required',
     legalEntityScope: '${legalEntityScope}',
     owningModuleKey: '${vertical.moduleId}',
-    payloadSchema: ${actionType}Payload,
+    payloadSchema: ${actionType}PayloadSchema,
     policies: [],
-    resultSchema: ${actionType}Result,
+    resultSchema: ${actionType}ResultSchema,
     schemaVersion: '1',
   },
   ${handler},
@@ -119,13 +117,11 @@ import { Effect, Schema } from 'effect';
 import { defineAction } from '../../actions/definition.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
-export const ${actionType}Payload = Schema.Struct({});
-type ${actionType}PayloadType = Schema.Schema.Type<typeof ${actionType}Payload>;
-export type { ${actionType}PayloadType as ${actionType}Payload };
+export const ${actionType}PayloadSchema = Schema.Struct({});
+export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}PayloadSchema>;
 
-export const ${actionType}Result = Schema.Struct({});
-type ${actionType}ResultType = Schema.Schema.Type<typeof ${actionType}Result>;
-export type { ${actionType}ResultType as ${actionType}Result };
+export const ${actionType}ResultSchema = Schema.Struct({});
+export type ${actionType}Result = Schema.Schema.Type<typeof ${actionType}ResultSchema>;
 
 export class ${actionType}NotImplemented extends Schema.TaggedErrorClass<${actionType}NotImplemented>()(
   '${actionType}NotImplemented',
@@ -162,9 +158,9 @@ export const ${actionValue} = defineAction(
     idempotency: 'required',
     legalEntityScope: '${legalEntityScope}',
     owningModuleKey: '${moduleKey}',
-    payloadSchema: ${actionType}Payload,
+    payloadSchema: ${actionType}PayloadSchema,
     policies: [],
-    resultSchema: ${actionType}Result,
+    resultSchema: ${actionType}ResultSchema,
     schemaVersion: '1',
   },
   ${handler},

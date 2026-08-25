@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type {
   ModuleEntrypointDescriptor,
-  ModuleEntrypointGatewayShape,
+  ModuleEntrypointGatewayService,
   ModuleStateGateError,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
@@ -14,7 +14,7 @@ export interface LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, 
 
 /** Shell-only composition seam. Callers pass typed descriptors and lazy thunks, never remote strings. */
 export const loadModuleEntrypointComposition = <Value, AuthorizationError, LoadError, Requirements>(
-  gateway: ModuleEntrypointGatewayShape,
+  gateway: ModuleEntrypointGatewayService,
   context: Readonly<TrustedPrincipalContext>,
   loads: readonly LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements>[],
 ): Effect.Effect<

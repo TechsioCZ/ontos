@@ -21,7 +21,7 @@ export type {
   ApiKeyBindingAdministration,
   AvailableTenant,
   PrincipalResolutionRecord,
-  PrincipalResolverShape,
+  PrincipalResolverService,
   ProviderSubject,
   ResolvedPrincipalIdentity,
 } from './auth/principal-resolver.ts';
@@ -41,7 +41,7 @@ export {
 } from './auth/support-recovery-principal-context.ts';
 export type {
   SupportRecoveryPrincipalContextError,
-  SupportRecoveryPrincipalContextResolverShape,
+  SupportRecoveryPrincipalContextResolverService,
 } from './auth/support-recovery-principal-context.ts';
 export type {
   SystemPrincipalContextError,
@@ -51,8 +51,9 @@ export {
   IdentityLifecycleConflictError,
   IdentityPersistenceUnavailableError,
   IdentityTargetInvalidError,
-  PrincipalManagementError,
+  PrincipalManagementErrorSchema,
 } from './auth/principal-management-errors.ts';
+export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
 export {
   managedPrincipalsRead,
   selfApiKeyBindingsRead,
@@ -72,7 +73,7 @@ export {
 export type {
   LegalEntityContextError,
   LegalEntityContextRecord,
-  LegalEntityContextShape,
+  LegalEntityContextService,
   SafeLegalEntity,
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
@@ -120,7 +121,7 @@ export type {
   ContextAccessClientFactory,
   ContextAccessDecision,
   ContextAccessResult,
-  ContextAccessShape,
+  ContextAccessService,
   ResourceAccessTarget,
 } from './permissions/context-access.ts';
 export { defineAction, isActionRegistration } from './actions/definition.ts';
@@ -179,7 +180,7 @@ export type {
   LegalEntityScope,
   OperationalScope,
   OperationalScopeRepository,
-  OperationalScopeResolverShape,
+  OperationalScopeResolverService,
   ResolveOperationalScopeInput,
 } from './operations/context.ts';
 export {
@@ -319,20 +320,20 @@ export {
   decideModuleStateAccess,
   tenantStatesAllowingAccess,
 } from './modules/module-state-gate.ts';
-export type { ModuleStateGateShape, ModuleStateSnapshot } from './modules/module-state-gate.ts';
+export type { ModuleStateGateService, ModuleStateSnapshot } from './modules/module-state-gate.ts';
 export {
   ModuleEntrypointGateway,
   ModuleEntrypointGatewayLive,
 } from './modules/module-entrypoint-gateway.ts';
 export type {
-  ModuleEntrypointGatewayShape,
+  ModuleEntrypointGatewayService,
   RunGatedModuleEntrypointInput,
 } from './modules/module-entrypoint-gateway.ts';
 export type {
   ActiveTenantModule,
   TenantModuleState,
   TenantModuleStateRecord,
-  TenantModuleStateServiceShape,
+  TenantModuleStateServiceContract,
 } from './modules/tenant-module-state-service.ts';
 export {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
@@ -408,7 +409,7 @@ export {
 export type {
   InstalledDeploymentContractInput,
   InstalledModuleCatalog,
-  InstalledModuleCatalogServiceShape,
+  InstalledModuleCatalogServiceContract,
 } from './modules/catalog.ts';
 export {
   defineVerticalRuntimeRegistration,

@@ -187,8 +187,8 @@ const requireReference = (set: ReadonlySet<string>, key: string, label: string):
   }
 };
 
-export const validateShellContributions = (
-  input: unknown,
+export const validateShellContributions = <Input>(
+  input: Input,
   references: ShellContributionReferenceSets,
 ): OntosShellContributions => {
   const contributions = Schema.decodeUnknownSync(OntosShellContributionsSchema, {

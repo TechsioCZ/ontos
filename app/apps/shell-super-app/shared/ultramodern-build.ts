@@ -1,3 +1,5 @@
+import { Predicate } from 'effect';
+
 declare const ULTRAMODERN_BUILD_MARKER: string;
 declare const ULTRAMODERN_SOURCE_REVISION: string;
 
@@ -45,14 +47,12 @@ const ultramodernGeneratedBuildArtifact = {
     },
   },
 } as const;
-const ultramodernBuildMarker =
-  typeof ULTRAMODERN_BUILD_MARKER === 'string'
-    ? ULTRAMODERN_BUILD_MARKER
-    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
-const ultramodernSourceRevision =
-  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
-    ? ULTRAMODERN_SOURCE_REVISION
-    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
+const ultramodernBuildMarker = Predicate.isString(ULTRAMODERN_BUILD_MARKER)
+  ? ULTRAMODERN_BUILD_MARKER
+  : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+const ultramodernSourceRevision = Predicate.isString(ULTRAMODERN_SOURCE_REVISION)
+  ? ULTRAMODERN_SOURCE_REVISION
+  : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
 const ultramodernBuildArtifact = {
   ...ultramodernGeneratedBuildArtifact,
   deliveryUnit: {

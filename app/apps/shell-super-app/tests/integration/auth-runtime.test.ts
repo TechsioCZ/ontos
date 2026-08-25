@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Predicate, Schema } from 'effect';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 import { Pool } from 'pg';
 import {
@@ -47,6 +47,17 @@ const principalId = '40000000-0000-4000-8000-000000000001';
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..');
 const fixtureLegalEntityId = '35000000-0000-4000-8000-000000000001';
 const fixtureAuthBindingId = '45000000-0000-4000-8000-000000000001';
+
+const IdentityResponseSchema = Schema.Struct({
+  identity: Schema.Struct({ email: Schema.String, principalId: Schema.String }),
+});
+const ProblemStatusSchema = Schema.Struct({ status: Schema.Number });
+const SessionResponseSchema = Schema.Struct({
+  identity: Schema.optional(Schema.Struct({ principalId: Schema.optional(Schema.String) })),
+});
+const RetryableProblemSchema = Schema.Struct({ retryable: Schema.optional(Schema.Boolean) });
+const TokenResponseSchema = Schema.Struct({ token: Schema.String });
+const DefectProblemSchema = Schema.Struct({ detail: Schema.optional(Schema.String) });
 
 const legalEntitySelectionOptions = {
   contextAccess: {
@@ -342,9 +353,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       }),
     );
     assert.equal(signInResponse.status, 200);
-    const signedIn = (await signInResponse.json()) as {
-      readonly identity: { readonly email: string; readonly principalId: string };
-    };
+    const signedIn = Schema.decodeUnknownSync(IdentityResponseSchema)(await signInResponse.json());
     const signedInCookies = signInResponse.headers.getSetCookie();
     assert.equal(signedIn.identity.email, email);
     assert.equal(signedIn.identity.principalId, principalId);
@@ -441,7 +450,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       await selectionRequiredRuntime.handler(exactPageRequest());
     assert.equal(selectionRequiredPageResponse.status, 409);
     assert.equal(
-      ((await selectionRequiredPageResponse.json()) as { readonly status: number }).status,
+      Schema.decodeUnknownSync(ProblemStatusSchema)(await selectionRequiredPageResponse.json())
+        .status,
       409,
     );
 
@@ -465,7 +475,10 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     handlers.push(deniedPageRuntime);
     const deniedPageResponse = await deniedPageRuntime.handler(exactPageRequest());
     assert.equal(deniedPageResponse.status, 403);
-    assert.equal(((await deniedPageResponse.json()) as { readonly status: number }).status, 403);
+    assert.equal(
+      Schema.decodeUnknownSync(ProblemStatusSchema)(await deniedPageResponse.json()).status,
+      403,
+    );
 
     const currentSessionResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/session`, {
@@ -474,7 +487,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(currentSessionResponse.status, 200);
     assert.equal(
-      ((await currentSessionResponse.json()) as { identity?: { principalId?: string } }).identity
+      Schema.decodeUnknownSync(SessionResponseSchema)(await currentSessionResponse.json()).identity
         ?.principalId,
       principalId,
     );
@@ -701,7 +714,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const unavailablePageResponse = await unavailableModulesHandler.handler(exactPageRequest());
     assert.equal(unavailablePageResponse.status, 503);
     assert.equal(
-      ((await unavailablePageResponse.json()) as { readonly status: number }).status,
+      Schema.decodeUnknownSync(ProblemStatusSchema)(await unavailablePageResponse.json()).status,
       503,
     );
 
@@ -722,7 +735,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       /application\/problem\+json/u,
     );
     assert.equal(
-      ((await unavailableGatewayResponse.json()) as { retryable?: boolean }).retryable,
+      Schema.decodeUnknownSync(RetryableProblemSchema)(await unavailableGatewayResponse.json())
+        .retryable,
       true,
     );
 
@@ -765,7 +779,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       }),
     );
     assert.equal(assertionResponse.status, 200);
-    const assertion = (await assertionResponse.json()) as { readonly token: string };
+    const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(await assertionResponse.json());
     const verifiedAssertion = await jwtVerify(assertion.token, pair.publicKey, {
       algorithms: ['EdDSA'],
       audience: 'inventory-stock',
@@ -807,18 +821,12 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       renderActionPrincipalServer({ appId: 'inventory-stock' }),
       'utf-8',
     );
-    const generatedVerifier = (await import(pathToFileURL(generatedVerifierPath).href)) as {
-      readonly verifyActionPrincipal: (
-        authorization: string,
-        options: {
-          readonly currentTimeSeconds: Effect.Effect<number>;
-          readonly environment: Readonly<Record<string, string>>;
-        },
-      ) => Effect.Effect<unknown>;
-    };
+    const generatedVerifier = await import(pathToFileURL(generatedVerifierPath).href);
+    const { verifyActionPrincipal } = generatedVerifier;
+    assert.ok(Predicate.isFunction(verifyActionPrincipal));
     assert.deepEqual(
       await Effect.runPromise(
-        generatedVerifier.verifyActionPrincipal(`Bearer ${assertion.token}`, {
+        verifyActionPrincipal(`Bearer ${assertion.token}`, {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
           environment: {
             ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
@@ -881,7 +889,9 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     );
     assert.equal(defectResponse.status, 500);
     assert.match(defectResponse.headers.get('content-type') ?? '', /application\/problem\+json/u);
-    const defectProblem = (await defectResponse.json()) as { detail?: string };
+    const defectProblem = Schema.decodeUnknownSync(DefectProblemSchema)(
+      await defectResponse.json(),
+    );
     assert.equal(defectProblem.detail, 'Gateway authentication could not complete.');
     assert.doesNotMatch(JSON.stringify(defectProblem), /deliberate gateway test defect/u);
 
@@ -1370,7 +1380,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
         method: 'POST',
       }),
     );
-    const assertion = (await assertionResponse.json()) as { readonly token: string };
+    const assertion = Schema.decodeUnknownSync(TokenResponseSchema)(await assertionResponse.json());
     const verified = await jwtVerify(assertion.token, pair.publicKey, {
       algorithms: ['EdDSA'],
       audience: 'inventory-stock',

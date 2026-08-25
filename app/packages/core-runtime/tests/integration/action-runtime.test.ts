@@ -4,11 +4,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after, before } from 'node:test';
 import { and, eq } from 'drizzle-orm';
-import { Cause, Deferred, Effect, Exit, Schema } from 'effect';
+import { Cause, Deferred, Effect, Exit, Schema, Predicate } from 'effect';
+import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
-import type { DomainEventReference } from '../../src/actions/events.ts';
+import { createDomainEventReference } from '../../src/actions/events.ts';
 import {
   defineGlobalPolicy,
   defineMicroverticalPolicy,
@@ -17,6 +18,7 @@ import {
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import {
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
@@ -142,7 +144,7 @@ const unconfiguredPermission = {
 };
 
 const withDatabase = <Value, Error>(
-  operation: (database: ContextServiceShape) => Effect.Effect<Value, Error>,
+  operation: (database: ContextServiceContract) => Effect.Effect<Value, Error>,
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
@@ -152,7 +154,7 @@ const withDatabase = <Value, Error>(
     }),
   );
 
-type ContextServiceShape = Parameters<typeof makeActionRuntime>[0];
+type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
 type EvidencePersistenceStage =
   | 'audit'
@@ -162,58 +164,46 @@ type EvidencePersistenceStage =
   | 'outbox';
 
 const withEvidencePersistenceFailure = (
-  database: ContextServiceShape,
+  database: ContextServiceContract,
   stage: EvidencePersistenceStage,
-): ContextServiceShape => {
-  const shouldFail = (operation: PropertyKey, table: unknown): boolean =>
-    (operation === 'insert' && stage === 'audit' && table === auditEvents) ||
-    (operation === 'insert' && stage === 'data-access' && table === dataAccessEvents) ||
-    (operation === 'insert' && stage === 'domain-event' && table === domainEvents) ||
-    (operation === 'insert' && stage === 'outbox' && table === outboxMessages) ||
-    (operation === 'update' && stage === 'invocation-success' && table === actionInvocations);
-
-  const executor = new Proxy(database.executor, {
-    get(target, property) {
-      if (property !== 'transaction') {
-        const value = Reflect.get(target, property, target) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
-      }
-
-      const transactionMethod = target.transaction as unknown as (
-        callback: (transaction: object) => PromiseLike<unknown>,
-      ) => Promise<unknown>;
-      return (callback: (transaction: object) => PromiseLike<unknown>) =>
-        transactionMethod.call(target, (transaction) => {
-          const faultingTransaction = new Proxy(transaction, {
-            get(transactionTarget, operation) {
-              const value = Reflect.get(transactionTarget, operation, transactionTarget) as unknown;
-              if (
-                (operation === 'insert' || operation === 'update') &&
-                typeof value === 'function'
-              ) {
-                return (table: unknown) => {
-                  if (shouldFail(operation, table)) {
-                    throw new Error(`Injected ${stage} persistence failure`);
-                  }
-                  return (value as (targetTable: unknown) => unknown).call(
-                    transactionTarget,
-                    table,
-                  );
-                };
-              }
-              return typeof value === 'function' ? value.bind(transactionTarget) : value;
-            },
-          });
-          return callback(faultingTransaction);
+): ContextServiceContract => {
+  const transactionOverride = {
+    transaction: (callback, configuration) =>
+      database.executor.transaction((transaction) => {
+        const insert: typeof transaction.insert = (table) => {
+          if (
+            (stage === 'audit' && Object.is(table, auditEvents)) ||
+            (stage === 'data-access' && Object.is(table, dataAccessEvents)) ||
+            (stage === 'domain-event' && Object.is(table, domainEvents)) ||
+            (stage === 'outbox' && Object.is(table, outboxMessages))
+          ) {
+            throw new Error(`Injected ${stage} persistence failure`);
+          }
+          return transaction.insert(table);
+        };
+        const update: typeof transaction.update = (table) => {
+          if (stage === 'invocation-success' && Object.is(table, actionInvocations)) {
+            throw new Error(`Injected ${stage} persistence failure`);
+          }
+          return transaction.update(table);
+        };
+        const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
+          insert,
+          update,
         });
-    },
-  });
+        return callback(faultingTransaction);
+      }, configuration),
+  } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+  const executor: ContextServiceContract['executor'] = Object.assign(
+    Object.create(database.executor),
+    transactionOverride,
+  );
 
-  return { executor } as ContextServiceShape;
+  return { executor };
 };
 
 const databasePromise = <Value>(
-  operation: (database: ContextServiceShape) => PromiseLike<Value>,
+  operation: (database: ContextServiceContract) => PromiseLike<Value>,
 ): Promise<Value> =>
   Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
@@ -270,9 +260,17 @@ after(async () => {
   });
 });
 
+const TestDomainEvents = {
+  'test-state.changed': Schema.Struct({ value: Schema.String }),
+};
+
+interface TestActionServices {
+  readonly transaction: ScopedTransactionExecutor;
+}
+type TestActionContext = ActionHandlerContext<typeof TestDomainEvents, TestActionServices>;
+
 interface RegistrationOptions {
   readonly actionKey: string;
-  readonly auditProfile?: 'invalid' | 'standard';
   readonly moduleStateKey: string;
   readonly mode?: 'orphan-outbox' | 'reject' | 'success';
   readonly onExecute?: () => void;
@@ -282,7 +280,6 @@ interface RegistrationOptions {
 
 const makeRegistration = ({
   actionKey,
-  auditProfile = 'standard',
   moduleStateKey,
   mode = 'success',
   onExecute,
@@ -296,11 +293,9 @@ const makeRegistration = ({
         policyKey: 'action-runtime.integration.v1',
       },
       actionKey,
-      auditProfile: auditProfile as 'standard',
+      auditProfile: 'standard',
       domainErrorSchema: Schema.Union([TestDomainRejected, TestPersistenceError]),
-      domainEvents: {
-        'test-state.changed': Schema.Struct({ value: Schema.String }),
-      },
+      domainEvents: TestDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
         entrypointKey: actionKey,
@@ -315,14 +310,13 @@ const makeRegistration = ({
       resultSchema: Schema.Struct({ stateId: Schema.String, value: Schema.String }),
       schemaVersion: '1',
     },
-    (payload, context) =>
+    (payload, context: TestActionContext) =>
       Effect.gen(function* integrationHandler() {
         onExecute?.();
-        const services = context.services as { readonly transaction: ScopedTransactionExecutor };
         const inserted = yield* Effect.tryPromise({
           catch: () => new TestPersistenceError({ reason: 'test business write failed' }),
           try: () =>
-            services.transaction
+            context.services.transaction
               .insert(tenantModuleStates)
               .values({
                 moduleKey: moduleStateKey,
@@ -345,7 +339,7 @@ const makeRegistration = ({
         });
 
         if (mode === 'orphan-outbox') {
-          yield* context.addOutboxMessage({} as DomainEventReference, {
+          yield* context.addOutboxMessage(createDomainEventReference(), {
             payloadJson: { value: payload.value },
             producerModuleKey: 'core.shell',
             topic: 'test-state.project',
@@ -391,7 +385,7 @@ const failureTag = <Error>(exit: Exit.Exit<unknown, Error>): string | undefined 
   }
   const failure = Cause.findErrorOption(exit.cause);
   return failure._tag === 'Some' &&
-    typeof failure.value === 'object' &&
+    Predicate.isObjectKeyword(failure.value) &&
     failure.value !== null &&
     '_tag' in failure.value
     ? String(failure.value._tag)
@@ -451,6 +445,7 @@ test('rechecks business module state under the tenant lock and retries after Cor
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const firstAttempt = Effect.runPromise(
       Effect.exit(
@@ -542,6 +537,7 @@ test('atomically commits business state, all success evidence, and the succeeded
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const result = await Effect.runPromise(
       runtime.runAction({
@@ -616,6 +612,7 @@ test('commits allowed Policy checkpoints atomically before handler success evide
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     await Effect.runPromise(
       runtime.runAction({
@@ -731,6 +728,7 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     for (const scenario of scenarios) {
       let handlerExecutions = 0;
@@ -738,21 +736,32 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
         .select()
         .from(outboxMessages)
         .where(eq(outboxMessages.tenantId, tenantId));
-      const exit = await Effect.runPromise(
-        Effect.exit(
-          runtime.runAction({
-            payload: { value: 'must-not-persist' },
-            principal,
-            registration: scenario.makeRegistration(() => {
-              handlerExecutions += 1;
-            }),
-            transport: transport(scenario.key, `test.${scenario.key}.${tenantId}`),
-          }),
-        ),
-      );
+      const actionEffect =
+        scenario.key === 'policy-denied-global'
+          ? runtime.runAction({
+              payload: { value: 'must-not-persist' },
+              principal,
+              registration: scenario.makeRegistration(() => {
+                handlerExecutions += 1;
+              }),
+              transport: transport(scenario.key, `test.${scenario.key}.${tenantId}`),
+            })
+          : runtime.runAction({
+              payload: { value: 'must-not-persist' },
+              principal,
+              registration: scenario.makeRegistration(() => {
+                handlerExecutions += 1;
+              }),
+              transport: transport(scenario.key, `test.${scenario.key}.${tenantId}`),
+            });
+      const exit = await Effect.runPromise(Effect.exit(actionEffect));
       const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : undefined;
       assert.equal(failureTag(exit), 'ActionPolicyDenied');
-      if (failure?._tag === 'Some' && typeof failure.value === 'object' && failure.value !== null) {
+      if (
+        failure?._tag === 'Some' &&
+        Predicate.isObjectKeyword(failure.value) &&
+        failure.value !== null
+      ) {
         assert.equal('reason' in failure.value && failure.value.reason, scenario.reason);
         assert.equal(
           'policyReasonCode' in failure.value && failure.value.policyReasonCode,
@@ -822,6 +831,7 @@ test('rolls back every denied-Policy finalization persistence failure', async ()
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       const exit = await Effect.runPromise(
         Effect.exit(
@@ -863,21 +873,18 @@ test('rolls back domain rejection, evidence persistence failure, and orphan outb
   const scenarios = [
     {
       actionKey: 'shell.test.domain-rejection',
-      auditProfile: 'standard',
       expectedTag: 'TestDomainRejected',
       key: 'domain-rejection',
       mode: 'reject',
     },
     {
       actionKey: 'shell.test.evidence-failure',
-      auditProfile: 'invalid',
       expectedTag: 'ActionTransactionError',
       key: 'evidence-failure',
       mode: 'success',
     },
     {
       actionKey: 'shell.test.orphan-outbox',
-      auditProfile: 'standard',
       expectedTag: 'ActionCollectorError',
       key: 'orphan-outbox',
       mode: 'orphan-outbox',
@@ -885,14 +892,17 @@ test('rolls back domain rejection, evidence persistence failure, and orphan outb
   ] as const;
 
   await databasePromise(async (database) => {
-    const runtime = makeActionRuntime(
-      database,
-      makeActionRepository(),
-      unconfiguredPermission,
-      testOperationalScopeResolver,
-    );
     for (const scenario of scenarios) {
       const moduleStateKey = `test.${scenario.key}.${tenantId}`;
+      const runtime = makeActionRuntime(
+        scenario.key === 'evidence-failure'
+          ? withEvidencePersistenceFailure(database, 'audit')
+          : database,
+        makeActionRepository(),
+        unconfiguredPermission,
+        testOperationalScopeResolver,
+        openActionRuntimeOptions,
+      );
       const exit = await Effect.runPromise(
         Effect.exit(
           runtime.runAction({
@@ -900,7 +910,6 @@ test('rolls back domain rejection, evidence persistence failure, and orphan outb
             principal,
             registration: makeRegistration({
               actionKey: scenario.actionKey,
-              auditProfile: scenario.auditProfile,
               mode: scenario.mode,
               moduleStateKey,
             }),
@@ -977,6 +986,7 @@ test('rolls back every individual success-evidence persistence failure', async (
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       const exit = await Effect.runPromise(
         Effect.exit(
@@ -1041,6 +1051,7 @@ test('keeps Policy rejection terminal and deduplicates repeated and concurrent e
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     let evaluations = 0;
     let handlerExecutions = 0;
@@ -1139,12 +1150,14 @@ test('never lets a losing Policy denial replace a running or successful invocati
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const deniedRuntime = makeActionRuntime(
       database,
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const handlerStarted = await Effect.runPromise(Deferred.make<null>());
     const key = 'policy-loses-to-success';
@@ -1206,6 +1219,7 @@ test('serializes concurrent requests and enforces committed, open-retry, and has
         makeActionRepository(),
         unconfiguredPermission,
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       );
       let executions = 0;
       const concurrentKey = 'concurrent-once';
@@ -1295,33 +1309,33 @@ test('serializes Domain Event allocation by tenant commit order', async () => {
   await databasePromise(async (database) => {
     const firstCommitRelease = await Effect.runPromise(Deferred.make<null>());
     const firstFlushed = await Effect.runPromise(Deferred.make<null>());
-    const delayedExecutor = new Proxy(database.executor, {
-      get(target, property, receiver) {
-        if (property === 'transaction') {
-          return (callback: (transaction: unknown) => Promise<unknown>) =>
-            target.transaction(async (transaction) => {
-              const result = await callback(transaction);
-              Effect.runSync(Deferred.succeed(firstFlushed, null));
-              await Effect.runPromise(Deferred.await(firstCommitRelease));
-              return result;
-            });
-        }
-        const value = Reflect.get(target, property, receiver) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
-    });
+    const delayedTransaction = {
+      transaction: (callback, configuration) =>
+        database.executor.transaction(async (transaction) => {
+          const result = await callback(transaction);
+          Effect.runSync(Deferred.succeed(firstFlushed, null));
+          await Effect.runPromise(Deferred.await(firstCommitRelease));
+          return result;
+        }, configuration),
+    } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+    const delayedExecutor: ContextServiceContract['executor'] = Object.assign(
+      Object.create(database.executor),
+      delayedTransaction,
+    );
     const repository = makeActionRepository();
     const firstRuntime = makeActionRuntime(
-      { executor: delayedExecutor } as ContextServiceShape,
+      { executor: delayedExecutor },
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const secondRuntime = makeActionRuntime(
       database,
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const firstModule = `test.sequence.first.${tenantId}`;
     const secondModule = `test.sequence.second.${tenantId}`;
@@ -1383,23 +1397,22 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
       moduleStateKey,
     });
 
-    const uncertainExecutor = new Proxy(database.executor, {
-      get(target, property, receiver) {
-        if (property === 'transaction') {
-          return async (callback: (transaction: unknown) => Promise<unknown>) => {
-            await target.transaction(callback as never);
-            throw { commitIndeterminate: true };
-          };
-        }
-        const value = Reflect.get(target, property, receiver) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
+    const uncertainTransaction = {
+      transaction: async (callback, configuration) => {
+        await database.executor.transaction(callback, configuration);
+        throw { commitIndeterminate: true };
       },
-    });
+    } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+    const uncertainExecutor: ContextServiceContract['executor'] = Object.assign(
+      Object.create(database.executor),
+      uncertainTransaction,
+    );
     const uncertainRuntime = makeActionRuntime(
-      { executor: uncertainExecutor } as ContextServiceShape,
+      { executor: uncertainExecutor },
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const first = await Effect.runPromise(
       Effect.exit(
@@ -1418,6 +1431,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const invocations = await database.executor
       .select()
@@ -1450,6 +1464,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
       },
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const unavailableResolution = await Effect.runPromise(
       Effect.exit(
@@ -1495,31 +1510,30 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
       actionKey: 'shell.test.lost-ack-open',
       moduleStateKey: openModuleStateKey,
     });
-    const uncertainRollbackExecutor = new Proxy(database.executor, {
-      get(target, property, receiver) {
-        if (property === 'transaction') {
-          return async (callback: (transaction: unknown) => Promise<unknown>) => {
-            try {
-              await target.transaction(async (transaction) => {
-                await callback(transaction);
-                throw new Error('force rollback after the transaction body');
-              });
-            } catch {
-              throw Object.assign(new Error('commit acknowledgement lost'), {
-                commitIndeterminate: true,
-              });
-            }
-          };
+    const uncertainRollbackTransaction = {
+      transaction: async (callback, configuration) => {
+        try {
+          return await database.executor.transaction(async (transaction) => {
+            await callback(transaction);
+            throw new Error('force rollback after the transaction body');
+          }, configuration);
+        } catch {
+          throw Object.assign(new Error('commit acknowledgement lost'), {
+            commitIndeterminate: true,
+          });
         }
-        const value = Reflect.get(target, property, receiver) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
       },
-    });
+    } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+    const uncertainRollbackExecutor: ContextServiceContract['executor'] = Object.assign(
+      Object.create(database.executor),
+      uncertainRollbackTransaction,
+    );
     const uncertainOpenRuntime = makeActionRuntime(
-      { executor: uncertainRollbackExecutor } as ContextServiceShape,
+      { executor: uncertainRollbackExecutor },
       repository,
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     const openFirst = await Effect.runPromise(
       Effect.exit(
@@ -1606,6 +1620,7 @@ test('persists no invocation or evidence for every non-writable business module 
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
+      openActionRuntimeOptions,
     );
     await Effect.runPromise(
       runtime.runAction({

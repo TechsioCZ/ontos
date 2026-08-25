@@ -48,20 +48,32 @@ const customer = {
   updatedAt: '2026-08-14T10:00:00.000Z',
 } as const satisfies PublicCustomer;
 
+interface ProblemFixture {
+  _tag: string;
+  detail: string;
+  retryable?: boolean;
+  status: number;
+  title: string;
+  type: string;
+}
+
 const assertProblemSchemaStatus = <Value extends { readonly status: number }>(
-  decode: (input: unknown) => Value,
+  decode: (input: ProblemFixture) => Value,
   tag: string,
   status: number,
   retryable: boolean,
 ) => {
-  const decoded = decode({
+  const problem: ProblemFixture = {
     _tag: tag,
     detail: 'safe detail',
-    ...(retryable ? { retryable: true } : {}),
     status,
     title: 'safe title',
     type: 'https://ontos.dev/problems/test',
-  });
+  };
+  if (retryable) {
+    problem.retryable = true;
+  }
+  const decoded = decode(problem);
   assert.equal(decoded.status, status);
 };
 

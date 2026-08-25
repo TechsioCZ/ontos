@@ -6,6 +6,19 @@ import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-con
 import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerDependencies } from '../../api/auth/gateway-issuer.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 const issuer = 'https://shell.example.test';
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
@@ -127,7 +140,7 @@ test('rejects transport correlation or any other excess principal claim', async 
       issueGatewayContextAssertion(
         {
           audience: 'property-registry',
-          principal: { ...principal, correlationId: 'must-remain-a-header' } as never,
+          principal: { ...principal, correlationId: 'must-remain-a-header' },
         },
         dependencies(configuration),
       ),
@@ -156,12 +169,17 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
     invalidJwks.map((privateJwk) =>
       Effect.runPromise(
         Effect.flip(
-          parseGatewayIssuerConfig({
-            ONTOS_GATEWAY_ISSUER: issuer,
-            ...(privateJwk === undefined
-              ? {}
-              : { ONTOS_GATEWAY_PRIVATE_JWK: JSON.stringify(privateJwk) }),
-          }),
+          parseGatewayIssuerConfig(
+            withOptionalProperty(
+              {
+                ONTOS_GATEWAY_ISSUER: issuer,
+              },
+              !(privateJwk === undefined),
+              'ONTOS_GATEWAY_PRIVATE_JWK',
+              JSON.stringify(privateJwk),
+              {},
+            ),
+          ),
         ),
       ),
     ),

@@ -1,12 +1,12 @@
 # OntOS
 
-OntOS is a delivery-bound property/rental ERP with strong platform foundations. This file is shared vocabulary, not an implementation specification; terms are working language until validated with product leads and customer discovery.
+OntOS is the product that contains Core, its Shell and operational runtimes, and reusable Foundational and Business Modules. Property/rental ERP and commerce are Application Compositions of those capabilities. This file is shared vocabulary, not an implementation specification; terms are working language until validated with product leads and customer discovery.
 
 ## Language
 
 **OntOS**:
-The system being built. In V1 it is a property/rental ERP with platform-shaped foundations; in the long-term vision it can grow into a temporal company ontology system.
-_Avoid_: TERP
+The encompassing modular business product being built. Core is its internal kernel; business capabilities live in OntOS Foundational and Business Modules and are assembled into Application Compositions. Property/rental ERP is an OntOS composition, and Commerce is the reusable composition first configured for Akros and then N1.
+_Avoid_: TERP, Core product, separate Akros product
 
 **OntOS V0**:
 The preparation phase for OntOS: Core implementation, architecture, ADRs, documentation, PoC work, module contracts, schema contracts, and delivery controls.
@@ -41,8 +41,8 @@ The Core-owned capability for listing and changing tenant module states. It is a
 _Avoid_: Ordinary business module, customer vertical, unguarded admin bypass
 
 **UltraModern.js MicroVertical**:
-The framework-level vertical slice concept in the UltraModern.js fork. It organizes frontend and backend behavior together inside the jointly deployable application. By itself, it does not define an OntOS manifest.
-_Avoid_: OntOS-specific manifest, standalone microservice, frontend-only module
+The framework-level full-stack vertical slice concept in the UltraModern.js fork. It keeps one capability's frontend and backend behavior together behind a strict independently deployable seam. Co-location is permitted, but changing placement must not change consuming business logic. By itself, a MicroVertical does not define an OntOS manifest or become a separate product.
+_Avoid_: OntOS-specific manifest, product, frontend-only module, mandatory co-location
 
 **OntOS Business Module**:
 A product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. It exposes a public OntOS Module Manifest so Core, activation logic, tooling, and other modules can reason about its public contract.
@@ -51,6 +51,26 @@ _Avoid_: Generic plugin, deployment unit, raw framework module
 **Foundational Module**:
 An OntOS Business Module that models shared business reality used by multiple other modules, but is not part of the Core Kernel. A Foundational Module may be active for most tenants and required by other modules, but it remains outside Core because it owns domain concepts that can evolve with customer discovery.
 _Avoid_: Core module, System Module, platform service, ordinary vertical, always-on kernel
+
+**Application Composition**:
+A named, reusable, versioned, dependency-closed directed acyclic graph of OntOS Foundational and Business Modules serving a coherent business purpose. It defines required modules, permitted optional modules, and dependency rules. Core validates and gates the graph without learning its business meaning. Commerce is one Application Composition shared by Akros, N1, and later commerce customers.
+_Avoid_: Customer deployment, product fork, module bundle without dependency rules
+
+**Customer Configuration**:
+A declarative customer-specific configuration of an Application Composition. It may select permitted optional modules and define policies, settings, branding, locales, Connectors, and integration participation, but it cannot fork Core, change shared module contracts, or create customer-specific module implementations. Akros and N1 are Customer Configurations of the Commerce Application Composition.
+_Avoid_: Customer fork, separate product, customer-named module family
+
+**Environment**:
+A topology-neutral lifecycle context in which a Customer Configuration operates, such as Production, Staging, or Development. Environment identity does not imply geography, data residency, isolated infrastructure, or shared multi-tenancy.
+_Avoid_: Deployment, region, tenant
+
+**Deployment Topology**:
+The physical mapping of Customer Configurations, Environments, Tenants, Application Composition modules, data stores, workers, and Channel Applications onto running infrastructure. It decides customer isolation, shared multi-tenancy, infrastructure placement, and regional or residency constraints without changing logical module ownership.
+_Avoid_: Application Composition, Customer Configuration, Environment
+
+**Channel Application**:
+A customer- or partner-facing application that composes public OntOS Business Module contracts for a channel, such as a commerce Storefront. It may live in the OntOS monorepo and deploy separately, but owns presentation and journey concerns rather than canonical business facts.
+_Avoid_: Business Module, System of Record, mandatory Shell route
 
 **Organization Registry**:
 The Foundational Module that models shared organizational business structure such as legal-entity groups, holdings, portfolios, acquisition batches, and similar views over managed Legal Entities. In V0 it is a group/view model, not a corporate ownership or control ledger; Core only owns the minimal Legal Entity boundary needed for context, audit, and isolation.
@@ -84,9 +104,9 @@ _Avoid_: User, employee, contact
 The Core-owned mapping from a stable externally authenticated subject to an OntOS Principal. BetterAuth owns users, sessions, API keys, key verification, and impersonation sessions; Core only stores the non-secret binding needed to resolve the effective Principal for actions, audit, and SpiceDB subjects. System jobs use system/service Principals without pretending to be external auth bindings.
 _Avoid_: Credential store, API key table, session table, runtime credential reference, user profile
 
-**Tenant-Scoped BetterAuth User**:
-A BetterAuth user account belongs to exactly one OntOS Tenant in the current product model. If the same real person needs access to multiple tenants, they use separate tenant-scoped BetterAuth user accounts rather than one global BetterAuth user with multiple tenant bindings.
-_Avoid_: Global multi-tenant user account, shared cross-tenant login
+**Tenant-Selected BetterAuth Session**:
+One BetterAuth user may have active bindings to multiple tenant-scoped Principals. Exactly one active Tenant is selected on the session and revalidated against an active binding, Principal, and Tenant on every trusted-context resolution; the selection itself grants no authority.
+_Avoid_: Unscoped global Principal, client-trusted tenant selector, selected tenant as permission
 
 **Authenticated Principal Session**:
 The OntOS-level login state where a BetterAuth session exists and resolves through an active Principal Auth Binding to an active Principal in an active Tenant. A BetterAuth session without an active Principal Auth Binding, active Principal, or active Tenant is only an authentication artifact, not a logged-in OntOS user.
@@ -115,6 +135,14 @@ _Avoid_: Every company, external manager, counterparty
 **Counterparty**:
 A Party in a commercial or contractual relationship with a managed Legal Entity. Counterparties can include tenants, guests, suppliers, external managers, corporate buyers, wholesalers, or accounting offices.
 _Avoid_: Legal entity, principal
+
+**Symmy Connector**:
+The single OntOS-to-Symmy integration seam. OntOS Business Modules publish provider-neutral business handoff contracts; the Symmy Connector adapts them to Symmy without owning business facts or lifecycle authority. OntOS does not maintain target direct Connectors to POHODA, ABRA, HELIOS, or similar provider systems.
+_Avoid_: Direct provider Connector, System of Record, Core capability
+
+**Symmy–Provider Integration**:
+A provider-specific integration operated downstream through Symmy, named for the concrete external system, such as Symmy–POHODA Integration or Symmy–ABRA Integration. N1's current direct POHODA integration is legacy and migration evidence, not the target architecture.
+_Avoid_: OntOS Connector, Core adapter, unnamed ERP integration
 
 **External Operator**:
 A Party outside the tenant's managed legal-entity structure that receives scoped operational access, such as an external property manager or external accountant.

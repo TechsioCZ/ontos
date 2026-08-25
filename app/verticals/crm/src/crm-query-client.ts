@@ -12,7 +12,7 @@ const contactEditSuccessKey = (customerId: string, contactId: string) =>
   `${customerId}:${contactId}`;
 
 export const getCrmQueryClient = () => {
-  if (typeof window === 'undefined') {
+  if (globalThis.window === undefined) {
     return createCrmQueryClient();
   }
   browserQueryClient ??= createCrmQueryClient();

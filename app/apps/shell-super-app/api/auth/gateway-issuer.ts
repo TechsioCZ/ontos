@@ -22,9 +22,9 @@ export class GatewayIssuerError extends Schema.TaggedErrorClass<GatewayIssuerErr
   },
 ) {}
 
-export interface IssueGatewayAssertionInput {
+export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalContext> {
   readonly audience: string;
-  readonly principal: GatewayTrustedPrincipalContext;
+  readonly principal: Principal;
 }
 
 export interface GatewayIssuerDependencies {
@@ -59,8 +59,8 @@ const unavailable = () =>
     reason: 'The gateway assertion issuer is unavailable',
   });
 
-export const issueGatewayContextAssertion = (
-  input: IssueGatewayAssertionInput,
+export const issueGatewayContextAssertion = <Principal>(
+  input: IssueGatewayAssertionInput<Principal>,
   dependencies: GatewayIssuerDependencies = gatewayIssuerLiveDependencies,
 ): Effect.Effect<GatewayContextResponse, GatewayIssuerError> =>
   Effect.gen(function* issueGatewayContextAssertionEffect() {

@@ -5,29 +5,42 @@ import test from 'node:test';
 import { Effect } from 'effect';
 import {
   enableGovernedRls,
-  installOperationalScope,
+  installOperationalScopeFromTransactionService,
   tenantLegalEntityRlsPolicies,
   tenantRlsPolicies,
 } from '../../src/db/scoped-transaction.ts';
 import { getTableConfig, pgTable, uuid } from 'drizzle-orm/pg-core';
+import type { OperationalScopeTransactionService } from '../../src/db/scoped-transaction.ts';
+
+const unusedOperation = (): never => {
+  throw new Error('CRUD operations are not used by this test');
+};
+const transactionService = (
+  install: OperationalScopeTransactionService['install'],
+  verify: OperationalScopeTransactionService['verify'],
+): OperationalScopeTransactionService => ({
+  delete: unusedOperation,
+  insert: unusedOperation,
+  install,
+  select: unusedOperation,
+  update: unusedOperation,
+  verify,
+});
 
 test('installs and verifies transaction-local scope and exposes no transaction controls', async () => {
   let calls = 0;
-  const transaction = {
-    delete: () => undefined,
-    execute: async () => {
+  const transaction = transactionService(
+    () => {
       calls += 1;
-      return calls === 1
-        ? { rows: [] }
-        : { rows: [{ legal_entity_id: 'entity', tenant_id: 'tenant' }] };
+      return Promise.resolve();
     },
-    insert: () => undefined,
-    query: {},
-    select: () => undefined,
-    update: () => undefined,
-  };
+    () => {
+      calls += 1;
+      return Promise.resolve({ legal_entity_id: 'entity', tenant_id: 'tenant' });
+    },
+  );
   const capability = await Effect.runPromise(
-    installOperationalScope(transaction as never, {
+    installOperationalScopeFromTransactionService(transaction, {
       authContextRef: 'job:test:run:scoped-transaction',
       authMethod: 'system',
       correlationId: 'c-1',
@@ -44,12 +57,13 @@ test('installs and verifies transaction-local scope and exposes no transaction c
 });
 
 test('fails closed when transaction settings do not match', async () => {
-  const transaction = {
-    execute: async () => ({ rows: [{ legal_entity_id: '', tenant_id: 'foreign' }] }),
-  };
+  const transaction = transactionService(
+    () => Promise.resolve(),
+    () => Promise.resolve({ legal_entity_id: '', tenant_id: 'foreign' }),
+  );
   const error = await Effect.runPromise(
     Effect.flip(
-      installOperationalScope(transaction as never, {
+      installOperationalScopeFromTransactionService(transaction, {
         authContextRef: 'job:test:run:scoped-transaction',
         authMethod: 'system',
         correlationId: 'c-1',

@@ -1,3 +1,4 @@
+import { Predicate } from 'effect';
 import type { Effect, Schema } from 'effect';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -5,7 +6,9 @@ import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 const outboxWorkerRegistration: unique symbol = Symbol(
   '@app/core-runtime/outbox/worker-registration',
 );
-const outboxWorkerHandlers = new WeakMap<object, OutboxWorkerHandler<unknown, unknown, unknown>>();
+const outboxWorkerHandler: unique symbol = Symbol(
+  '@app/core-runtime/outbox/worker-registration/handler',
+);
 
 export interface OutboxWorkerRetryPolicy {
   readonly initialBackoffMs: number;
@@ -55,6 +58,19 @@ export type OutboxWorkerHandler<Payload, Error, Requirements = never> = (
   context: OutboxWorkerHandlerContext,
 ) => Effect.Effect<void, Error, Requirements>;
 
+declare class OutboxWorkerHandlerVariance<Payload, Error, Requirements> {
+  invoke(
+    payload: Payload,
+    context: OutboxWorkerHandlerContext,
+  ): Effect.Effect<void, Error, Requirements>;
+}
+
+type BivariantOutboxWorkerHandler<Payload, Error, Requirements> = OutboxWorkerHandlerVariance<
+  Payload,
+  Error,
+  Requirements
+>['invoke'];
+
 export interface OutboxWorkerRegistration<
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
   Consumer extends string,
@@ -63,6 +79,11 @@ export interface OutboxWorkerRegistration<
   HandlerRequirements = never,
 > {
   readonly [outboxWorkerRegistration]: true;
+  readonly [outboxWorkerHandler]: BivariantOutboxWorkerHandler<
+    PayloadSchema['Type'],
+    HandlerError,
+    HandlerRequirements
+  >;
   readonly descriptor: Readonly<OutboxWorkerDescriptor<PayloadSchema, Consumer, Producer>>;
   readonly _handlerError?: HandlerError;
   readonly _handlerRequirements?: HandlerRequirements;
@@ -184,11 +205,12 @@ export const defineOutboxWorker = <
   ) {
     throw descriptorError('retryPolicy.multiplier must be a finite number from 1 through 100');
   }
-  if (typeof handler !== 'function') {
+  if (!Predicate.isFunction(handler)) {
     throw descriptorError('handler must be an Effect function');
   }
 
   const registration = Object.freeze({
+    [outboxWorkerHandler]: handler,
     [outboxWorkerRegistration]: true as const,
     descriptor: Object.freeze({
       ...descriptor,
@@ -196,7 +218,6 @@ export const defineOutboxWorker = <
       retryPolicy: Object.freeze({ ...descriptor.retryPolicy }),
     }),
   });
-  outboxWorkerHandlers.set(registration, handler as OutboxWorkerHandler<unknown, unknown, unknown>);
   return registration;
 };
 
@@ -262,23 +283,16 @@ export const validateOutboxWorkerSubscriptions = (
 };
 
 /** Internal Core seam. Worker handlers are absent from public registrations. */
-export const getOutboxWorkerHandler = <Registration extends AnyOutboxWorkerRegistration>(
+export function getOutboxWorkerHandler<Registration extends AnyOutboxWorkerRegistration>(
   registration: Registration,
 ): OutboxWorkerHandler<
-  unknown,
+  Registration['descriptor']['payloadSchema']['Type'],
   OutboxWorkerHandlerError<Registration>,
   OutboxWorkerRequirements<Registration>
-> => {
-  const handler = outboxWorkerHandlers.get(registration);
-  if (handler === undefined) {
-    throw descriptorError('Outbox Worker registration was not created by defineOutboxWorker');
-  }
-  return handler as OutboxWorkerHandler<
-    unknown,
-    OutboxWorkerHandlerError<Registration>,
-    OutboxWorkerRequirements<Registration>
-  >;
-};
+>;
+export function getOutboxWorkerHandler(registration: AnyOutboxWorkerRegistration) {
+  return registration[outboxWorkerHandler];
+}
 
 export const retryBackoffMs = (
   policy: OutboxWorkerRetryPolicy,

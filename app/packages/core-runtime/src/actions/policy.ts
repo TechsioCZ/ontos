@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Schema, Predicate } from 'effect';
 import type { Effect } from 'effect';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 
@@ -113,5 +113,7 @@ export const defineMicroverticalPolicy = <Payload, const Owner extends string>(
 };
 
 /** Internal definition-time guard; only constructor-produced references pass. */
-export const isActionPolicy = (value: unknown): value is ActionPolicy<unknown, string> =>
-  typeof value === 'object' && value !== null && policyReferences.has(value);
+export const isActionPolicy = <Value>(
+  value: Value,
+): value is Value & ActionPolicy<unknown, string> =>
+  Predicate.isObjectKeyword(value) && value !== null && policyReferences.has(value);

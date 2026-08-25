@@ -2,10 +2,10 @@
 // @effect-diagnostics asyncFunction:off
 // Drizzle owns the Promise transaction callback; Effect exits are carried
 // through a private rollback signal so typed handler failures remain typed.
-import { Cause, Context, Effect, Exit, Layer, Schema } from 'effect';
+import { Cause, Context, Effect, Exit, Layer, Schema, Predicate } from 'effect';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import type { CoreTransaction } from '../db/types.ts';
-import { makeActionCollector } from './collector.ts';
+import { createActionCollector } from './collector.ts';
 import { ActionTransportMetadataSchema } from './context.ts';
 import type { ActionTransportMetadata, TrustedPrincipalContext } from './context.ts';
 import {
@@ -49,6 +49,8 @@ import {
   computeCanonicalValueHash,
   getActionInvocationPersistenceFailureCause,
   getActionTransactionFailureCause,
+  logActionInvocationPersistenceFailureCause,
+  logActionTransactionFailureCause,
 } from './repository.ts';
 import type {
   ActionInvocationRecord,
@@ -58,24 +60,31 @@ import type {
 import {
   ModuleEntrypointGateway,
   ModuleEntrypointGatewayLive,
-  makeModuleEntrypointGateway,
 } from '../modules/module-entrypoint-gateway.ts';
-import type { ModuleEntrypointGatewayShape } from '../modules/module-entrypoint-gateway.ts';
-import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
-import {
-  ModuleStateGate,
-  ModuleStateGateLive,
-  makeModuleStateGate,
-} from '../modules/module-state-gate.ts';
-import type { ModuleStateGateShape } from '../modules/module-state-gate.ts';
-import { makeTenantModuleStateService } from '../modules/tenant-module-state-service.ts';
+import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
+import type {
+  ModuleEntrypointDescriptor,
+  TenantModuleEntrypoint,
+} from '../modules/module-entrypoint.ts';
+import { ModuleStateGate, ModuleStateGateLive } from '../modules/module-state-gate.ts';
+import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
-import type { OperationalScopeResolverShape } from '../operations/context.ts';
-import {
-  makeOperationalScopeRepository,
-  makeOperationalScopeResolver,
-} from '../operations/context.ts';
+import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
+import type { OperationalScopeResolverService } from '../operations/context.ts';
 import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 export const ACTION_RUNTIME_STAGES = [
   'payload_decoded',
@@ -166,50 +175,62 @@ export interface ActionRuntimeService {
 }
 
 export interface ActionRuntimeOptions {
-  readonly contextAccess?: Context.Service.Shape<typeof ContextAccess>;
-  readonly moduleEntrypointGateway?: ModuleEntrypointGatewayShape;
-  readonly moduleStateGate?: ModuleStateGateShape;
+  readonly contextAccess?: (typeof ContextAccess)['Service'];
+  readonly moduleEntrypointGateway: ModuleEntrypointGatewayService;
+  readonly moduleStateGate: ModuleStateGateService;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
   readonly installScope?: typeof installOperationalScope;
 }
 
-class ActionRollbackSignal<Error> {
-  readonly cause: Cause.Cause<Error>;
-  readonly defectCause: Cause.Cause<unknown> | undefined;
+type ActionRollbackToken = symbol;
 
-  constructor(cause: Cause.Cause<Error>, defectCause?: Cause.Cause<unknown>) {
+class ActionRollbackSignal<Error, DefectError = never> {
+  readonly cause: Cause.Cause<Error>;
+  readonly defectCause: Cause.Cause<DefectError> | undefined;
+  readonly #token: ActionRollbackToken;
+
+  constructor(
+    token: ActionRollbackToken,
+    cause: Cause.Cause<Error>,
+    defectCause?: Cause.Cause<DefectError>,
+  ) {
+    this.#token = token;
     this.cause = cause;
     this.defectCause = defectCause;
   }
+
+  matches(token: ActionRollbackToken): boolean {
+    return this.#token === token;
+  }
 }
 
-class TransactionBridgeFailure {
+class TransactionBridgeFailure<Original> {
   readonly _tag = 'TransactionBridgeFailure';
-  readonly original: unknown;
+  readonly original: Original;
 
-  constructor(original: unknown) {
+  constructor(original: Original) {
     this.original = original;
   }
 }
 
-const exitValueOrRollback = <Value, Error>(exit: Exit.Exit<Value, Error>): Value => {
+const exitValueOrRollback = <Value, Error>(
+  exit: Exit.Exit<Value, Error>,
+  token: ActionRollbackToken,
+): Value => {
   if (Exit.isFailure(exit)) {
     const failure = Cause.findErrorOption(exit.cause);
-    let originalCause: unknown;
+    let defectCause: Cause.Cause<never> | undefined = undefined;
     if (failure._tag === 'Some' && Schema.is(ActionTransactionError)(failure.value)) {
-      originalCause = getActionTransactionFailureCause(failure.value);
+      defectCause = getActionTransactionFailureCause(failure.value);
     } else if (
       failure._tag === 'Some' &&
       Schema.is(ActionInvocationPersistenceError)(failure.value)
     ) {
-      originalCause = getActionInvocationPersistenceFailureCause(failure.value);
+      defectCause = getActionInvocationPersistenceFailureCause(failure.value);
     }
-    throw new ActionRollbackSignal(
-      exit.cause,
-      originalCause === undefined ? undefined : Cause.die(originalCause),
-    );
+    throw new ActionRollbackSignal(token, exit.cause, defectCause);
   }
   return exit.value;
 };
@@ -217,24 +238,16 @@ const exitValueOrRollback = <Value, Error>(exit: Exit.Exit<Value, Error>): Value
 const logInvocationPersistenceFailure = (
   failure: ActionInvocationPersistenceError,
   annotations: Readonly<Record<string, string>>,
-): Effect.Effect<void> => {
-  const cause = getActionInvocationPersistenceFailureCause(failure);
-  return cause === undefined
-    ? Effect.void
-    : Effect.annotateLogs(
-        Effect.logError('Unexpected Action invocation persistence failure', cause),
-        annotations,
-      );
-};
+): Effect.Effect<void> => logActionInvocationPersistenceFailureCause(failure, annotations);
 
-const isCommitAcknowledgementFailure = (error: unknown): boolean => {
-  if (typeof error !== 'object' || error === null) {
+const isCommitAcknowledgementFailure = <Failure>(error: Failure): boolean => {
+  if (!Predicate.isObjectKeyword(error) || error === null) {
     return false;
   }
   if ('commitIndeterminate' in error && error.commitIndeterminate === true) {
     return true;
   }
-  if ('code' in error && typeof error.code === 'string') {
+  if ('code' in error && Predicate.isString(error.code)) {
     const networkCodes = new Set([
       'ECONNABORTED',
       'ECONNRESET',
@@ -274,7 +287,7 @@ const requestHashConflict = () =>
   });
 
 const checkTenantActionPermission = (
-  contextAccess: Context.Service.Shape<typeof ContextAccess> | undefined,
+  contextAccess: (typeof ContextAccess)['Service'] | undefined,
   principal: TrustedPrincipalContext,
   requiredPermission: (() => 'impersonate' | 'manage_identity' | undefined) | undefined,
 ): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> =>
@@ -350,10 +363,10 @@ const verifyInvocation = (
   );
 };
 
-const validatePrincipal = (
-  input: unknown,
-  actionRegistration?: object,
-  payload?: unknown,
+const validatePrincipal = <Input, Registration extends object = object, Payload = undefined>(
+  input: Input,
+  actionRegistration?: Registration,
+  payload?: Payload,
 ): Effect.Effect<TrustedPrincipalContext, ActionTrustedContextValidationError> =>
   decodeTrustedPrincipalContext(input).pipe(
     Effect.filterOrFail(
@@ -361,7 +374,7 @@ const validatePrincipal = (
         !isTrustedSupportRecoveryPrincipalContext(principal) ||
         (actionRegistration !== undefined &&
           isTrustedSupportRecoveryPrincipalContext(principal, actionRegistration) &&
-          typeof payload === 'object' &&
+          Predicate.isObjectKeyword(payload) &&
           payload !== null &&
           'checkpoint' in payload &&
           payload.checkpoint === 'stopped'),
@@ -380,8 +393,8 @@ const validatePrincipal = (
     ),
   );
 
-const validateTransport = (
-  input: unknown,
+const validateTransport = <Input>(
+  input: Input,
 ): Effect.Effect<ActionTransportMetadata, ActionPayloadValidationError> =>
   Schema.decodeUnknownEffect(ActionTransportMetadataSchema)(input).pipe(
     Effect.mapError(
@@ -399,6 +412,10 @@ const makeHandlerExecutionError = () =>
     reason: 'The Action handler failed unexpectedly',
   });
 
+const isTenantActionEntrypoint = <Owner extends string>(
+  entrypoint: ModuleEntrypointDescriptor<'action', 'write', Owner>,
+): entrypoint is TenantModuleEntrypoint<'action', 'write', Owner> => entrypoint.scope === 'tenant';
+
 const policyEvidence = <Payload, Owner extends string>(
   policy: ActionPolicy<Payload, Owner>,
 ): ActionPolicyEvidence =>
@@ -410,8 +427,8 @@ const policyEvidence = <Payload, Owner extends string>(
         scope: policy.scope,
       };
 
-const validateInvocationId = (
-  input: unknown,
+const validateInvocationId = <Input>(
+  input: Input,
 ): Effect.Effect<string, ActionPayloadValidationError> =>
   Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(input).pipe(
     Effect.mapError(
@@ -424,16 +441,13 @@ const validateInvocationId = (
   );
 
 export const makeActionRuntime = (
-  database: Context.Service.Shape<typeof CoreDatabaseService>,
+  database: (typeof CoreDatabaseService)['Service'],
   repository: ActionRepositoryService,
   permission: ActionPermissionService,
-  operationalScopeResolver: OperationalScopeResolverShape,
-  options: ActionRuntimeOptions = {},
+  operationalScopeResolver: OperationalScopeResolverService,
+  options: ActionRuntimeOptions,
 ): ActionRuntimeService => {
-  const moduleStateGate =
-    options.moduleStateGate ?? makeModuleStateGate(makeTenantModuleStateService(database));
-  const moduleEntrypointGateway =
-    options.moduleEntrypointGateway ?? makeModuleEntrypointGateway(moduleStateGate);
+  const { moduleEntrypointGateway, moduleStateGate } = options;
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
   const installScope = options.installScope ?? installOperationalScope;
@@ -474,12 +488,19 @@ export const makeActionRuntime = (
 
       const principal = yield* validatePrincipal(input.principal, input.registration, payload);
       const transport = yield* validateTransport(input.transport);
-      const scope = yield* operationalScopeResolver.resolve({
-        correlationId: transport.correlationId,
-        legalEntityScope: input.registration.descriptor.legalEntityScope,
-        principal,
-        ...(transport.traceId === undefined ? {} : { traceId: transport.traceId }),
-      });
+      const scope = yield* operationalScopeResolver.resolve(
+        withOptionalProperty(
+          {
+            correlationId: transport.correlationId,
+            legalEntityScope: input.registration.descriptor.legalEntityScope,
+            principal,
+          },
+          !(transport.traceId === undefined),
+          'traceId',
+          transport.traceId,
+          {},
+        ),
+      );
       notifyStage('trusted_context_validated');
 
       const moduleStateSnapshot = yield* moduleEntrypointGateway.prepareSnapshot(scope, [
@@ -514,17 +535,25 @@ export const makeActionRuntime = (
             owningModuleKey: input.registration.descriptor.owningModuleKey,
             principal,
             schemaVersion: input.registration.descriptor.schemaVersion,
-            target: {
-              ...(transport.targetModuleKey === undefined
-                ? {}
-                : { targetModuleKey: transport.targetModuleKey }),
-              ...(transport.targetResourceId === undefined
-                ? {}
-                : { targetResourceId: transport.targetResourceId }),
-              ...(transport.targetResourceType === undefined
-                ? {}
-                : { targetResourceType: transport.targetResourceType }),
-            },
+            target: withOptionalProperty(
+              withOptionalProperty(
+                withOptionalProperty(
+                  {},
+                  !(transport.targetModuleKey === undefined),
+                  'targetModuleKey',
+                  transport.targetModuleKey,
+                  {},
+                ),
+                !(transport.targetResourceId === undefined),
+                'targetResourceId',
+                transport.targetResourceId,
+                {},
+              ),
+              !(transport.targetResourceType === undefined),
+              'targetResourceType',
+              transport.targetResourceType,
+              {},
+            ),
           }),
       });
 
@@ -569,17 +598,15 @@ export const makeActionRuntime = (
                 });
               }
               if (error._tag === 'ActionTransactionError') {
-                const cause = getActionTransactionFailureCause(error);
-                return cause === undefined
-                  ? Effect.void
-                  : Effect.annotateLogs(
-                      Effect.logError('Unexpected permission denial persistence failure', cause),
-                      {
-                        actionKey: input.registration.descriptor.actionKey,
-                        correlationId: transport.correlationId,
-                        invocationId: invocation.actionInvocationId,
-                      },
-                    );
+                return logActionTransactionFailureCause(
+                  error,
+                  'Unexpected permission denial persistence failure',
+                  {
+                    actionKey: input.registration.descriptor.actionKey,
+                    correlationId: transport.correlationId,
+                    invocationId: invocation.actionInvocationId,
+                  },
+                );
               }
               return Effect.void;
             }),
@@ -634,21 +661,38 @@ export const makeActionRuntime = (
         }),
         payload,
         principal: Object.freeze({ ...principal }),
-        target: Object.freeze({
-          ...(transport.targetModuleKey === undefined
-            ? {}
-            : { targetModuleKey: transport.targetModuleKey }),
-          ...(transport.targetResourceId === undefined
-            ? {}
-            : { targetResourceId: transport.targetResourceId }),
-          ...(transport.targetResourceType === undefined
-            ? {}
-            : { targetResourceType: transport.targetResourceType }),
-        }),
-        transport: Object.freeze({
-          correlationId: transport.correlationId,
-          ...(transport.traceId === undefined ? {} : { traceId: transport.traceId }),
-        }),
+        target: Object.freeze(
+          withOptionalProperty(
+            withOptionalProperty(
+              withOptionalProperty(
+                {},
+                !(transport.targetModuleKey === undefined),
+                'targetModuleKey',
+                transport.targetModuleKey,
+                {},
+              ),
+              !(transport.targetResourceId === undefined),
+              'targetResourceId',
+              transport.targetResourceId,
+              {},
+            ),
+            !(transport.targetResourceType === undefined),
+            'targetResourceType',
+            transport.targetResourceType,
+            {},
+          ),
+        ),
+        transport: Object.freeze(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+            },
+            !(transport.traceId === undefined),
+            'traceId',
+            transport.traceId,
+            {},
+          ),
+        ),
       });
       const allowedPolicies: ActionPolicyEvidence[] = [];
       for (const policy of input.registration.descriptor.policies) {
@@ -723,43 +767,39 @@ export const makeActionRuntime = (
       notifyStage('invocation_running');
 
       let transactionBodyCompleted = false;
+      const rollbackToken = Symbol('@app/core-runtime/actions/rollback');
       const transaction = Effect.tryPromise({
         catch: (error) => new TransactionBridgeFailure(error),
         try: () =>
-          database.executor.transaction(async (drizzleTransaction) => {
+          database.executor.transaction(async (drizzleTransaction: CoreTransaction) => {
             const lockedInvocation = exitValueOrRollback(
               await Effect.runPromiseExit(
-                repository.lockInvocation(
-                  drizzleTransaction as CoreTransaction,
-                  invocation.actionInvocationId,
-                ),
+                repository.lockInvocation(drizzleTransaction, invocation.actionInvocationId),
               ),
+              rollbackToken,
             );
             notifyStage('invocation_locked');
             exitValueOrRollback(
               await Effect.runPromiseExit(verifyInvocation(lockedInvocation, requestHash)),
+              rollbackToken,
             );
 
             const scopedTransaction = exitValueOrRollback(
-              await Effect.runPromiseExit(
-                installScope(drizzleTransaction as CoreTransaction, scope),
-              ),
+              await Effect.runPromiseExit(installScope(drizzleTransaction, scope)),
+              rollbackToken,
             );
             notifyStage('database_scope_installed');
 
-            if (input.registration.descriptor.entrypoint.scope === 'tenant') {
+            if (isTenantActionEntrypoint(input.registration.descriptor.entrypoint)) {
               exitValueOrRollback(
                 await Effect.runPromiseExit(
                   moduleStateGate.recheckWrite(
-                    drizzleTransaction as CoreTransaction,
+                    drizzleTransaction,
                     scope.tenantId,
-                    input.registration.descriptor.entrypoint as TenantModuleEntrypoint<
-                      'action',
-                      'write',
-                      Owner
-                    >,
+                    input.registration.descriptor.entrypoint,
                   ),
                 ),
+                rollbackToken,
               );
             }
             notifyStage('module_state_rechecked');
@@ -768,10 +808,11 @@ export const makeActionRuntime = (
               await Effect.runPromiseExit(
                 serviceFactory(scopedTransaction, scope).pipe(Effect.provide(handlerRequirements)),
               ),
+              rollbackToken,
             );
             const handler = resolveHandler(input.registration);
 
-            const collector = makeActionCollector(
+            const collector = createActionCollector(
               input.registration.descriptor.domainEvents,
               input.registration.descriptor.owningModuleKey,
               input.registration.descriptor.accessEvidencePolicy,
@@ -796,6 +837,7 @@ export const makeActionRuntime = (
             if (Exit.isFailure(handlerExit)) {
               if (Cause.hasDies(handlerExit.cause) || Cause.hasInterrupts(handlerExit.cause)) {
                 throw new ActionRollbackSignal(
+                  rollbackToken,
                   Cause.fail(makeHandlerExecutionError()),
                   handlerExit.cause,
                 );
@@ -803,12 +845,13 @@ export const makeActionRuntime = (
               const domainError = Cause.findErrorOption(handlerExit.cause);
               if (domainError._tag === 'None') {
                 throw new ActionRollbackSignal(
+                  rollbackToken,
                   Cause.fail(makeHandlerExecutionError()),
                   handlerExit.cause,
                 );
               }
               if (Schema.is(ActionCollectorError)(domainError.value)) {
-                throw new ActionRollbackSignal(Cause.fail(domainError.value));
+                throw new ActionRollbackSignal(rollbackToken, Cause.fail(domainError.value));
               }
               const decodedDomainError = await Effect.runPromiseExit(
                 Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(
@@ -817,11 +860,12 @@ export const makeActionRuntime = (
               );
               if (Exit.isFailure(decodedDomainError)) {
                 throw new ActionRollbackSignal(
+                  rollbackToken,
                   Cause.fail(makeHandlerExecutionError()),
                   handlerExit.cause,
                 );
               }
-              throw new ActionRollbackSignal(Cause.fail(decodedDomainError.value));
+              throw new ActionRollbackSignal(rollbackToken, Cause.fail(decodedDomainError.value));
             }
             notifyStage('handler_executed');
 
@@ -829,11 +873,12 @@ export const makeActionRuntime = (
               await Effect.runPromiseExit(
                 decodeActionResult(input.registration.descriptor.resultSchema, handlerExit.value),
               ),
+              rollbackToken,
             );
 
             const resultHash = computeCanonicalValueHash(result);
             const persistenceExit = await Effect.runPromiseExit(
-              repository.flushSuccess(drizzleTransaction as CoreTransaction, {
+              repository.flushSuccess(drizzleTransaction, {
                 actionInvocationId: invocation.actionInvocationId,
                 actionKey: input.registration.descriptor.actionKey,
                 allowedPolicies,
@@ -844,24 +889,29 @@ export const makeActionRuntime = (
                 transport,
               }),
             );
-            exitValueOrRollback(persistenceExit);
+            exitValueOrRollback(persistenceExit, rollbackToken);
             notifyStage('success_evidence_flushed');
             transactionBodyCompleted = true;
             return result;
           }),
       });
+      const isCurrentRollback = <Value>(
+        value: Value,
+      ): value is Value &
+        ActionRollbackSignal<ActionCoreError | DomainErrorSchema['Type'], unknown> =>
+        value instanceof ActionRollbackSignal && value.matches(rollbackToken);
 
       return yield* transaction.pipe(
         Effect.catch((bridgeError) => {
           const transactionError = bridgeError.original;
-          if (transactionError instanceof ActionRollbackSignal) {
-            const rollback = transactionError as ActionRollbackSignal<
-              ActionCoreError | DomainErrorSchema['Type']
-            >;
+          if (isCurrentRollback(transactionError)) {
             return Effect.gen(function* reportRollback() {
-              if (rollback.defectCause !== undefined) {
+              if (transactionError.defectCause !== undefined) {
                 yield* Effect.annotateLogs(
-                  Effect.logError('Unexpected Action execution defect', rollback.defectCause),
+                  Effect.logError(
+                    'Unexpected Action execution defect',
+                    transactionError.defectCause,
+                  ),
                   {
                     actionKey: input.registration.descriptor.actionKey,
                     correlationId: transport.correlationId,
@@ -869,7 +919,7 @@ export const makeActionRuntime = (
                   },
                 );
               }
-              return yield* Effect.failCause(rollback.cause);
+              return yield* Effect.failCause(transactionError.cause);
             });
           }
           if (transactionBodyCompleted && isCommitAcknowledgementFailure(transactionError)) {
@@ -961,24 +1011,20 @@ export const ActionRuntimeLive = Layer.effect(
     const permission = yield* ActionPermission;
     const moduleEntrypointGateway = yield* ModuleEntrypointGateway;
     const moduleStateGate = yield* ModuleStateGate;
+    const scopeResolver = yield* OperationalScopeResolver;
     const contextAccess = yield* ContextAccess;
-    return makeActionRuntime(
-      database,
-      repository,
-      permission,
-      makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
-      {
-        contextAccess,
-        moduleEntrypointGateway,
-        moduleStateGate,
-      },
-    );
+    return makeActionRuntime(database, repository, permission, scopeResolver, {
+      contextAccess,
+      moduleEntrypointGateway,
+      moduleStateGate,
+    });
   }),
 ).pipe(
   Layer.provide(ActionRepositoryLive),
   Layer.provide(ActionPermissionLive),
   Layer.provide(ModuleEntrypointGatewayLive),
   Layer.provide(ModuleStateGateLive),
+  Layer.provide(OperationalScopeResolverLive),
   Layer.provide(ContextAccessLive),
 );
 

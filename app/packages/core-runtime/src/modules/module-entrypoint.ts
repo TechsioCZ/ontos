@@ -103,16 +103,41 @@ const defineEntrypoint = <
   input: Omit<ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope>, 'scope'>,
   scope: Scope,
 ): ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> => {
-  let decoded: Schema.Schema.Type<typeof ModuleEntrypointSchema>;
+  const descriptor: ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> = {
+    ...input,
+    scope,
+  };
   try {
-    decoded = Schema.decodeUnknownSync(ModuleEntrypointSchema)({ ...input, scope });
+    Schema.decodeUnknownSync(ModuleEntrypointSchema)(descriptor);
   } catch {
     throw new TypeError('Module entrypoint identity is invalid');
   }
-  if (!roleAllowsAccess(decoded.role, decoded.access)) {
+  if (!roleAllowsAccess(descriptor.role, descriptor.access)) {
     throw new TypeError('Module entrypoint role and access are inconsistent');
   }
-  return Object.freeze(decoded) as ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope>;
+  return Object.freeze(descriptor);
+};
+
+export const decodeTenantModuleEntrypoint = <Input>(input: Input): TenantModuleEntrypoint => {
+  let descriptor: Schema.Schema.Type<typeof ModuleEntrypointSchema>;
+  try {
+    descriptor = Schema.decodeUnknownSync(ModuleEntrypointSchema)({
+      ...input,
+      scope: 'tenant',
+    });
+  } catch {
+    throw new TypeError('Module entrypoint identity is invalid');
+  }
+  if (descriptor.scope !== 'tenant' || !roleAllowsAccess(descriptor.role, descriptor.access)) {
+    throw new TypeError('Module entrypoint role and access are inconsistent');
+  }
+  return Object.freeze({
+    access: descriptor.access,
+    entrypointKey: descriptor.entrypointKey,
+    moduleKey: descriptor.moduleKey,
+    role: descriptor.role,
+    scope: 'tenant',
+  });
 };
 
 export const defineTenantModuleEntrypoint = <

@@ -6,10 +6,12 @@ import test, { after, before } from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
+import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
+import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -71,10 +73,10 @@ const transport = (idempotencyKey: string, targetResourceId: string) => ({
   targetResourceType: 'permission-test-state',
 });
 
-type ContextServiceShape = Parameters<typeof makeActionRuntime>[0];
+type ContextServiceContract = Parameters<typeof makeActionRuntime>[0];
 
 const withDatabase = <Value, Error>(
-  operation: (database: ContextServiceShape) => Effect.Effect<Value, Error>,
+  operation: (database: ContextServiceContract) => Effect.Effect<Value, Error>,
 ) =>
   Effect.scoped(
     Effect.gen(function* databaseScope() {
@@ -85,7 +87,7 @@ const withDatabase = <Value, Error>(
   );
 
 const databasePromise = <Value>(
-  operation: (database: ContextServiceShape) => PromiseLike<Value>,
+  operation: (database: ContextServiceContract) => PromiseLike<Value>,
 ): Promise<Value> =>
   Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
@@ -204,6 +206,15 @@ after(async () => {
   }
 });
 
+const NoDomainEvents = {};
+interface PermissionActionServices {
+  readonly transaction: ScopedTransactionExecutor;
+}
+type PermissionActionContext = ActionHandlerContext<
+  typeof NoDomainEvents,
+  PermissionActionServices
+>;
+
 const registration = (actionKey: string, moduleStateKey: string, onExecute: () => void) =>
   defineAction(
     {
@@ -214,7 +225,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       actionKey,
       auditProfile: 'sensitive',
       domainErrorSchema: TestWriteError,
-      domainEvents: {},
+      domainEvents: NoDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
         entrypointKey: actionKey,
@@ -229,14 +240,13 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    (_payload, context) =>
+    (_payload, context: PermissionActionContext) =>
       Effect.gen(function* permissionIntegrationHandler() {
         onExecute();
-        const services = context.services as { readonly transaction: ScopedTransactionExecutor };
         yield* Effect.tryPromise({
           catch: () => new TestWriteError({ reason: 'test business write failed' }),
           try: () =>
-            services.transaction.insert(tenantModuleStates).values({
+            context.services.transaction.insert(tenantModuleStates).values({
               moduleKey: moduleStateKey,
               state: 'active',
               tenantId: context.scope.tenantId,
@@ -247,7 +257,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
   );
 
 const runWithLivePermission = async <Value>(
-  database: ContextServiceShape,
+  database: ContextServiceContract,
   operation: (runtime: ReturnType<typeof makeActionRuntime>) => Promise<Value>,
   configuration: SpiceDbConfigValue = spiceDbConfig,
 ): Promise<Value> => {
@@ -259,6 +269,7 @@ const runWithLivePermission = async <Value>(
         makeActionRepository(),
         makeActionPermissionService(client),
         testOperationalScopeResolver,
+        openActionRuntimeOptions,
       ),
     );
   } finally {
@@ -414,46 +425,36 @@ test('serializes concurrent denials into one Audit Event without executing the h
 type DenialFailureStage = 'audit' | 'invocation-update';
 
 const withDenialPersistenceFailure = (
-  database: ContextServiceShape,
+  database: ContextServiceContract,
   stage: DenialFailureStage,
-): ContextServiceShape => {
-  const executor = new Proxy(database.executor, {
-    get(target, property) {
-      if (property !== 'transaction') {
-        const value = Reflect.get(target, property, target) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
-      }
-      return (callback: (transaction: object) => PromiseLike<unknown>) =>
-        target.transaction(async (transaction) => {
-          const faultingTransaction = new Proxy(transaction, {
-            get(transactionTarget, operation) {
-              const value = Reflect.get(transactionTarget, operation, transactionTarget) as unknown;
-              if (
-                ((stage === 'audit' && operation === 'insert') ||
-                  (stage === 'invocation-update' && operation === 'update')) &&
-                typeof value === 'function'
-              ) {
-                return (table: unknown) => {
-                  if (
-                    (stage === 'audit' && table === auditEvents) ||
-                    (stage === 'invocation-update' && table === actionInvocations)
-                  ) {
-                    throw new Error(`Injected denial ${stage} failure`);
-                  }
-                  return (value as (targetTable: unknown) => unknown).call(
-                    transactionTarget,
-                    table,
-                  );
-                };
-              }
-              return typeof value === 'function' ? value.bind(transactionTarget) : value;
-            },
-          });
-          return await callback(faultingTransaction);
+): ContextServiceContract => {
+  const transactionOverride = {
+    transaction: (callback, configuration) =>
+      database.executor.transaction((transaction) => {
+        const insert: typeof transaction.insert = (table) => {
+          if (stage === 'audit' && Object.is(table, auditEvents)) {
+            throw new Error(`Injected denial ${stage} failure`);
+          }
+          return transaction.insert(table);
+        };
+        const update: typeof transaction.update = (table) => {
+          if (stage === 'invocation-update' && Object.is(table, actionInvocations)) {
+            throw new Error(`Injected denial ${stage} failure`);
+          }
+          return transaction.update(table);
+        };
+        const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
+          insert,
+          update,
         });
-    },
-  });
-  return { executor } as ContextServiceShape;
+        return callback(faultingTransaction);
+      }, configuration),
+  } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
+  const executor: ContextServiceContract['executor'] = Object.assign(
+    Object.create(database.executor),
+    transactionOverride,
+  );
+  return { executor };
 };
 
 test('rolls back both denial evidence writes when either persistence step fails', async () => {

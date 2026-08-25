@@ -7,11 +7,12 @@ import { useState } from 'react';
 import { attachResourceMedia, runEffectRequest } from '../../../../../../api/auth-client.ts';
 import { AuthenticatedDashboardLayout } from '../../../../../shell-frame.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
-import type { ResourcePageModel } from './page.data.ts';
 
-export default function ResourcePage() {
+const ResourcePage = () => {
   const { t } = useModernI18n();
-  const model = useLoaderData({ strict: false }) as ResourcePageModel;
+  const model = useLoaderData({
+    from: '/$lang/resources/$moduleId/$resourceType/$resourceId',
+  });
   const [mediaState, setMediaState] = useState<'failed' | 'idle' | 'pending' | 'success'>('idle');
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined,
@@ -147,4 +148,6 @@ export default function ResourcePage() {
       {content}
     </AuthenticatedDashboardLayout>
   );
-}
+};
+
+export default ResourcePage;

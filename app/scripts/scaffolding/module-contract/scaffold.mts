@@ -51,6 +51,8 @@ import {
   createMutation,
   discoverVertical,
   ensureUniqueMutationPaths,
+  isMissingFileError,
+  isStringValue,
   patchJsonObjectProperty,
   readJson,
   requireOntosModuleId,
@@ -61,6 +63,7 @@ import {
   updateMutation,
 } from '../shared.mts';
 import type {
+  JsonValue,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
   ScaffoldPlan,
@@ -89,7 +92,7 @@ const assertUniqueModuleId = async (
           const content = await readFile(manifestPath, 'utf-8');
           return { entry, moduleId: content.match(moduleMarkerPattern)?.groups?.['moduleId'] };
         } catch (error) {
-          if ((error as { readonly code?: string }).code === 'ENOENT') {
+          if (isMissingFileError(error)) {
             return null;
           }
           throw error;
@@ -240,7 +243,7 @@ ${VERTICAL_REPORT_SLOT_END}
 };
 
 const addArtifactCommand = (
-  current: unknown,
+  current: JsonValue | undefined,
   vertical: VerticalMetadata,
   target: 'cloudflare-dist' | 'dist',
   label: string,
@@ -302,7 +305,7 @@ const patchTsconfig = async (
   const tsconfigPath = resolveContainedPath(vertical.directory, 'tsconfig.json');
   const { content, value } = await readJson(tsconfigPath, `vertical ${vertical.slug} tsconfig`);
   const { include } = value;
-  if (!Array.isArray(include) || !include.every((entry) => typeof entry === 'string')) {
+  if (!Array.isArray(include) || !include.every(isStringValue)) {
     throw new Error(`vertical ${vertical.slug} tsconfig include must be a string array`);
   }
   const nextInclude = [

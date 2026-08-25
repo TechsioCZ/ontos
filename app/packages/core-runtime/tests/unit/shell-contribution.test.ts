@@ -136,30 +136,56 @@ test('rejects extra keys, duplicates, cross-owner entrypoints, and missing refer
 });
 
 test('rejects incompatible entrypoint roles and arbitrary transport metadata', () => {
-  const incompatible = full();
-  incompatible.search[0] = {
-    ...incompatible.search[0]!,
-    entrypoint: entrypoint('page') as never,
-  };
-  assert.throws(() => validateShellContributions(incompatible, references));
-  const incompatibleAccess = full();
-  incompatibleAccess.pages[0] = {
-    ...incompatibleAccess.pages[0]!,
-    entrypoint: { ...incompatibleAccess.pages[0]!.entrypoint, access: 'write' } as never,
-  };
-  assert.throws(() => validateShellContributions(incompatibleAccess, references));
-  const incompatibleMediaAccess = full();
-  incompatibleMediaAccess.mediaAttachments[0] = {
-    ...incompatibleMediaAccess.mediaAttachments[0]!,
-    entrypoint: {
-      ...incompatibleMediaAccess.mediaAttachments[0]!.entrypoint,
-      access: 'read',
-    } as never,
-  };
-  assert.throws(() => validateShellContributions(incompatibleMediaAccess, references));
-  const withRemote = full();
-  withRemote.pages[0] = { ...withRemote.pages[0]!, remote: 'private/remote' } as never;
-  assert.throws(() => validateShellContributions(withRemote, references));
+  const baseline = full();
+  assert.throws(() =>
+    validateShellContributions(
+      {
+        ...baseline,
+        search: [{ ...baseline.search[0]!, entrypoint: entrypoint('page') }],
+      },
+      references,
+    ),
+  );
+  assert.throws(() =>
+    validateShellContributions(
+      {
+        ...baseline,
+        pages: [
+          {
+            ...baseline.pages[0]!,
+            entrypoint: { ...baseline.pages[0]!.entrypoint, access: 'write' },
+          },
+        ],
+      },
+      references,
+    ),
+  );
+  assert.throws(() =>
+    validateShellContributions(
+      {
+        ...baseline,
+        mediaAttachments: [
+          {
+            ...baseline.mediaAttachments[0]!,
+            entrypoint: {
+              ...baseline.mediaAttachments[0]!.entrypoint,
+              access: 'read',
+            },
+          },
+        ],
+      },
+      references,
+    ),
+  );
+  assert.throws(() =>
+    validateShellContributions(
+      {
+        ...baseline,
+        pages: [{ ...baseline.pages[0]!, remote: 'private/remote' }],
+      },
+      references,
+    ),
+  );
   const withUnsafeRoute = full();
   withUnsafeRoute.pages[0] = { ...withUnsafeRoute.pages[0]!, routePath: '/modules/:module-id' };
   assert.throws(() => validateShellContributions(withUnsafeRoute, references));

@@ -22,10 +22,10 @@ const subjectBody = (ico = '48039101') => ({
   pravniForma: '112',
 });
 
-const jsonResponse = (
+const jsonResponse = <Body>(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
-  body: unknown,
+  body: Body,
 ): HttpClientResponse.HttpClientResponse =>
   HttpClientResponse.fromWeb(
     request,

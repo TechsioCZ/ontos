@@ -1,3 +1,4 @@
+import { Predicate } from 'effect';
 import type { AnyOutboxWorkerRegistration } from '../outbox/definition.ts';
 import { validateOutboxWorkerRegistrations } from '../outbox/definition.ts';
 import type {
@@ -36,7 +37,7 @@ export interface VerticalRuntimeRegistrationInput<
   readonly outboxWorkers: readonly AnyOutboxWorkerRegistration[];
 }
 
-export type VerticalRuntimeEntrypointThunk = () => unknown;
+export type VerticalRuntimeEntrypointThunk = () => PromiseLike<object>;
 
 export interface VerticalRuntimeEntrypointBindings {
   readonly api: Readonly<Record<string, VerticalRuntimeEntrypointThunk>>;
@@ -69,7 +70,7 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
 ): VerticalRuntimeRegistration<Manifest['module']['id']> => {
   const allowed = new Set(['actions', 'entrypoints', 'manifest', 'outboxWorkers']);
   for (const key of Reflect.ownKeys(input)) {
-    if (typeof key !== 'string' || !allowed.has(key)) {
+    if (!Predicate.isString(key) || !allowed.has(key)) {
       throw new TypeError(`runtime registration contains unsupported field ${String(key)}`);
     }
   }
@@ -95,12 +96,12 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
   const entrypoints = input.entrypoints ?? emptyEntrypoints();
   const entrypointCategories = new Set(['api', 'components', 'pages', 'reports', 'search']);
   for (const key of Reflect.ownKeys(entrypoints)) {
-    if (typeof key !== 'string' || !entrypointCategories.has(key)) {
+    if (!Predicate.isString(key) || !entrypointCategories.has(key)) {
       throw new TypeError(`runtime entrypoints contain unsupported field ${String(key)}`);
     }
   }
   for (const [category, bindings] of Object.entries(entrypoints)) {
-    if (Object.values(bindings).some((value) => typeof value !== 'function')) {
+    if (Object.values(bindings).some((value) => !Predicate.isFunction(value))) {
       throw new TypeError(`runtime ${category} entrypoints must be lazy thunks`);
     }
   }

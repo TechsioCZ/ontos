@@ -2,8 +2,8 @@
 /* eslint-disable max-classes-per-file, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/no-array-method-this-argument -- Support impersonation orchestration and typed Effect failures share one Auth service boundary. */
 import type {
   ActionRuntimeService,
-  PrincipalResolverShape,
-  SupportRecoveryPrincipalContextResolverShape,
+  PrincipalResolverService,
+  SupportRecoveryPrincipalContextResolverService,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
@@ -18,14 +18,14 @@ import { parseCookies } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins';
 import { asc, eq } from 'drizzle-orm';
-import { Clock, Context, Effect, Layer, Schema } from 'effect';
+import { Clock, Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { AuthConfig } from './config.ts';
 import type { AuthConfigValue } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
 import { authDatabaseSchema, session, supportImpersonationRecovery } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
 import { AuthenticationService } from './service.ts';
-import type { AuthenticationServiceShape } from './service.ts';
+import type { AuthenticationServiceContract } from './service.ts';
 
 export class SupportImpersonationDeniedError extends Schema.TaggedErrorClass<SupportImpersonationDeniedError>()(
   'SupportImpersonationDeniedError',
@@ -49,17 +49,17 @@ const unavailable = () =>
     reason: 'Support impersonation is temporarily unavailable',
   });
 const cookieHeaders = (headers: Headers): readonly string[] =>
-  typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  Predicate.isFunction(headers.getSetCookie) ? headers.getSetCookie() : [];
 const mapAuthenticationError = (error: { readonly _tag?: string }) =>
   error._tag === 'AuthenticationUnavailableError' || error._tag === 'AuthenticationInternalError'
     ? unavailable()
     : denied();
 const mapResolverError = (error: { readonly _tag?: string }) =>
   error._tag === 'PrincipalResolverUnavailableError' ? unavailable() : denied();
-const mapProviderError = (error: unknown) =>
+const mapProviderError = <Failure>(error: Failure) =>
   error instanceof APIError && error.statusCode < 500 ? denied() : unavailable();
 
-interface SupportProviderSession {
+export interface SupportProviderSession {
   readonly activeTenantId?: null | string;
   readonly id: string;
   readonly impersonatedBy?: null | string;
@@ -70,8 +70,14 @@ interface SupportProviderSession {
   readonly impersonationReason?: null | string;
   readonly impersonationTargetPrincipalId?: null | string;
 }
-type SupportRecoveryRecord = Omit<typeof supportImpersonationRecovery.$inferSelect, 'createdAt'>;
-interface SupportAuthProvider {
+export type SupportRecoveryRecord = Omit<
+  typeof supportImpersonationRecovery.$inferSelect,
+  'createdAt'
+>;
+interface SupportProviderUser {
+  readonly id: string;
+}
+export interface SupportAuthProvider {
   readonly api: {
     readonly getSession: (input: {
       readonly headers: Headers;
@@ -80,7 +86,7 @@ interface SupportAuthProvider {
       readonly headers: Headers;
       readonly response: null | {
         readonly session: SupportProviderSession;
-        readonly user: Readonly<Record<string, unknown>>;
+        readonly user: SupportProviderUser;
       };
     }>;
     readonly impersonateUser: (input: {
@@ -99,6 +105,31 @@ interface SupportAuthProvider {
       readonly response: { readonly session: SupportProviderSession };
     }>;
   };
+}
+
+export interface SupportImpersonationStore {
+  readonly deleteRecovery: (impersonationSessionId: string) => Promise<void>;
+  readonly deleteSession: (sessionId: string) => Promise<void>;
+  readonly insertRecovery: (recovery: SupportRecoveryRecord) => Promise<void>;
+  readonly loadExpiredRecovery: (
+    sessionToken: string,
+  ) => Promise<SupportRecoveryRecord | undefined>;
+  readonly loadOriginalSession: (
+    sessionToken: string,
+  ) => Promise<{ readonly expiresAt: Date; readonly id: string } | undefined>;
+  readonly loadRecoveries: (originalSessionId: string) => Promise<readonly SupportRecoveryRecord[]>;
+  readonly updateImpersonationSession: (
+    sessionId: string,
+    metadata: {
+      readonly actionId: string;
+      readonly originalAuthBindingId: string;
+      readonly originalPrincipalId: string;
+      readonly originalSessionId: string;
+      readonly reason: string;
+      readonly targetPrincipalId: string;
+      readonly tenantId: string;
+    },
+  ) => Promise<void>;
 }
 
 const makeSupportAuthProvider = (
@@ -141,7 +172,92 @@ const makeSupportAuthProvider = (
       },
     },
     trustedOrigins: [...configuration.trustedOrigins],
-  }) as unknown as SupportAuthProvider;
+  }) satisfies SupportAuthProvider;
+
+const makeSupportImpersonationStore = (
+  database: AuthDatabaseExecutor,
+): SupportImpersonationStore => ({
+  deleteRecovery: async (impersonationSessionId) => {
+    await database
+      .delete(supportImpersonationRecovery)
+      .where(eq(supportImpersonationRecovery.impersonationSessionId, impersonationSessionId));
+  },
+  deleteSession: async (sessionId) => {
+    await database.delete(session).where(eq(session.id, sessionId));
+  },
+  insertRecovery: async (recovery) => {
+    await database.insert(supportImpersonationRecovery).values(recovery).onConflictDoNothing();
+  },
+  loadExpiredRecovery: async (sessionToken) => {
+    const [loaded] = await database
+      .select({
+        actionId: session.impersonationActionId,
+        impersonatedBy: session.impersonatedBy,
+        impersonationSessionId: session.id,
+        originalAuthBindingId: session.impersonationOriginalAuthBindingId,
+        originalPrincipalId: session.impersonationOriginalPrincipalId,
+        originalSessionId: session.impersonationOriginalSessionId,
+        reason: session.impersonationReason,
+        targetPrincipalId: session.impersonationTargetPrincipalId,
+        tenantId: session.activeTenantId,
+      })
+      .from(session)
+      .where(eq(session.token, sessionToken))
+      .limit(1);
+    if (
+      loaded === undefined ||
+      !Predicate.isString(loaded.impersonatedBy) ||
+      !Predicate.isString(loaded.actionId) ||
+      !Predicate.isString(loaded.originalAuthBindingId) ||
+      !Predicate.isString(loaded.originalPrincipalId) ||
+      !Predicate.isString(loaded.originalSessionId) ||
+      !Predicate.isString(loaded.reason) ||
+      !Predicate.isString(loaded.targetPrincipalId) ||
+      !Predicate.isString(loaded.tenantId)
+    ) {
+      return;
+    }
+    return {
+      actionId: loaded.actionId,
+      impersonationSessionId: loaded.impersonationSessionId,
+      originalAuthBindingId: loaded.originalAuthBindingId,
+      originalPrincipalId: loaded.originalPrincipalId,
+      originalSessionId: loaded.originalSessionId,
+      reason: loaded.reason,
+      targetPrincipalId: loaded.targetPrincipalId,
+      tenantId: loaded.tenantId,
+    };
+  },
+  loadOriginalSession: async (sessionToken) => {
+    const [loaded] = await database
+      .select({ expiresAt: session.expiresAt, id: session.id })
+      .from(session)
+      .where(eq(session.token, sessionToken))
+      .limit(1);
+    return loaded;
+  },
+  loadRecoveries: (originalSessionId) =>
+    database
+      .select()
+      .from(supportImpersonationRecovery)
+      .where(eq(supportImpersonationRecovery.originalSessionId, originalSessionId))
+      .orderBy(asc(supportImpersonationRecovery.createdAt)),
+  updateImpersonationSession: async (sessionId, metadata) => {
+    await database
+      .update(session)
+      .set({
+        activeLegalEntityId: null,
+        activeTenantId: metadata.tenantId,
+        impersonationActionId: metadata.actionId,
+        impersonationOriginalAuthBindingId: metadata.originalAuthBindingId,
+        impersonationOriginalPrincipalId: metadata.originalPrincipalId,
+        impersonationOriginalSessionId: metadata.originalSessionId,
+        impersonationReason: metadata.reason,
+        impersonationTargetPrincipalId: metadata.targetPrincipalId,
+      })
+      .where(eq(session.id, sessionId));
+  },
+});
 
 const authCookieName = (configuration: AuthConfigValue, suffix: string): string =>
   `${configuration.secureCookies ? '__Secure-' : ''}better-auth.${suffix}`;
@@ -173,18 +289,33 @@ const decodeSignedCookie = async (
 const encodeSignedCookie = async (value: string, secret: string): Promise<string> =>
   encodeURIComponent(`${value}.${await makeSignature(value, secret)}`);
 
-export const makeSupportImpersonationService = (dependencies: {
+export interface SupportImpersonationDependencies {
   readonly actionRuntime: ActionRuntimeService;
-  readonly authentication: AuthenticationServiceShape;
+  readonly authentication: AuthenticationServiceContract;
   readonly configuration: AuthConfigValue;
-  readonly database: AuthDatabaseExecutor;
+  readonly database?: AuthDatabaseExecutor;
   readonly provider?: SupportAuthProvider;
-  readonly resolver: PrincipalResolverShape;
-  readonly supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverShape;
-}) => {
+  readonly resolver: PrincipalResolverService;
+  readonly store?: SupportImpersonationStore;
+  readonly supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService;
+}
+
+export const makeSupportImpersonationService = (dependencies: SupportImpersonationDependencies) => {
+  const { database } = dependencies;
   const auth =
     dependencies.provider ??
-    makeSupportAuthProvider(dependencies.configuration, dependencies.database);
+    (database === undefined
+      ? (() => {
+          throw new Error('Support impersonation requires a provider or database');
+        })()
+      : makeSupportAuthProvider(dependencies.configuration, database));
+  const store =
+    dependencies.store ??
+    (database === undefined
+      ? (() => {
+          throw new Error('Support impersonation requires a store or database');
+        })()
+      : makeSupportImpersonationStore(database));
   const checkpoint = (input: {
     readonly correlationId: string;
     readonly idempotencyKey: string;
@@ -202,12 +333,7 @@ export const makeSupportImpersonationService = (dependencies: {
   const loadRecoveries = (originalSessionId: string) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: () =>
-        dependencies.database
-          .select()
-          .from(supportImpersonationRecovery)
-          .where(eq(supportImpersonationRecovery.originalSessionId, originalSessionId))
-          .orderBy(asc(supportImpersonationRecovery.createdAt)),
+      try: () => store.loadRecoveries(originalSessionId),
     });
   const loadExpiredImpersonationRecovery = (requestHeaders: Headers) =>
     Effect.gen(function* loadExpiredSupportImpersonation() {
@@ -223,50 +349,10 @@ export const makeSupportImpersonationService = (dependencies: {
       if (sessionToken === undefined) {
         return;
       }
-      const expired = yield* Effect.tryPromise({
+      return yield* Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [loaded] = await dependencies.database
-            .select({
-              actionId: session.impersonationActionId,
-              impersonatedBy: session.impersonatedBy,
-              impersonationSessionId: session.id,
-              originalAuthBindingId: session.impersonationOriginalAuthBindingId,
-              originalPrincipalId: session.impersonationOriginalPrincipalId,
-              originalSessionId: session.impersonationOriginalSessionId,
-              reason: session.impersonationReason,
-              targetPrincipalId: session.impersonationTargetPrincipalId,
-              tenantId: session.activeTenantId,
-            })
-            .from(session)
-            .where(eq(session.token, sessionToken))
-            .limit(1);
-          return loaded;
-        },
+        try: () => store.loadExpiredRecovery(sessionToken),
       });
-      if (
-        expired === undefined ||
-        typeof expired.impersonatedBy !== 'string' ||
-        typeof expired.actionId !== 'string' ||
-        typeof expired.originalAuthBindingId !== 'string' ||
-        typeof expired.originalPrincipalId !== 'string' ||
-        typeof expired.originalSessionId !== 'string' ||
-        typeof expired.reason !== 'string' ||
-        typeof expired.targetPrincipalId !== 'string' ||
-        typeof expired.tenantId !== 'string'
-      ) {
-        return;
-      }
-      return {
-        actionId: expired.actionId,
-        impersonationSessionId: expired.impersonationSessionId,
-        originalAuthBindingId: expired.originalAuthBindingId,
-        originalPrincipalId: expired.originalPrincipalId,
-        originalSessionId: expired.originalSessionId,
-        reason: expired.reason,
-        targetPrincipalId: expired.targetPrincipalId,
-        tenantId: expired.tenantId,
-      } satisfies SupportRecoveryRecord;
     });
   const recoverOriginalSession = (requestHeaders: Headers) =>
     Effect.gen(function* recoverOriginalSupportSession() {
@@ -286,14 +372,7 @@ export const makeSupportImpersonationService = (dependencies: {
       }
       const original = yield* Effect.tryPromise({
         catch: unavailable,
-        try: async () => {
-          const [loaded] = await dependencies.database
-            .select({ expiresAt: session.expiresAt, id: session.id })
-            .from(session)
-            .where(eq(session.token, originalSessionToken))
-            .limit(1);
-          return loaded;
-        },
+        try: () => store.loadOriginalSession(originalSessionToken),
       });
       const nowEpochMillis = yield* Clock.currentTimeMillis;
       if (original === undefined) {
@@ -353,8 +432,7 @@ export const makeSupportImpersonationService = (dependencies: {
   const terminateImpersonationSession = (impersonationSessionId: string) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: () =>
-        dependencies.database.delete(session).where(eq(session.id, impersonationSessionId)),
+      try: () => store.deleteSession(impersonationSessionId),
     });
   const completeRecovery = (input: {
     readonly correlationId: string;
@@ -420,15 +498,7 @@ export const makeSupportImpersonationService = (dependencies: {
       const cleanupExit = yield* Effect.exit(
         Effect.tryPromise({
           catch: unavailable,
-          try: () =>
-            dependencies.database
-              .delete(supportImpersonationRecovery)
-              .where(
-                eq(
-                  supportImpersonationRecovery.impersonationSessionId,
-                  input.recovery.impersonationSessionId,
-                ),
-              ),
+          try: () => store.deleteRecovery(input.recovery.impersonationSessionId),
         }),
       );
       return {
@@ -456,8 +526,8 @@ export const makeSupportImpersonationService = (dependencies: {
         if (
           shell.state !== 'authenticated' ||
           shell.principal.authMethod !== 'session' ||
-          typeof shell.principal.authBindingId !== 'string' ||
-          typeof shell.principal.authContextRef !== 'string' ||
+          !Predicate.isString(shell.principal.authBindingId) ||
+          !Predicate.isString(shell.principal.authContextRef) ||
           !shell.principal.authContextRef.startsWith('better-auth-session:') ||
           shell.principal.principalId === input.targetPrincipalId
         ) {
@@ -499,27 +569,20 @@ export const makeSupportImpersonationService = (dependencies: {
         yield* Effect.tryPromise({
           catch: unavailable,
           try: () =>
-            dependencies.database
-              .update(session)
-              .set({
-                activeLegalEntityId: null,
-                activeTenantId: shell.principal.tenantId,
-                impersonationActionId: input.idempotencyKey,
-                impersonationOriginalAuthBindingId: originalAuthBindingId,
-                impersonationOriginalPrincipalId: shell.principal.principalId,
-                impersonationOriginalSessionId: originalSessionId,
-                impersonationReason: reason,
-                impersonationTargetPrincipalId: input.targetPrincipalId,
-              })
-              .where(eq(session.id, created.response.session.id)),
+            store.updateImpersonationSession(created.response.session.id, {
+              actionId: input.idempotencyKey,
+              originalAuthBindingId,
+              originalPrincipalId: shell.principal.principalId,
+              originalSessionId,
+              reason,
+              targetPrincipalId: input.targetPrincipalId,
+              tenantId: shell.principal.tenantId,
+            }),
         }).pipe(
           Effect.catch((error) =>
             Effect.tryPromise({
               catch: () => error,
-              try: () =>
-                dependencies.database
-                  .delete(session)
-                  .where(eq(session.id, created.response.session.id)),
+              try: () => store.deleteSession(created.response.session.id),
             }).pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
@@ -535,11 +598,7 @@ export const makeSupportImpersonationService = (dependencies: {
         } satisfies SupportRecoveryRecord;
         yield* Effect.tryPromise({
           catch: unavailable,
-          try: () =>
-            dependencies.database
-              .insert(supportImpersonationRecovery)
-              .values(recovery)
-              .onConflictDoNothing(),
+          try: () => store.insertRecovery(recovery),
         }).pipe(
           Effect.catch((error) =>
             terminateImpersonationSession(created.response.session.id).pipe(
@@ -567,15 +626,7 @@ export const makeSupportImpersonationService = (dependencies: {
                 terminateImpersonationSession(created.response.session.id),
                 Effect.tryPromise({
                   catch: () => null,
-                  try: () =>
-                    dependencies.database
-                      .delete(supportImpersonationRecovery)
-                      .where(
-                        eq(
-                          supportImpersonationRecovery.impersonationSessionId,
-                          created.response.session.id,
-                        ),
-                      ),
+                  try: () => store.deleteRecovery(created.response.session.id),
                 }),
               ],
               { discard: true },
@@ -604,11 +655,7 @@ export const makeSupportImpersonationService = (dependencies: {
           if (expiredRecovery !== undefined) {
             yield* Effect.tryPromise({
               catch: unavailable,
-              try: () =>
-                dependencies.database
-                  .insert(supportImpersonationRecovery)
-                  .values(expiredRecovery)
-                  .onConflictDoNothing(),
+              try: () => store.insertRecovery(expiredRecovery),
             });
             yield* terminateImpersonationSession(expiredRecovery.impersonationSessionId);
             const restoredMatches =
@@ -651,7 +698,7 @@ export const makeSupportImpersonationService = (dependencies: {
           };
         }
         const currentSessionId = current.response.session.id;
-        if (typeof current.response.session.impersonatedBy !== 'string') {
+        if (!Predicate.isString(current.response.session.impersonatedBy)) {
           const recoveries = yield* loadRecoveries(currentSessionId);
           if (recoveries.length === 0) {
             return {
@@ -683,13 +730,13 @@ export const makeSupportImpersonationService = (dependencies: {
         const reason = current.response.session.impersonationReason;
         const targetPrincipalId = current.response.session.impersonationTargetPrincipalId;
         if (
-          typeof tenantId !== 'string' ||
-          typeof actionId !== 'string' ||
-          typeof originalAuthBindingId !== 'string' ||
-          typeof originalPrincipalId !== 'string' ||
-          typeof originalSessionId !== 'string' ||
-          typeof reason !== 'string' ||
-          typeof targetPrincipalId !== 'string'
+          !Predicate.isString(tenantId) ||
+          !Predicate.isString(actionId) ||
+          !Predicate.isString(originalAuthBindingId) ||
+          !Predicate.isString(originalPrincipalId) ||
+          !Predicate.isString(originalSessionId) ||
+          !Predicate.isString(reason) ||
+          !Predicate.isString(targetPrincipalId)
         ) {
           return yield* unavailable();
         }
@@ -705,11 +752,7 @@ export const makeSupportImpersonationService = (dependencies: {
         };
         yield* Effect.tryPromise({
           catch: unavailable,
-          try: () =>
-            dependencies.database
-              .insert(supportImpersonationRecovery)
-              .values(recovery)
-              .onConflictDoNothing(),
+          try: () => store.insertRecovery(recovery),
         });
         const stoppedExit = yield* Effect.exit(
           Effect.tryPromise({
@@ -750,11 +793,13 @@ export const makeSupportImpersonationService = (dependencies: {
   });
 };
 
-export type SupportImpersonationServiceShape = ReturnType<typeof makeSupportImpersonationService>;
+export type SupportImpersonationServiceContract = ReturnType<
+  typeof makeSupportImpersonationService
+>;
 
 export class SupportImpersonationService extends Context.Service<
   SupportImpersonationService,
-  SupportImpersonationServiceShape
+  SupportImpersonationServiceContract
 >()('@app/shell-super-app/api/auth/impersonation-service/SupportImpersonationService') {}
 
 export const SupportImpersonationServiceLive = Layer.effect(

@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { GeneratorCore } from '@modern-js/codesmith';
+import { Schema } from 'effect';
 import { ONTOS_MODULE_CONTRACT_SCHEMA_VERSION } from '../../packages/core-runtime/src/index.ts';
 
 /* eslint-disable unicorn/prefer-number-coercion -- The schema version is parsed as a base-10 integer by contract. */
@@ -208,8 +209,11 @@ export interface ModuleContractScaffoldResult {
   readonly registrationPath: string;
 }
 
-export type JsonObject = Readonly<Record<string, unknown>>;
-export type MutableJsonObject = Record<string, unknown>;
+export type JsonScalar = boolean | null | number | string;
+export type JsonValue = JsonObject | JsonScalar | readonly JsonValue[];
+
+export type JsonObject = Readonly<Record<string, JsonValue>>;
+export type MutableJsonObject = Record<string, JsonValue>;
 
 export interface VerticalMetadata {
   readonly appId: string;
@@ -248,25 +252,30 @@ const reservedSegments = new Set([
   'verticals',
 ]);
 
-const isJsonObject = (value: unknown): value is JsonObject =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isJsonObject = (value: JsonValue): value is JsonObject =>
+  value instanceof Object && !Array.isArray(value);
 
-export const asJsonObject = (value: unknown, label: string): JsonObject => {
+export const asJsonObject = (value: JsonValue, label: string): JsonObject => {
   if (!isJsonObject(value)) {
     throw new Error(`${label} must be a JSON object`);
   }
   return value;
 };
 
-export const requiredString = (value: unknown, label: string): string => {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+export const isStringValue = (value: JsonValue | undefined): value is string =>
+  value !== undefined &&
+  Object.prototype.toString.call(value) === '[object String]' &&
+  value === String(value);
+
+export const requiredString = (value: JsonValue | undefined, label: string): string => {
+  if (!isStringValue(value) || value.trim().length === 0) {
     throw new Error(`${label} must be a non-empty string`);
   }
   return value;
 };
 
-export const isMissingFileError = (error: unknown): boolean =>
-  isJsonObject(error) && error['code'] === 'ENOENT';
+export const isMissingFileError = <ErrorValue,>(error: ErrorValue): boolean =>
+  error instanceof Error && 'code' in error && error.code === 'ENOENT';
 
 export const pathExists = async (targetPath: string): Promise<boolean> => {
   try {
@@ -421,9 +430,13 @@ const maskNonCode = (content: string, preserveStrings = false): string => {
   return masked.join('');
 };
 
-const moduleFederationExposesRange = (
-  content: string,
-): { readonly closeIndex: number; readonly openIndex: number; readonly propertyIndex: number } => {
+interface ModuleFederationExposesRange {
+  readonly closeIndex: number;
+  readonly openIndex: number;
+  readonly propertyIndex: number;
+}
+
+const moduleFederationExposesRange = (content: string): ModuleFederationExposesRange => {
   const code = maskNonCode(content);
   const propertyMatches = [...code.matchAll(/\bexposes\s*:\s*\{/gu)];
   if (propertyMatches.length === 0) {
@@ -602,7 +615,7 @@ export const readJson = async (
     }
     throw error;
   }
-  let parsed: unknown;
+  let parsed: JsonValue;
   try {
     parsed = JSON.parse(content);
   } catch {
@@ -691,7 +704,7 @@ const scanJsonObject = (source: string, start: number): JsonObjectSpan => {
   while (source[cursor] !== '}') {
     const keyStart = cursor;
     const keyEnd = scanJsonString(source, keyStart);
-    const key = JSON.parse(source.slice(keyStart, keyEnd)) as string;
+    const key = Schema.decodeUnknownSync(Schema.String)(JSON.parse(source.slice(keyStart, keyEnd)));
     cursor = skipJsonWhitespace(source, keyEnd);
     if (source[cursor] !== ':') {
       throw new Error('invalid JSON property while planning an owner-file patch');
@@ -715,7 +728,7 @@ const lineIndentAt = (source: string, offset: number): string => {
 };
 
 const renderJsonPropertyValue = (
-  value: unknown,
+  value: JsonValue,
   source: string,
   propertyIndent: string,
   multiline: boolean,
@@ -732,7 +745,7 @@ export const patchJsonObjectProperty = (
   source: string,
   objectPath: readonly string[],
   propertyName: string,
-  value: unknown,
+  value: JsonValue,
 ): string => {
   let object = scanJsonObject(source, skipJsonWhitespace(source, 0));
   for (const segment of objectPath) {

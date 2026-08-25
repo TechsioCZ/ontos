@@ -4,12 +4,10 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit } from 'effect';
-import type { Context } from 'effect';
 import type { CoreDatabase } from '../../src/db/client.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { tenantModuleStates, tenants } from '../../src/db/schema.ts';
-import type { CoreTransaction } from '../../src/db/types.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import {
   decideModuleStateAccess,
@@ -19,11 +17,13 @@ import {
   TENANT_MODULE_STATES,
   makeTenantModuleStateService,
 } from '../../src/modules/tenant-module-state-service.ts';
+import { TenantModuleStateReadUnavailableError } from '../../src/modules/tenant-module-state-errors.ts';
+import type { TenantModuleStateServiceContract } from '../../src/modules/tenant-module-state-service.ts';
 
-type DatabaseShape = Context.Service.Shape<typeof CoreDatabase>;
+type DatabaseService = (typeof CoreDatabase)['Service'];
 
 const withDatabase = <Value, Error>(
-  operation: (database: DatabaseShape) => Effect.Effect<Value, Error>,
+  operation: (database: DatabaseService) => Effect.Effect<Value, Error>,
 ) =>
   Effect.scoped(
     Effect.gen(function* moduleStateGateDatabaseScope() {
@@ -34,9 +34,21 @@ const withDatabase = <Value, Error>(
   );
 
 const databasePromise = <Value>(
-  operation: (database: DatabaseShape) => PromiseLike<Value>,
+  operation: (database: DatabaseService) => PromiseLike<Value>,
 ): Promise<Value> =>
   Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
+
+const unavailableStateService = (reason: string): TenantModuleStateServiceContract => {
+  const failure = new TenantModuleStateReadUnavailableError({
+    code: 'tenant_module_state_read_unavailable',
+    reason,
+  });
+  return {
+    getTenantModuleStates: () => Effect.fail(failure),
+    listActiveTenantModules: () => Effect.fail(failure),
+    listTenantModuleStates: () => Effect.fail(failure),
+  };
+};
 
 test('batches tenant-isolated states once, rejects malformed/unavailable reads, and rechecks transactionally', async () => {
   const tenantOne = randomUUID();
@@ -73,23 +85,17 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
 
     try {
       let selects = 0;
-      const countingDatabase = {
-        executor: new Proxy(database.executor, {
-          get(target, property) {
-            const value = Reflect.get(target, property, target) as unknown;
-            if (property === 'select' && typeof value === 'function') {
-              return (...arguments_: readonly unknown[]) => {
-                selects += 1;
-                return Reflect.apply(value as (...input: unknown[]) => unknown, target, [
-                  ...arguments_,
-                ]);
-              };
-            }
-            return typeof value === 'function' ? value.bind(target) : value;
-          },
-        }),
-      } as never;
-      const gate = makeModuleStateGate(makeTenantModuleStateService(countingDatabase));
+      const countingExecutor: DatabaseService['executor'] = Object.create(database.executor);
+      Object.defineProperty(countingExecutor, 'select', {
+        configurable: true,
+        get: () => {
+          selects += 1;
+          return database.executor.select;
+        },
+      });
+      const gate = makeModuleStateGate(
+        makeTenantModuleStateService({ executor: countingExecutor }),
+      );
       const read = defineTenantModuleEntrypoint({
         access: 'read',
         entrypointKey: `${moduleKey}.page`,
@@ -162,7 +168,7 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
       assert.equal(missing._tag, 'ModuleStateDeniedError');
 
       await database.executor.transaction((transaction) =>
-        Effect.runPromise(gate.recheckWrite(transaction as CoreTransaction, tenantOne, write)),
+        Effect.runPromise(gate.recheckWrite(transaction, tenantOne, write)),
       );
       await database.executor
         .update(tenantModuleStates)
@@ -174,26 +180,13 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
           ),
         );
       const lockedDenial = await database.executor.transaction((transaction) =>
-        Effect.runPromise(
-          Effect.flip(gate.recheckWrite(transaction as CoreTransaction, tenantOne, write)),
-        ),
+        Effect.runPromise(Effect.flip(gate.recheckWrite(transaction, tenantOne, write))),
       );
       assert.equal(lockedDenial._tag, 'ModuleStateDeniedError');
 
-      const unavailableDatabase = {
-        executor: {
-          select: () => ({
-            from: () => ({
-              where: () => ({
-                orderBy: () => Promise.reject(new Error('secret db failure')),
-              }),
-            }),
-          }),
-        },
-      } as never;
       const unavailable = await Effect.runPromise(
         Effect.flip(
-          makeModuleStateGate(makeTenantModuleStateService(unavailableDatabase)).prepareSnapshot(
+          makeModuleStateGate(unavailableStateService('secret db failure')).prepareSnapshot(
             tenantOne,
             [read],
           ),
@@ -202,20 +195,9 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
       assert.equal(unavailable._tag, 'ModuleStateCheckUnavailableError');
       assert.doesNotMatch(unavailable.reason, /secret|db failure/u);
 
-      const malformedDatabase = {
-        executor: {
-          select: () => ({
-            from: () => ({
-              where: () => ({
-                orderBy: () => Promise.resolve([{ moduleKey, state: 'corrupt-storage-value' }]),
-              }),
-            }),
-          }),
-        },
-      } as never;
       const malformed = await Effect.runPromise(
         Effect.flip(
-          makeModuleStateGate(makeTenantModuleStateService(malformedDatabase)).prepareSnapshot(
+          makeModuleStateGate(unavailableStateService('corrupt-storage-value')).prepareSnapshot(
             tenantOne,
             [read],
           ),

@@ -352,10 +352,9 @@ const runApiProofs = async (miniflare, shell, executionByAppId) => {
       }
       const direct = await responseEvidence(
         app,
-        await (await miniflare.getWorker(workerName(app))).fetch(
-          `https://${workerName(app)}.invalid${check.route}`,
-          init,
-        ),
+        await (
+          await miniflare.getWorker(workerName(app))
+        ).fetch(`https://${workerName(app)}.invalid${check.route}`, init),
       );
       const throughShell = await responseEvidence(
         app,

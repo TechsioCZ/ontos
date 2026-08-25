@@ -13,7 +13,7 @@ import type {
   ReadCoreError,
   ReadHandlerResult,
   TrustedPrincipalContext,
-  TenantModuleStateServiceShape,
+  TenantModuleStateServiceContract,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
@@ -34,10 +34,26 @@ import type {
   ShellSearchResponse,
 } from '../../shared/api.ts';
 import { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
-import type { ShellInstalledModuleCatalogShape } from './installed-module-catalog.ts';
-import { makeShellComposition } from './shell-composition.ts';
-import { makeShellResourceDetail, makeShellSearch } from './shell-resources.ts';
+import type { ShellInstalledModuleCatalogService } from './installed-module-catalog.ts';
+import { ShellCompositionFactory, ShellCompositionFactoryLive } from './shell-composition.ts';
+import {
+  ShellResourceServicesFactory,
+  ShellResourceServicesFactoryLive,
+} from './shell-resources.ts';
 import type { ShellProviderAssertionIssuer, ShellResourceGateways } from './shell-resources.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 interface ShellReadInvocation {
   readonly correlationId: string;
@@ -46,9 +62,9 @@ interface ShellReadInvocation {
 
 export type ShellScopedModuleStateFactory = (
   transaction: Parameters<typeof makeTenantModuleStateService>[0]['executor'],
-) => TenantModuleStateServiceShape;
+) => TenantModuleStateServiceContract;
 
-export interface ShellGovernedReadsShape {
+export interface ShellGovernedReadsService {
   readonly composition: (
     input: ShellReadInvocation,
   ) => Effect.Effect<ShellComposition, ReadCoreError>;
@@ -65,7 +81,7 @@ export interface ShellGovernedReadsShape {
 
 export class ShellGovernedReads extends Context.Service<
   ShellGovernedReads,
-  ShellGovernedReadsShape
+  ShellGovernedReadsService
 >()('@app/shell-super-app/api/modules/shell-governed-reads/ShellGovernedReads') {}
 
 const emptyInput = Schema.Struct({});
@@ -100,12 +116,14 @@ const hasLegalEntity = (
   scope.legalEntityId !== undefined;
 
 const makeRegistrations = (
-  catalog: ShellInstalledModuleCatalogShape,
-  contextAccess: Context.Service.Shape<typeof ContextAccess>,
-  moduleStates: Context.Service.Shape<typeof TenantModuleStateService>,
+  catalog: ShellInstalledModuleCatalogService,
+  contextAccess: (typeof ContextAccess)['Service'],
+  moduleStates: (typeof TenantModuleStateService)['Service'],
   gateways: ShellResourceGateways,
   assertionIssuer: ShellProviderAssertionIssuer,
   scopedModuleStateFactory: ShellScopedModuleStateFactory,
+  compositionFactory: (typeof ShellCompositionFactory)['Service'],
+  resourceServicesFactory: (typeof ShellResourceServicesFactory)['Service'],
 ) => {
   const dependencies = { ...assertionIssuer, catalog: catalog.load, contextAccess, moduleStates };
   const serviceFactory = (
@@ -117,9 +135,12 @@ const makeRegistrations = (
     };
     return Effect.succeed(
       Object.freeze({
-        composition: makeShellComposition(scopedDependencies),
-        resourceDetail: makeShellResourceDetail(scopedDependencies, gateways.resource),
-        search: makeShellSearch(scopedDependencies, gateways.search),
+        composition: compositionFactory.create(scopedDependencies),
+        resourceDetail: resourceServicesFactory.createResourceDetail(
+          scopedDependencies,
+          gateways.resource,
+        ),
+        search: resourceServicesFactory.createSearch(scopedDependencies, gateways.search),
       }),
     );
   };
@@ -220,10 +241,12 @@ const makeRegistrations = (
     },
     ({ entrypointKey, moduleId }, context) =>
       context.services.composition
-        .resolveModuleTarget(context.scope, {
-          ...(entrypointKey === undefined ? {} : { entrypointKey }),
-          moduleId,
-        })
+        .resolveModuleTarget(
+          context.scope,
+          withOptionalProperty({}, !(entrypointKey === undefined), 'entrypointKey', entrypointKey, {
+            moduleId,
+          }),
+        )
         .pipe(
           Effect.flatMap(
             (
@@ -350,7 +373,7 @@ const makeRegistrations = (
   return { composition, moduleTarget, resourceDetail, search } as const;
 };
 
-export const makeShellGovernedReadsLive = (
+export const createShellGovernedReadsLayer = (
   gateways: ShellResourceGateways,
   assertionIssuer: ShellProviderAssertionIssuer,
   scopedModuleStateFactory: ShellScopedModuleStateFactory,
@@ -362,6 +385,8 @@ export const makeShellGovernedReadsLive = (
       const catalog = yield* ShellInstalledModuleCatalog;
       const contextAccess = yield* ContextAccess;
       const moduleStates = yield* TenantModuleStateService;
+      const compositionFactory = yield* ShellCompositionFactory;
+      const resourceServicesFactory = yield* ShellResourceServicesFactory;
       const registrations = makeRegistrations(
         catalog,
         contextAccess,
@@ -369,6 +394,8 @@ export const makeShellGovernedReadsLive = (
         gateways,
         assertionIssuer,
         scopedModuleStateFactory,
+        compositionFactory,
+        resourceServicesFactory,
       );
       return {
         composition: ({ correlationId, principal }) =>
@@ -380,10 +407,15 @@ export const makeShellGovernedReadsLive = (
           }),
         moduleTarget: ({ correlationId, entrypointKey, moduleId, principal }) =>
           runtime.runRead({
-            input: {
-              ...(entrypointKey === undefined ? {} : { entrypointKey }),
-              moduleId,
-            },
+            input: withOptionalProperty(
+              {},
+              !(entrypointKey === undefined),
+              'entrypointKey',
+              entrypointKey,
+              {
+                moduleId,
+              },
+            ),
             principal,
             registration: registrations.moduleTarget,
             transport: { correlationId, targetModuleKey: moduleId },
@@ -409,4 +441,7 @@ export const makeShellGovernedReadsLive = (
           }),
       };
     }),
+  ).pipe(
+    Layer.provide(ShellCompositionFactoryLive),
+    Layer.provide(ShellResourceServicesFactoryLive),
   );

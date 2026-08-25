@@ -1,5 +1,7 @@
 # Roadmap
 
+> Historical planning snapshot. Its month-by-month ERP sequence is not the current product priority or architecture authority. Current direction treats OntOS as the product, Commerce as a reusable Application Composition, Akros as its first Customer Configuration, and N1 as the next. Use `CONTEXT.md` and current `app/docs/` for vocabulary and architecture.
+
 This roadmap is intentionally agile. It sets monthly delivery intent and architectural proof points; it is not a waterfall specification.
 
 ## End of May 2026 — throwaway PoC

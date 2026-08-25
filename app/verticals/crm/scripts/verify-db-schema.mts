@@ -13,13 +13,29 @@ class CrmDatabaseVerificationError extends Schema.TaggedErrorClass<CrmDatabaseVe
   },
 ) {}
 
-type TableCatalogRow = Record<string, unknown> & {
+interface TableCatalogRow extends Readonly<Record<string, string>> {
   readonly table_name: string;
-};
-type ColumnCatalogRow = Record<string, unknown> & {
+}
+interface ColumnCatalogRow extends Readonly<Record<string, string>> {
   readonly column_name: string;
   readonly table_name: string;
-};
+}
+interface InfrastructureCatalogRow extends Readonly<Record<string, boolean | number | string>> {
+  readonly contact_owner: string;
+  readonly customer_owner: string;
+  readonly foreign_key_count: number;
+  readonly journal_count: number;
+  readonly policy_count: number;
+  readonly runtime_create: boolean;
+  readonly runtime_delete: boolean;
+  readonly runtime_insert: boolean;
+  readonly runtime_select: boolean;
+  readonly runtime_update: boolean;
+  readonly runtime_usage: boolean;
+  readonly role_bypass_rls: boolean;
+  readonly role_super: boolean;
+  readonly rls_count: number;
+}
 
 const expectedColumns = [
   'contacts.archived_at',
@@ -117,24 +133,7 @@ const verification = Effect.gen(function* verifyCrmDatabase() {
         reason: 'Unable to verify CRM PostgreSQL constraints, RLS, ownership, or grants',
       }),
     try: () =>
-      database.executor.execute<
-        Record<string, unknown> & {
-          readonly contact_owner: string;
-          readonly customer_owner: string;
-          readonly foreign_key_count: number;
-          readonly journal_count: number;
-          readonly policy_count: number;
-          readonly runtime_create: boolean;
-          readonly runtime_delete: boolean;
-          readonly runtime_insert: boolean;
-          readonly runtime_select: boolean;
-          readonly runtime_update: boolean;
-          readonly runtime_usage: boolean;
-          readonly role_bypass_rls: boolean;
-          readonly role_super: boolean;
-          readonly rls_count: number;
-        }
-      >(sql`
+      database.executor.execute<InfrastructureCatalogRow>(sql`
         select
           pg_catalog.pg_get_userbyid(customer.relowner) as customer_owner,
           pg_catalog.pg_get_userbyid(contact.relowner) as contact_owner,

@@ -8,6 +8,8 @@ import {
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   decodeOntosModuleDeploymentContract,
   defineOntosModuleManifest,
+  validateOntosModuleExecutableReferences,
+  validateOntosModuleManifestFields,
 } from '../../src/modules/manifest.ts';
 import {
   defineVerticalRuntimeRegistration,
@@ -95,9 +97,10 @@ test('defines a valid empty manifest, preserves literals, and freezes its public
   assert.equal(Object.isFrozen(manifest), true);
   assert.equal(Object.isFrozen(manifest.activation.supportedStates), true);
   assert.equal(Object.isFrozen(manifest.publicSurface.actions), true);
-  assert.throws(
-    () => (manifest.publicSurface.actions as unknown as unknown[]).push('private'),
-    TypeError,
+  assert.throws(() =>
+    Object.defineProperty(manifest.publicSurface.actions, 0, {
+      value: 'private',
+    }),
   );
 });
 
@@ -207,17 +210,19 @@ test('rejects invalid identities, private fields, duplicates, cross-owner values
       module: { ...emptyManifestInput().module, id: 'property-registry' },
     }),
   );
+  const privateRoutesInput = {
+    ...emptyManifestInput(),
+    privateRoutes: [],
+  };
   assert.throws(() =>
-    defineOntosModuleManifest({
-      ...emptyManifestInput(),
-      privateRoutes: [],
-    } as never),
+    validateOntosModuleManifestFields(privateRoutesInput, privateRoutesInput.publicSurface),
   );
+  const dependenciesInput = {
+    ...emptyManifestInput(),
+    dependencies: { core: [], externalSystems: [], modules: [] },
+  };
   assert.throws(() =>
-    defineOntosModuleManifest({
-      ...emptyManifestInput(),
-      dependencies: { core: [], externalSystems: [], modules: [] },
-    } as never),
+    validateOntosModuleManifestFields(dependenciesInput, dependenciesInput.publicSurface),
   );
   assert.throws(() =>
     defineOntosModuleManifest({
@@ -255,63 +260,37 @@ test('rejects invalid identities, private fields, duplicates, cross-owner values
   );
   assert.throws(
     () =>
-      defineOntosModuleManifest({
-        ...emptyManifestInput(),
-        publicSurface: {
-          ...emptyManifestInput().publicSurface,
-          actions: [
-            {
-              descriptor: {
-                actionKey: 'property.registry.fake',
-                auditProfile: 'minimal',
-                idempotency: 'optional',
-                legalEntityScope: 'optional',
-                owningModuleKey: 'property.registry',
-                schemaVersion: '1',
-              },
+      validateOntosModuleExecutableReferences(
+        [
+          {
+            descriptor: {
+              actionKey: 'property.registry.fake',
+              auditProfile: 'minimal',
+              idempotency: 'optional',
+              legalEntityScope: 'optional',
+              owningModuleKey: 'property.registry',
+              schemaVersion: '1',
             },
-          ],
-        },
-      } as never),
+          },
+        ],
+        [],
+        [],
+        [],
+        'property.registry',
+      ),
     /real values created by defineAction/u,
   );
   assert.throws(
-    () =>
-      defineOntosModuleManifest({
-        ...emptyManifestInput(),
-        publicSurface: { ...emptyManifestInput().publicSurface, api: { FakeApi: 42 } },
-      } as never),
+    () => validateOntosModuleExecutableReferences([], [42], [], [], 'property.registry'),
     /real Effect HttpApi/u,
   );
   assert.throws(
     () =>
-      defineOntosModuleManifest({
-        ...emptyManifestInput(),
-        publicSurface: {
-          ...emptyManifestInput().publicSurface,
-          components: { FakeComponent: 'not-a-component' },
-        },
-      } as never),
+      validateOntosModuleExecutableReferences([], [], ['not-a-component'], [], 'property.registry'),
     /callable component/u,
   );
   assert.throws(
-    () =>
-      defineOntosModuleManifest({
-        ...emptyManifestInput(),
-        publicSurface: {
-          ...emptyManifestInput().publicSurface,
-          events: [
-            {
-              key: 'property.registry.fake-event',
-              owningModuleId: 'property.registry',
-              payloadSchema: {},
-              referencesResourceTypes: [],
-              tense: 'past',
-              visibility: 'public_module_event',
-            },
-          ],
-        },
-      } as never),
+    () => validateOntosModuleExecutableReferences([], [], [], [{}], 'property.registry'),
     /Effect Schema value/u,
   );
 });

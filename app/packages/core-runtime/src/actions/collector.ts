@@ -1,5 +1,10 @@
-import { Effect, Schema } from 'effect';
-import { DataAccessEventSchema, DomainEventSchema, OutboxMessageSchema } from './events.ts';
+import { Effect, Schema, Predicate } from 'effect';
+import {
+  DataAccessEventSchema,
+  DomainEventSchema,
+  OutboxMessageSchema,
+  createDomainEventReference,
+} from './events.ts';
 import type {
   ActionAccessEvidencePolicy,
   ActionEvidenceSnapshot,
@@ -14,6 +19,19 @@ import type {
 } from './events.ts';
 import { ActionCollectorError } from './errors.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 const invalidCollectorInput = (reason: string) =>
   new ActionCollectorError({
     code: 'action_collector_invalid',
@@ -21,7 +39,7 @@ const invalidCollectorInput = (reason: string) =>
   });
 
 const freezeJson = <Value>(value: Value): Value => {
-  if (value !== null && typeof value === 'object') {
+  if (value !== null && Predicate.isObjectKeyword(value)) {
     Object.freeze(value);
     for (const child of Object.values(value)) {
       freezeJson(child);
@@ -31,6 +49,12 @@ const freezeJson = <Value>(value: Value): Value => {
 };
 
 const cloneAndFreeze = <Value>(value: Value): Value => freezeJson(structuredClone(value));
+
+type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
+type JsonObject = Readonly<Record<string, JsonValue>>;
+const isJsonObject = (value: JsonValue): value is JsonObject =>
+  value !== null && Predicate.isObjectKeyword(value) && !Array.isArray(value);
+const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 
 const validateDataAccessInvariant = (
   event: DataAccessEvent,
@@ -104,20 +128,33 @@ export interface ActionCollector<DomainEvents extends DomainEventContractMap> {
   readonly addDomainEvent: (
     event: DeclaredDomainEvent<DomainEvents>,
   ) => Effect.Effect<DomainEventReference, ActionCollectorError>;
+  readonly addDomainEventInput: <Input>(
+    event: Input,
+  ) => Effect.Effect<DomainEventReference, ActionCollectorError>;
   readonly addOutboxMessage: (
     domainEvent: DomainEventReference,
     message: OutboxMessage,
   ) => Effect.Effect<void, ActionCollectorError>;
+  readonly addOutboxMessageInput: <Reference, Message>(
+    domainEvent: Reference,
+    message: Message,
+  ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordDataAccess: (
     event: DataAccessEventInput,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccessInput: <Input>(
+    event: Input,
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
   ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordAuditEvidenceInput: <Input>(
+    evidence: Input,
+  ) => Effect.Effect<void, ActionCollectorError>;
   readonly snapshot: () => ActionEvidenceSnapshot;
 }
 
-export const makeActionCollector = <DomainEvents extends DomainEventContractMap>(
+export const createActionCollector = <DomainEvents extends DomainEventContractMap>(
   domainEventContracts: DomainEvents,
   owningModuleKey: string,
   accessEvidencePolicy: ActionAccessEvidencePolicy,
@@ -130,7 +167,12 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
   const outboxMessages: CollectedOutboxMessage[] = [];
   const references = new Map<DomainEventReference, number>();
 
-  const recordAuditEvidence: ActionCollector<DomainEvents>['recordAuditEvidence'] = (evidence) => {
+  const recordAuditEvidenceInput = <Input>(
+    evidence: Input,
+  ): Effect.Effect<void, ActionCollectorError> => {
+    if (evidence === null || !Predicate.isObjectKeyword(evidence) || Array.isArray(evidence)) {
+      return Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object'));
+    }
     if (hasAuditEvidence) {
       return Effect.fail(invalidCollectorInput('Action audit evidence may be recorded only once'));
     }
@@ -151,7 +193,7 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
       Effect.flatMap((declared) => Schema.decodeUnknownEffect(Schema.Json)(declared)),
       Effect.mapError(() => invalidCollectorInput('The Action audit evidence is not valid JSON')),
       Effect.flatMap((decoded) => {
-        if (decoded === null || Array.isArray(decoded) || typeof decoded !== 'object') {
+        if (!isJsonObject(decoded)) {
           return Effect.fail(invalidCollectorInput('Action audit evidence must be a JSON object'));
         }
         const inputKeys = Object.keys(evidence).toSorted();
@@ -168,28 +210,33 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
           return Effect.fail(invalidCollectorInput('Action audit evidence exceeds its size limit'));
         }
         return Effect.sync(() => {
-          auditEvidence = cloneAndFreeze(
-            decoded as Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
-          );
+          auditEvidence = cloneAndFreeze(decoded);
           hasAuditEvidence = true;
         });
       }),
     );
   };
+  const recordAuditEvidence: ActionCollector<DomainEvents>['recordAuditEvidence'] =
+    recordAuditEvidenceInput;
 
-  const recordDataAccess = (
-    event: DataAccessEventInput,
+  const recordDataAccessInput = <Input>(
+    event: Input,
   ): Effect.Effect<void, ActionCollectorError> => {
+    const eventRecord = Schema.is(UnknownRecordSchema)(event) ? event : undefined;
+    const resultFingerprintHash = eventRecord?.['resultFingerprintHash'];
     const policyFields = (() => {
       switch (accessEvidencePolicy.captureMode) {
         case 'hash_only': {
-          return {
-            evidenceCaptureMode: accessEvidencePolicy.captureMode,
-            evidencePolicyKey: accessEvidencePolicy.policyKey,
-            ...(event.resultFingerprintHash === undefined
-              ? {}
-              : { resultFingerprintSchema: accessEvidencePolicy.resultFingerprintSchema }),
-          } as const;
+          return withOptionalProperty(
+            {
+              evidenceCaptureMode: accessEvidencePolicy.captureMode,
+              evidencePolicyKey: accessEvidencePolicy.policyKey,
+            },
+            resultFingerprintHash !== undefined,
+            'resultFingerprintSchema',
+            accessEvidencePolicy.resultFingerprintSchema,
+            {},
+          );
         }
         case 'metadata_only': {
           return {
@@ -210,10 +257,8 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
         }
       }
     })();
-    const materializedEvent: DataAccessEvent = {
-      ...event,
-      ...policyFields,
-    };
+    const materializedEvent =
+      eventRecord === undefined ? event : { ...eventRecord, ...policyFields };
 
     return Schema.decodeUnknownEffect(DataAccessEventSchema)(materializedEvent).pipe(
       Effect.mapError(() => invalidCollectorInput('The Data Access Event is structurally invalid')),
@@ -226,9 +271,10 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
       Effect.asVoid,
     );
   };
+  const recordDataAccess: ActionCollector<DomainEvents>['recordDataAccess'] = recordDataAccessInput;
 
-  const addDomainEvent = (
-    event: DeclaredDomainEvent<DomainEvents>,
+  const addDomainEventInput = <Input>(
+    event: Input,
   ): Effect.Effect<DomainEventReference, ActionCollectorError> =>
     Schema.decodeUnknownEffect(DomainEventSchema)(event).pipe(
       Effect.mapError(() => invalidCollectorInput('The Domain Event is structurally invalid')),
@@ -264,19 +310,28 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
         );
       }),
       Effect.map((decoded) => {
-        const reference = Object.freeze({}) as DomainEventReference;
+        const reference = createDomainEventReference();
         const index = domainEvents.length;
         domainEvents.push(cloneAndFreeze(decoded));
         references.set(reference, index);
         return reference;
       }),
     );
+  const addDomainEvent: ActionCollector<DomainEvents>['addDomainEvent'] = addDomainEventInput;
 
-  const addOutboxMessage = (
-    domainEvent: DomainEventReference,
-    message: OutboxMessage,
+  const findReferenceIndex = <Reference>(candidate: Reference): number | undefined => {
+    for (const [reference, index] of references) {
+      if (Object.is(reference, candidate)) {
+        return index;
+      }
+    }
+    return undefined;
+  };
+  const addOutboxMessageInput = <Reference, Message>(
+    domainEvent: Reference,
+    message: Message,
   ): Effect.Effect<void, ActionCollectorError> => {
-    const domainEventIndex = references.get(domainEvent);
+    const domainEventIndex = findReferenceIndex(domainEvent);
 
     if (domainEventIndex === undefined) {
       return Effect.fail(
@@ -316,6 +371,7 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
       Effect.asVoid,
     );
   };
+  const addOutboxMessage: ActionCollector<DomainEvents>['addOutboxMessage'] = addOutboxMessageInput;
 
   const snapshot = (): ActionEvidenceSnapshot =>
     Object.freeze({
@@ -327,9 +383,13 @@ export const makeActionCollector = <DomainEvents extends DomainEventContractMap>
 
   return Object.freeze({
     addDomainEvent,
+    addDomainEventInput,
     addOutboxMessage,
+    addOutboxMessageInput,
     recordAuditEvidence,
+    recordAuditEvidenceInput,
     recordDataAccess,
+    recordDataAccessInput,
     snapshot,
   });
 };

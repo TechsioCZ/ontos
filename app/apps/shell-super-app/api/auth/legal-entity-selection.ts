@@ -1,8 +1,8 @@
 /* eslint-disable max-classes-per-file -- The selection boundary exposes two distinct typed failure channels. */
 import type {
-  ContextAccessShape,
+  ContextAccessService,
   LegalEntityContextError,
-  LegalEntityContextShape,
+  LegalEntityContextService,
   SafeLegalEntity,
 } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
@@ -36,8 +36,8 @@ const contextFailure = (_error: LegalEntityContextError): LegalEntitySelectionUn
   new LegalEntitySelectionUnavailableError();
 
 export const resolveAuthorizedLegalEntities = (
-  legalEntityContext: LegalEntityContextShape,
-  contextAccess: ContextAccessShape,
+  legalEntityContext: LegalEntityContextService,
+  contextAccess: ContextAccessService,
   input: {
     readonly principalId: string;
     readonly savedLegalEntityId?: string;
@@ -81,8 +81,8 @@ export const resolveAuthorizedLegalEntities = (
   });
 
 export const validateAuthorizedLegalEntity = (
-  legalEntityContext: LegalEntityContextShape,
-  contextAccess: ContextAccessShape,
+  legalEntityContext: LegalEntityContextService,
+  contextAccess: ContextAccessService,
   input: {
     readonly legalEntityId: string;
     readonly principalId: string;

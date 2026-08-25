@@ -1,3 +1,12 @@
+import { Schema } from 'effect';
+
+export const DEFAULT_CRM_SHELL_ORIGIN = 'http://localhost:3020';
+
+const ShellOriginSchema = Schema.String;
+
+export const resolveCrmShellOrigin = <Value>(value?: Value): string =>
+  Schema.is(ShellOriginSchema)(value) ? value : DEFAULT_CRM_SHELL_ORIGIN;
+
 export const crmCorsAllowedHeaders = [
   'Accept',
   'Accept-Language',

@@ -1,12 +1,16 @@
 import { createRequire } from 'node:module';
 
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
+import { Schema } from 'effect';
 
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
-const bffVersion = (require('@modern-js/plugin-bff/package.json') as { version: string }).version;
-const effectVersion = (require('effect/package.json') as { version: string }).version;
+const PackageVersionSchema = Schema.Struct({ version: Schema.String });
+const packageVersion = (specifier: string): string =>
+  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
+const bffVersion = packageVersion('@modern-js/plugin-bff/package.json');
+const effectVersion = packageVersion('effect/package.json');
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
   createModuleFederationConfig({

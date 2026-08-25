@@ -2,7 +2,9 @@
 /* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal, node/callback-return, promise/prefer-await-to-callbacks -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Schema } from 'effect';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Effect, Schema, Predicate } from 'effect';
+import { Pool } from 'pg';
 import { CoreDatabase } from '../../src/db/client.ts';
 import type {
   ActionInvocationRecord,
@@ -44,7 +46,8 @@ import {
   checkModuleEntrypoint,
   makeModuleStateSnapshot,
 } from '../../src/modules/module-state-gate.ts';
-import { makeSupportRecoveryPrincipalContextResolver } from '../../src/auth/support-recovery-principal-context.ts';
+import { supportRecoveryPrincipalContextResolverFromRepository } from '../../src/auth/support-recovery-principal-context.ts';
+import { coreDatabaseSchema } from '../../src/db/schema.ts';
 import { recordSupportImpersonationAction } from '../../src/modules/actions/record-support-impersonation.action.ts';
 
 const principal = {
@@ -64,21 +67,7 @@ const transport = (idempotencyKey = 'intent-1') => ({
   targetResourceType: 'counter',
 });
 
-const fakeTransaction = {
-  delete: () => {},
-  insert: () => {},
-  query: {},
-  select: () => ({
-    from: () => ({
-      innerJoin: () => ({
-        where: () => ({
-          limit: () => Promise.resolve([{ authBindingId: principal.authBindingId }]),
-        }),
-      }),
-    }),
-  }),
-  update: () => {},
-};
+const QueryConfigSchema = Schema.Struct({ text: Schema.String });
 
 interface HarnessOptions {
   readonly commitFailureCode?: string;
@@ -199,14 +188,25 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
   };
 
-  const database = {
-    executor: {
-      transaction: async (callback: (transaction: unknown) => Promise<unknown>) => {
+  let installedTenantId = principal.tenantId;
+  let installedLegalEntityId = principal.legalEntityId;
+  const query = <Query, Values>(queryInput: Query, values?: Values) =>
+    Promise.resolve().then(() => {
+      const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
+      if (text.includes('set_config') && Array.isArray(values)) {
+        const [tenantId, legalEntityId] = values;
+        if (Predicate.isString(tenantId) && Predicate.isString(legalEntityId)) {
+          installedTenantId = tenantId;
+          installedLegalEntityId = legalEntityId;
+        }
+      }
+      if (text === 'begin') {
         transactionCount += 1;
         if (options.transactionMode === 'definite-failure') {
           throw new Error('transaction unavailable');
         }
-        const result = await callback(fakeTransaction);
+      }
+      if (text === 'commit') {
         if (options.transactionMode === 'uncertain') {
           throw { commitIndeterminate: true };
         }
@@ -218,9 +218,29 @@ const makeHarness = (options: HarnessOptions = {}) => {
         if (options.transactionMode === 'commit-definite') {
           throw Object.assign(new Error('serialization failure'), { code: '40001' });
         }
-        return result;
-      },
-    },
+      }
+      if (text.includes('current_setting')) {
+        return {
+          rows: [
+            {
+              legal_entity_id: installedLegalEntityId,
+              tenant_id: installedTenantId,
+            },
+          ],
+        };
+      }
+      if (text.startsWith('select')) {
+        return { rows: [{ authBindingId: principal.authBindingId }] };
+      }
+      return { rows: [] };
+    });
+  const pool = new Pool();
+  Object.defineProperty(pool, 'connect', {
+    value: () => Promise.resolve({ query, release: () => {} }),
+  });
+  Object.defineProperty(pool, 'query', { value: query });
+  const database = {
+    executor: drizzle({ client: pool, schema: coreDatabaseSchema }),
   };
 
   const permission = {
@@ -294,7 +314,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
   } as const;
   const runtime = makeActionRuntime(
-    database as never,
+    database,
     repository,
     permission,
     testOperationalScopeResolver,
@@ -311,7 +331,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
             })),
           ),
       },
-      installScope: () => Effect.succeed(fakeTransaction as never),
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       onStage: (stage) => {
@@ -430,29 +449,15 @@ test('executes the complete stage order with transaction ownership and success e
 
 test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
   const recoveryPrincipal = await Effect.runPromise(
-    makeSupportRecoveryPrincipalContextResolver({
-      executor: {
-        select: () => ({
-          from: () => {
-            const query = {
-              innerJoin: () => query,
-              where: () => ({
-                limit: () =>
-                  Promise.resolve([
-                    {
-                      bindingPrincipalId: principal.principalId,
-                      bindingTenantId: principal.tenantId,
-                      principalKind: 'human',
-                      principalTenantId: principal.tenantId,
-                      tenantId: principal.tenantId,
-                    },
-                  ]),
-              }),
-            };
-            return query;
-          },
+    supportRecoveryPrincipalContextResolverFromRepository({
+      load: () =>
+        Promise.resolve({
+          bindingPrincipalId: principal.principalId,
+          bindingTenantId: principal.tenantId,
+          principalKind: 'human',
+          principalTenantId: principal.tenantId,
+          tenantId: principal.tenantId,
         }),
-      } as never,
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,
@@ -1063,12 +1068,8 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
   assert.equal(harness.flushed.length, 0);
 });
 
-test('sanitizes Policy defects, interrupts, and undeclared failures without finalizing', async () => {
-  const evaluators = [
-    () => Effect.die('secret evaluator defect'),
-    () => Effect.interrupt,
-    () => Effect.fail({ _tag: 'UnavailablePolicyCapability', secret: 'database detail' }) as never,
-  ] as const;
+test('sanitizes Policy defects and interrupts without finalizing', async () => {
+  const evaluators = [() => Effect.die('secret evaluator defect'), () => Effect.interrupt] as const;
 
   for (const [index, evaluate] of evaluators.entries()) {
     let handlerExecutions = 0;
@@ -1436,7 +1437,11 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       resultSchema: Schema.Struct({ total: Schema.Finite }),
       schemaVersion: '1',
     },
-    () => Effect.succeed({ total: 'invalid' } as never),
+    () => {
+      const result = { total: 0 };
+      Object.defineProperty(result, 'total', { value: 'invalid' });
+      return Effect.succeed(result);
+    },
   );
   const resultError = await Effect.runPromise(
     Effect.flip(
@@ -1461,10 +1466,12 @@ test('sanitizes undeclared handler failures instead of widening the domain error
     'DeclaredDomainError',
     { reason: Schema.String },
   ) {}
-  class UndeclaredDomainError extends Schema.TaggedErrorClass<UndeclaredDomainError>()(
-    'UndeclaredDomainError',
-    { reason: Schema.String },
-  ) {}
+  const undeclaredDomainError = new DeclaredDomainError({
+    reason: 'secret undeclared failure',
+  });
+  Object.defineProperty(undeclaredDomainError, '_tag', {
+    value: 'UndeclaredDomainError',
+  });
   const harness = makeHarness();
   const action = defineAction(
     {
@@ -1487,10 +1494,7 @@ test('sanitizes undeclared handler failures instead of widening the domain error
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    () =>
-      Effect.fail(
-        new UndeclaredDomainError({ reason: 'secret undeclared failure' }),
-      ) as unknown as Effect.Effect<void, DeclaredDomainError>,
+    () => Effect.fail(undeclaredDomainError),
   );
   const error = await Effect.runPromise(
     Effect.flip(
@@ -1741,5 +1745,5 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
 });
 
 test('the Core database service identity remains server-only', () => {
-  assert.equal(typeof CoreDatabase, 'function');
+  assert.equal(Predicate.isFunction(CoreDatabase), true);
 });

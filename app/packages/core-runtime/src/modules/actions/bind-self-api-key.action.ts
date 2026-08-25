@@ -4,25 +4,26 @@
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
-import { bindApiKey } from '../../auth/principal-management.ts';
-import { PrincipalManagementError } from '../../auth/principal-management-errors.ts';
+import {
+  bindApiKey,
+  principalManagementRepositoryFromTransaction,
+} from '../../auth/principal-management.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const subject = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const BindSelfApiKeyPayload = Schema.Struct({ providerSubjectId: subject });
-type BindSelfApiKeyPayloadType = Schema.Schema.Type<typeof BindSelfApiKeyPayload>;
-export type { BindSelfApiKeyPayloadType as BindSelfApiKeyPayload };
-export const BindSelfApiKeyResult = Schema.Struct({
+export const BindSelfApiKeyPayloadSchema = Schema.Struct({ providerSubjectId: subject });
+export type BindSelfApiKeyPayload = Schema.Schema.Type<typeof BindSelfApiKeyPayloadSchema>;
+export const BindSelfApiKeyResultSchema = Schema.Struct({
   authBindingId: uuid,
   status: Schema.Literal('active'),
 });
-type BindSelfApiKeyResultType = Schema.Schema.Type<typeof BindSelfApiKeyResult>;
-export type { BindSelfApiKeyResultType as BindSelfApiKeyResult };
+export type BindSelfApiKeyResult = Schema.Schema.Type<typeof BindSelfApiKeyResultSchema>;
 type Input = Parameters<typeof bindApiKey>[1];
 type Result = ReturnType<typeof bindApiKey>;
 const handle = (
-  payload: BindSelfApiKeyPayloadType,
+  payload: BindSelfApiKeyPayload,
   context: ActionHandlerContext<
     Readonly<Record<never, never>>,
     { readonly bind: (input: Input) => Result }
@@ -54,7 +55,7 @@ export const bindSelfApiKeyAction = defineAction(
     },
     actionKey: 'core.identity.bind-self-api-key',
     auditProfile: 'sensitive',
-    domainErrorSchema: PrincipalManagementError,
+    domainErrorSchema: PrincipalManagementErrorSchema,
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
@@ -65,11 +66,14 @@ export const bindSelfApiKeyAction = defineAction(
     idempotency: 'required',
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    payloadSchema: BindSelfApiKeyPayload,
+    payloadSchema: BindSelfApiKeyPayloadSchema,
     policies: [],
-    resultSchema: BindSelfApiKeyResult,
+    resultSchema: BindSelfApiKeyResultSchema,
     schemaVersion: '1',
   },
   handle,
-  (transaction) => Effect.succeed({ bind: (input) => bindApiKey(transaction, input) }),
+  (transaction) => {
+    const repository = principalManagementRepositoryFromTransaction(transaction);
+    return Effect.succeed({ bind: (input) => bindApiKey(repository, input) });
+  },
 );

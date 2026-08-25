@@ -92,7 +92,7 @@ test('publishes only the narrow server Action surface', () => {
   assert.equal('resolveActionCommit' in publicSurface, true);
   assert.equal('ActionRepository' in publicSurface, false);
   assert.equal('ActionRepositoryLive' in publicSurface, false);
-  assert.equal('makeActionCollector' in publicSurface, false);
+  assert.equal('createActionCollector' in publicSurface, false);
   assert.equal('makeActionRepository' in publicSurface, false);
   assert.equal('finalizePolicyDenial' in publicSurface, false);
   assert.equal('isActionPolicy' in publicSurface, false);

@@ -12,14 +12,11 @@ import {
   ModuleEntrypointGateway,
   ModuleEntrypointGatewayLive,
 } from '../modules/module-entrypoint-gateway.ts';
-import type { ModuleEntrypointGatewayShape } from '../modules/module-entrypoint-gateway.ts';
+import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
 import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
-import type { ContextAccessShape } from '../permissions/context-access.ts';
-import {
-  makeOperationalScopeRepository,
-  makeOperationalScopeResolver,
-} from '../operations/context.ts';
-import type { OperationalScopeResolverShape } from '../operations/context.ts';
+import type { ContextAccessService } from '../permissions/context-access.ts';
+import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
+import type { OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import { PolicyDenied } from '../actions/policy.ts';
 import { computeCanonicalValueHash } from '../actions/repository.ts';
@@ -45,6 +42,19 @@ import {
   ReadResultValidationError,
 } from './errors.ts';
 import type { ReadCoreError } from './errors.ts';
+
+const withOptionalProperty = <
+  const Base extends object,
+  const Key extends PropertyKey,
+  const Value,
+  const Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const ReadTransportSchema = Schema.Struct({
   correlationId: Schema.String.check(Schema.isMinLength(1)),
@@ -136,10 +146,10 @@ const targetMetadata = (target: ResolvedReadPermissionTarget) => {
 };
 
 export const makeReadRuntime = (
-  database: Context.Service.Shape<typeof CoreDatabase>,
-  gateway: ModuleEntrypointGatewayShape,
-  scopeResolver: OperationalScopeResolverShape,
-  contextAccess: ContextAccessShape,
+  database: (typeof CoreDatabase)['Service'],
+  gateway: ModuleEntrypointGatewayService,
+  scopeResolver: OperationalScopeResolverService,
+  contextAccess: ContextAccessService,
   options: ReadRuntimeOptions = {},
 ) => {
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
@@ -218,12 +228,19 @@ export const makeReadRuntime = (
       );
       stage('input_decoded');
       const scopeExit = yield* Effect.exit(
-        scopeResolver.resolve({
-          correlationId: transport.correlationId,
-          legalEntityScope: input.registration.descriptor.legalEntityScope,
-          principal,
-          ...(transport.traceId === undefined ? {} : { traceId: transport.traceId }),
-        }),
+        scopeResolver.resolve(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+              legalEntityScope: input.registration.descriptor.legalEntityScope,
+              principal,
+            },
+            !(transport.traceId === undefined),
+            'traceId',
+            transport.traceId,
+            {},
+          ),
+        ),
       );
       if (Exit.isFailure(scopeExit)) {
         const failure = Cause.findErrorOption(scopeExit.cause);
@@ -322,20 +339,29 @@ export const makeReadRuntime = (
       }
       stage('permission_checked');
       if (permissionDecision === 'denied') {
-        yield* persistReadEvidence(database.executor, {
-          accessKind: input.registration.descriptor.accessKind,
-          captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-          outcome: 'denied',
-          outcomeCode: 'spicedb_permission_denied',
-          outcomeStage: 'authz',
-          policyKey: input.registration.descriptor.evidencePolicy.policyKey,
-          ...(queryHash === undefined ? {} : { queryHash }),
-          readKey: input.registration.descriptor.readKey,
-          resultCount: 0,
-          scope,
-          servingModuleKey: input.registration.descriptor.owningModuleKey,
-          ...permissionTargetMetadata,
-        });
+        yield* persistReadEvidence(
+          database.executor,
+          withOptionalProperty(
+            {
+              accessKind: input.registration.descriptor.accessKind,
+              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+              outcome: 'denied',
+              outcomeCode: 'spicedb_permission_denied',
+              outcomeStage: 'authz',
+              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+            },
+            !(queryHash === undefined),
+            'queryHash',
+            queryHash,
+            {
+              readKey: input.registration.descriptor.readKey,
+              resultCount: 0,
+              scope,
+              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              ...permissionTargetMetadata,
+            },
+          ),
+        );
         return yield* new ReadPermissionDenied({
           code: 'read_permission_denied',
           reason: 'The principal is not permitted to perform this read',
@@ -368,10 +394,15 @@ export const makeReadRuntime = (
             payload: decodedInput,
             principal: scope,
             target: permissionTargetMetadata,
-            transport: {
-              correlationId: transport.correlationId,
-              ...(transport.traceId === undefined ? {} : { traceId: transport.traceId }),
-            },
+            transport: withOptionalProperty(
+              {
+                correlationId: transport.correlationId,
+              },
+              !(transport.traceId === undefined),
+              'traceId',
+              transport.traceId,
+              {},
+            ),
           }),
         );
         if (Exit.isSuccess(policyExit)) {
@@ -384,19 +415,28 @@ export const makeReadRuntime = (
           failure._tag === 'Some' &&
           Schema.is(PolicyDenied)(failure.value)
         ) {
-          yield* persistReadEvidence(database.executor, {
-            accessKind: input.registration.descriptor.accessKind,
-            captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-            outcome: 'denied',
-            outcomeCode: failure.value.reasonCode,
-            outcomeStage: 'policy',
-            policyKey: input.registration.descriptor.evidencePolicy.policyKey,
-            ...(queryHash === undefined ? {} : { queryHash }),
-            readKey: input.registration.descriptor.readKey,
-            resultCount: 0,
-            scope,
-            servingModuleKey: input.registration.descriptor.owningModuleKey,
-          });
+          yield* persistReadEvidence(
+            database.executor,
+            withOptionalProperty(
+              {
+                accessKind: input.registration.descriptor.accessKind,
+                captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+                outcome: 'denied',
+                outcomeCode: failure.value.reasonCode,
+                outcomeStage: 'policy',
+                policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+              },
+              !(queryHash === undefined),
+              'queryHash',
+              queryHash,
+              {
+                readKey: input.registration.descriptor.readKey,
+                resultCount: 0,
+                scope,
+                servingModuleKey: input.registration.descriptor.owningModuleKey,
+              },
+            ),
+          );
           return yield* new ReadPolicyDenied({
             code: 'read_policy_denied',
             httpStatus: denialStatus,
@@ -431,11 +471,9 @@ export const makeReadRuntime = (
                 Cause.die(error),
               ),
         try: () =>
-          database.executor.transaction(async (transaction) => {
+          database.executor.transaction(async (transaction: CoreTransaction) => {
             const scoped = unwrapCore(
-              await Effect.runPromiseExit(
-                installOperationalScope(transaction as CoreTransaction, scope),
-              ),
+              await Effect.runPromiseExit(installOperationalScope(transaction, scope)),
             );
             stage('scope_installed');
             const serviceExit = await Effect.runPromiseExit(
@@ -597,28 +635,42 @@ export const makeReadRuntime = (
             );
             unwrapCore(
               await Effect.runPromiseExit(
-                persistReadEvidence(transaction as CoreTransaction, {
-                  accessKind: input.registration.descriptor.accessKind,
-                  captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-                  outcome: 'allowed',
-                  outcomeCode: 'read_allowed',
-                  outcomeStage: 'evidence',
-                  policyKey: input.registration.descriptor.evidencePolicy.policyKey,
-                  ...(queryHash === undefined ? {} : { queryHash }),
-                  readKey: input.registration.descriptor.readKey,
-                  resultCount: evidence.resultCount,
-                  ...(evidence.resultFingerprintHash === undefined
-                    ? {}
-                    : { resultFingerprintHash: evidence.resultFingerprintHash }),
-                  ...(evidence.resultFingerprintSchema === undefined
-                    ? {}
-                    : {
-                        resultFingerprintSchema: evidence.resultFingerprintSchema,
-                      }),
-                  scope,
-                  servingModuleKey: input.registration.descriptor.owningModuleKey,
-                  ...permissionTargetMetadata,
-                }),
+                persistReadEvidence(
+                  transaction,
+                  withOptionalProperty(
+                    withOptionalProperty(
+                      withOptionalProperty(
+                        {
+                          accessKind: input.registration.descriptor.accessKind,
+                          captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+                          outcome: 'allowed',
+                          outcomeCode: 'read_allowed',
+                          outcomeStage: 'evidence',
+                          policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+                        },
+                        !(queryHash === undefined),
+                        'queryHash',
+                        queryHash,
+                        {
+                          readKey: input.registration.descriptor.readKey,
+                          resultCount: evidence.resultCount,
+                        },
+                      ),
+                      !(evidence.resultFingerprintHash === undefined),
+                      'resultFingerprintHash',
+                      evidence.resultFingerprintHash,
+                      {},
+                    ),
+                    !(evidence.resultFingerprintSchema === undefined),
+                    'resultFingerprintSchema',
+                    evidence.resultFingerprintSchema,
+                    {
+                      scope,
+                      servingModuleKey: input.registration.descriptor.owningModuleKey,
+                      ...permissionTargetMetadata,
+                    },
+                  ),
+                ),
               ),
             );
             stage('evidence_persisted');
@@ -637,20 +689,29 @@ export const makeReadRuntime = (
                   },
                 );
           const persistLateDenial = Schema.is(ReadPermissionDenied)(error.error)
-            ? persistReadEvidence(database.executor, {
-                accessKind: input.registration.descriptor.accessKind,
-                captureMode: input.registration.descriptor.evidencePolicy.captureMode,
-                outcome: 'denied',
-                outcomeCode: 'read_permission_denied',
-                outcomeStage: 'authz',
-                policyKey: input.registration.descriptor.evidencePolicy.policyKey,
-                ...(queryHash === undefined ? {} : { queryHash }),
-                readKey: input.registration.descriptor.readKey,
-                resultCount: 0,
-                scope,
-                servingModuleKey: input.registration.descriptor.owningModuleKey,
-                ...permissionTargetMetadata,
-              })
+            ? persistReadEvidence(
+                database.executor,
+                withOptionalProperty(
+                  {
+                    accessKind: input.registration.descriptor.accessKind,
+                    captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+                    outcome: 'denied',
+                    outcomeCode: 'read_permission_denied',
+                    outcomeStage: 'authz',
+                    policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+                  },
+                  !(queryHash === undefined),
+                  'queryHash',
+                  queryHash,
+                  {
+                    readKey: input.registration.descriptor.readKey,
+                    resultCount: 0,
+                    scope,
+                    servingModuleKey: input.registration.descriptor.owningModuleKey,
+                    ...permissionTargetMetadata,
+                  },
+                ),
+              )
             : Effect.void;
           return logDefect.pipe(
             Effect.andThen(persistLateDenial),
@@ -675,19 +736,16 @@ const readRuntimeLayer = Layer.effect(
   Effect.gen(function* makeReadRuntimeService() {
     const database = yield* CoreDatabase;
     const gateway = yield* ModuleEntrypointGateway;
+    const scopeResolver = yield* OperationalScopeResolver;
     const contextAccess = yield* ContextAccess;
-    return makeReadRuntime(
-      database,
-      gateway,
-      makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
-      contextAccess,
-    );
+    return makeReadRuntime(database, gateway, scopeResolver, contextAccess);
   }),
 );
 
 export const makeReadRuntimeLive = (contextAccessLayer: Layer.Layer<ContextAccess>) =>
   readRuntimeLayer.pipe(
     Layer.provide(ModuleEntrypointGatewayLive),
+    Layer.provide(OperationalScopeResolverLive),
     Layer.provide(contextAccessLayer),
   );
 

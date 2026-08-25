@@ -36,6 +36,7 @@ import {
   crmCorsAllowedHeaders,
   crmCorsAllowedMethods,
   crmCorsAllowedOrigins,
+  resolveCrmShellOrigin,
 } from '../shared/cors.ts';
 import type { CrmContactNotFound } from '../shared/apis/contact-detail.ts';
 import type {
@@ -61,15 +62,17 @@ import { customerDetailReadApiLive } from './customer-detail-read-server.ts';
 import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
 
-const operationAttributes = (operationContext: OperationContext) => ({
-  'modernjs.operation.id': operationContext.operationId,
-  'modernjs.operation.method': operationContext.method,
-  'modernjs.operation.route': operationContext.routePath,
-  'modernjs.operation.source': operationContext.source,
-  ...(typeof operationContext.traceId === 'string'
-    ? { 'modernjs.trace.id': operationContext.traceId }
-    : {}),
-});
+const operationAttributes = (operationContext: OperationContext) => {
+  const attributes = {
+    'modernjs.operation.id': operationContext.operationId,
+    'modernjs.operation.method': operationContext.method,
+    'modernjs.operation.route': operationContext.routePath,
+    'modernjs.operation.source': operationContext.source,
+  };
+  return operationContext.traceId === undefined
+    ? attributes
+    : { ...attributes, 'modernjs.trace.id': operationContext.traceId };
+};
 
 const problem = {
   authentication: (): CrmProblem => ({
@@ -102,7 +105,7 @@ const problem = {
     title: 'CRM operation forbidden',
     type: 'https://ontos.dev/problems/crm-forbidden',
   }),
-  internal: (): CrmProblem => ({
+  internal: (): Extract<CrmProblem, { readonly _tag: 'CrmInternalProblem' }> => ({
     _tag: 'CrmInternalProblem',
     detail: 'The CRM operation could not be completed.',
     status: 500,
@@ -156,6 +159,15 @@ type CrmActionError =
   | CrmLifecycleConflict
   | CrmPersistenceUnavailable;
 type CrmCreateCustomerProblem = Exclude<CrmProblem, { readonly _tag: 'CrmNotFoundProblem' }>;
+
+interface CrmActionTransport {
+  readonly correlationId: string;
+  idempotencyKey?: string;
+  traceId?: string;
+}
+
+const isCrmProblem = (error: CrmActionError | CrmProblem): error is CrmProblem =>
+  error._tag.startsWith('Crm') && error._tag.endsWith('Problem');
 
 const actionProblem = (error: CrmActionError, supportsNotFound: boolean): CrmProblem => {
   switch (error._tag) {
@@ -242,7 +254,7 @@ const runCrmAction = <
     Services,
     Requirements
   >,
-  payload: unknown,
+  payload: Schema.Schema.Type<PayloadSchema>,
   headers: Readonly<Record<string, string | undefined>>,
   requestHeaders: Readonly<Record<string, string | undefined>>,
 ) =>
@@ -253,29 +265,22 @@ const runCrmAction = <
     }
     const principal = yield* verifyPrincipal(requestHeaders['authorization']);
     const runtime = yield* ActionRuntime;
-    return yield* runtime.runAction({
-      payload,
-      principal,
-      registration,
-      transport: {
-        correlationId,
-        ...(headers['idempotency-key'] === undefined
-          ? {}
-          : { idempotencyKey: headers['idempotency-key'] }),
-        ...(requestHeaders['x-trace-id'] === undefined
-          ? {}
-          : { traceId: requestHeaders['x-trace-id'] }),
-      },
-    });
+    const transport: CrmActionTransport = { correlationId };
+    const idempotencyKey = headers['idempotency-key'];
+    if (idempotencyKey !== undefined) {
+      transport.idempotencyKey = idempotencyKey;
+    }
+    const traceId = requestHeaders['x-trace-id'];
+    if (traceId !== undefined) {
+      transport.traceId = traceId;
+    }
+    return yield* runtime.runAction({ payload, principal, registration, transport });
   }).pipe(
-    Effect.catch((error) =>
-      '_tag' in error && error._tag.startsWith('Crm') && error._tag.endsWith('Problem')
-        ? Effect.fail(error as CrmProblem)
+    Effect.catch((error: CrmActionError | CrmProblem) =>
+      isCrmProblem(error)
+        ? Effect.fail(error)
         : failProblem(
-            actionProblem(
-              error as CrmActionError,
-              registration.descriptor.actionKey !== 'crm.core.create-customer',
-            ),
+            actionProblem(error, registration.descriptor.actionKey !== 'crm.core.create-customer'),
           ),
     ),
     Effect.catchDefect((defect) =>
@@ -311,11 +316,8 @@ const customerMutationsLive = HttpApiBuilder.group(crmApi, 'customerMutations', 
   handlers
     .handle('createCustomer', ({ headers, payload, request }) =>
       runCrmAction(createCustomerAction, payload, headers, request.headers).pipe(
-        Effect.mapError(
-          (error): CrmCreateCustomerProblem =>
-            error._tag === 'CrmNotFoundProblem'
-              ? (problem.internal() as CrmCreateCustomerProblem)
-              : error,
+        Effect.mapError((error): CrmCreateCustomerProblem =>
+          error._tag === 'CrmNotFoundProblem' ? problem.internal() : error,
         ),
       ),
     )
@@ -352,8 +354,17 @@ const readRuntimeLive = makeReadRuntimeLive(ContextAccessLive).pipe(
   Layer.orDie,
 );
 const aresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
-const shellOrigin =
-  typeof ULTRAMODERN_SHELL_ORIGIN === 'string' ? ULTRAMODERN_SHELL_ORIGIN : 'http://localhost:3020';
+const readShellOrigin = (): string => {
+  let configuredOrigin: string | undefined;
+  try {
+    configuredOrigin = ULTRAMODERN_SHELL_ORIGIN;
+  } catch {
+    configuredOrigin = undefined;
+  }
+  return resolveCrmShellOrigin(configuredOrigin);
+};
+
+const shellOrigin = readShellOrigin();
 export const makeCrmApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,

@@ -26,10 +26,12 @@ import {
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../packages/shared-contracts/src/gateway-context.ts';
 import { SignJWT, exportJWK, generateKeyPair, generateSecret, importJWK } from 'jose';
+import type { JWK } from 'jose';
 import { issueGatewayContextAssertion } from '../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../../apps/shell-super-app/api/auth/gateway-issuer-config.ts';
 import { getHelpText, runScaffold } from '../cli.mts';
 import type { ScaffoldCommand } from '../cli.mts';
+import type { JsonValue } from '../shared.mts';
 import {
   assertPublishedOutboxDependencyUsage,
   publishedOutboxContractExports,
@@ -54,6 +56,48 @@ interface FixtureVertical {
   readonly namespace: string;
   readonly slug: string;
 }
+
+interface GeneratedPrincipalEnvironment {
+  readonly ONTOS_GATEWAY_ISSUER?: string;
+  readonly ONTOS_GATEWAY_PUBLIC_JWKS?: string;
+}
+
+const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
+const FixturePackageSchema = Schema.Struct({
+  dependencies: StringRecordSchema,
+  exports: StringRecordSchema,
+  modernjs: Schema.Record(Schema.String, Schema.Json),
+  scripts: StringRecordSchema,
+});
+const EsbuildMetafileSchema = Schema.Struct({
+  inputs: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      bytes: Schema.Number,
+    }),
+  ),
+});
+const RetryableProblemSchema = Schema.Struct({
+  retryable: Schema.optional(Schema.Boolean),
+});
+const FixtureTsconfigSchema = Schema.Struct({
+  references: Schema.Array(Schema.Struct({ path: Schema.String })),
+});
+const InventoryLocaleSchema = Schema.Struct({
+  inventory: Schema.Struct({
+    existing: Schema.optional(Schema.String),
+    pages: Schema.Record(Schema.String, Schema.Record(Schema.String, Schema.String)),
+  }),
+});
+
+const decodeFixturePackage = (source: string) =>
+  Schema.decodeUnknownSync(FixturePackageSchema, { onExcessProperty: 'preserve' })(
+    JSON.parse(source),
+  );
+const decodeInventoryLocale = (source: string) =>
+  Schema.decodeUnknownSync(InventoryLocaleSchema, { onExcessProperty: 'preserve' })(
+    JSON.parse(source),
+  );
 
 const inventoryVertical: FixtureVertical = {
   appId: 'inventory-stock',
@@ -87,7 +131,7 @@ const crmVertical: FixtureVertical = {
   slug: 'crm',
 };
 
-const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const require = createRequire(import.meta.url);
 const createEntry = require.resolve('@modern-js/create');
@@ -101,7 +145,7 @@ const makeGatewayKey = async (
   kid: string,
 ): Promise<{
   configuration: GatewayIssuerConfigValue;
-  publicJwk: Record<string, unknown>;
+  publicJwk: JWK;
 }> => {
   const pair = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
   const privateJwk = await exportJWK(pair.privateKey);
@@ -774,9 +818,9 @@ test('generates one immutable Action identity boundary and exact direct dependen
     assert.doesNotMatch(server, /Date\.now|Effect\.runPromise|decodeUnknownSync/u);
     assert.match(client, /acquire\(\{ audience: ACTION_GATEWAY_AUDIENCE \}/u);
     assert.doesNotMatch(client, /localStorage|sessionStorage/u);
-    const packageJson = JSON.parse(
+    const packageJson = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
-    ) as { dependencies: Record<string, string>; scripts: Record<string, string> };
+    );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': 'workspace:*',
       '@app/shared-contracts': 'workspace:*',
@@ -808,9 +852,7 @@ test('Action identity boundary preflight refuses unsafe writes', async () => {
   });
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
-    const packageJson = JSON.parse(await readFile(packagePath, 'utf-8')) as {
-      dependencies: Record<string, string>;
-    };
+    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
     packageJson.dependencies['jose'] = '^5.0.0';
     await writeFile(packagePath, json(packageJson), 'utf-8');
     const before = await snapshotTree(fixture.root);
@@ -867,10 +909,12 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       edgeBundle.stderr || edgeBundle.error?.message || 'edge bundle command did not start',
     );
     const edgeInputs = Object.keys(
-      (JSON.parse(await readFile(edgeMetafile, 'utf-8')) as { inputs: Record<string, unknown> })
-        .inputs,
+      Schema.decodeUnknownSync(EsbuildMetafileSchema)(
+        JSON.parse(await readFile(edgeMetafile, 'utf-8')),
+      ).inputs,
     ).join('\n');
     assert.doesNotMatch(edgeInputs, /core-runtime\/src\/(?:auth|db)|node:(?:crypto|path)|\/pg\//u);
+    // SAFETY: The fixture module was generated and successfully bundled above; TypeScript cannot infer exports from its runtime-only temporary path, and the calls below execute the declared verifier contract.
     const generated = (await import(
       pathToFileURL(
         path.join(fixture.root, 'verticals/inventory-stock/api/auth/action-principal.ts'),
@@ -880,10 +924,11 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         authorization: string | undefined,
         options: {
           currentTimeSeconds: Effect.Effect<number>;
-          environment: Readonly<Record<string, string>>;
+          environment: GeneratedPrincipalEnvironment;
         },
       ) => Effect.Effect<TrustedPrincipalContext, { readonly _tag: GeneratedPrincipalErrorTag }>;
     };
+    // SAFETY: The fixture client module was generated from the tested template at this temporary path; TypeScript cannot statically resolve its exports, and the invocation below verifies the declared gateway contract.
     const generatedClient = (await import(
       pathToFileURL(path.join(fixture.root, 'verticals/inventory-stock/src/api/action-gateway.ts'))
         .href
@@ -1107,7 +1152,7 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
       Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
     );
     let actionReached = false;
-    let endpointEnvironment: Readonly<Record<string, string>> = environment;
+    let endpointEnvironment: GeneratedPrincipalEnvironment = environment;
     const actionGroupLive = HttpApiBuilder.group(actionApi, 'action', (handlers) =>
       handlers.handle('invoke', ({ request }) =>
         generated
@@ -1179,7 +1224,11 @@ test('generated verifier executes real Shell assertions and overlapping Ed25519 
         }),
       );
       assert.equal(unavailableResponse.status, 503);
-      assert.equal(((await unavailableResponse.json()) as { retryable?: boolean }).retryable, true);
+      assert.equal(
+        Schema.decodeUnknownSync(RetryableProblemSchema)(await unavailableResponse.json())
+          .retryable,
+        true,
+      );
       assert.equal(actionReached, false);
 
       endpointEnvironment = environment;
@@ -1213,11 +1262,11 @@ test('generates one self-contained typed fail-closed Action and preserves packag
 import { Effect, Schema } from 'effect';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
-export const CreateOrder2Payload = Schema.Struct({});
-export type CreateOrder2Payload = Schema.Schema.Type<typeof CreateOrder2Payload>;
+export const CreateOrder2PayloadSchema = Schema.Struct({});
+export type CreateOrder2Payload = Schema.Schema.Type<typeof CreateOrder2PayloadSchema>;
 
-export const CreateOrder2Result = Schema.Struct({});
-export type CreateOrder2Result = Schema.Schema.Type<typeof CreateOrder2Result>;
+export const CreateOrder2ResultSchema = Schema.Struct({});
+export type CreateOrder2Result = Schema.Schema.Type<typeof CreateOrder2ResultSchema>;
 
 export class CreateOrder2NotImplemented extends Schema.TaggedErrorClass<CreateOrder2NotImplemented>()(
   'CreateOrder2NotImplemented',
@@ -1254,9 +1303,9 @@ export const createOrder2Action = defineAction(
     idempotency: 'required',
     legalEntityScope: 'optional',
     owningModuleKey: 'inventory.stock',
-    payloadSchema: CreateOrder2Payload,
+    payloadSchema: CreateOrder2PayloadSchema,
     policies: [],
-    resultSchema: CreateOrder2Result,
+    resultSchema: CreateOrder2ResultSchema,
     schemaVersion: '1',
   },
   handleCreateOrder2,
@@ -1266,12 +1315,9 @@ export const createOrder2Action = defineAction(
 // </generated-outbox-message-exports>
 `,
     );
-    const packageJson = JSON.parse(
+    const packageJson = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
-    ) as {
-      readonly dependencies: Readonly<Record<string, string>>;
-      readonly scripts: Readonly<Record<string, string>>;
-    };
+    );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': 'workspace:*',
       zeta: '1.0.0',
@@ -1362,13 +1408,13 @@ export class AresSubjectNotImplemented extends Schema.TaggedErrorClass<AresSubje
   },
 ) {}
 
-export interface AresSubjectServiceShape {
+export interface AresSubjectServiceContract {
   readonly subject: () => Effect.Effect<never, AresSubjectNotImplemented>;
 }
 
 export class AresSubjectService extends Context.Service<
   AresSubjectService,
-  AresSubjectServiceShape
+  AresSubjectServiceContract
 >()('@app/crm/integrations/ares/ares-subject/AresSubjectService') {}
 
 const makeAresSubjectService = Effect.gen(function* () {
@@ -1383,7 +1429,7 @@ const makeAresSubjectService = Effect.gen(function* () {
         }),
       );
     },
-  } satisfies AresSubjectServiceShape;
+  } satisfies AresSubjectServiceContract;
 });
 
 export const AresSubjectServiceLive = Layer.effect(AresSubjectService, makeAresSubjectService);
@@ -1466,10 +1512,17 @@ test('rejects unsafe external HTTP adapter command input without writing', async
         /package metadata is missing/u,
       ],
     ];
-    for (const [arguments_, expected] of invalidCalls) {
+    const assertInvalidCall = async (index = 0): Promise<void> => {
+      const invalidCall = invalidCalls[index];
+      if (invalidCall === undefined) {
+        return;
+      }
+      const [arguments_, expected] = invalidCall;
       await assert.rejects(run(fixture, 'external-http-adapter', arguments_), expected);
       assert.deepEqual(await snapshotTree(fixture.root), before);
-    }
+      await assertInvalidCall(index + 1);
+    };
+    await assertInvalidCall();
   });
 });
 
@@ -1650,7 +1703,7 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
 test('preflights the Action dependency patch before creating a file', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
-    const packageJson = JSON.parse(await readFile(packagePath, 'utf-8')) as Record<string, unknown>;
+    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
     packageJson['dependencies'] = { '@app/core-runtime': '^1.0.0', zeta: '1.0.0' };
     await writeFile(packagePath, json(packageJson), 'utf-8');
     const before = await snapshotTree(fixture.root);
@@ -1665,9 +1718,7 @@ test('preflights the Action dependency patch before creating a file', async () =
 test('rejects Action generation when a vertical app identity is duplicated', async () => {
   await withFixture(async (fixture) => {
     const billingPackagePath = path.join(fixture.root, 'verticals/billing/package.json');
-    const billingPackage = JSON.parse(await readFile(billingPackagePath, 'utf-8')) as {
-      modernjs: Record<string, unknown>;
-    };
+    const billingPackage = decodeFixturePackage(await readFile(billingPackagePath, 'utf-8'));
     billingPackage.modernjs['appId'] = inventoryVertical.appId;
     await writeFile(billingPackagePath, json(billingPackage), 'utf-8');
     const before = await snapshotTree(fixture.root);
@@ -1683,9 +1734,7 @@ test('rejects Action generation when a vertical app identity is duplicated', asy
 test('rejects Action generation when the target identity is absent from topology', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
-    const packageJson = JSON.parse(await readFile(packagePath, 'utf-8')) as {
-      modernjs: Record<string, unknown>;
-    };
+    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
     packageJson.modernjs['appId'] = 'inventory-shadow';
     await writeFile(packagePath, json(packageJson), 'utf-8');
     const before = await snapshotTree(fixture.root);
@@ -1701,7 +1750,7 @@ test('rejects Action generation when the target identity is absent from topology
 test('preserves owner JSON document style while patching the Core dependency', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
-    const packageJson = JSON.parse(await readFile(packagePath, 'utf-8')) as Record<string, unknown>;
+    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
     const styledPackage = JSON.stringify(packageJson, null, 4).replaceAll('\n', '\r\n');
     await writeFile(packagePath, styledPackage, 'utf-8');
 
@@ -1758,13 +1807,13 @@ import {
 } from '@app/inventory-stock/outbox/orders-created';
 import type { OutboxPayload } from '@app/inventory-stock/outbox/orders-created';
 
-export const CreateOrderOrdersCreatedOutboxPayload = OutboxPayloadSchema;
+export const CreateOrderOrdersCreatedOutboxPayloadSchema = OutboxPayloadSchema;
 export type CreateOrderOrdersCreatedOutboxPayload = OutboxPayload;
 export const CreateOrderOrdersCreatedOutboxProducerModuleKey = outboxProducerModuleKey;
 export const CreateOrderOrdersCreatedOutboxTopic = outboxTopic;
 
 export const createCreateOrderOrdersCreatedOutboxMessage = (
-  payload: CreateOrderOrdersCreatedOutboxPayload,
+  payload: OutboxPayload,
 ): OutboxMessage => ({
   payloadJson: payload,
   producerModuleKey: CreateOrderOrdersCreatedOutboxProducerModuleKey,
@@ -1791,18 +1840,18 @@ export const outboxTopic = 'orders.created' as const;
 export const outboxProducerModuleKey = 'inventory.stock' as const;
 `,
     );
-    const producerPackage = JSON.parse(
+    const producerPackage = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
-    ) as { readonly exports: Readonly<Record<string, string>> };
+    );
     assert.equal(
       producerPackage.exports['./outbox/orders-created'],
       './shared/outbox/orders-created.ts',
     );
     const action = await readFile(actionPath, 'utf-8');
     const createdExport =
-      "export { CreateOrderOrdersCreatedOutboxPayload } from './create-order.orders-created.outbox-message.ts';";
+      "export { CreateOrderOrdersCreatedOutboxPayloadSchema } from './create-order.orders-created.outbox-message.ts';";
     const shippedExport =
-      "export { CreateOrderOrdersShippedOutboxPayload } from './create-order.orders-shipped.outbox-message.ts';";
+      "export { CreateOrderOrdersShippedOutboxPayloadSchema } from './create-order.orders-shipped.outbox-message.ts';";
     assert.ok(action.indexOf(createdExport) < action.indexOf(shippedExport));
     assert.match(action, /export const developerOwned = true;/u);
     assert.doesNotMatch(
@@ -2056,13 +2105,9 @@ startOutboxWorkerProcess({
 });
 `,
     );
-    const consumerPackage = JSON.parse(
+    const consumerPackage = decodeFixturePackage(
       await readFixtureFile(fixture.root, 'verticals/billing/package.json'),
-    ) as {
-      readonly dependencies: Readonly<Record<string, string>>;
-      readonly exports: Readonly<Record<string, string>>;
-      readonly scripts: Readonly<Record<string, string>>;
-    };
+    );
     assert.equal(consumerPackage.dependencies['@app/core-runtime'], 'workspace:*');
     assert.equal(consumerPackage.dependencies['@app/inventory-stock'], 'workspace:*');
     assert.equal(consumerPackage.exports['./workers'], undefined);
@@ -2074,9 +2119,9 @@ startOutboxWorkerProcess({
       consumerPackage.scripts['worker:start'],
       'node --experimental-strip-types ./src/worker-host/main.ts',
     );
-    const consumerTsconfig = JSON.parse(
-      await readFixtureFile(fixture.root, 'verticals/billing/tsconfig.json'),
-    ) as { readonly references: readonly { readonly path: string }[] };
+    const consumerTsconfig = Schema.decodeUnknownSync(FixtureTsconfigSchema)(
+      JSON.parse(await readFixtureFile(fixture.root, 'verticals/billing/tsconfig.json')),
+    );
     assert.deepEqual(consumerTsconfig.references, [{ path: '../inventory-stock' }]);
     const producerAfter = Object.fromEntries(
       Object.entries(await snapshotTree(fixture.root)).filter(([file]) =>
@@ -2248,10 +2293,8 @@ export { tenantActivePolicy } from './policies/tenant-active.policy.ts';
     );
     assert.doesNotMatch(coreIndex, /stockAvailablePolicy/u);
     assert.equal(
-      (
-        JSON.parse(
-          await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
-        ) as { readonly dependencies: Readonly<Record<string, string>> }
+      decodeFixturePackage(
+        await readFixtureFile(fixture.root, 'verticals/inventory-stock/package.json'),
       ).dependencies['@app/core-runtime'],
       'workspace:*',
     );
@@ -2418,15 +2461,10 @@ export { routeMeta };
 `,
     );
     const englishContent = await readFile(englishLocalePath, 'utf-8');
-    const english = JSON.parse(englishContent) as {
-      readonly inventory: {
-        readonly existing: string;
-        readonly pages: Readonly<Record<string, unknown>>;
-      };
-    };
-    const czech = JSON.parse(
+    const english = decodeInventoryLocale(englishContent);
+    const czech = decodeInventoryLocale(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/cs/inventory.json'),
-    ) as typeof english;
+    );
     assert.equal(english.inventory.existing, 'en-preserved');
     assert.match(englishContent, /"inventory": \{"existing":"en-preserved", "pages":/u);
     assert.doesNotMatch(englishContent, /(?<!\r)\n/u);
@@ -3341,9 +3379,7 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
           fixture.root,
           `verticals/inventory-stock/locales/${locale}/inventory.json`,
         );
-        const catalog = JSON.parse(await readFile(localePath, 'utf-8')) as {
-          inventory: { pages: Record<string, Record<string, string>> };
-        };
+        const catalog = decodeInventoryLocale(await readFile(localePath, 'utf-8'));
         catalog.inventory.pages['orders'] =
           locale === 'cs'
             ? {
@@ -3373,9 +3409,9 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
       ),
       /entrypointKey: 'inventory\.stock\.page\.orders'/u,
     );
-    const migratedEnglish = JSON.parse(
+    const migratedEnglish = decodeInventoryLocale(
       await readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/en/inventory.json'),
-    ) as { inventory: { pages: Record<string, Record<string, string>> } };
+    );
     assert.deepEqual(migratedEnglish.inventory.pages['orders'], {
       description: 'This page is ready for implementation.',
       title: 'New Page',
@@ -3389,9 +3425,7 @@ export const loader = ({ request }: ShellPageLoaderArguments) =>
 test('rejects page generation when an owning locale has no truthful starter translation', async () => {
   await withFixture(async (fixture) => {
     const packagePath = path.join(fixture.root, 'verticals/inventory-stock/package.json');
-    const packageJson = JSON.parse(await readFile(packagePath, 'utf-8')) as {
-      exports: Record<string, string>;
-    };
+    const packageJson = decodeFixturePackage(await readFile(packagePath, 'utf-8'));
     packageJson.exports['./locales/de'] = './locales/de/inventory.json';
     await writeFile(packagePath, json(packageJson), 'utf-8');
     await writeFixtureFile(
@@ -3647,6 +3681,7 @@ test('all generated files typecheck against the real workspace contracts', async
       '--topic',
       'orders.created',
     ]);
+    await mkdir(path.join(fixture.root, 'node_modules', '@authzed'), { recursive: true });
     await mkdir(path.join(fixture.root, 'node_modules', '@modern-js'), { recursive: true });
     await mkdir(path.join(fixture.root, 'node_modules', '@types'), { recursive: true });
     await symlink(
@@ -3665,6 +3700,21 @@ test('all generated files typecheck against the real workspace contracts', async
       'dir',
     );
     await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/dotenv'),
+      path.join(fixture.root, 'node_modules/dotenv'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/pg'),
+      path.join(fixture.root, 'node_modules/pg'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/@authzed/authzed-node'),
+      path.join(fixture.root, 'node_modules/@authzed/authzed-node'),
+      'dir',
+    );
+    await symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/@modern-js/plugin-i18n'),
       path.join(fixture.root, 'node_modules/@modern-js/plugin-i18n'),
       'dir',
@@ -3677,6 +3727,11 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'apps/shell-super-app/node_modules/@types/react'),
       path.join(fixture.root, 'node_modules/@types/react'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/node_modules/@types/pg'),
+      path.join(fixture.root, 'node_modules/@types/pg'),
       'dir',
     );
     await symlink(
@@ -3697,6 +3752,16 @@ test('all generated files typecheck against the real workspace contracts', async
     await symlink(
       path.join(appRoot, 'packages/core-runtime/src/operations'),
       path.join(fixture.root, 'packages/core-runtime/src/operations'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/environment'),
+      path.join(fixture.root, 'packages/core-runtime/src/environment'),
+      'dir',
+    );
+    await symlink(
+      path.join(appRoot, 'packages/core-runtime/src/permissions'),
+      path.join(fixture.root, 'packages/core-runtime/src/permissions'),
       'dir',
     );
     await symlink(

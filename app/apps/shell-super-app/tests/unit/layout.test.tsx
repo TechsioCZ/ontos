@@ -9,10 +9,14 @@ import type { ComponentProps, ReactNode } from 'react';
 import Layout from '../../src/routes/layout';
 import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
 
-const { accountMenuSelectHandlers, tenantValueChangeHandlers } = rstest.hoisted(() => ({
-  accountMenuSelectHandlers: [] as (((details: { value: string }) => void) | undefined)[],
-  tenantValueChangeHandlers: [] as ComponentProps<typeof ActualSelect>['onValueChange'][],
-}));
+const { accountMenuSelectHandlers, tenantValueChangeHandlers } = rstest.hoisted(() => {
+  const accountHandlers: ComponentProps<typeof ActualMenu>['onSelect'][] = [];
+  const tenantHandlers: ComponentProps<typeof ActualSelect>['onValueChange'][] = [];
+  return {
+    accountMenuSelectHandlers: accountHandlers,
+    tenantValueChangeHandlers: tenantHandlers,
+  };
+});
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   Outlet: () => <main>Current route</main>,
@@ -23,10 +27,9 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
     children,
     to,
     ...props
-  }: {
+  }: Omit<ComponentProps<'a'>, 'href'> & {
     children: ReactNode;
     to: string;
-    [key: string]: unknown;
   }) => (
     <a href={`/en${to === '/' ? '/' : to}`} {...props}>
       {children}
@@ -253,7 +256,8 @@ test('renders the account Menu last and dispatches only the logout command by ke
   const header = document.querySelector('header[aria-label="Dashboard header"]');
   const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
   expect(header?.lastElementChild?.contains(trigger)).toBe(true);
-  expect((header?.lastElementChild as HTMLElement | null)?.dataset.position).toBe('end');
+  const accountMenu = header?.lastElementChild;
+  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset.position : undefined).toBe('end');
 
   trigger.focus();
   await user.keyboard('{Enter}');

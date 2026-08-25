@@ -12,9 +12,11 @@ The project will likely start with a throwaway PoC. The documents in this pack s
 
 Do not model OntOS as a separate Web App container and BFF/API container where MicroVerticals live only in one of them. That is not the intended MicroVertical concept.
 
-An UltraModern.js MicroVertical is a unified vertical slice inside a jointly deployable UltraModern.js application. It includes frontend and backend concerns together: UI, routes, components, state, actions, command handlers, domain code, migrations, tests, and metadata. OntOS Business Modules normally use that implementation shape in V0 and expose an OntOS-specific Effect Schema-defined Module Manifest for their public contract. Core services are outside ordinary business modules and provide the platform capabilities that all modules use.
+An UltraModern.js MicroVertical is a full-stack vertical slice behind a strict independently deployable seam. It includes frontend and backend concerns together: UI, routes, components, state, Actions, handlers, domain code, migrations, tests, and metadata. OntOS Business Modules normally use that implementation shape and expose an OntOS-specific Effect Schema-defined Module Manifest for their public contract. Core capabilities are outside ordinary business modules and provide the kernel mechanisms that all modules use.
 
-A separate worker runtime may exist for outbox processing, projections, imports, exports, and scheduled work. That does not make each MicroVertical a microservice. In V0 the system is a modular monolith/modulith.
+A MicroVertical may be co-located with other modules, but moving it to another server or process must require deployment configuration or Adapter selection only. A separate worker runtime may process outbox work, projections, imports, exports, and scheduled work. Independent deployability does not turn modules into separate products.
+
+OntOS is the product. ERP and Commerce are Application Compositions of reusable Foundational and Business Modules. Commerce is one dependency-closed composition; Akros and N1 are declarative Customer Configurations of it. Core and module forks are forbidden.
 
 ## Constraints to respect
 

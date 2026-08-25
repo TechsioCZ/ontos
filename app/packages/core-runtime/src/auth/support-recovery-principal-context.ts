@@ -23,7 +23,7 @@ export type SupportRecoveryPrincipalContextError =
   | SupportRecoveryPrincipalContextDeniedError
   | SupportRecoveryPrincipalContextUnavailableError;
 
-export interface SupportRecoveryPrincipalContextResolverShape {
+export interface SupportRecoveryPrincipalContextResolverService {
   readonly resolveStoppedImpersonation: (input: {
     readonly originalAuthBindingId: string;
     readonly originalPrincipalId: string;
@@ -32,9 +32,61 @@ export interface SupportRecoveryPrincipalContextResolverShape {
   }) => Effect.Effect<TrustedPrincipalContext, SupportRecoveryPrincipalContextError>;
 }
 
-export const makeSupportRecoveryPrincipalContextResolver = (database: {
+export interface SupportRecoveryPrincipalContextRepositoryService {
+  readonly load: (input: {
+    readonly originalAuthBindingId: string;
+    readonly originalPrincipalId: string;
+    readonly tenantId: string;
+  }) => Promise<
+    | {
+        readonly bindingPrincipalId: string;
+        readonly bindingTenantId: string;
+        readonly principalKind: (typeof principals.$inferSelect)['kind'];
+        readonly principalTenantId: string;
+        readonly tenantId: string;
+      }
+    | undefined
+  >;
+}
+
+const supportRecoveryPrincipalContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}): SupportRecoveryPrincipalContextResolverShape => ({
+}): SupportRecoveryPrincipalContextRepositoryService => ({
+  load: async (input) => {
+    const [loaded] = await database.executor
+      .select({
+        bindingPrincipalId: principalAuthBindings.principalId,
+        bindingTenantId: principalAuthBindings.tenantId,
+        principalKind: principals.kind,
+        principalTenantId: principals.tenantId,
+        tenantId: tenants.tenantId,
+      })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
+      .where(
+        and(
+          eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalId, input.originalPrincipalId),
+          eq(principalAuthBindings.provider, 'better_auth'),
+          eq(principalAuthBindings.subjectType, 'user'),
+        ),
+      )
+      .limit(1);
+    return loaded;
+  },
+});
+
+export const supportRecoveryPrincipalContextResolverFromRepository = (
+  repository: SupportRecoveryPrincipalContextRepositoryService,
+): SupportRecoveryPrincipalContextResolverService => ({
   resolveStoppedImpersonation: (input) =>
     Effect.gen(function* resolveSupportRecoveryPrincipal() {
       if (
@@ -56,36 +108,12 @@ export const makeSupportRecoveryPrincipalContextResolver = (database: {
             code: 'support_recovery_context_unavailable',
             reason: 'The support recovery identity could not be revalidated',
           }),
-        try: async () => {
-          const [loaded] = await database.executor
-            .select({
-              bindingPrincipalId: principalAuthBindings.principalId,
-              bindingTenantId: principalAuthBindings.tenantId,
-              principalKind: principals.kind,
-              principalTenantId: principals.tenantId,
-              tenantId: tenants.tenantId,
-            })
-            .from(principalAuthBindings)
-            .innerJoin(
-              principals,
-              and(
-                eq(principals.tenantId, principalAuthBindings.tenantId),
-                eq(principals.principalId, principalAuthBindings.principalId),
-              ),
-            )
-            .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
-            .where(
-              and(
-                eq(principalAuthBindings.principalAuthBindingId, input.originalAuthBindingId),
-                eq(principalAuthBindings.tenantId, input.tenantId),
-                eq(principalAuthBindings.principalId, input.originalPrincipalId),
-                eq(principalAuthBindings.provider, 'better_auth'),
-                eq(principalAuthBindings.subjectType, 'user'),
-              ),
-            )
-            .limit(1);
-          return loaded;
-        },
+        try: () =>
+          repository.load({
+            originalAuthBindingId: input.originalAuthBindingId,
+            originalPrincipalId: input.originalPrincipalId,
+            tenantId: input.tenantId,
+          }),
       });
       if (
         record?.bindingPrincipalId !== input.originalPrincipalId ||
@@ -112,9 +140,16 @@ export const makeSupportRecoveryPrincipalContextResolver = (database: {
     }),
 });
 
+export const makeSupportRecoveryPrincipalContextResolver = (database: {
+  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+}): SupportRecoveryPrincipalContextResolverService =>
+  supportRecoveryPrincipalContextResolverFromRepository(
+    supportRecoveryPrincipalContextRepositoryFromDatabase(database),
+  );
+
 export class SupportRecoveryPrincipalContextResolver extends Context.Service<
   SupportRecoveryPrincipalContextResolver,
-  SupportRecoveryPrincipalContextResolverShape
+  SupportRecoveryPrincipalContextResolverService
 >()(
   '@app/core-runtime/auth/support-recovery-principal-context/SupportRecoveryPrincipalContextResolver',
 ) {}

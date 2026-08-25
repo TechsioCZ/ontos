@@ -1,5 +1,5 @@
 // @effect-diagnostics preferSchemaOverJson:off
-import { Effect, Schema } from 'effect';
+import { Effect, Schema, Predicate } from 'effect';
 import { ONTOS_MODULE_CONTRACT_PATH, OntosDeploymentAppIdSchema } from '@app/core-runtime';
 import type { OntosDeploymentAppId } from '@app/core-runtime';
 
@@ -21,17 +21,20 @@ export interface DeploymentAllowlist {
   readonly revision: string;
 }
 
+type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
+const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
+
 export interface DeploymentAllowlistInput {
-  readonly environment: unknown;
-  readonly overlay: unknown;
-  readonly topology: unknown;
+  readonly environment: JsonValue;
+  readonly overlay: JsonValue;
+  readonly topology: JsonValue;
 }
 
-const object = (value: unknown): Readonly<Record<string, unknown>> => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+const object = (value: JsonValue) => {
+  if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
     throw new TypeError('expected object');
   }
-  return value as Readonly<Record<string, unknown>>;
+  return Schema.decodeUnknownSync(JsonObjectSchema)(value);
 };
 
 const invalid = () =>
@@ -46,8 +49,8 @@ const isLoopback = (hostname: string): boolean =>
   hostname === '[::1]' ||
   hostname.endsWith('.localhost');
 
-const normalizeContractUrl = (value: unknown, environment: string): string => {
-  if (typeof value !== 'string') {
+const normalizeContractUrl = <Value>(value: Value, environment: string): string => {
+  if (!Predicate.isString(value)) {
     throw new TypeError('contract URL must be a string');
   }
   const url = new URL(value);
@@ -76,7 +79,7 @@ export const deriveDeploymentAllowlist = (
     catch: invalid,
     try: () => {
       const { environment } = input;
-      if (typeof environment !== 'string' || environment.length === 0) {
+      if (!Predicate.isString(environment) || environment.length === 0) {
         throw new TypeError('environment is missing');
       }
       const topology = object(input.topology);

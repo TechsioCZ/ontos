@@ -2,7 +2,7 @@
 
 The OntOS Module Manifest is an OntOS-specific public contract for a module. It is not part of the standard UltraModern.js MicroVertical concept.
 
-UltraModern.js MicroVerticals describe how code is organized as a vertical slice inside one jointly deployable application. OntOS adds a manifest because the ERP runtime needs a typed, machine-readable contract for module activation, dependencies, public APIs, public components, public resource types, public events, search, and reports.
+UltraModern.js MicroVerticals describe how one full-stack business capability is organized behind an independently deployable seam. OntOS adds a manifest because the runtime needs a typed, machine-readable contract for deployment identity, module activation, Application Composition dependencies, public Actions/APIs/components, resources, events, search, and reports.
 
 The manifest should be authored as a TypeScript value validated by Effect Schema. Build tooling can emit JSON for catalogs, docs, runtime inspection, or CI artifacts, but JSON should be an output artifact rather than the hand-authored source of truth.
 

@@ -1,6 +1,6 @@
 # ADR-0008: Module activation and state model
 
-Status: Proposed
+Status: Superseded in deployment and dependency details on 2026-08-23. The state vocabulary and fail-closed entrypoint gate remain; current installation uses deployment manifests, and Application Composition dependency closure governs activation.
 
 ## Context
 

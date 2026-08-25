@@ -1,9 +1,10 @@
 // @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect, Tracer } from 'effect';
+import { Effect, Tracer, Predicate } from 'effect';
 import {
   MODULE_ENTRYPOINT_ACCESSES,
+  decodeTenantModuleEntrypoint,
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
@@ -18,7 +19,11 @@ import {
 } from '../../src/modules/module-state-gate.ts';
 import { TENANT_MODULE_STATES } from '../../src/modules/tenant-module-state-service.ts';
 import type { TrustedPrincipalContext } from '../../src/actions/context.ts';
-import type { TenantModuleStateServiceShape } from '../../src/modules/tenant-module-state-service.ts';
+import type { ModuleEntrypointAccess } from '../../src/modules/module-entrypoint.ts';
+import type {
+  TenantModuleState,
+  TenantModuleStateServiceContract,
+} from '../../src/modules/tenant-module-state-service.ts';
 
 const trustedContext = (tenantId = '20000000-0000-4000-8000-000000000001') =>
   ({
@@ -68,22 +73,25 @@ const makeRecordingTracer = (spans: Tracer.Span[]): Tracer.Tracer =>
     },
   });
 
+const accessSet = (
+  ...accesses: readonly ModuleEntrypointAccess[]
+): ReadonlySet<ModuleEntrypointAccess> => new Set(accesses);
 const expectedAllowed = {
-  active: ['background', 'historical_read', 'read', 'write'],
-  archived: ['historical_read'],
-  deprecated: ['historical_read', 'read'],
-  inactive: ['historical_read'],
-  quarantined: [],
-  read_only: ['historical_read', 'read'],
-  suspended: ['historical_read'],
-} as const;
+  active: accessSet('background', 'historical_read', 'read', 'write'),
+  archived: accessSet('historical_read'),
+  deprecated: accessSet('historical_read', 'read'),
+  inactive: accessSet('historical_read'),
+  quarantined: accessSet(),
+  read_only: accessSet('historical_read', 'read'),
+  suspended: accessSet('historical_read'),
+} satisfies Readonly<Record<TenantModuleState, ReadonlySet<ModuleEntrypointAccess>>>;
 
 test('encodes the exhaustive state/access matrix once, including missing state', () => {
   for (const state of TENANT_MODULE_STATES) {
     for (const access of MODULE_ENTRYPOINT_ACCESSES) {
       assert.equal(
         decideModuleStateAccess(state, access),
-        expectedAllowed[state].includes(access as never) ? 'allow' : 'deny',
+        expectedAllowed[state].has(access) ? 'allow' : 'deny',
         `${state}/${access}`,
       );
     }
@@ -92,9 +100,7 @@ test('encodes the exhaustive state/access matrix once, including missing state',
     assert.equal(decideModuleStateAccess(null, access), 'deny');
     assert.deepEqual(
       tenantStatesAllowingAccess(access),
-      TENANT_MODULE_STATES.filter((state) =>
-        expectedAllowed[state].includes(access as never),
-      ).toSorted(),
+      TENANT_MODULE_STATES.filter((state) => expectedAllowed[state].has(access)).toSorted(),
     );
   }
 });
@@ -116,12 +122,12 @@ test('constructs frozen tenant and explicit system entrypoints and rejects forge
   assert.equal(tenant.scope, 'tenant');
   assert.equal(system.scope, 'system');
   assert.throws(() =>
-    defineTenantModuleEntrypoint({
+    decodeTenantModuleEntrypoint({
       access: 'read',
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
-    } as never),
+    }),
   );
   assert.throws(() =>
     defineSystemModuleEntrypoint({
@@ -154,7 +160,7 @@ test('constructs frozen tenant and explicit system entrypoints and rejects forge
 test('deduplicates one batch, reuses an immutable snapshot, and fails undeclared keys closed', async () => {
   let reads = 0;
   let observedKeys: readonly string[] = [];
-  const service: TenantModuleStateServiceShape = {
+  const service: TenantModuleStateServiceContract = {
     getTenantModuleStates: (_tenantId, moduleKeys) => {
       reads += 1;
       observedKeys = moduleKeys;
@@ -230,7 +236,7 @@ test('records safe acquisition and evaluation telemetry including snapshot reuse
     moduleKey: 'inventory.stock',
     role: 'page',
   });
-  const service: TenantModuleStateServiceShape = {
+  const service: TenantModuleStateServiceContract = {
     getTenantModuleStates: () =>
       Effect.succeed([{ moduleKey: 'inventory.stock', state: 'active' }]),
     listActiveTenantModules: () => Effect.succeed([]),
@@ -252,7 +258,7 @@ test('records safe acquisition and evaluation telemetry including snapshot reuse
   assert.equal(evaluations.length, 2);
   assert.equal(acquisitions[0]?.attributes.get('batchSize'), 1);
   assert.equal(acquisitions[0]?.attributes.get('outcome'), 'available');
-  assert.equal(typeof acquisitions[0]?.attributes.get('elapsedMs'), 'number');
+  assert.equal(Predicate.isNumber(acquisitions[0]?.attributes.get('elapsedMs')), true);
   assert.equal(acquisitions[1]?.attributes.get('outcome'), 'unavailable');
   assert.equal(evaluations[0]?.attributes.get('access'), 'read');
   assert.equal(evaluations[0]?.attributes.get('outcome'), 'allow');
@@ -269,7 +275,7 @@ test('records safe acquisition and evaluation telemetry including snapshot reuse
 
 test('empty and system-only compositions perform zero reads', async () => {
   let reads = 0;
-  const service: TenantModuleStateServiceShape = {
+  const service: TenantModuleStateServiceContract = {
     getTenantModuleStates: () => {
       reads += 1;
       return Effect.succeed([]);
@@ -309,7 +315,7 @@ test('the gateway rejects missing trusted principal context before state acquisi
     listTenantModuleStates: () => Effect.succeed([]),
   });
   const failure = await Effect.runPromise(
-    Effect.flip(makeModuleEntrypointGateway(gate).prepareSnapshot({} as never, [descriptor])),
+    Effect.flip(makeModuleEntrypointGateway(gate).prepareSnapshotInput({}, [descriptor])),
   );
   assert.equal(failure._tag, 'ModuleStateCheckUnavailableError');
   assert.equal(reads, 0);

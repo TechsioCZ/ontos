@@ -1,14 +1,14 @@
 // @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
 /* eslint-disable complexity, max-classes-per-file, no-negated-condition, promise/prefer-await-to-then, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module. */
 import type {
-  ContextAccessShape,
+  ContextAccessService,
   InstalledModuleCatalog,
   TenantModuleState,
-  TenantModuleStateServiceShape,
+  TenantModuleStateServiceContract,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
-import { Effect, Exit, Schema } from 'effect';
+import { Context, Effect, Exit, Layer, Schema } from 'effect';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 
@@ -97,8 +97,8 @@ export interface ShellResourceGateways {
 
 interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
   readonly catalog: Effect.Effect<InstalledModuleCatalog, unknown>;
-  readonly contextAccess: ContextAccessShape;
-  readonly moduleStates: Pick<TenantModuleStateServiceShape, 'getTenantModuleStates'>;
+  readonly contextAccess: ContextAccessService;
+  readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
 
 const unavailable = () => new ShellProviderUnavailableError();
@@ -514,3 +514,21 @@ export const attachShellMedia = (
   _ref: ResourceRef,
 ): Effect.Effect<ShellMediaAttachmentResolution> =>
   Effect.succeed({ outcome: 'unavailable' as const });
+
+export interface ShellResourceServicesFactoryService {
+  readonly createResourceDetail: typeof makeShellResourceDetail;
+  readonly createSearch: typeof makeShellSearch;
+}
+
+export class ShellResourceServicesFactory extends Context.Service<
+  ShellResourceServicesFactory,
+  ShellResourceServicesFactoryService
+>()('@app/shell-super-app/api/modules/shell-resources/ShellResourceServicesFactory') {}
+
+export const ShellResourceServicesFactoryLive = Layer.succeed(
+  ShellResourceServicesFactory,
+  Object.freeze({
+    createResourceDetail: makeShellResourceDetail,
+    createSearch: makeShellSearch,
+  }),
+);

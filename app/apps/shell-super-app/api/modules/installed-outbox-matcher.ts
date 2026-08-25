@@ -23,10 +23,28 @@ export type InstalledOutboxMatch<Requirements = OutboxRuntime> = (
 >;
 
 /** One explicit provenance seam from the validated installed catalog into Core matching. */
-export const matchInstalledOutboxMessagesOnce = <Requirements = OutboxRuntime>(
+export function matchInstalledOutboxMessagesOnce(
   catalog: InstalledModuleCatalog,
-  match: InstalledOutboxMatch<Requirements> = matchOutboxMessages as InstalledOutboxMatch<Requirements>,
-) => match({ subscriptions: catalog.outboxSubscriptions });
+): Effect.Effect<
+  OutboxMatchResult,
+  OutboxPersistenceError | OutboxWorkerDescriptorError,
+  OutboxRuntime
+>;
+export function matchInstalledOutboxMessagesOnce<Requirements>(
+  catalog: InstalledModuleCatalog,
+  match: InstalledOutboxMatch<Requirements>,
+): Effect.Effect<
+  OutboxMatchResult,
+  OutboxPersistenceError | OutboxWorkerDescriptorError,
+  Requirements
+>;
+export function matchInstalledOutboxMessagesOnce<Requirements>(
+  catalog: InstalledModuleCatalog,
+  match?: InstalledOutboxMatch<Requirements>,
+) {
+  const input = { subscriptions: catalog.outboxSubscriptions };
+  return match === undefined ? matchOutboxMessages(input) : match(input);
+}
 
 export interface InstalledOutboxMatcherLayerOptions {
   readonly intervalMs?: number;
@@ -42,7 +60,7 @@ export interface InstalledOutboxMatcherLayerOptions {
  * Runs Core matching in the Shell/Core process. Failures are observable but never prevent
  * authentication or other unrelated Shell capabilities from starting.
  */
-export const makeInstalledOutboxMatcherLayer = (
+export const createInstalledOutboxMatcherLayer = (
   options: InstalledOutboxMatcherLayerOptions = {},
 ): Layer.Layer<never, never, OutboxRuntime | ShellInstalledModuleCatalog> => {
   const loadCatalog = options.loadCatalog ?? installedModuleCatalog;

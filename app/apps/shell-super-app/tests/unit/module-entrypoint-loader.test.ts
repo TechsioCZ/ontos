@@ -7,7 +7,7 @@ import {
 } from '@app/core-runtime';
 import type {
   ModuleEntrypointDescriptor,
-  ModuleEntrypointGatewayShape,
+  ModuleEntrypointGatewayService,
   ModuleStateGateError,
   ModuleStateSnapshot,
   TrustedPrincipalContext,
@@ -29,8 +29,8 @@ interface FakeGatewayOptions {
   readonly unavailable?: boolean;
 }
 
-const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGatewayShape => {
-  const check: ModuleEntrypointGatewayShape['check'] = (snapshot, entrypoint) => {
+const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGatewayService => {
+  const check: ModuleEntrypointGatewayService['check'] = (snapshot, entrypoint) => {
     if (!snapshot.entrypointKeys.includes(entrypoint.entrypointKey)) {
       return Effect.fail(
         new ModuleStateCheckUnavailableError({
@@ -48,7 +48,7 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
         )
       : Effect.void;
   };
-  const gateway: ModuleEntrypointGatewayShape = {
+  const gateway: ModuleEntrypointGatewayService = {
     check,
     prepareSnapshot: (context, entrypoints) => {
       options.onPrepare?.(entrypoints);

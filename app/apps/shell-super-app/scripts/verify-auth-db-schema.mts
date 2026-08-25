@@ -13,7 +13,7 @@ class AuthDatabaseVerificationError extends Schema.TaggedErrorClass<AuthDatabase
   },
 ) {}
 
-type CatalogRow = Record<string, unknown> & {
+type CatalogRow = Readonly<Record<string, string | null>> & {
   readonly kind: 'migration' | 'table';
   readonly schema_name: string;
   readonly table_name: null | string;

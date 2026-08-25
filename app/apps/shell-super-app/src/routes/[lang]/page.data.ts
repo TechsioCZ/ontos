@@ -19,6 +19,19 @@ import type {
   ShellNavigationItem,
 } from '../../../shared/api.ts';
 
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
 interface HomeLoaderArguments {
   readonly request: Request;
 }
@@ -72,10 +85,15 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: string) =>
 
 export const loadHomePageModel = (request: Request): Promise<HomePageModel> => {
   const cookie = request.headers.get('cookie');
-  const options = {
-    baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    ...(cookie === null ? {} : { cookie }),
-  };
+  const options = withOptionalProperty(
+    {
+      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
+    },
+    !(cookie === null),
+    'cookie',
+    cookie,
+    {},
+  );
 
   return runEffectRequest(
     currentSession(options).pipe(
@@ -117,21 +135,24 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> => {
             Effect.catch((error) => Effect.succeed(tenantRead(error, session.identity.tenantId))),
           ),
         }).pipe(
-          Effect.map(
-            ({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
-              tenants.state === 'stale'
-                ? anonymousModel
-                : {
+          Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
+            tenants.state === 'stale'
+              ? anonymousModel
+              : withOptionalProperty(
+                  {
                     contextState: session.state,
                     identity: session.identity,
                     legalEntities: choices,
                     navigation: items,
-                    ...(session.state === 'authenticated'
-                      ? { selectedLegalEntityId: session.identity.legalEntityId }
-                      : {}),
+                  },
+                  session.state === 'authenticated',
+                  'selectedLegalEntityId',
+                  session.identity.legalEntityId,
+                  {
                     state: 'authenticated',
                     tenants,
                   },
+                ),
           ),
         );
       }),

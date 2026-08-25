@@ -10,7 +10,7 @@ import {
 } from '@app/shared-contracts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
-import { Clock, DateTime, Effect, Schema } from 'effect';
+import { Clock, DateTime, Effect, Option, Schema } from 'effect';
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import type { JSONWebKeySet } from 'jose';
 
@@ -71,6 +71,32 @@ interface VerificationConfiguration {
   readonly jwks: JSONWebKeySet;
 }
 
+const VerificationJwkSchema = Schema.Struct({
+  alg: Schema.Literal('EdDSA'),
+  crv: Schema.Literal('Ed25519'),
+  d: Schema.optional(Schema.String),
+  ext: Schema.optional(Schema.Boolean),
+  key_ops: Schema.optional(Schema.Array(Schema.Literal('verify'))),
+  kid: Schema.String,
+  kty: Schema.Literal('OKP'),
+  use: Schema.Literal('sig'),
+  x: Schema.String,
+  x5c: Schema.optional(Schema.Array(Schema.String)),
+  x5t: Schema.optional(Schema.String),
+  'x5t#S256': Schema.optional(Schema.String),
+  x5u: Schema.optional(Schema.String),
+});
+
+const VerificationJwksSchema = Schema.Struct({
+  keys: Schema.Array(VerificationJwkSchema),
+});
+
+const VerificationFailureSchema = Schema.Struct({
+  claim: Schema.optional(Schema.String),
+  code: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+});
+
 const configurationError = () =>
   new ActionPrincipalConfigurationError({
     reason: 'Action identity verification is misconfigured',
@@ -86,46 +112,26 @@ const parseConfiguration = (
   if (issuer === undefined || rawJwks === undefined) {
     throw configurationError();
   }
-  let parsed: unknown;
+  let parsed: Schema.Schema.Type<typeof VerificationJwksSchema>;
   try {
-    parsed = JSON.parse(rawJwks);
+    parsed = Schema.decodeUnknownSync(VerificationJwksSchema, {
+      onExcessProperty: 'preserve',
+    })(JSON.parse(rawJwks));
   } catch {
     throw configurationError();
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw configurationError();
-  }
-  const keys = (parsed as Record<string, unknown>)['keys'];
-  if (!Array.isArray(keys) || keys.length === 0) {
+  if (
+    parsed.keys.length === 0 ||
+    parsed.keys.some((key) => key.kid.length === 0 || key.x.length === 0 || key.d !== undefined)
+  ) {
     throw configurationError();
   }
   const keyIds = new Set<string>();
-  for (const candidate of keys) {
-    if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) {
+  for (const key of parsed.keys) {
+    if (keyIds.has(key.kid)) {
       throw configurationError();
     }
-    const key = candidate as Record<string, unknown>;
-    const keyOperations = key['key_ops'];
-    if (
-      key['kty'] !== 'OKP' ||
-      key['crv'] !== 'Ed25519' ||
-      key['alg'] !== 'EdDSA' ||
-      key['use'] !== 'sig' ||
-      typeof key['kid'] !== 'string' ||
-      key['kid'].length === 0 ||
-      typeof key['x'] !== 'string' ||
-      key['x'].length === 0 ||
-      key['d'] !== undefined ||
-      (keyOperations !== undefined &&
-        (!Array.isArray(keyOperations) ||
-          keyOperations.some((operation) => operation !== 'verify')))
-    ) {
-      throw configurationError();
-    }
-    if (keyIds.has(key['kid'])) {
-      throw configurationError();
-    }
-    keyIds.add(key['kid']);
+    keyIds.add(key.kid);
   }
   try {
     const parsedIssuer = new URL(issuer);
@@ -135,40 +141,38 @@ const parseConfiguration = (
   } catch {
     throw configurationError();
   }
-  return { issuer, jwks: { keys } as JSONWebKeySet };
+  const keys: JSONWebKeySet['keys'] = parsed.keys.map((key) => ({ ...key }));
+  return { issuer, jwks: { keys } };
 };
 
-const classifyVerificationFailure = (error: unknown): ActionPrincipalError => {
+const classifyVerificationFailure = <Failure>(error: Failure): ActionPrincipalError => {
   if (Schema.is(ActionPrincipalErrorSchema)(error)) {
     return error;
   }
-  if (typeof error === 'object' && error !== null) {
-    const name = Reflect.get(error, 'name');
-    const code = Reflect.get(error, 'code');
+  const failure = Option.getOrUndefined(
+    Schema.decodeUnknownOption(VerificationFailureSchema)(error),
+  );
+  if (failure !== undefined) {
+    const { claim, code, name } = failure;
     if (name === 'JWTExpired') {
       return new ActionPrincipalExpiredError({ reason: 'The Bearer assertion has expired' });
     }
     if (name === 'JWTClaimValidationFailed') {
-      const claim = Reflect.get(error, 'claim');
       if (claim === 'iss' || claim === 'aud') {
         return new ActionPrincipalScopeError({ reason: 'The Bearer assertion has invalid scope' });
       }
       return invalidError();
     }
-    if (name === 'SchemaError') {
-      return invalidError();
-    }
-    if (typeof name === 'string' && name.startsWith('JWS')) {
-      return invalidError();
-    }
-    if (typeof name === 'string' && name.startsWith('JWT')) {
-      return invalidError();
-    }
-    if (typeof name === 'string' && name.startsWith('JOSE')) {
+    if (
+      name === 'SchemaError' ||
+      name?.startsWith('JWS') === true ||
+      name?.startsWith('JWT') === true ||
+      name?.startsWith('JOSE') === true
+    ) {
       return invalidError();
     }
     if (
-      typeof code === 'string' &&
+      code !== undefined &&
       (/^ERR_(?:JOSE|JWK|JWKS|JWS|JWT)_/u.test(code) || code === 'ERR_JWKS_NO_MATCHING_KEY')
     ) {
       return invalidError();

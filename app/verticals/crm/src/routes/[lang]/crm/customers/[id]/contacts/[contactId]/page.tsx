@@ -25,6 +25,11 @@ import { UltramodernRouteHead } from '../../../../../../ultramodern-route-head';
 
 type ContactDetailPageRouteParams = Readonly<Partial<Record<'id' | 'contactId', string>>>;
 
+interface MutableContactDetailPageRouteParams {
+  contactId?: string;
+  id?: string;
+}
+
 interface ContactDetailPageProps {
   readonly routeParams: ContactDetailPageRouteParams;
 }
@@ -36,6 +41,11 @@ type ContactDetailErrorState =
   | { readonly state: 'forbidden' }
   | { readonly state: 'not_found' }
   | { readonly reason: ContactDetailUnavailableReason; readonly state: 'unavailable' };
+
+interface ContactDetailLinks {
+  emailHref?: string;
+  phoneHref?: string;
+}
 
 interface ContactDetailReadyModel {
   readonly contactId: string;
@@ -89,7 +99,7 @@ interface ContactDetailViewProps {
   readonly backHref: string | undefined;
   readonly copy: ContactDetailCopy;
   readonly editHref: string | undefined;
-  readonly onRetry: () => Promise<unknown>;
+  readonly onRetry: () => Promise<void>;
   readonly retrying: boolean;
   readonly saved: boolean;
   readonly view: ContactDetailViewState;
@@ -367,25 +377,31 @@ export const toContactDetailReadyModel = (
   contact: ContactDetailResponse,
   customerId: string,
   language: string,
-): ContactDetailReadyModel | undefined =>
-  contact.customerId === customerId
-    ? {
-        contactId: contact.contactId,
-        createdAt: formatContactTimestamp(contact.createdAt, language),
-        createdAtIso: contact.createdAt,
-        customerId: contact.customerId,
-        email: contact.email,
-        ...(Schema.is(CrmEmailSchema)(contact.email)
-          ? { emailHref: `mailto:${contact.email}` }
-          : {}),
-        lifecycle: contact.archivedAt === null ? 'active' : 'archived',
-        name: contact.name,
-        phone: contact.phone,
-        ...(Schema.is(CrmPhoneSchema)(contact.phone) ? { phoneHref: `tel:${contact.phone}` } : {}),
-        updatedAt: formatContactTimestamp(contact.updatedAt, language),
-        updatedAtIso: contact.updatedAt,
-      }
-    : undefined;
+): ContactDetailReadyModel | undefined => {
+  if (contact.customerId !== customerId) {
+    return undefined;
+  }
+  const links: ContactDetailLinks = {};
+  if (Schema.is(CrmEmailSchema)(contact.email)) {
+    links.emailHref = `mailto:${contact.email}`;
+  }
+  if (Schema.is(CrmPhoneSchema)(contact.phone)) {
+    links.phoneHref = `tel:${contact.phone}`;
+  }
+  return {
+    contactId: contact.contactId,
+    createdAt: formatContactTimestamp(contact.createdAt, language),
+    createdAtIso: contact.createdAt,
+    customerId: contact.customerId,
+    email: contact.email,
+    lifecycle: contact.archivedAt === null ? 'active' : 'archived',
+    name: contact.name,
+    phone: contact.phone,
+    updatedAt: formatContactTimestamp(contact.updatedAt, language),
+    updatedAtIso: contact.updatedAt,
+    ...links,
+  };
+};
 
 const ContactDetailQuery = ({
   backHref,
@@ -442,7 +458,9 @@ const ContactDetailQuery = ({
       backHref={backHref}
       copy={copy}
       editHref={`/${language}/crm/customers/${customerId}/contacts/${contactId}/edit`}
-      onRetry={refetch}
+      onRetry={async () => {
+        await refetch();
+      }}
       retrying={query.isFetching && !query.isPending}
       saved={saved}
       view={view}
@@ -522,15 +540,15 @@ export const ContactDetailPage = ({ routeParams }: ContactDetailPageProps) => {
 
 const StandaloneContactDetailPage = () => {
   const routeParams = useParams({ strict: false });
+  const contactRouteParams: MutableContactDetailPageRouteParams = {};
+  if (routeParams.contactId !== undefined) {
+    contactRouteParams.contactId = routeParams.contactId;
+  }
+  if (routeParams.id !== undefined) {
+    contactRouteParams.id = routeParams.id;
+  }
 
-  return (
-    <ContactDetailPage
-      routeParams={{
-        ...(routeParams.contactId === undefined ? {} : { contactId: routeParams.contactId }),
-        ...(routeParams.id === undefined ? {} : { id: routeParams.id }),
-      }}
-    />
-  );
+  return <ContactDetailPage routeParams={contactRouteParams} />;
 };
 
 export default StandaloneContactDetailPage;

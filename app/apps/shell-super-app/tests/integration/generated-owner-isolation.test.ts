@@ -15,16 +15,16 @@ import {
   getVerticalRuntimeEntrypoints,
 } from '@app/core-runtime';
 import type {
-  ContextAccessShape,
+  ContextAccessService,
   InstalledModuleCatalog,
   OntosModuleDeploymentContract,
-  OperationalScopeResolverShape,
+  OperationalScopeResolverService,
   ReadRuntimeService,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/plugin-bff/effect-edge';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect, Layer, Logger } from 'effect';
+import { Effect, Layer, Logger, Predicate, Schema } from 'effect';
 import { exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
@@ -61,7 +61,7 @@ import { issueGatewayContextAssertion } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import {
   ShellGovernedReads,
-  makeShellGovernedReadsLive,
+  createShellGovernedReadsLayer,
 } from '../../api/modules/shell-governed-reads.ts';
 import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
 import {
@@ -70,6 +70,19 @@ import {
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const TEST_SPICEDB = {
   endpoint: process.env['SPICEDB_ENDPOINT'] ?? 'localhost:50051',
@@ -82,8 +95,27 @@ interface OwnerHttpHandler {
   readonly handler: (request: Request) => Promise<Response>;
 }
 
+const ResourceRefSchema = Schema.Struct({
+  moduleId: Schema.String,
+  resourceId: Schema.String,
+  resourceType: Schema.String,
+});
+const OwnerDetailSchema = Schema.Struct({
+  ref: ResourceRefSchema,
+  title: Schema.String,
+});
+const OwnerTimelineSchema = Schema.Struct({
+  entries: Schema.Array(Schema.Struct({ summary: Schema.String })),
+  projectionLagging: Schema.Boolean,
+});
+const OwnerSearchSchema = Schema.Array(
+  Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }),
+);
+
+type GeneratedOwnerAction = ReturnType<typeof getVerticalRuntimeActions>[number];
+
 interface GeneratedOwnerModules {
-  readonly action: any;
+  readonly action: GeneratedOwnerAction;
   readonly counts: { action: number; detail: number; list: number; search: number };
   readonly detail: OwnerHttpHandler;
   readonly list: OwnerHttpHandler;
@@ -124,10 +156,9 @@ const makeOwnerHandler = (
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
 ) => {
-  const loggedRuntime = {
-    runRead: (input: Parameters<ReadRuntimeService['runRead']>[0]) =>
-      runtime.runRead(input).pipe(Effect.provide(loggerLayer)),
-  } as ReadRuntimeService;
+  const loggedRuntime: ReadRuntimeService = {
+    runRead: (input) => runtime.runRead(input).pipe(Effect.provide(loggerLayer)),
+  };
   const bff = defineEffectBff({
     api,
     layer: HttpApiBuilder.layer(api).pipe(
@@ -136,7 +167,8 @@ const makeOwnerHandler = (
       Layer.provide(loggerLayer),
     ),
   });
-  return bff.createHandler() as OwnerHttpHandler;
+  const handler: OwnerHttpHandler = bff.createHandler();
+  return handler;
 };
 
 const loadGeneratedOwner = async (
@@ -145,7 +177,7 @@ const loadGeneratedOwner = async (
   loggerLayer: Layer.Layer<never>,
 ): Promise<GeneratedOwnerModules> => {
   const load = (relativePath: string) =>
-    import(pathToFileURL(`${verticalRoot}/${relativePath}`).href) as Promise<Record<string, any>>;
+    import(pathToFileURL(`${verticalRoot}/${relativePath}`).href);
   const [
     detailApi,
     detailServer,
@@ -205,26 +237,17 @@ const loadGeneratedOwner = async (
     verifyOperationPrincipal: verifier['verifyOperationPrincipal'],
     wiring: {
       action: true,
-      detailClient:
-        typeof (detailClient as Record<string, unknown> | undefined)?.[
-          'executeResourceDetailWithAuthorization'
-        ] === 'function',
-      listClient:
-        typeof (listClient as Record<string, unknown> | undefined)?.[
-          'executeResourceListWithAuthorization'
-        ] === 'function',
-      searchClient:
-        typeof (searchClient as Record<string, unknown> | undefined)?.[
-          'loadRecordsClientWithAuthorization'
-        ] === 'function',
+      detailClient: Predicate.isFunction(detailClient?.['executeResourceDetailWithAuthorization']),
+      listClient: Predicate.isFunction(listClient?.['executeResourceListWithAuthorization']),
+      searchClient: Predicate.isFunction(searchClient?.['loadRecordsClientWithAuthorization']),
     },
   };
 };
 
-const requestOwner = (
+const requestOwner = <Payload>(
   handler: OwnerHttpHandler,
   path: string,
-  payload: unknown,
+  payload: Payload,
   authorization: string,
   correlationId: string,
 ): Promise<Response> =>
@@ -240,7 +263,10 @@ const requestOwner = (
     }),
   );
 
-const responseJson = (response: Response): Promise<unknown> => response.json();
+const decodeResponse = async <Value, Encoded>(
+  response: Response,
+  schema: Schema.Schema<Value, Encoded>,
+): Promise<Value> => Schema.decodeUnknownSync(schema)(await response.json());
 
 const createOwnerSchema = async (admin: Pool, schemaName: string): Promise<void> => {
   const tenantPredicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
@@ -289,46 +315,30 @@ const createOwnerSchema = async (admin: Pool, schemaName: string): Promise<void>
   );
 };
 
-const failingEvidenceDatabase = (database: { readonly executor: any }) => ({
-  executor: new Proxy(database.executor, {
-    get(target, property) {
-      const value = Reflect.get(target, property, target) as unknown;
-      if (property !== 'transaction' || typeof value !== 'function') {
-        return typeof value === 'function' ? value.bind(target) : value;
-      }
-      return (callback: (transaction: any) => PromiseLike<unknown>) =>
-        (value as (callback: (transaction: any) => PromiseLike<unknown>) => Promise<unknown>).call(
-          target,
-          (transaction) =>
-            callback(
-              new Proxy(transaction, {
-                get(transactionTarget, operation) {
-                  const transactionValue = Reflect.get(
-                    transactionTarget,
-                    operation,
-                    transactionTarget,
-                  ) as unknown;
-                  if (operation === 'insert' && typeof transactionValue === 'function') {
-                    return (table: unknown) => {
-                      if (table === dataAccessEvents) {
-                        throw new Error('Injected evidence persistence failure');
-                      }
-                      return (transactionValue as (targetTable: unknown) => unknown).call(
-                        transactionTarget,
-                        table,
-                      );
-                    };
-                  }
-                  return typeof transactionValue === 'function'
-                    ? transactionValue.bind(transactionTarget)
-                    : transactionValue;
-                },
-              }),
-            ),
-        );
-    },
-  }),
-});
+type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
+
+const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
+  const transactionOverride = {
+    transaction: (callback, configuration) =>
+      database.executor.transaction((transaction) => {
+        const insert: typeof transaction.insert = (table) => {
+          if (Object.is(table, dataAccessEvents)) {
+            throw new Error('Injected evidence persistence failure');
+          }
+          return transaction.insert(table);
+        };
+        const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
+          insert,
+        });
+        return callback(faultingTransaction);
+      }, configuration),
+  } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
+  const executor: CoreDatabaseService['executor'] = Object.assign(
+    Object.create(database.executor),
+    transactionOverride,
+  );
+  return { executor };
+};
 
 const capturedLoggerLayer = (entries: string[]) =>
   Logger.layer([
@@ -345,11 +355,12 @@ test('Codesmith composes the disposable owner Action and receiving read BFFs', a
     vertical: GENERATED_OWNER.slug,
     workspaceRoot: fixture.root,
   });
+  const compileRuntime: ReadRuntimeService = {
+    runRead: () => Effect.die(new Error('The compile fixture must not execute a governed read')),
+  };
   const generated = await loadGeneratedOwner(
     fixture.verticalRoot,
-    {
-      runRead: () => Effect.die(new Error('The compile fixture must not execute a governed read')),
-    } as ReadRuntimeService,
+    compileRuntime,
     capturedLoggerLayer([]),
   );
   try {
@@ -485,17 +496,37 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
   const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
   const issueProviderAuthorization = (context: TrustedPrincipalContext) =>
-    issueAuthorization({
-      authMethod: context.authMethod,
-      principalId: context.principalId,
-      tenantId: context.tenantId,
-      ...(context.authBindingId === undefined ? {} : { authBindingId: context.authBindingId }),
-      ...(context.authContextRef === undefined ? {} : { authContextRef: context.authContextRef }),
-      ...(context.impersonatedByPrincipalId === undefined
-        ? {}
-        : { impersonatedByPrincipalId: context.impersonatedByPrincipalId }),
-      ...(context.legalEntityId === undefined ? {} : { legalEntityId: context.legalEntityId }),
-    });
+    issueAuthorization(
+      withOptionalProperty(
+        withOptionalProperty(
+          withOptionalProperty(
+            withOptionalProperty(
+              {
+                authMethod: context.authMethod,
+                principalId: context.principalId,
+                tenantId: context.tenantId,
+              },
+              !(context.authBindingId === undefined),
+              'authBindingId',
+              context.authBindingId,
+              {},
+            ),
+            !(context.authContextRef === undefined),
+            'authContextRef',
+            context.authContextRef,
+            {},
+          ),
+          !(context.impersonatedByPrincipalId === undefined),
+          'impersonatedByPrincipalId',
+          context.impersonatedByPrincipalId,
+          {},
+        ),
+        !(context.legalEntityId === undefined),
+        'legalEntityId',
+        context.legalEntityId,
+        {},
+      ),
+    );
   const resourceRef = {
     moduleId: GENERATED_OWNER.moduleId,
     resourceId: collidingResourceId,
@@ -607,10 +638,10 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       await issueAuthorization(principalA1),
       randomUUID(),
     );
-    const ownerSearchProbeBody = await responseJson(ownerSearchProbe);
+    const ownerSearchProbeBody = await decodeResponse(ownerSearchProbe, OwnerSearchSchema);
     assert.equal(ownerSearchProbe.status, 200, JSON.stringify(ownerSearchProbeBody));
     assert.deepEqual(
-      (ownerSearchProbeBody as readonly { readonly title: string }[]).map(({ title }) => title),
+      ownerSearchProbeBody.map(({ title }) => title),
       ['A1 searchable'],
     );
 
@@ -631,7 +662,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               if (!response.ok) {
                 throw new Error('Owner detail request failed');
               }
-              return responseJson(response);
+              return decodeResponse(response, OwnerDetailSchema);
             },
           }),
         timeline: ({ authorization, correlationId, ref }: any) =>
@@ -648,10 +679,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               if (!response.ok) {
                 throw new Error('Owner list request failed');
               }
-              return responseJson(response) as Promise<{
-                readonly entries: readonly unknown[];
-                readonly projectionLagging: boolean;
-              }>;
+              return decodeResponse(response, OwnerTimelineSchema);
             },
           }),
       },
@@ -670,7 +698,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               if (!response.ok) {
                 throw new Error('Owner search request failed');
               }
-              return responseJson(response) as Promise<readonly unknown[]>;
+              return decodeResponse(response, OwnerSearchSchema);
             },
           }),
       },
@@ -750,7 +778,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         results: [{ ref: resourceRef, title: 'A1 searchable' }],
       },
     );
-    const shellLayer = makeShellGovernedReadsLive(
+    const shellLayer = createShellGovernedReadsLayer(
       gateway,
       {
         issueAssertion: ({ context }) =>
@@ -858,7 +886,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         randomUUID(),
       );
       assert.equal(response.status, 403);
-      const problem = JSON.stringify(await responseJson(response));
+      const problem = JSON.stringify(await response.json());
       assert.doesNotMatch(
         problem,
         new RegExp([tenantA, tenantB, entityA2, entityB1].join('|'), 'u'),
@@ -896,7 +924,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       },
     ]);
 
-    const unavailableContextAccess: ContextAccessShape = {
+    const unavailableContextAccess: ContextAccessService = {
       legalEntities: ({ legalEntityIds }) =>
         Effect.succeed(legalEntityIds.map((key) => ({ decision: 'unavailable' as const, key }))),
       modules: ({ moduleIds }) =>
@@ -909,7 +937,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           })),
         ),
     };
-    const unavailableResolver: OperationalScopeResolverShape = makeOperationalScopeResolver(
+    const unavailableResolver: OperationalScopeResolverService = makeOperationalScopeResolver(
       makeOperationalScopeRepository(runtimeDatabase),
       unavailableContextAccess,
     );
@@ -936,7 +964,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     assert.equal(unavailableResponse.status, 503);
     assert.equal(generated.counts.detail, unavailableBefore);
     assert.doesNotMatch(
-      JSON.stringify(await responseJson(unavailableResponse)),
+      JSON.stringify(await unavailableResponse.json()),
       /postgres|spicedb|permission check|row-level/iu,
     );
 
@@ -964,10 +992,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
       randomUUID(),
     );
     assert.equal(evidenceFailureResponse.status, 503);
-    assert.doesNotMatch(
-      JSON.stringify(await responseJson(evidenceFailureResponse)),
-      /A1 searchable/u,
-    );
+    assert.doesNotMatch(JSON.stringify(await evidenceFailureResponse.json()), /A1 searchable/u);
 
     const actionRuntime = makeActionRuntime(
       runtimeDatabase,
@@ -978,7 +1003,12 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     );
     const invokeAction = async (
       trustedPrincipal: TrustedPrincipalContext,
-      payload: unknown,
+      payload: {
+        readonly legalEntityId: string;
+        readonly resourceId: string;
+        readonly tenantId: string;
+        readonly title: string;
+      },
       idempotencyKey: string,
     ) => {
       const authorization = await issueAuthorization(trustedPrincipal);
@@ -995,7 +1025,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               correlationId: randomUUID(),
               idempotencyKey,
               targetModuleKey: GENERATED_OWNER.moduleId,
-              targetResourceId: (payload as { readonly resourceId: string }).resourceId,
+              targetResourceId: payload.resourceId,
               targetResourceType: GENERATED_OWNER.resourceType,
             },
           })

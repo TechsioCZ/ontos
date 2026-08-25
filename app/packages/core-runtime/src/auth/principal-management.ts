@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
 import { and, eq, isNull } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
@@ -20,10 +20,10 @@ const conflict = (reason: string) =>
   new IdentityLifecycleConflictError({ code: 'identity_lifecycle_conflict', reason });
 const invalid = (reason: string) =>
   new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
-const hasDatabaseErrorCode = (error: unknown, expectedCode: string): boolean => {
-  let current = error;
+const hasDatabaseErrorCode = <Failure>(error: Failure, expectedCode: string): boolean => {
+  let current: unknown = error;
   const visited = new Set<object>();
-  while (typeof current === 'object' && current !== null && !visited.has(current)) {
+  while (Predicate.isObjectKeyword(current) && current !== null && !visited.has(current)) {
     visited.add(current);
     if ('code' in current && current.code === expectedCode) {
       return true;
@@ -32,26 +32,184 @@ const hasDatabaseErrorCode = (error: unknown, expectedCode: string): boolean => 
   }
   return false;
 };
-const bindingInsertFailure = (error: unknown): PrincipalManagementError =>
+const bindingInsertFailure = <Failure>(error: Failure): PrincipalManagementError =>
   hasDatabaseErrorCode(error, '23505')
     ? conflict('The API key is already bound')
     : persistenceFailure();
 
+type PrincipalRecord = Readonly<{ readonly kind: PrincipalKind; readonly status: PrincipalStatus }>;
+type ApiKeyBindingRecord = Readonly<{
+  readonly bindingStatus: BindingStatus;
+  readonly principalKind: PrincipalKind;
+  readonly principalStatus: PrincipalStatus;
+}>;
+type SupportBindingRecord = Readonly<{ readonly authBindingId: string }>;
+
+export interface PrincipalManagementRepositoryService {
+  readonly createPrincipal: (
+    input: CreateNonHumanPrincipalInput,
+  ) => Promise<{ readonly principalId: string } | undefined>;
+  readonly insertApiKeyBinding: (
+    input: BindApiKeyInput,
+  ) => Promise<{ readonly authBindingId: string } | undefined>;
+  readonly loadApiKeyBinding: (
+    input: SetApiKeyBindingStatusInput,
+  ) => Promise<ApiKeyBindingRecord | undefined>;
+  readonly loadPrincipal: (
+    tenantId: string,
+    principalId: string,
+  ) => Promise<PrincipalRecord | undefined>;
+  readonly loadSupportBindings: (input: {
+    readonly activeOnly: boolean;
+    readonly authBindingId?: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  }) => Promise<readonly SupportBindingRecord[]>;
+  readonly updateApiKeyBindingStatus: (
+    input: SetApiKeyBindingStatusInput,
+  ) => Promise<{ readonly status: BindingStatus } | undefined>;
+  readonly updatePrincipalStatus: (
+    input: ChangePrincipalStatusInput,
+  ) => Promise<{ readonly status: PrincipalStatus } | undefined>;
+}
+
+export const principalManagementRepositoryFromTransaction = (
+  transaction: Pick<ScopedTransactionExecutor, 'insert' | 'select' | 'update'>,
+): PrincipalManagementRepositoryService => ({
+  createPrincipal: async (input) => {
+    const [created] = await transaction
+      .insert(principals)
+      .values({
+        displayName: input.displayName,
+        kind: input.kind,
+        status: 'active',
+        tenantId: input.tenantId,
+      })
+      .returning({ principalId: principals.principalId });
+    return created;
+  },
+  insertApiKeyBinding: async (input) => {
+    const [created] = await transaction
+      .insert(principalAuthBindings)
+      .values({
+        principalId: input.principalId,
+        provider: 'better_auth',
+        providerSubjectId: input.providerSubjectId,
+        status: 'active',
+        subjectType: 'api_key',
+        tenantId: input.tenantId,
+      })
+      .returning({ authBindingId: principalAuthBindings.principalAuthBindingId });
+    return created;
+  },
+  loadApiKeyBinding: async (input) => {
+    const [record] = await transaction
+      .select({
+        bindingStatus: principalAuthBindings.status,
+        principalKind: principals.kind,
+        principalStatus: principals.status,
+      })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+          eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.subjectType, 'api_key'),
+        ),
+      )
+      .limit(1);
+    return record;
+  },
+  loadPrincipal: async (tenantId, principalId) => {
+    const [record] = await transaction
+      .select({ kind: principals.kind, status: principals.status })
+      .from(principals)
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
+      .limit(1);
+    return record;
+  },
+  loadSupportBindings: (input) =>
+    transaction
+      .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
+      .from(principalAuthBindings)
+      .innerJoin(
+        principals,
+        and(
+          eq(principals.tenantId, principalAuthBindings.tenantId),
+          eq(principals.principalId, principalAuthBindings.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principalAuthBindings.tenantId, input.tenantId),
+          eq(principalAuthBindings.principalId, input.principalId),
+          eq(principalAuthBindings.subjectType, 'user'),
+          eq(principals.kind, 'human'),
+          ...(input.activeOnly
+            ? [
+                eq(principalAuthBindings.status, 'active'),
+                isNull(principalAuthBindings.revokedAt),
+                eq(principals.status, 'active'),
+              ]
+            : []),
+          ...(input.authBindingId === undefined
+            ? []
+            : [eq(principalAuthBindings.principalAuthBindingId, input.authBindingId)]),
+        ),
+      )
+      .limit(2),
+  updateApiKeyBindingStatus: async (input) => {
+    const [updated] = await transaction
+      .update(principalAuthBindings)
+      .set({
+        revokedAt: input.newStatus === 'revoked' ? new Date() : null,
+        status: input.newStatus,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
+          eq(principalAuthBindings.status, input.expectedStatus),
+        ),
+      )
+      .returning({ status: principalAuthBindings.status });
+    return updated;
+  },
+  updatePrincipalStatus: async (input) => {
+    const [updated] = await transaction
+      .update(principals)
+      .set({
+        disabledAt: input.newStatus === 'disabled' ? new Date() : null,
+        status: input.newStatus,
+      })
+      .where(
+        and(
+          eq(principals.tenantId, input.tenantId),
+          eq(principals.principalId, input.principalId),
+          eq(principals.status, input.expectedStatus),
+        ),
+      )
+      .returning({ status: principals.status });
+    return updated;
+  },
+});
+
 const loadPrincipal = (
-  transaction: ScopedTransactionExecutor,
+  repository: PrincipalManagementRepositoryService,
   tenantId: string,
   principalId: string,
 ) =>
   Effect.tryPromise({
     catch: persistenceFailure,
-    try: async () => {
-      const [record] = await transaction
-        .select({ kind: principals.kind, status: principals.status })
-        .from(principals)
-        .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, principalId)))
-        .limit(1);
-      return record;
-    },
+    try: () => repository.loadPrincipal(tenantId, principalId),
   });
 
 export interface CreateNonHumanPrincipalInput {
@@ -61,7 +219,7 @@ export interface CreateNonHumanPrincipalInput {
 }
 
 export const createNonHumanPrincipal = (
-  transaction: ScopedTransactionExecutor,
+  repository: PrincipalManagementRepositoryService,
   input: CreateNonHumanPrincipalInput,
 ): Effect.Effect<
   { readonly principalId: string; readonly status: 'active' },
@@ -70,15 +228,7 @@ export const createNonHumanPrincipal = (
   Effect.tryPromise({
     catch: persistenceFailure,
     try: async () => {
-      const [created] = await transaction
-        .insert(principals)
-        .values({
-          displayName: input.displayName,
-          kind: input.kind,
-          status: 'active',
-          tenantId: input.tenantId,
-        })
-        .returning({ principalId: principals.principalId, status: principals.status });
+      const created = await repository.createPrincipal(input);
       if (created === undefined) {
         throw new Error('principal insert returned no row');
       }
@@ -95,14 +245,14 @@ export interface ChangePrincipalStatusInput {
 }
 
 export const changePrincipalStatus = (
-  transaction: ScopedTransactionExecutor,
+  repository: PrincipalManagementRepositoryService,
   input: ChangePrincipalStatusInput,
 ): Effect.Effect<
   { readonly previousStatus: PrincipalStatus; readonly status: PrincipalStatus },
   PrincipalManagementError
 > =>
   Effect.gen(function* changeStatus() {
-    const target = yield* loadPrincipal(transaction, input.tenantId, input.principalId);
+    const target = yield* loadPrincipal(repository, input.tenantId, input.principalId);
     if (target === undefined || target.kind === 'human') {
       return yield* invalid('The target is not a tenant-local non-human principal');
     }
@@ -124,23 +274,9 @@ export const changePrincipalStatus = (
     if (!allowed) {
       return yield* conflict('The principal status transition is not allowed');
     }
-    const [updated] = yield* Effect.tryPromise({
+    const updated = yield* Effect.tryPromise({
       catch: persistenceFailure,
-      try: () =>
-        transaction
-          .update(principals)
-          .set({
-            disabledAt: input.newStatus === 'disabled' ? new Date() : null,
-            status: input.newStatus,
-          })
-          .where(
-            and(
-              eq(principals.tenantId, input.tenantId),
-              eq(principals.principalId, input.principalId),
-              eq(principals.status, input.expectedStatus),
-            ),
-          )
-          .returning({ status: principals.status }),
+      try: () => repository.updatePrincipalStatus(input),
     });
     if (updated === undefined) {
       return yield* conflict('The principal status changed concurrently');
@@ -156,14 +292,14 @@ export interface BindApiKeyInput {
 }
 
 export const bindApiKey = (
-  transaction: ScopedTransactionExecutor,
+  repository: PrincipalManagementRepositoryService,
   input: BindApiKeyInput,
 ): Effect.Effect<
   { readonly authBindingId: string; readonly status: 'active' },
   PrincipalManagementError
 > =>
   Effect.gen(function* bindKey() {
-    const target = yield* loadPrincipal(transaction, input.tenantId, input.principalId);
+    const target = yield* loadPrincipal(repository, input.tenantId, input.principalId);
     const allowedKinds: readonly PrincipalKind[] = input.managed
       ? ['service', 'integration']
       : ['human'];
@@ -173,17 +309,7 @@ export const bindApiKey = (
     return yield* Effect.tryPromise({
       catch: bindingInsertFailure,
       try: async () => {
-        const [created] = await transaction
-          .insert(principalAuthBindings)
-          .values({
-            principalId: input.principalId,
-            provider: 'better_auth',
-            providerSubjectId: input.providerSubjectId,
-            status: 'active',
-            subjectType: 'api_key',
-            tenantId: input.tenantId,
-          })
-          .returning({ authBindingId: principalAuthBindings.principalAuthBindingId });
+        const created = await repository.insertApiKeyBinding(input);
         if (created === undefined) {
           throw new Error('binding insert returned no row');
         }
@@ -211,43 +337,23 @@ export interface ValidateSupportImpersonationInput {
 }
 
 export const validateSupportImpersonation = (
-  transaction: ScopedTransactionExecutor,
+  repository: PrincipalManagementRepositoryService,
   input: ValidateSupportImpersonationInput,
 ): Effect.Effect<void, PrincipalManagementError> =>
   Effect.gen(function* validateSupportParticipants() {
     const loadHumanBindings = (principalId: string, authBindingId?: string) =>
       Effect.tryPromise({
         catch: persistenceFailure,
-        try: () =>
-          transaction
-            .select({ authBindingId: principalAuthBindings.principalAuthBindingId })
-            .from(principalAuthBindings)
-            .innerJoin(
-              principals,
-              and(
-                eq(principals.tenantId, principalAuthBindings.tenantId),
-                eq(principals.principalId, principalAuthBindings.principalId),
-              ),
-            )
-            .where(
-              and(
-                eq(principalAuthBindings.tenantId, input.tenantId),
-                eq(principalAuthBindings.principalId, principalId),
-                eq(principalAuthBindings.subjectType, 'user'),
-                eq(principals.kind, 'human'),
-                ...(input.checkpoint === 'stopped'
-                  ? []
-                  : [
-                      eq(principalAuthBindings.status, 'active'),
-                      isNull(principalAuthBindings.revokedAt),
-                      eq(principals.status, 'active'),
-                    ]),
-                ...(authBindingId === undefined
-                  ? []
-                  : [eq(principalAuthBindings.principalAuthBindingId, authBindingId)]),
-              ),
-            )
-            .limit(2),
+        try: () => {
+          const query = {
+            activeOnly: input.checkpoint !== 'stopped',
+            principalId,
+            tenantId: input.tenantId,
+          };
+          return repository.loadSupportBindings(
+            authBindingId === undefined ? query : { ...query, authBindingId },
+          );
+        },
       });
     const original = yield* loadHumanBindings(
       input.originalPrincipalId,
@@ -264,7 +370,7 @@ export const validateSupportImpersonation = (
   });
 
 export const setApiKeyBindingStatus = (
-  transaction: ScopedTransactionExecutor,
+  repository: PrincipalManagementRepositoryService,
   input: SetApiKeyBindingStatusInput,
 ): Effect.Effect<
   { readonly previousStatus: BindingStatus; readonly status: BindingStatus },
@@ -273,32 +379,7 @@ export const setApiKeyBindingStatus = (
   Effect.gen(function* setBindingStatus() {
     const binding = yield* Effect.tryPromise({
       catch: persistenceFailure,
-      try: async () => {
-        const [record] = await transaction
-          .select({
-            bindingStatus: principalAuthBindings.status,
-            principalKind: principals.kind,
-            principalStatus: principals.status,
-          })
-          .from(principalAuthBindings)
-          .innerJoin(
-            principals,
-            and(
-              eq(principals.tenantId, principalAuthBindings.tenantId),
-              eq(principals.principalId, principalAuthBindings.principalId),
-            ),
-          )
-          .where(
-            and(
-              eq(principalAuthBindings.tenantId, input.tenantId),
-              eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
-              eq(principalAuthBindings.principalId, input.principalId),
-              eq(principalAuthBindings.subjectType, 'api_key'),
-            ),
-          )
-          .limit(1);
-        return record;
-      },
+      try: () => repository.loadApiKeyBinding(input),
     });
     if (binding === undefined) {
       return yield* invalid('The API key binding is unavailable');
@@ -327,23 +408,9 @@ export const setApiKeyBindingStatus = (
     if (!allowed) {
       return yield* conflict('The binding transition is not allowed');
     }
-    const [updated] = yield* Effect.tryPromise({
+    const updated = yield* Effect.tryPromise({
       catch: persistenceFailure,
-      try: () =>
-        transaction
-          .update(principalAuthBindings)
-          .set({
-            revokedAt: input.newStatus === 'revoked' ? new Date() : null,
-            status: input.newStatus,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(principalAuthBindings.principalAuthBindingId, input.authBindingId),
-              eq(principalAuthBindings.status, input.expectedStatus),
-            ),
-          )
-          .returning({ status: principalAuthBindings.status }),
+      try: () => repository.updateApiKeyBindingStatus(input),
     });
     if (updated === undefined) {
       return yield* conflict('The binding status changed concurrently');

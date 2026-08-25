@@ -26,7 +26,7 @@ export interface ResourceAccessTarget {
   readonly resourceType: string;
 }
 
-export interface ContextAccessShape {
+export interface ContextAccessService {
   readonly tenants: (input: {
     readonly permission: 'access' | 'impersonate' | 'manage_identity';
     readonly principalId: string;
@@ -52,7 +52,7 @@ export interface ContextAccessShape {
   }) => Effect.Effect<readonly ContextAccessResult[]>;
 }
 
-export class ContextAccess extends Context.Service<ContextAccess, ContextAccessShape>()(
+export class ContextAccess extends Context.Service<ContextAccess, ContextAccessService>()(
   '@app/core-runtime/permissions/context-access/ContextAccess',
 ) {}
 
@@ -142,7 +142,7 @@ const sameRequest = (
   actual.subject?.object?.objectId === expected.subject?.object?.objectId &&
   actual.subject?.object?.objectType === expected.subject?.object?.objectType;
 
-export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessShape => {
+export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
   const checkBatch = (
     items: readonly BatchItem[],
     principalId: string,
@@ -191,15 +191,15 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
             seen.add(key);
             return { decision: classifyPair(pair), key };
           });
-          return decisions.some((decision) => decision === null)
-            ? unavailable(keys)
-            : (decisions as readonly ContextAccessResult[]);
+          return decisions.every((decision): decision is ContextAccessResult => decision !== null)
+            ? decisions
+            : unavailable(keys);
         },
       }),
     );
   };
 
-  const service: ContextAccessShape = {
+  const service: ContextAccessService = {
     legalEntities: ({ legalEntityIds, principalId, tenantId }) =>
       checkBatch(
         legalEntityIds.map((legalEntityId) => ({
@@ -244,8 +244,8 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
   return Object.freeze(service);
 };
 
-const unavailableContextAccess = (): ContextAccessShape => {
-  const service: ContextAccessShape = {
+const unavailableContextAccess = (): ContextAccessService => {
+  const service: ContextAccessService = {
     legalEntities: ({ legalEntityIds }) => Effect.succeed(unavailable(legalEntityIds)),
     modules: ({ moduleIds }) => Effect.succeed(unavailable(moduleIds)),
     resources: ({ resources }) =>
@@ -267,7 +267,7 @@ export const makeContextAccessLive = (
     SpiceDbConfigValue,
     SpiceDbConfigError
   > = loadSpiceDbConfig,
-): Effect.Effect<ContextAccessShape, never, Scope.Scope> =>
+): Effect.Effect<ContextAccessService, never, Scope.Scope> =>
   Effect.matchEffect(loadConfiguration(), {
     onFailure: () => Effect.succeed(unavailableContextAccess()),
     onSuccess: (configuration) =>

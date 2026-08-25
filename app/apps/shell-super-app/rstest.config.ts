@@ -2,15 +2,24 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
+import { Schema } from 'effect';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
-const referenceTopology = JSON.parse(
-  readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
-) as unknown;
-const developmentOverlay = JSON.parse(
-  readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8'),
-) as unknown;
+const decodeJson = Schema.decodeUnknownSync(Schema.Json);
+const referenceTopology = decodeJson(
+  JSON.parse(
+    readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
+  ),
+);
+const developmentOverlay = decodeJson(
+  JSON.parse(
+    readFileSync(
+      new URL('../../topology/local-overlays/development.json', import.meta.url),
+      'utf-8',
+    ),
+  ),
+);
 
 export default defineConfig({
   clearMocks: true,

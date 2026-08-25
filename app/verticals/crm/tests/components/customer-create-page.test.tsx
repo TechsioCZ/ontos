@@ -8,11 +8,16 @@ import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/crm.json';
 import enCatalog from '../../locales/en/crm.json';
+import { flattenCatalogKeys, translateCatalog } from '../support/locale-catalog.ts';
 import {
   CustomerCreateFeature,
   classifyCustomerAresLookupError,
   classifyCreateCustomerError,
 } from '../../src/routes/[lang]/crm/customers/[id]/new/page.tsx';
+
+interface LocaleState {
+  current: 'cs' | 'en';
+}
 
 Object.assign(globalThis, {
   ULTRAMODERN_CRM_API_BASE_URL: 'http://localhost:4101/crm-api',
@@ -25,34 +30,22 @@ const {
   localeState,
   navigateMock,
   runEffectRequestMock,
-} = rstest.hoisted(() => ({
-  createCustomerMock: rstest.fn(),
-  executeCustomerAresLookupMock: rstest.fn(),
-  legacyExecuteCustomerAresLookupMock: rstest.fn(),
-  localeState: { current: 'en' as 'cs' | 'en' },
-  navigateMock: rstest.fn(() => Promise.resolve()),
-  runEffectRequestMock: rstest.fn(),
-}));
+} = rstest.hoisted(() => {
+  const state: LocaleState = { current: 'en' };
+  return {
+    createCustomerMock: rstest.fn(),
+    executeCustomerAresLookupMock: rstest.fn(),
+    legacyExecuteCustomerAresLookupMock: rstest.fn(),
+    localeState: state,
+    navigateMock: rstest.fn(() => Promise.resolve()),
+    runEffectRequestMock: rstest.fn(),
+  };
+});
 
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
-const translate = (language: 'cs' | 'en', key: string): string => {
-  let current: unknown = catalogs[language];
-  for (const segment of key.split('.')) {
-    current =
-      typeof current === 'object' && current !== null
-        ? (current as Record<string, unknown>)[segment]
-        : undefined;
-  }
-  return typeof current === 'string' ? current : key;
-};
-
-const flattenKeys = (value: object, prefix = ''): string[] =>
-  Object.entries(value)
-    .flatMap(([key, child]) => {
-      const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-      return typeof child === 'object' && child !== null ? flattenKeys(child, path) : [path];
-    })
-    .toSorted();
+const translate = (language: 'cs' | 'en', key: string): string =>
+  translateCatalog(catalogs[language], key);
+const flattenKeys = flattenCatalogKeys;
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({
@@ -109,8 +102,15 @@ const aresCustomer = {
 
 const getAresForm = () => screen.getByRole('form', { name: /ARES/u });
 const getAresIco = () => within(getAresForm()).getByRole('textbox', { name: /^IČO/u });
-const getCustomerIco = () =>
-  document.querySelector<HTMLInputElement>('#customer-ico') as HTMLInputElement;
+const requireInput = (element: HTMLElement | null, description: string): HTMLInputElement => {
+  if (!(element instanceof HTMLInputElement)) {
+    throw new Error(`Expected ${description} to be an input`);
+  }
+  return element;
+};
+const getCustomerIco = () => requireInput(document.querySelector('#customer-ico'), 'Customer IČO');
+const getInputByLabel = (label: string) =>
+  requireInput(screen.getByLabelText(label), `${label} field`);
 
 const renderFeature = ({ writable = true }: { readonly writable?: boolean } = {}) => {
   const queryClient = new QueryClient({
@@ -196,7 +196,7 @@ test('emits no lookup before valid loader intent and calls the composed CRM clie
 test('routes ARES lookup through the composed CRM client instead of decoding the page response', async () => {
   localeState.current = 'cs';
   legacyExecuteCustomerAresLookupMock.mockReturnValue(
-    Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'DecodeError' } } as never),
+    Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'DecodeError' } }),
   );
   const user = userEvent.setup();
   renderFeature();
@@ -259,10 +259,8 @@ test('replaces canonical fields, retains omitted optional values, and replaces s
   expect(screen.getByRole('textbox', { name: /^Legal-form code/u }).getAttribute('value')).toBe(
     '101',
   );
-  expect((screen.getByLabelText('Establishment date') as HTMLInputElement).value).toBe(
-    '2019-01-02',
-  );
-  expect((screen.getByLabelText('Dissolution date') as HTMLInputElement).value).toBe('2025-01-02');
+  expect(getInputByLabel('Establishment date').value).toBe('2019-01-02');
+  expect(getInputByLabel('Dissolution date').value).toBe('2025-01-02');
 
   await user.clear(getAresIco());
   await user.type(getAresIco(), '00123456');
@@ -277,10 +275,8 @@ test('replaces canonical fields, retains omitted optional values, and replaces s
   expect(screen.getByRole('textbox', { name: /^Legal-form code/u }).getAttribute('value')).toBe(
     '112',
   );
-  expect((screen.getByLabelText('Establishment date') as HTMLInputElement).value).toBe(
-    '2020-01-02',
-  );
-  expect((screen.getByLabelText('Dissolution date') as HTMLInputElement).value).toBe('2026-08-17');
+  expect(getInputByLabel('Establishment date').value).toBe('2020-01-02');
+  expect(getInputByLabel('Dissolution date').value).toBe('2026-08-17');
 });
 
 test('keeps ARES-prefilled fields editable and creates only the final canonical flat payload', async () => {
@@ -403,7 +399,7 @@ test('keeps lookup readable while a non-writable target disables only creation',
 test('reuses an idempotency key only for an uncertain retry of the same normalized intent', async () => {
   createCustomerMock
     .mockReturnValueOnce(
-      Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } } as never),
+      Effect.fail({ _tag: 'HttpClientError', reason: { _tag: 'TransportError' } }),
     )
     .mockReturnValueOnce(Effect.succeed(createdCustomer));
   const user = userEvent.setup();
@@ -426,7 +422,7 @@ test('reuses an idempotency key only for an uncertain retry of the same normaliz
 });
 
 test('creates a new idempotency key after any Customer field changes an uncertain intent', async () => {
-  createCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' } as never));
+  createCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmUnavailableProblem' }));
   const user = userEvent.setup();
   renderFeature();
   const name = screen.getByRole('textbox', { name: /^Customer name/u });
@@ -444,7 +440,7 @@ test('creates a new idempotency key after any Customer field changes an uncertai
 });
 
 test('creates a new idempotency key after a definite terminal failure', async () => {
-  createCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmConflictProblem' } as never));
+  createCustomerMock.mockReturnValue(Effect.fail({ _tag: 'CrmConflictProblem' }));
   const user = userEvent.setup();
   renderFeature();
   await user.type(screen.getByRole('textbox', { name: /^Customer name/u }), 'Acme');
@@ -473,7 +469,7 @@ test.each([
 ] as const)(
   'maps the %s mutation failure into the form without navigating',
   async (tag, message) => {
-    createCustomerMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+    createCustomerMock.mockReturnValue(Effect.fail({ _tag: tag }));
     const user = userEvent.setup();
     renderFeature();
     await user.type(screen.getByRole('textbox', { name: /^Customer name/u }), 'Acme');
@@ -525,7 +521,7 @@ test('maps the complete client failure families to a closed presentation vocabul
   ] as const;
 
   for (const [error, expected] of cases) {
-    expect(classifyCreateCustomerError(error as never)).toEqual(expected);
+    expect(classifyCreateCustomerError(error)).toEqual(expected);
   }
 });
 
@@ -551,7 +547,7 @@ test.each([
 ] as const)(
   'maps the %s lookup failure to an isolated accessible loader state',
   async (tag, message, expectedCalls) => {
-    executeCustomerAresLookupMock.mockReturnValue(Effect.fail({ _tag: tag } as never));
+    executeCustomerAresLookupMock.mockReturnValue(Effect.fail({ _tag: tag }));
     const user = userEvent.setup();
     renderFeature();
     await user.type(getAresIco(), aresCustomer.ico);
@@ -585,7 +581,7 @@ test.each([
   'maps and bounds uncertain lookup client failures %#',
   // oxlint-disable-next-line promise/prefer-await-to-callbacks -- Parameterized Rstest cases use an async callback to exercise the rendered mutation lifecycle.
   async (error, message, expectedState) => {
-    executeCustomerAresLookupMock.mockReturnValue(Effect.fail(error as never));
+    executeCustomerAresLookupMock.mockReturnValue(Effect.fail(error));
     const user = userEvent.setup();
     renderFeature();
     await user.type(getAresIco(), aresCustomer.ico);
@@ -593,14 +589,14 @@ test.each([
 
     expect(await screen.findByText(message)).toBeTruthy();
     expect(executeCustomerAresLookupMock).toHaveBeenCalledTimes(2);
-    expect(classifyCustomerAresLookupError(error as never)).toEqual(expectedState);
+    expect(classifyCustomerAresLookupError(error)).toEqual(expectedState);
     expect(within(getAresForm()).getByRole('button', { name: 'Try ARES again' })).toBeTruthy();
   },
 );
 
 test('retries only an uncertain lookup once with fresh correlation and clears stale failure', async () => {
   executeCustomerAresLookupMock
-    .mockReturnValueOnce(Effect.fail({ _tag: 'CustomerAresLookupUnavailableProblem' } as never))
+    .mockReturnValueOnce(Effect.fail({ _tag: 'CustomerAresLookupUnavailableProblem' }))
     .mockReturnValueOnce(Effect.succeed(aresCustomer));
   const user = userEvent.setup();
   renderFeature();
@@ -655,7 +651,7 @@ test('maps the complete lookup client error union to a closed presentation vocab
   ] as const;
 
   for (const [error, expected] of cases) {
-    expect(classifyCustomerAresLookupError(error as never)).toEqual(expected);
+    expect(classifyCustomerAresLookupError(error)).toEqual(expected);
   }
 });
 

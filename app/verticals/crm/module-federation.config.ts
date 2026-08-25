@@ -2,18 +2,19 @@ import { createRequire } from 'node:module';
 
 import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
+import { Schema } from 'effect';
 
 import { dependencies } from './package.json';
 
 const require = createRequire(import.meta.url);
-const pluginI18nVersion = (require('@modern-js/plugin-i18n/package.json') as { version: string })
-  .version;
-const pluginTanstackVersion = (
-  require('@modern-js/plugin-tanstack/package.json') as { version: string }
-).version;
-const runtimeVersion = (require('@modern-js/runtime/package.json') as { version: string }).version;
-const reactVersion = (require('react/package.json') as { version: string }).version;
-const reactDomVersion = (require('react-dom/package.json') as { version: string }).version;
+const PackageVersionSchema = Schema.Struct({ version: Schema.String });
+const packageVersion = (specifier: string): string =>
+  Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
+const pluginI18nVersion = packageVersion('@modern-js/plugin-i18n/package.json');
+const pluginTanstackVersion = packageVersion('@modern-js/plugin-tanstack/package.json');
+const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
+const reactVersion = packageVersion('react/package.json');
+const reactDomVersion = packageVersion('react-dom/package.json');
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({
   from: import.meta.url,

@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 import { and, eq } from 'drizzle-orm';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Schema, Predicate } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
 import {
   actionInvocations,
@@ -9,7 +9,7 @@ import {
   principals,
   tenants,
 } from '../db/schema.ts';
-import type { BindingSubjectType, PrincipalKind } from '../db/schema.ts';
+import type { PrincipalKind } from '../db/schema.ts';
 import {
   PrincipalBindingAmbiguousError,
   PrincipalBindingInactiveError,
@@ -58,6 +58,26 @@ export interface PrincipalResolutionRecord {
   readonly tenantName: string;
   readonly tenantStatus: string;
 }
+
+export interface PrincipalResolutionRecordRepository {
+  readonly load: (
+    subject: ProviderSubject,
+    tenantId?: string,
+  ) => Promise<readonly PrincipalResolutionRecord[]>;
+}
+
+const loadPrincipalResolutionRecords = (
+  repository: PrincipalResolutionRecordRepository,
+  subject: ProviderSubject,
+  tenantId?: string,
+): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolverUnavailableError> =>
+  Effect.tryPromise({
+    catch: () =>
+      new PrincipalResolverUnavailableError({
+        reason: 'Unable to resolve the authenticated principal',
+      }),
+    try: () => repository.load(subject, tenantId),
+  });
 
 const compareText = (left: string, right: string): number => {
   if (left < right) {
@@ -135,6 +155,16 @@ export const classifyAvailableTenants = (
     ),
   );
 
+export const listAvailableTenantsFromRepository = (
+  repository: PrincipalResolutionRecordRepository,
+  betterAuthUserId: string,
+): Effect.Effect<readonly AvailableTenant[], PrincipalResolutionError> =>
+  loadPrincipalResolutionRecords(repository, {
+    provider: 'better_auth',
+    providerSubjectId: betterAuthUserId,
+    subjectType: 'user',
+  }).pipe(Effect.flatMap(classifyAvailableTenants));
+
 export const classifyDefaultPrincipal = (
   records: readonly PrincipalResolutionRecord[],
 ): Effect.Effect<ResolvedPrincipalIdentity, PrincipalResolutionError> =>
@@ -181,7 +211,7 @@ export const classifyApiKeyPrincipal = (
     return toResolvedIdentity(only);
   });
 
-export interface PrincipalResolverShape {
+export interface PrincipalResolverService {
   readonly resolveBetterAuthUserForPrincipal: (input: {
     readonly principalId: string;
     readonly tenantId: string;
@@ -223,55 +253,50 @@ export interface PrincipalResolverShape {
   }) => Effect.Effect<boolean, PrincipalResolverUnavailableError>;
 }
 
-export class PrincipalResolver extends Context.Service<PrincipalResolver, PrincipalResolverShape>()(
-  '@app/core-runtime/auth/principal-resolver/PrincipalResolver',
-) {}
+export class PrincipalResolver extends Context.Service<
+  PrincipalResolver,
+  PrincipalResolverService
+>()('@app/core-runtime/auth/principal-resolver/PrincipalResolver') {}
 
 export const makePrincipalResolver = (
-  database: Context.Service.Shape<typeof CoreDatabase>,
-): PrincipalResolverShape => {
-  const loadRecords = (
-    subject: ProviderSubject,
-    tenantId?: string,
-  ): Effect.Effect<readonly PrincipalResolutionRecord[], PrincipalResolverUnavailableError> =>
-    Effect.tryPromise({
-      catch: () =>
-        new PrincipalResolverUnavailableError({
-          reason: 'Unable to resolve the authenticated principal',
-        }),
-      try: () =>
-        database.executor
-          .select({
-            authBindingId: principalAuthBindings.principalAuthBindingId,
-            bindingCreatedAt: principalAuthBindings.createdAt,
-            bindingRevokedAt: principalAuthBindings.revokedAt,
-            bindingStatus: principalAuthBindings.status,
-            displayName: principals.displayName,
-            principalId: principals.principalId,
-            principalKind: principals.kind,
-            principalStatus: principals.status,
-            tenantId: tenants.tenantId,
-            tenantName: tenants.name,
-            tenantStatus: tenants.status,
-          })
-          .from(principalAuthBindings)
-          .innerJoin(
-            principals,
-            and(
-              eq(principals.principalId, principalAuthBindings.principalId),
-              eq(principals.tenantId, principalAuthBindings.tenantId),
-            ),
-          )
-          .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
-          .where(
-            and(
-              eq(principalAuthBindings.provider, subject.provider),
-              eq(principalAuthBindings.subjectType, subject.subjectType as BindingSubjectType),
-              eq(principalAuthBindings.providerSubjectId, subject.providerSubjectId),
-              ...(tenantId === undefined ? [] : [eq(principalAuthBindings.tenantId, tenantId)]),
-            ),
+  database: (typeof CoreDatabase)['Service'],
+): PrincipalResolverService => {
+  const recordRepository: PrincipalResolutionRecordRepository = {
+    load: (subject, tenantId) =>
+      database.executor
+        .select({
+          authBindingId: principalAuthBindings.principalAuthBindingId,
+          bindingCreatedAt: principalAuthBindings.createdAt,
+          bindingRevokedAt: principalAuthBindings.revokedAt,
+          bindingStatus: principalAuthBindings.status,
+          displayName: principals.displayName,
+          principalId: principals.principalId,
+          principalKind: principals.kind,
+          principalStatus: principals.status,
+          tenantId: tenants.tenantId,
+          tenantName: tenants.name,
+          tenantStatus: tenants.status,
+        })
+        .from(principalAuthBindings)
+        .innerJoin(
+          principals,
+          and(
+            eq(principals.principalId, principalAuthBindings.principalId),
+            eq(principals.tenantId, principalAuthBindings.tenantId),
           ),
-    });
+        )
+        .innerJoin(tenants, eq(tenants.tenantId, principalAuthBindings.tenantId))
+        .where(
+          and(
+            eq(principalAuthBindings.provider, subject.provider),
+            eq(principalAuthBindings.subjectType, subject.subjectType),
+            eq(principalAuthBindings.providerSubjectId, subject.providerSubjectId),
+            ...(tenantId === undefined ? [] : [eq(principalAuthBindings.tenantId, tenantId)]),
+          ),
+        ),
+  };
+  const loadRecords = (subject: ProviderSubject, tenantId?: string) =>
+    loadPrincipalResolutionRecords(recordRepository, subject, tenantId);
   const loadApiKeyBindingSubject = (input: {
     readonly authBindingId: string;
     readonly principalId: string;
@@ -305,11 +330,7 @@ export const makePrincipalResolver = (
 
   return {
     listAvailableTenants: (betterAuthUserId) =>
-      loadRecords({
-        provider: 'better_auth',
-        providerSubjectId: betterAuthUserId,
-        subjectType: 'user',
-      }).pipe(Effect.flatMap(classifyAvailableTenants)),
+      listAvailableTenantsFromRepository(recordRepository, betterAuthUserId),
     loadApiKeyBindingForAdministration: (input) =>
       loadApiKeyBindingSubject(input).pipe(
         Effect.flatMap(
@@ -458,7 +479,7 @@ export const makePrincipalResolver = (
       }).pipe(
         Effect.map((records) =>
           records.some(({ evidence }) => {
-            if (typeof evidence !== 'object' || evidence === null) {
+            if (!Predicate.isObjectKeyword(evidence) || evidence === null) {
               return false;
             }
             return (

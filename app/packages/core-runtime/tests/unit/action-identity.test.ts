@@ -33,26 +33,66 @@ test('identity Actions are generated, sensitive, idempotent, and owned by Core i
 });
 
 test('identity administration and support starts declare independent tenant permissions', () => {
-  for (const registration of [
-    bindManagedApiKeyAction,
-    changePrincipalStatusAction,
-    createNonHumanPrincipalAction,
-    setManagedApiKeyBindingStatusAction,
-  ]) {
-    assert.equal(registration.descriptor.tenantPermission?.({} as never), 'manage_identity');
+  const principalId = '00000000-0000-4000-8000-000000000001';
+  const authBindingId = '00000000-0000-4000-8000-000000000002';
+  const originalPrincipalId = '00000000-0000-4000-8000-000000000003';
+  const managedPermissions = [
+    bindManagedApiKeyAction.descriptor.tenantPermission?.(
+      Schema.decodeUnknownSync(bindManagedApiKeyAction.descriptor.payloadSchema)({
+        principalId,
+        providerSubjectId: 'provider-key-id',
+      }),
+    ),
+    changePrincipalStatusAction.descriptor.tenantPermission?.(
+      Schema.decodeUnknownSync(changePrincipalStatusAction.descriptor.payloadSchema)({
+        expectedStatus: 'active',
+        newStatus: 'disabled',
+        principalId,
+        reason: 'Offboarding',
+      }),
+    ),
+    createNonHumanPrincipalAction.descriptor.tenantPermission?.(
+      Schema.decodeUnknownSync(createNonHumanPrincipalAction.descriptor.payloadSchema)({
+        displayName: 'Inventory service',
+        kind: 'service',
+      }),
+    ),
+    setManagedApiKeyBindingStatusAction.descriptor.tenantPermission?.(
+      Schema.decodeUnknownSync(setManagedApiKeyBindingStatusAction.descriptor.payloadSchema)({
+        authBindingId,
+        expectedStatus: 'active',
+        newStatus: 'disabled',
+        principalId,
+      }),
+    ),
+  ];
+  for (const permission of managedPermissions) {
+    assert.equal(permission, 'manage_identity');
   }
   assert.equal(bindSelfApiKeyAction.descriptor.tenantPermission, undefined);
   assert.equal(setSelfApiKeyBindingStatusAction.descriptor.tenantPermission, undefined);
+  const supportPayload = {
+    originalPrincipalId,
+    reason: 'Investigating a support request',
+    targetPrincipalId: principalId,
+  };
   assert.equal(
-    recordSupportImpersonationAction.descriptor.tenantPermission?.({
-      checkpoint: 'requested',
-    } as never),
+    recordSupportImpersonationAction.descriptor.tenantPermission?.(
+      Schema.decodeUnknownSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
+        ...supportPayload,
+        checkpoint: 'requested',
+      }),
+    ),
     'impersonate',
   );
   assert.equal(
-    recordSupportImpersonationAction.descriptor.tenantPermission?.({
-      checkpoint: 'stopped',
-    } as never),
+    recordSupportImpersonationAction.descriptor.tenantPermission?.(
+      Schema.decodeUnknownSync(recordSupportImpersonationAction.descriptor.payloadSchema)({
+        ...supportPayload,
+        checkpoint: 'stopped',
+        sessionRef: 'better-auth-session:safe-session-reference',
+      }),
+    ),
     undefined,
   );
 });

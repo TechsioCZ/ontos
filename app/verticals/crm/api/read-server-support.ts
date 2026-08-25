@@ -18,12 +18,6 @@ interface ReadProblemSet {
   readonly unavailable: () => HttpProblem;
 }
 
-type ReadProblem<Problems extends ReadProblemSet> = {
-  [Key in keyof Problems]-?: Problems[Key] extends (...arguments_: never[]) => infer Problem
-    ? Problem
-    : never;
-}[keyof Problems];
-
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(HttpServerResponse.setHeader(response, 'www-authenticate', 'Bearer')),
 );
@@ -53,10 +47,10 @@ export const verifyReadPrincipal = <
     Effect.mapError(problems.unavailable),
     Effect.flatMap((environment) => verifyOperationPrincipal(authorization, { environment })),
     Effect.catch((error: ActionPrincipalError | Unavailable) => {
-      if ('status' in error && typeof error.status === 'number') {
-        return Effect.fail(error as Unavailable);
+      if ('status' in error) {
+        return Effect.fail(error);
       }
-      const principalError = error as ActionPrincipalError;
+      const principalError = error;
       const unavailable =
         principalError._tag === 'ActionPrincipalConfigurationError' ||
         principalError._tag === 'ActionPrincipalUnavailableError';
@@ -71,9 +65,11 @@ export const verifyReadPrincipal = <
 export const mapReadProblem = <Problems extends ReadProblemSet>(
   error: ReadCoreError,
   problems: Problems,
-): ReadProblem<Problems> => {
-  const select = <Key extends keyof Problems>(key: Key): ReadProblem<Problems> =>
-    (problems[key] as () => ReadProblem<Problems>)();
+) => {
+  const select = <Key extends keyof Problems>(key: Key) => {
+    const factory = problems[key];
+    return factory === undefined ? problems.internal() : factory();
+  };
   switch (error._tag) {
     case 'ReadInputValidationError':
       return select('invalid');

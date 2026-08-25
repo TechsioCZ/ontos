@@ -45,14 +45,24 @@ const ultramodernGeneratedBuildArtifact = {
     },
   },
 } as const;
-const ultramodernBuildMarker =
-  typeof ULTRAMODERN_BUILD_MARKER === 'string'
-    ? ULTRAMODERN_BUILD_MARKER
-    : ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
-const ultramodernSourceRevision =
-  typeof ULTRAMODERN_SOURCE_REVISION === 'string'
-    ? ULTRAMODERN_SOURCE_REVISION
-    : ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
+const readInjectedBuildMarker = (): string => {
+  try {
+    return ULTRAMODERN_BUILD_MARKER;
+  } catch {
+    return ultramodernGeneratedBuildArtifact.deliveryUnit.buildMarker;
+  }
+};
+
+const readInjectedSourceRevision = (): string => {
+  try {
+    return ULTRAMODERN_SOURCE_REVISION;
+  } catch {
+    return ultramodernGeneratedBuildArtifact.deliveryUnit.sourceRevision;
+  }
+};
+
+const ultramodernBuildMarker = readInjectedBuildMarker();
+const ultramodernSourceRevision = readInjectedSourceRevision();
 const ultramodernBuildArtifact = {
   ...ultramodernGeneratedBuildArtifact,
   deliveryUnit: {

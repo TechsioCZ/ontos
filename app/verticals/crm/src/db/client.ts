@@ -37,11 +37,14 @@ export type PoolFactory = (configuration: PoolConfig) => Pool;
 
 const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
 
+type ContextServiceContract<Service> =
+  Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
+
 export const makeCrmDatabase = (
-  configuration: Context.Service.Shape<typeof DatabaseConfig>,
+  configuration: ContextServiceContract<typeof DatabaseConfig>,
   poolFactory: PoolFactory = defaultPoolFactory,
 ): Effect.Effect<
-  Context.Service.Shape<typeof CrmDatabase>,
+  ContextServiceContract<typeof CrmDatabase>,
   CrmDatabaseConnectionError,
   Scope.Scope
 > =>

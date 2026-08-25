@@ -5,6 +5,7 @@ import test from 'node:test';
 import { getTableName, isTable } from 'drizzle-orm';
 import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
 import type { PgTable } from 'drizzle-orm/pg-core';
+import { Schema } from 'effect';
 import * as schemaExports from '../../src/db/schema.ts';
 import { CRM_SCHEMA_NAME, CRM_TABLE_INVENTORY, contacts, customers } from '../../src/db/schema.ts';
 import type {
@@ -77,8 +78,8 @@ const indexColumnNames = (config: typeof customerConfig | typeof contactConfig, 
 };
 
 test('owns exactly Customer and Contact tables in the CRM schema', () => {
-  const exportedTables = (Object.values(schemaExports) as unknown[]).filter(
-    (value): value is PgTable => isTable(value),
+  const exportedTables = Object.values(schemaExports).filter((value): value is PgTable =>
+    isTable(value),
   );
   const qualifiedNames = exportedTables
     .map((table) => {
@@ -303,9 +304,9 @@ test('keeps the narrow generated-migration adjustment that forces RLS', async ()
 });
 
 test('creates the runtime role before CRM policies and refreshes grants afterward', async () => {
-  const rootPackage = JSON.parse(
-    await readFile(new URL('../../../../package.json', import.meta.url), 'utf-8'),
-  ) as { readonly scripts?: Readonly<Record<string, string>> };
+  const rootPackage = Schema.decodeUnknownSync(
+    Schema.Struct({ scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)) }),
+  )(JSON.parse(await readFile(new URL('../../../../package.json', import.meta.url), 'utf-8')));
   const bootstrap = await readFile(
     new URL('../../../../scripts/postgres/bootstrap-runtime-role.mts', import.meta.url),
     'utf-8',

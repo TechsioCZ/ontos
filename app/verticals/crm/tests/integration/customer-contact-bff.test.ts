@@ -8,14 +8,19 @@ import {
   ActionIdempotencyKeyRequired,
   ActionPayloadValidationError,
   ActionPermissionDenied,
+  ActionResultValidationError,
   ActionRuntime,
   ReadEvidencePersistenceError,
+  ReadResultValidationError,
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { Effect, Layer, Schema } from '@modern-js/plugin-bff/effect-edge';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeCrmApiRuntime } from '../../api/index.ts';
+import { parseJsonObject } from '../support/json-value.ts';
+import type { JsonObject } from '../support/json-value.ts';
+import { appendRequestChunk, webRequestInit } from '../support/node-http.ts';
 import {
   CrmCustomerIcoConflict,
   CrmCustomerNotFound,
@@ -101,10 +106,10 @@ const contact = {
 
 interface CapturedInvocation {
   readonly correlationId: string;
-  readonly idempotencyKey?: string;
+  idempotencyKey?: string;
   readonly key: string;
-  readonly payload?: Readonly<Record<string, unknown>>;
-  readonly traceId?: string;
+  readonly payload?: JsonObject;
+  traceId?: string;
 }
 
 const startServer = async (
@@ -115,7 +120,7 @@ const startServer = async (
   const server = createServer(async (request, response) => {
     const chunks: Uint8Array[] = [];
     for await (const chunk of request) {
-      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+      appendRequestChunk(chunks, chunk);
     }
     const url = `http://${request.headers.host ?? '127.0.0.1'}${request.url ?? '/'}`;
     if (new URL(url).pathname === '/auth/gateway-context') {
@@ -128,11 +133,7 @@ const startServer = async (
       return;
     }
     const webResponse = await handler.handler(
-      new Request(url, {
-        ...(chunks.length === 0 ? {} : { body: Buffer.concat(chunks) }),
-        headers: request.headers as HeadersInit,
-        method: request.method ?? 'GET',
-      }),
+      new Request(url, webRequestInit(chunks, request.headers, request.method)),
     );
     response.statusCode = webResponse.status;
     for (const [key, value] of webResponse.headers) {
@@ -142,7 +143,7 @@ const startServer = async (
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  assert.ok(address !== null && typeof address === 'object');
+  assert.ok(address instanceof Object);
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     close: () =>
@@ -174,20 +175,52 @@ test('runs every CRM client operation through the real governed BFF boundary', a
   });
 
   const invocations: CapturedInvocation[] = [];
-  const actionRuntime = {
+  const actionRuntime: ActionRuntimeService = {
     resolveActionCommit: () => Effect.die('resolveActionCommit is not used by this BFF'),
-    runAction: (input: {
-      readonly payload: Readonly<Record<string, unknown>>;
-      readonly registration: { readonly descriptor: { readonly actionKey: string } };
-      readonly transport: {
-        readonly correlationId: string;
-        readonly idempotencyKey?: string;
-        readonly traceId?: string;
-      };
-    }) => {
+    runAction: (input) => {
       const key = input.registration.descriptor.actionKey;
-      invocations.push({ key, payload: input.payload, ...input.transport });
-      if (input.transport.idempotencyKey === undefined) {
+      const payload = parseJsonObject(input.payload);
+      const transport = Schema.decodeUnknownSync(
+        Schema.Struct({
+          correlationId: Schema.String,
+          idempotencyKey: Schema.optional(Schema.String),
+          traceId: Schema.optional(Schema.String),
+        }),
+      )(input.transport);
+      const invocation: CapturedInvocation = {
+        correlationId: transport.correlationId,
+        key,
+        payload,
+      };
+      if (transport.idempotencyKey !== undefined) {
+        invocation.idempotencyKey = transport.idempotencyKey;
+      }
+      if (transport.traceId !== undefined) {
+        invocation.traceId = transport.traceId;
+      }
+      invocations.push(invocation);
+      const decodeResult = <Result>(result: Result) =>
+        Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)(result).pipe(
+          Effect.mapError(
+            () =>
+              new ActionResultValidationError({
+                code: 'action_result_invalid',
+                reason: 'The Action fixture result does not match its declared schema',
+              }),
+          ),
+        );
+      const failDomain = <Failure>(failure: Failure) =>
+        Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failure).pipe(
+          Effect.mapError(
+            () =>
+              new ActionResultValidationError({
+                code: 'action_result_invalid',
+                reason: 'The Action fixture domain error does not match its declared schema',
+              }),
+          ),
+          Effect.flatMap(Effect.fail),
+        );
+      if (transport.idempotencyKey === undefined) {
         return Effect.fail(
           new ActionIdempotencyKeyRequired({
             code: 'action_idempotency_key_required',
@@ -195,10 +228,10 @@ test('runs every CRM client operation through the real governed BFF boundary', a
           }),
         );
       }
-      if (input.payload['name'] === 'trigger-defect') {
+      if (payload['name'] === 'trigger-defect') {
         return Effect.die(new Error('secret persistence detail'));
       }
-      if (input.payload['name'] === 'trigger-invalid') {
+      if (payload['name'] === 'trigger-invalid') {
         return Effect.fail(
           new ActionPayloadValidationError({
             code: 'action_payload_invalid',
@@ -206,23 +239,23 @@ test('runs every CRM client operation through the real governed BFF boundary', a
           }),
         );
       }
-      if (input.payload['name'] === 'trigger-ico-conflict') {
-        return Effect.fail(
+      if (payload['name'] === 'trigger-ico-conflict') {
+        return failDomain(
           new CrmCustomerIcoConflict({
             code: 'crm_customer_ico_conflict',
             reason: 'A Customer with this IČO already exists',
           }),
         );
       }
-      if (input.payload['name'] === 'trigger-unavailable') {
-        return Effect.fail(
+      if (payload['name'] === 'trigger-unavailable') {
+        return failDomain(
           new CrmPersistenceUnavailable({
             code: 'crm_persistence_unavailable',
             reason: 'CRM persistence is temporarily unavailable',
           }),
         );
       }
-      if (input.payload['name'] === 'trigger-forbidden') {
+      if (payload['name'] === 'trigger-forbidden') {
         return Effect.fail(
           new ActionPermissionDenied({
             code: 'action_permission_denied',
@@ -230,8 +263,8 @@ test('runs every CRM client operation through the real governed BFF boundary', a
           }),
         );
       }
-      if (key.endsWith('edit-customer') && input.payload['customerId'] === missingId) {
-        return Effect.fail(
+      if (key.endsWith('edit-customer') && payload['customerId'] === missingId) {
+        return failDomain(
           new CrmCustomerNotFound({
             code: 'crm_customer_not_found',
             customerId: missingId,
@@ -239,8 +272,8 @@ test('runs every CRM client operation through the real governed BFF boundary', a
           }),
         );
       }
-      if (key.endsWith('archive-customer') && input.payload['customerId'] === conflictId) {
-        return Effect.fail(
+      if (key.endsWith('archive-customer') && payload['customerId'] === conflictId) {
+        return failDomain(
           new CrmLifecycleConflict({
             code: 'crm_lifecycle_conflict',
             reason: 'The Customer is already archived',
@@ -251,27 +284,47 @@ test('runs every CRM client operation through the real governed BFF boundary', a
         );
       }
       if (key.endsWith('contact')) {
-        return Effect.succeed(contact);
+        return decodeResult(contact);
       }
       if (key.endsWith('edit-customer')) {
-        return Effect.succeed({
+        return decodeResult({
           ...nullableCustomer,
-          ...input.payload,
+          ...payload,
           updatedAt: timestamp,
         });
       }
-      return Effect.succeed(nullableCustomer);
+      return decodeResult(nullableCustomer);
     },
-  } as unknown as ActionRuntimeService;
-  const readRuntime = {
-    runRead: (input: {
-      readonly input: Readonly<Record<string, unknown>>;
-      readonly registration: { readonly descriptor: { readonly readKey: string } };
-      readonly transport: { readonly correlationId: string };
-    }) => {
+  };
+  const readRuntime: ReadRuntimeService = {
+    runRead: (input) => {
       const key = input.registration.descriptor.readKey;
-      invocations.push({ key, ...input.transport });
-      if (input.input['customerId'] === missingId) {
+      const readInput = parseJsonObject(input.input);
+      const transport = Schema.decodeUnknownSync(
+        Schema.Struct({
+          correlationId: Schema.String,
+          traceId: Schema.optional(Schema.String),
+        }),
+      )(input.transport);
+      const invocation: CapturedInvocation = {
+        correlationId: transport.correlationId,
+        key,
+      };
+      if (transport.traceId !== undefined) {
+        invocation.traceId = transport.traceId;
+      }
+      invocations.push(invocation);
+      const decodeResult = <Result>(result: Result) =>
+        Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)(result).pipe(
+          Effect.mapError(
+            () =>
+              new ReadResultValidationError({
+                code: 'read_result_invalid',
+                reason: 'The Read fixture result does not match its declared schema',
+              }),
+          ),
+        );
+      if (readInput['customerId'] === missingId) {
         return Effect.fail(
           new ReadEvidencePersistenceError({
             code: 'read_evidence_persistence_failed',
@@ -280,12 +333,12 @@ test('runs every CRM client operation through the real governed BFF boundary', a
         );
       }
       if (key.endsWith('customer-detail')) {
-        return Effect.succeed(
-          input.input['customerId'] === completeCustomerId ? completeCustomer : nullableCustomer,
+        return decodeResult(
+          readInput['customerId'] === completeCustomerId ? completeCustomer : nullableCustomer,
         );
       }
       if (key.endsWith('customer-list')) {
-        if (input.input['offset'] === 99) {
+        if (readInput['offset'] === 99) {
           return Effect.fail(
             new ReadEvidencePersistenceError({
               code: 'read_evidence_persistence_failed',
@@ -293,14 +346,14 @@ test('runs every CRM client operation through the real governed BFF boundary', a
             }),
           );
         }
-        return Effect.succeed({ items: [completeCustomer, nullableCustomer], nextOffset: null });
+        return decodeResult({ items: [completeCustomer, nullableCustomer], nextOffset: null });
       }
       if (key.endsWith('contact-detail')) {
-        return Effect.succeed(contact);
+        return decodeResult(contact);
       }
-      return Effect.succeed({ items: [contact], nextOffset: null });
+      return decodeResult({ items: [contact], nextOffset: null });
     },
-  } as unknown as ReadRuntimeService;
+  };
   const runtime = makeCrmApiRuntime(
     Layer.succeed(ActionRuntime, actionRuntime),
     Layer.succeed(ReadRuntime, readRuntime),
@@ -382,17 +435,11 @@ test('runs every CRM client operation through the real governed BFF boundary', a
     const evidenceFailure = await Effect.runPromise(
       Effect.flip(getCustomerDetail({ customerId: missingId }, base)),
     );
-    assert.equal(
-      (evidenceFailure as { readonly _tag: string })._tag,
-      'CustomerDetailUnavailableProblem',
-    );
+    assert.equal(parseJsonObject(evidenceFailure)['_tag'], 'CustomerDetailUnavailableProblem');
     const listEvidenceFailure = await Effect.runPromise(
       Effect.flip(getCustomerList({ limit: 10, offset: 99 }, base)),
     );
-    assert.equal(
-      (listEvidenceFailure as { readonly _tag: string })._tag,
-      'CustomerListUnavailableProblem',
-    );
+    assert.equal(parseJsonObject(listEvidenceFailure)['_tag'], 'CustomerListUnavailableProblem');
 
     let malformedGatewayIssues = 0;
     const malformedServer = await startServer(
@@ -443,40 +490,39 @@ test('runs every CRM client operation through the real governed BFF boundary', a
         ),
       ),
     );
-    assert.equal((transportFailure as { readonly _tag: string })._tag, 'HttpClientError');
-    assert.equal(
-      (transportFailure as { readonly reason: { readonly _tag: string } }).reason._tag,
-      'TransportError',
-    );
+    const transportProblem = parseJsonObject(transportFailure);
+    assert.equal(transportProblem['_tag'], 'HttpClientError');
+    assert.equal(parseJsonObject(transportProblem['reason'])['_tag'], 'TransportError');
 
     const defectFailure = await Effect.runPromise(
       Effect.flip(createCustomer(customerPayload('trigger-defect'), mutation)),
     );
-    assert.equal((defectFailure as { readonly _tag: string })._tag, 'CrmInternalProblem');
+    assert.equal(parseJsonObject(defectFailure)['_tag'], 'CrmInternalProblem');
     assert.equal(JSON.stringify(defectFailure).includes('secret persistence detail'), false);
 
     const forbiddenFailure = await Effect.runPromise(
       Effect.flip(createCustomer(customerPayload('trigger-forbidden'), mutation)),
     );
-    assert.equal((forbiddenFailure as { readonly _tag: string })._tag, 'CrmForbiddenProblem');
+    assert.equal(parseJsonObject(forbiddenFailure)['_tag'], 'CrmForbiddenProblem');
     const notFoundFailure = await Effect.runPromise(
       Effect.flip(editCustomer({ customerId: missingId, ...customerPayload('Missing') }, mutation)),
     );
-    assert.equal((notFoundFailure as { readonly _tag: string })._tag, 'CrmNotFoundProblem');
+    assert.equal(parseJsonObject(notFoundFailure)['_tag'], 'CrmNotFoundProblem');
     const conflictFailure = await Effect.runPromise(
       Effect.flip(archiveCustomer({ customerId: conflictId }, mutation)),
     );
-    assert.equal((conflictFailure as { readonly _tag: string })._tag, 'CrmConflictProblem');
+    assert.equal(parseJsonObject(conflictFailure)['_tag'], 'CrmConflictProblem');
 
     const invalidMutation = await Effect.runPromise(
       Effect.flip(createCustomer(customerPayload('trigger-invalid'), mutation)),
     );
-    assert.equal((invalidMutation as { readonly _tag: string })._tag, 'CrmInvalidRequestProblem');
+    assert.equal(parseJsonObject(invalidMutation)['_tag'], 'CrmInvalidRequestProblem');
     const icoConflict = await Effect.runPromise(
       Effect.flip(createCustomer(customerPayload('trigger-ico-conflict'), mutation)),
     );
-    assert.equal((icoConflict as { readonly _tag: string })._tag, 'CrmConflictProblem');
-    assert.equal((icoConflict as { readonly code: string }).code, 'crm_customer_ico_conflict');
+    const icoConflictProblem = parseJsonObject(icoConflict);
+    assert.equal(icoConflictProblem['_tag'], 'CrmConflictProblem');
+    assert.equal(icoConflictProblem['code'], 'crm_customer_ico_conflict');
     assert.equal(JSON.stringify(icoConflict).includes('crm_customers_tenant_ico_uk'), false);
     const editIcoConflict = await Effect.runPromise(
       Effect.flip(
@@ -490,14 +536,16 @@ test('runs every CRM client operation through the real governed BFF boundary', a
         ),
       ),
     );
-    assert.equal((editIcoConflict as { readonly _tag: string })._tag, 'CrmConflictProblem');
-    assert.equal((editIcoConflict as { readonly code: string }).code, 'crm_customer_ico_conflict');
+    const editIcoConflictProblem = parseJsonObject(editIcoConflict);
+    assert.equal(editIcoConflictProblem['_tag'], 'CrmConflictProblem');
+    assert.equal(editIcoConflictProblem['code'], 'crm_customer_ico_conflict');
     assert.equal(JSON.stringify(editIcoConflict).includes('crm_customers_tenant_ico_uk'), false);
     const unavailableMutation = await Effect.runPromise(
       Effect.flip(createCustomer(customerPayload('trigger-unavailable'), mutation)),
     );
-    assert.equal((unavailableMutation as { readonly _tag: string })._tag, 'CrmUnavailableProblem');
-    assert.equal((unavailableMutation as { readonly retryable: boolean }).retryable, true);
+    const unavailableProblem = parseJsonObject(unavailableMutation);
+    assert.equal(unavailableProblem['_tag'], 'CrmUnavailableProblem');
+    assert.equal(unavailableProblem['retryable'], true);
 
     const rawValidHeaders = {
       authorization: `Bearer ${assertion}`,

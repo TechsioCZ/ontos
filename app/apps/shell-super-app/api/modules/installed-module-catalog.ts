@@ -40,13 +40,13 @@ export interface InstalledModuleCatalogLoaderOptions {
   readonly timeoutMs?: number;
 }
 
-export interface ShellInstalledModuleCatalogShape {
+export interface ShellInstalledModuleCatalogService {
   readonly load: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>;
 }
 
 export class ShellInstalledModuleCatalog extends Context.Service<
   ShellInstalledModuleCatalog,
-  ShellInstalledModuleCatalogShape
+  ShellInstalledModuleCatalogService
 >()('@app/shell-super-app/api/modules/installed-module-catalog/ShellInstalledModuleCatalog') {}
 
 const unavailable = () =>
@@ -61,7 +61,9 @@ const invalid = () =>
     reason: 'The installed module catalog is contradictory or malformed',
   });
 
-const readBoundedJson = async (response: Response, maxBytes: number): Promise<unknown> => {
+type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
+
+const readBoundedJson = async (response: Response, maxBytes: number): Promise<JsonValue> => {
   if (response.status < 200 || response.status >= 300 || response.redirected) {
     throw unavailable();
   }
@@ -98,7 +100,7 @@ const readBoundedJson = async (response: Response, maxBytes: number): Promise<un
     offset += chunk.byteLength;
   }
   try {
-    return JSON.parse(new TextDecoder().decode(bytes));
+    return Schema.decodeUnknownSync(Schema.Json)(JSON.parse(new TextDecoder().decode(bytes)));
   } catch {
     throw invalid();
   }
@@ -109,7 +111,7 @@ const fetchContract = async (
   contractUrl: string,
   fetchContractDocument: ModuleContractFetch,
   options: Required<InstalledModuleCatalogLoaderOptions>,
-): Promise<{ readonly contract: unknown; readonly expectedAppId: string }> => {
+): Promise<{ readonly contract: JsonValue; readonly expectedAppId: string }> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
   try {
@@ -186,7 +188,7 @@ export const installedModuleCatalog: Effect.Effect<
 
 export const ShellInstalledModuleCatalogLive = Layer.sync(
   ShellInstalledModuleCatalog,
-  (): ShellInstalledModuleCatalogShape => {
+  (): ShellInstalledModuleCatalogService => {
     let loader: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> | undefined;
     return {
       load: deploymentAllowlist.pipe(

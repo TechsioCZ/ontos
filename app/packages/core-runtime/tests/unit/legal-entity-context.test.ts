@@ -6,7 +6,7 @@ import { Effect } from 'effect';
 import {
   classifyActiveLegalEntities,
   classifySelectedLegalEntity,
-  makeLegalEntityContext,
+  legalEntityContextFromRepository,
 } from '../../src/auth/legal-entity-context.ts';
 import type {
   LegalEntityContextError,
@@ -121,12 +121,8 @@ test('rejects cross-tenant, malformed, and duplicate records', async () => {
 });
 
 test('types database failures as sanitized legal-entity context unavailability', async () => {
-  const context = makeLegalEntityContext({
-    executor: {
-      select: () => {
-        throw new Error('secret database diagnostic');
-      },
-    } as never,
+  const context = legalEntityContextFromRepository({
+    load: () => Promise.reject(new Error('secret database diagnostic')),
   });
   const error = await Effect.runPromise(Effect.flip(context.listActiveForTenant(tenantId)));
   assert.equal(error._tag, 'LegalEntityContextUnavailableError');

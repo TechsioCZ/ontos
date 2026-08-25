@@ -71,11 +71,20 @@ worker keys. A failed load never creates or caches a partial catalog. A subscrip
 producer that is not installed; it remains dormant until matching messages can exist.
 
 Core capabilities are implicit universal infrastructure, not per-module requirements. External
-system readiness and module-owned setup remain private implementation concerns and are not V0
-activation gates. Every installed business module has an independent tenant lifecycle: any state
-declared in its own `supportedStates` may be requested regardless of other modules' installation or
-tenant state. Typed API, public event, and Outbox communication preserves deployment boundaries but
-never creates installation, activation, deactivation, setup, or transition coupling.
+system readiness and module-owned setup remain private implementation concerns and are not generic
+activation gates.
+
+A versioned Application Composition owns a dependency-closed DAG of Foundational and Business
+Modules. Core validates that graph without learning its business meaning. Installation, activation,
+and entrypoint execution must preserve dependency closure: a module can activate only when every
+required dependency is installed, compatible, and active. Customer Configurations may select only
+modules permitted by the composition.
+
+Dependency enforcement never authorizes private imports, shared repositories, shared business
+transactions, or direct table access. Typed API, public event, and Outbox communication preserves
+the deployment seams. A dependency outage produces an explicit unavailable/degraded result for the
+affected entrypoint without rewriting or cascading persisted module states; unrelated modules keep
+their independent lifecycles and remain operable.
 
 ## Generator order
 
@@ -122,10 +131,10 @@ Federation exposure, and the generated Shell lazy-client allowlist. They do not 
 `navigation` contributions because a route template is not a usable destination. The manifest never
 contains route values, loader functions, imports, private source paths, or executable matching code.
 
-## Repository documentation follow-up
+## Documentation authority
 
-The repository-level `../docs/03_ARCHITECTURE_OVERVIEW.md`, `../docs/04_C4_MODEL.md`,
-`../docs/05_MICROVERTICALS.md`, `../docs/14_ONTOS_MODULE_MANIFEST.md`, `../docs/CONTEXT.md`, and
-proposed ADRs still describe a jointly deployed process or static registration catalog. Their
-documentation owners must reconcile that older model separately; this app-local contract is the
-authoritative implementation rule for independently deployed MicroVerticals.
+Repository-level product vocabulary and the app-local implementation contract agree that OntOS
+Business Modules preserve independently deployable MicroVertical seams. Proposed historical ADRs
+remain decision history and do not override this app-local implementation rule. If future product
+vocabulary and implementation guidance diverge, update both explicitly rather than silently
+selecting one generation.

@@ -43,11 +43,7 @@ const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuratio
 export const makeCoreDatabase = (
   configuration: DatabaseConfigValue,
   poolFactory: PoolFactory = defaultPoolFactory,
-): Effect.Effect<
-  Context.Service.Shape<typeof CoreDatabase>,
-  DatabaseConnectionError,
-  Scope.Scope
-> =>
+): Effect.Effect<(typeof CoreDatabase)['Service'], DatabaseConnectionError, Scope.Scope> =>
   acquirePoolResource(() =>
     poolFactory({
       connectionString: configuration.connectionString,

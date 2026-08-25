@@ -34,15 +34,15 @@ class DatabaseVerificationError extends Schema.TaggedErrorClass<DatabaseVerifica
   },
 ) {}
 
-type CatalogRow = Record<string, unknown> & {
+type CatalogRow = Readonly<Record<string, string | null>> & {
   readonly kind: 'migration' | 'table';
   readonly schema_name: string;
   readonly table_name: null | string;
 };
 
-const verifyTypedQuery = (
+const verifyTypedQuery = <Result,>(
   tableName: string,
-  query: () => PromiseLike<unknown>,
+  query: () => PromiseLike<Result>,
 ): Effect.Effect<void, DatabaseVerificationError> =>
   Effect.tryPromise({
     catch: () =>

@@ -47,13 +47,13 @@ const authenticatedShell = {
   tenants: { items: [], state: 'available' as const },
 };
 
-const request = () =>
-  ({
-    headers: {
-      get: (name: string) => (name.toLowerCase() === 'cookie' ? 'session=test-session' : null),
-    },
-    url: 'https://shell.example.test/en/crm/customers',
-  }) as Request;
+const request = () => {
+  const value = new Request('https://shell.example.test/en/crm/customers');
+  Object.defineProperty(value, 'headers', {
+    value: new Headers({ cookie: 'session=test-session' }),
+  });
+  return value;
+};
 
 beforeEach(() => {
   loadHomePageModelMock.mockResolvedValue(authenticatedShell);

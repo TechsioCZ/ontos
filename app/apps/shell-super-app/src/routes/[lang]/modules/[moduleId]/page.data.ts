@@ -1,11 +1,24 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader preserves the typed Effect error channel until the framework boundary. */
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget, runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { shellAuthenticationApiContract } from '../../../../../shared/api.ts';
 import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
+
+const withOptionalProperty = <
+  Base extends object,
+  Key extends PropertyKey,
+  Value,
+  Trailing extends object,
+>(
+  base: Base,
+  condition: boolean,
+  key: Key,
+  value: Value,
+  trailing: Trailing,
+) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 interface ModuleTargetLoaderArguments {
   readonly params: { readonly entrypointKey?: string; readonly moduleId: string };
@@ -28,7 +41,7 @@ export const selectRouteParams = (
       declaredNames.slice(0, routeParameterLimit).flatMap((name) => {
         const value = params[name];
         return routeParameterNamePattern.test(name) &&
-          typeof value === 'string' &&
+          Predicate.isString(value) &&
           value.length <= routeParameterValueLengthLimit
           ? [[name, value] as const]
           : [];
@@ -83,27 +96,35 @@ export const loader = async ({
     } as const;
   }
   const cookie = request.headers.get('cookie');
-  const options = {
-    baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    ...(cookie === null ? {} : { cookie }),
-  };
+  const options = withOptionalProperty(
+    {
+      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
+    },
+    !(cookie === null),
+    'cookie',
+    cookie,
+    {},
+  );
   const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
   return runEffectRequest(
     resolveModuleTarget(
-      {
-        ...(params.entrypointKey === undefined ? {} : { entrypointKey: params.entrypointKey }),
-        moduleId: params.moduleId,
-      },
+      withOptionalProperty(
+        {},
+        !(params.entrypointKey === undefined),
+        'entrypointKey',
+        params.entrypointKey,
+        {
+          moduleId: params.moduleId,
+        },
+      ),
       options,
     ).pipe(
-      Effect.map(
-        (target): ModuleTargetPageModel => ({
-          routeParams: boundedRouteParams,
-          shell,
-          state: 'resolved',
-          target,
-        }),
-      ),
+      Effect.map((target): ModuleTargetPageModel => ({
+        routeParams: boundedRouteParams,
+        shell,
+        state: 'resolved',
+        target,
+      })),
       Effect.catch((error) => Effect.succeed(safeState(error, shell))),
     ),
   );

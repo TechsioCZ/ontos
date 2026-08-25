@@ -9,6 +9,7 @@ import { Pool } from 'pg';
 import {
   bindApiKey,
   createNonHumanPrincipal,
+  principalManagementRepositoryFromTransaction,
   setApiKeyBindingStatus,
 } from '../../src/auth/principal-management.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -44,7 +45,7 @@ test('persists managed key lifecycle without credential material and enforces gl
     });
     const first = await database.transaction((transaction) =>
       Effect.runPromise(
-        createNonHumanPrincipal(transaction as never, {
+        createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
           displayName: 'Managed integration',
           kind: 'integration',
           tenantId,
@@ -53,7 +54,7 @@ test('persists managed key lifecycle without credential material and enforces gl
     );
     const second = await database.transaction((transaction) =>
       Effect.runPromise(
-        createNonHumanPrincipal(transaction as never, {
+        createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
           displayName: 'Managed service',
           kind: 'service',
           tenantId,
@@ -62,7 +63,7 @@ test('persists managed key lifecycle without credential material and enforces gl
     );
     const binding = await database.transaction((transaction) =>
       Effect.runPromise(
-        bindApiKey(transaction as never, {
+        bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
           managed: true,
           principalId: first.principalId,
           providerSubjectId: providerKeyId,
@@ -73,7 +74,7 @@ test('persists managed key lifecycle without credential material and enforces gl
     const duplicate = await database.transaction((transaction) =>
       Effect.runPromise(
         Effect.flip(
-          bindApiKey(transaction as never, {
+          bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
             managed: true,
             principalId: second.principalId,
             providerSubjectId: providerKeyId,
@@ -87,7 +88,7 @@ test('persists managed key lifecycle without credential material and enforces gl
     const missingReason = await database.transaction((transaction) =>
       Effect.runPromise(
         Effect.flip(
-          setApiKeyBindingStatus(transaction as never, {
+          setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
             authBindingId: binding.authBindingId,
             expectedStatus: 'active',
             managed: true,
@@ -102,7 +103,7 @@ test('persists managed key lifecycle without credential material and enforces gl
 
     await database.transaction((transaction) =>
       Effect.runPromise(
-        setApiKeyBindingStatus(transaction as never, {
+        setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
           authBindingId: binding.authBindingId,
           expectedStatus: 'active',
           managed: true,

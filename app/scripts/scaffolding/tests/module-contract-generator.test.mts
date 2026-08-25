@@ -3,13 +3,50 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { Schema } from 'effect';
 import { checkOntosModuleContracts } from '../../check-ontos-module-contracts.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { generateOntosModuleContract } from '../../generate-ontos-module-contract.mts';
 import { getHelpText, runScaffold } from '../cli.mts';
+import type { JsonValue } from '../shared.mts';
+
+const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
+const ModulePackageSchema = Schema.Struct({
+  dependencies: StringRecordSchema,
+  exports: StringRecordSchema,
+  modernjs: Schema.Struct({
+    ontosModule: Schema.Struct({
+      contractPath: Schema.String,
+      manifest: Schema.String,
+      moduleId: Schema.String,
+      registration: Schema.String,
+      schemaVersion: Schema.Number,
+    }),
+  }),
+  scripts: StringRecordSchema,
+});
+const ModuleTsconfigSchema = Schema.Struct({ include: Schema.Array(Schema.String) });
+const ModuleContractDocumentSchema = Schema.Struct({
+  deployment: Schema.Struct({ appId: Schema.String }),
+  manifest: Schema.Struct({
+    module: Schema.Struct({ id: Schema.String }),
+    publicSurface: Schema.Struct({
+      api: Schema.Array(Schema.Struct({ operationKeys: Schema.Array(Schema.String) })),
+    }),
+  }),
+  schemaVersion: Schema.String,
+});
+const decodeModulePackage = (source: string) =>
+  Schema.decodeUnknownSync(ModulePackageSchema, { onExcessProperty: 'preserve' })(
+    JSON.parse(source),
+  );
+const decodeModuleContract = (source: string) =>
+  Schema.decodeUnknownSync(ModuleContractDocumentSchema, { onExcessProperty: 'preserve' })(
+    JSON.parse(source),
+  );
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
-const json = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;
 
 const write = async (root: string, relative: string, content: string): Promise<void> => {
   const target = path.join(root, relative);
@@ -269,14 +306,9 @@ test('generates conservative owner files and patches only package and tsconfig o
     assert.match(registration, /defineVerticalRuntimeRegistration/u);
     assert.match(registration, /generated-module-registration-workers/u);
     assert.doesNotMatch(registration, /handler|migration|route/u);
-    const packageJson = JSON.parse(
+    const packageJson = decodeModulePackage(
       await readFile(path.join(root, 'verticals/property-registry/package.json'), 'utf-8'),
-    ) as {
-      dependencies: Record<string, string>;
-      exports: Record<string, string>;
-      modernjs: { ontosModule: Record<string, unknown> };
-      scripts: Record<string, string>;
-    };
+    );
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': 'workspace:*',
       zeta: '1.0.0',
@@ -295,9 +327,11 @@ test('generates conservative owner files and patches only package and tsconfig o
       registration: './vertical.registration.ts',
       schemaVersion: 2,
     });
-    const tsconfig = JSON.parse(
-      await readFile(path.join(root, 'verticals/property-registry/tsconfig.json'), 'utf-8'),
-    ) as { include: string[] };
+    const tsconfig = Schema.decodeUnknownSync(ModuleTsconfigSchema)(
+      JSON.parse(
+        await readFile(path.join(root, 'verticals/property-registry/tsconfig.json'), 'utf-8'),
+      ),
+    );
     assert.deepEqual(tsconfig.include, [
       'src',
       'shared',
@@ -337,9 +371,7 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     const firstContent = await readFile(first.path, 'utf-8');
     const packagePath = path.join(root, 'verticals/property-registry/package.json');
     const packageContent = await readFile(packagePath, 'utf-8');
-    const incompatiblePackage = JSON.parse(packageContent) as {
-      modernjs: { ontosModule: { schemaVersion: number } };
-    };
+    const incompatiblePackage = decodeModulePackage(packageContent);
     incompatiblePackage.modernjs.ontosModule.schemaVersion = 0;
     await writeFile(packagePath, json(incompatiblePackage), 'utf-8');
     await assert.rejects(
@@ -359,14 +391,7 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
     });
     assert.equal(await readFile(second.path, 'utf-8'), firstContent);
     assert.equal(second.etag, first.etag);
-    const document = JSON.parse(firstContent) as {
-      deployment: { appId: string };
-      manifest: {
-        module: { id: string };
-        publicSurface: { api: readonly { operationKeys: readonly string[] }[] };
-      };
-      schemaVersion: string;
-    };
+    const document = decodeModuleContract(firstContent);
     assert.equal(document.deployment.appId, 'property-registry');
     assert.equal(document.manifest.module.id, 'property.registry');
     assert.equal(document.schemaVersion, '2');
@@ -385,10 +410,7 @@ test('emits deterministic deployment-safe JSON and rejects damaged owner slots',
       vertical: 'documents-center',
       workspaceRoot: root,
     });
-    const secondDocument = JSON.parse(await readFile(secondDeployment.path, 'utf-8')) as {
-      deployment: { appId: string };
-      manifest: { module: { id: string } };
-    };
+    const secondDocument = decodeModuleContract(await readFile(secondDeployment.path, 'utf-8'));
     assert.equal(secondDocument.deployment.appId, 'documents-center');
     assert.equal(secondDocument.manifest.module.id, 'documents.center');
 

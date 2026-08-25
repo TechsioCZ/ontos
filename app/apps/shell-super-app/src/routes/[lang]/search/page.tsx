@@ -3,13 +3,12 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import type { SearchPageModel } from './page.data.ts';
 import { AuthenticatedDashboardLayout } from '../../shell-frame.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
-export default function SearchPage() {
+const SearchPage = () => {
   const { language, t } = useModernI18n();
-  const model = useLoaderData({ strict: false }) as SearchPageModel;
+  const model = useLoaderData({ from: '/$lang/search' });
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined,
   );
@@ -93,4 +92,6 @@ export default function SearchPage() {
       {content}
     </AuthenticatedDashboardLayout>
   );
-}
+};
+
+export default SearchPage;

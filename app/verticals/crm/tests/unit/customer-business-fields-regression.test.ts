@@ -4,6 +4,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { customerAresLookupRead } from '../../src/api/customer-ares-lookup.read.ts';
 import { crmE2eCustomers } from '../support/e2e-customers.ts';
+import { flattenCatalogKeys, parseLocaleCatalogGroup } from '../support/locale-catalog.ts';
 
 const customerBusinessFields = [
   'dic',
@@ -33,18 +34,12 @@ const sourceFiles = (directory: URL) =>
 const readSources = (files: readonly URL[]) =>
   Promise.all(files.map(async (file) => ({ file, source: await readFile(file, 'utf-8') })));
 
-const readJson = async (file: URL): Promise<unknown> => {
+const readJson = async (file: URL) => {
   const source = await readFile(file, 'utf-8');
-  return JSON.parse(source);
+  return parseLocaleCatalogGroup(JSON.parse(source));
 };
 
-const leafPaths = (value: unknown, prefix = ''): string[] => {
-  assert.ok(typeof value === 'object' && value !== null && !Array.isArray(value));
-  return Object.entries(value).flatMap(([key, child]) => {
-    const path = prefix.length === 0 ? key : `${prefix}.${key}`;
-    return typeof child === 'object' && child !== null ? leafPaths(child, path) : [path];
-  });
-};
+const leafPaths = flattenCatalogKeys;
 
 test('keeps Czech/English CRM copy and complete/null Customer fixtures structurally aligned', async () => {
   const [czech, english, fixtureSource] = await Promise.all([

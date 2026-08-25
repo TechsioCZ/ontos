@@ -52,33 +52,45 @@ export interface CrmMutationOptions extends CrmOperationOptions {
   readonly idempotencyKey: string;
 }
 
-const makeClient = (
-  options: CrmClientOptions,
-  authorization?: string,
-  correlationId?: string,
-  traceId?: string,
-) =>
-  makeEffectHttpApiClient(crmApi, {
+interface CrmClientAuthorization {
+  readonly authorization: string;
+  readonly correlationId: string;
+  readonly traceId?: string;
+}
+
+const makeClient = (options: CrmClientOptions, authentication?: CrmClientAuthorization) => {
+  const localeContext = options.locale === undefined ? {} : { locale: options.locale };
+  const operationContext =
+    options.operationContext === undefined
+      ? localeContext
+      : { ...localeContext, operationContext: options.operationContext };
+  const requestContext =
+    options.traceparent === undefined
+      ? operationContext
+      : { ...operationContext, traceparent: options.traceparent };
+  const config = {
     baseUrl: options.baseUrl ?? crmApiContract.apiPrefix,
-    requestContext: {
-      ...(options.locale === undefined ? {} : { locale: options.locale }),
-      ...(options.operationContext === undefined
-        ? {}
-        : { operationContext: options.operationContext }),
-      ...(options.traceparent === undefined ? {} : { traceparent: options.traceparent }),
-    },
-    ...(authorization === undefined
-      ? {}
+    requestContext,
+  };
+  if (authentication === undefined) {
+    return makeEffectHttpApiClient(crmApi, config);
+  }
+  const headers =
+    authentication.traceId === undefined
+      ? {
+          authorization: authentication.authorization,
+          'x-correlation-id': authentication.correlationId,
+        }
       : {
-          transformClient: HttpClient.mapRequest(
-            HttpClientRequest.setHeaders({
-              authorization,
-              'x-correlation-id': correlationId as string,
-              ...(traceId === undefined ? {} : { 'x-trace-id': traceId }),
-            }),
-          ),
-        }),
+          authorization: authentication.authorization,
+          'x-correlation-id': authentication.correlationId,
+          'x-trace-id': authentication.traceId,
+        };
+  return makeEffectHttpApiClient(crmApi, {
+    ...config,
+    transformClient: HttpClient.mapRequest(HttpClientRequest.setHeaders(headers)),
   });
+};
 
 export const createCrmClient = (options: CrmClientOptions = {}): CrmClientEffect<CrmClient> =>
   makeClient(options);
@@ -88,21 +100,18 @@ const invoke = <Success, Failure>(
   context: OperationContext,
   operation: (client: CrmClient) => Effect.Effect<Success, Failure>,
 ) =>
-  actionGateway.invoke(
-    (authorization) =>
-      makeClient(
-        {
-          ...options,
-          operationContext:
-            options.operationContext ??
-            (options.traceId === undefined ? context : { ...context, traceId: options.traceId }),
-        },
-        authorization,
-        options.correlationId,
-        options.traceId,
-      ).pipe(Effect.flatMap(operation)),
-    options.gateway,
-  );
+  actionGateway.invoke((authorization) => {
+    const operationContext =
+      options.operationContext ??
+      (options.traceId === undefined ? context : { ...context, traceId: options.traceId });
+    const authentication =
+      options.traceId === undefined
+        ? { authorization, correlationId: options.correlationId }
+        : { authorization, correlationId: options.correlationId, traceId: options.traceId };
+    return makeClient({ ...options, operationContext }, authentication).pipe(
+      Effect.flatMap(operation),
+    );
+  }, options.gateway);
 
 const mutationHeaders = (options: CrmMutationOptions) => ({
   'idempotency-key': options.idempotencyKey,

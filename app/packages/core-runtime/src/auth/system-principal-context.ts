@@ -46,9 +46,40 @@ export const registerSystemWorkload = (input: {
   return registration;
 };
 
-export const makeSystemPrincipalContextResolver = (database: {
+export interface SystemPrincipalContextRepositoryService {
+  readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Promise<
+    | {
+        readonly kind: (typeof principals.$inferSelect)['kind'];
+        readonly principalStatus: (typeof principals.$inferSelect)['status'];
+        readonly tenantStatus: (typeof tenants.$inferSelect)['status'];
+      }
+    | undefined
+  >;
+}
+
+const systemPrincipalContextRepositoryFromDatabase = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
-}) => ({
+}): SystemPrincipalContextRepositoryService => ({
+  load: async (input) => {
+    const [loaded] = await database.executor
+      .select({
+        kind: principals.kind,
+        principalStatus: principals.status,
+        tenantStatus: tenants.status,
+      })
+      .from(principals)
+      .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
+      .where(
+        and(eq(principals.tenantId, input.tenantId), eq(principals.principalId, input.principalId)),
+      )
+      .limit(1);
+    return loaded;
+  },
+});
+
+export const systemPrincipalContextResolverFromRepository = (
+  repository: SystemPrincipalContextRepositoryService,
+) => ({
   resolve: (input: {
     readonly principalId: string;
     readonly registration: SystemWorkloadRegistration;
@@ -73,24 +104,11 @@ export const makeSystemPrincipalContextResolver = (database: {
             code: 'system_principal_context_unavailable',
             reason: 'The system principal could not be revalidated',
           }),
-        try: async () => {
-          const [loaded] = await database.executor
-            .select({
-              kind: principals.kind,
-              principalStatus: principals.status,
-              tenantStatus: tenants.status,
-            })
-            .from(principals)
-            .innerJoin(tenants, eq(tenants.tenantId, principals.tenantId))
-            .where(
-              and(
-                eq(principals.tenantId, input.tenantId),
-                eq(principals.principalId, input.principalId),
-              ),
-            )
-            .limit(1);
-          return loaded;
-        },
+        try: () =>
+          repository.load({
+            principalId: input.principalId,
+            tenantId: input.tenantId,
+          }),
       });
       const kindAllowed =
         record?.kind === 'system' ||
@@ -115,3 +133,10 @@ export const makeSystemPrincipalContextResolver = (database: {
       );
     }),
 });
+
+export const makeSystemPrincipalContextResolver = (database: {
+  readonly executor: Pick<CoreDatabaseExecutor, 'select'>;
+}) =>
+  systemPrincipalContextResolverFromRepository(
+    systemPrincipalContextRepositoryFromDatabase(database),
+  );
