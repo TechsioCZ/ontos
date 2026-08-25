@@ -10,6 +10,7 @@ Follow the `Instructions` to implement the `Plan`, execute the `Application Vali
 ## Instructions
 
 - Work from the OntOS `app/` directory.
+- Create a new Git Worktree
 - Read the plan, think hard about the plan, and implement the plan.
 - If project context is not fresh, use `$ontos-prime` before continuing.
 - Read `../AGENTS.md`, `AGENTS.md`, and every relevant guidance file referenced by `AGENTS.md`. Do not rely on memory or a previous summary.
@@ -170,21 +171,27 @@ Create or update one section in the plan:
 ## Implementation Evidence
 
 ### Summary
+
 - <What was implemented.>
 
 ### Changed Files
+
 <Concise output from git diff --stat.>
 
 ### Tests Written or Updated
+
 - `<test path>` — <behavior and failure path it proves>.
 
 ### Validation
+
 - `<exact command>` — <passed, failed, or not run; include the reason>.
 
 ### Review
+
 - <AGENTS.md files and referenced guidance reviewed, findings, fixes, and any screenshots.>
 
 ### Deviations and Follow-ups
+
 - <Deviation, accepted finding, baseline failure, or follow-up. Write "None" when empty.>
 ```
 
