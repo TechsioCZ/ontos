@@ -72,6 +72,10 @@ const isLocalhostEndpoint = (endpoint: string): boolean => {
   }
 };
 
+const isStagePrivateEndpoint = (endpoint: string, environment: Environment): boolean =>
+  environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim() === 'stage' &&
+  endpoint === 'spicedb:50051';
+
 const isValidEndpoint = (endpoint: string): boolean => {
   try {
     const parsed = new URL(`https://${endpoint}`);
@@ -107,9 +111,15 @@ export const parseSpiceDbConfig = (
   if (insecureFlag !== 'true' && insecureFlag !== 'false') {
     return Effect.fail(configFailure('SPICEDB_INSECURE must be explicitly true or false'));
   }
-  if (insecureFlag === 'true' && !isLocalhostEndpoint(endpoint)) {
+  if (
+    insecureFlag === 'true' &&
+    !isLocalhostEndpoint(endpoint) &&
+    !isStagePrivateEndpoint(endpoint, environment)
+  ) {
     return Effect.fail(
-      configFailure('Insecure SpiceDB transport is allowed only for an explicit localhost port'),
+      configFailure(
+        'Insecure SpiceDB transport is allowed only for an explicit localhost port or the stage private endpoint',
+      ),
     );
   }
 

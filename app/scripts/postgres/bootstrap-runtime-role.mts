@@ -1,4 +1,8 @@
+import { config as loadDotenv } from 'dotenv';
 import { Client } from 'pg';
+import { APP_ENV_PATH } from '../../packages/core-runtime/src/environment/workspace-environment.ts';
+
+loadDotenv({ path: APP_ENV_PATH, quiet: true });
 
 const adminUrl = process.env['DATABASE_ADMIN_URL']?.trim();
 const runtimeUrl = process.env['DATABASE_URL']?.trim();

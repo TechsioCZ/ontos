@@ -1,6 +1,7 @@
 # Agent Instructions
 
-- Work solely in `@app`.
+- Work solely in `@app`, except repository-root `.github/workflows/` files required for GitHub to
+  discover and run this application's CI/deployment workflows.
 - `mvp/` and `mvp2/` are read only.
 
 ## Mandatory Codesmith Generators

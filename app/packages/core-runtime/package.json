@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
+    "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "scripts": {

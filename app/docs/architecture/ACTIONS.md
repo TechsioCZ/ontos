@@ -20,6 +20,14 @@ receive or import a database executor.
   value is published in the owner-authored manifest and bound to its private handler only in the
   owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
+The only installation exception is the first operator-invoked creation of a deployment's initial
+Tenant, legal entity, human Principal/Auth binding, module state, and matching authorization
+relationships. An Action cannot perform that transition because its trusted tenant and Principal do
+not exist yet. This bootstrap must be stage/environment gated, idempotent and conflict detecting,
+must stay inside a Core-owned Effect boundary, and must never run from normal application startup or
+an automatic deployment. Shell may create the matching Better Auth credential, then pass only the
+provider user ID to that Core installation boundary. Every later state change uses an Action.
+
 Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
 active tenant selection, API-key provider mechanics, and mechanical impersonation-session
 creation/restoration—are Shell-owned authentication mechanics, not canonical business-state
