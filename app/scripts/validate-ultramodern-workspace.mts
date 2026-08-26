@@ -5965,6 +5965,12 @@ if (hasDeliveryUnits) {
     'Zerops Node services must install pinned Node during container initialization without a custom runtime image',
   );
   assert(
+    zeropsYaml.includes(
+      'DATABASE_ADMIN_URL: postgresql://${db_superUser}:${db_superUserPassword}@${db_hostname}:${db_port}/${db_dbName}',
+    ) && !zeropsYaml.includes('DATABASE_ADMIN_URL: ${db_connectionString}'),
+    'Zerops migrator must use the PostgreSQL administrative identity for role and database bootstrap',
+  );
+  assert(
     zeropsYaml.includes('deployFiles:'),
     'Zerops manifest must deploy package-pruned runtime directories',
   );
