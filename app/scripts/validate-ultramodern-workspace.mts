@@ -5957,6 +5957,11 @@ if (hasDeliveryUnits) {
     'Zerops manifest must use the provisioned Alpine runtime version',
   );
   assert(
+    zeropsYaml.includes(`base: ${quoteYamlString('nodejs@24')}`) &&
+      zeropsYaml.includes(`initCommands:\n        - sh app/scripts/install-zerops-node.sh`),
+    'Zerops Node services must install pinned Node during container initialization without a custom runtime image',
+  );
+  assert(
     zeropsYaml.includes('deployFiles:'),
     'Zerops manifest must deploy package-pruned runtime directories',
   );
