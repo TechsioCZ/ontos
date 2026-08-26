@@ -4916,14 +4916,15 @@ assert(
 );
 assert(
   pnpmWorkspace.includes("'@vercel/nft@0.29.2': patches/@vercel__nft@0.29.2.patch"),
-  'pnpm-workspace.yaml must patch the deployment tracer for missing pnpm project markers',
+  'pnpm-workspace.yaml must patch the deployment tracer for transient filesystem markers',
 );
 const vercelNftPatch = readText('patches/@vercel__nft@0.29.2.patch');
 assert(
-  vercelNftPatch.includes('isMissingPnpmProjectMarker') &&
+  vercelNftPatch.includes('isTransientMissingFile') &&
     vercelNftPatch.includes('pnpm[\\\\/]store[\\\\/]v\\d+') &&
+    vercelNftPatch.includes('^\\/proc\\/(?:self|\\d+)\\/fd\\/\\d+$') &&
     vercelNftPatch.includes("throw new Error('File ' + path + ' does not exist.')"),
-  'The deployment tracer patch must ignore only pnpm project markers while rejecting other missing files',
+  'The deployment tracer patch must ignore only transient pnpm and process markers while rejecting other missing files',
 );
 assert(
   pnpmWorkspace.includes(`'@effect/opentelemetry': ${expectedEffectVersion}`),
