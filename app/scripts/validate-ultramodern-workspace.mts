@@ -4765,6 +4765,11 @@ const minimumPnpmVersion = { major: 11, minor: 0, patch: 0 };
 const currentPnpmVersion = parseSemver(activePnpmVersion);
 const minimumNodeVersion = { major: 26, minor: 0, patch: 0 };
 const currentNodeVersion = parseSemver(activeNodeVersion);
+const repositoryWorkflowPath = fs.existsSync(
+  path.join(root, '../.github/workflows/ultramodern-workspace-gates.yml'),
+)
+  ? '../.github/workflows/ultramodern-workspace-gates.yml'
+  : '.github/workflows/ultramodern-workspace-gates.yml';
 
 assert(
   compareSemver(currentPnpmVersion, minimumPnpmVersion) >= 0,
@@ -4788,7 +4793,7 @@ const requiredPaths = [
   'oxlint.config.ts',
   'oxfmt.config.ts',
   '.github/renovate.json',
-  '.github/workflows/ultramodern-workspace-gates.yml',
+  repositoryWorkflowPath,
   '.agents/agent-reference-repos.json',
   'topology/reference-topology.json',
   'topology/ownership.json',
@@ -4998,7 +5003,7 @@ assert(
   readText('.mise.toml').includes(`pnpm = "${packageManagerPnpmVersion}"`),
   'mise must pin the generated pnpm version',
 );
-const workflowText = readText('.github/workflows/ultramodern-workspace-gates.yml');
+const workflowText = readText(repositoryWorkflowPath);
 const workflowNodeVersions = extractWorkflowNodeVersions(workflowText);
 assert(workflowNodeVersions.length > 0, 'CI workflow must configure setup-node node-version');
 assert(
@@ -5689,7 +5694,7 @@ const assertAdditionalShellCohort = () => {
     assertExists('zerops.yaml');
     const zeropsYaml = readText('zerops.yaml');
     assert(
-      zeropsYaml.includes(`setup: ${quoteYamlString('shell-super-app')}`),
+      zeropsYaml.includes(`setup: ${quoteYamlString('shellsuperapp')}`),
       'shell-super-app must have a Zerops service',
     );
     for (const shell of expectedAdditionalShells) {
@@ -5943,12 +5948,12 @@ if (hasDeliveryUnits) {
   const zeropsYaml = readText('zerops.yaml');
   assert(zeropsYaml.includes('zerops:'), 'Zerops manifest must include zerops services');
   assert(
-    zeropsYaml.includes(`setup: ${quoteYamlString('shell-super-app')}`),
+    zeropsYaml.includes(`setup: ${quoteYamlString('shellsuperapp')}`),
     'Zerops manifest must include shell service',
   );
   assert(
-    zeropsYaml.includes(`base: ${quoteYamlString('nodejs@26')}`),
-    'Zerops manifest must use generated Node runtime major',
+    zeropsYaml.includes(`base: ${quoteYamlString('alpine@3.23')}`),
+    'Zerops manifest must use the provisioned Alpine runtime version',
   );
   assert(
     zeropsYaml.includes('deployFiles:'),
@@ -5956,7 +5961,7 @@ if (hasDeliveryUnits) {
   );
   assert(
     zeropsYaml.includes(
-      `start: cd ${quoteShellValue('.zerops/runtime/shell-super-app')} && npm run serve`,
+      `start: cd ${quoteShellValue('app/.zerops/runtime/shell-super-app')} && PATH="$HOME/.local/node-26.5.0/bin:$PATH" npm run serve`,
     ),
     'Zerops shell service must start from materialized runtime package',
   );
@@ -5965,6 +5970,13 @@ if (hasDeliveryUnits) {
       zeropsYaml.includes('ULTRAMODERN_ZEROPS_SERVICE:'),
     'Zerops manifest must expose service identity and ports',
   );
+  assert(
+    zeropsYaml.includes(`setup: ${quoteYamlString('migrator')}`) &&
+      zeropsYaml.includes(`setup: ${quoteYamlString('spicedb')}`) &&
+      zeropsYaml.includes('authzed/spicedb:v1.56.0') &&
+      zeropsYaml.includes('--network=host'),
+    'Zerops manifest must include the pinned remote migration and SpiceDB services',
+  );
   for (const vertical of fullStackVerticals) {
     assert(
       zeropsYaml.includes(`setup: ${quoteYamlString(vertical.id)}`),
@@ -5972,7 +5984,7 @@ if (hasDeliveryUnits) {
     );
     assert(
       zeropsYaml.includes(
-        `~/.local/bin/mise exec -- pnpm run zerops:materialize -- --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`,
+        `PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm run zerops:materialize -- --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`,
       ),
       `${vertical.id} Zerops service must materialize its runtime package`,
     );
@@ -5989,13 +6001,22 @@ if (hasDeliveryUnits) {
     }
   }
   const zeropsMaterializer = readText('scripts/materialize-zerops-runtime.mjs');
+  for (const deliveryUnitPath of [
+    'apps/shell-super-app',
+    ...fullStackVerticals.map((vertical) => vertical.path),
+  ]) {
+    const deliveryUnitPackage = readJson(`${deliveryUnitPath}/package.json`);
+    assert(
+      deliveryUnitPackage.scripts?.build?.includes(
+        'MODERNJS_DEPLOY=node modern deploy --skip-build',
+      ),
+      `${deliveryUnitPath} build must produce the Modern.js Node output before Zerops materialization`,
+    );
+  }
   assert(
-    zeropsMaterializer.includes("MODERNJS_DEPLOY: 'node'"),
-    'Zerops materializer must use Modern.js Node deploy target',
-  );
-  assert(
-    /'deploy',\s*'--skip-build'/.test(zeropsMaterializer),
-    'Zerops materializer must pass --skip-build directly to Modern deploy',
+    zeropsMaterializer.includes("const appOutputDir = path.join(appRoot, '.output')") &&
+      zeropsMaterializer.includes('before runtime materialization'),
+    'Zerops materializer must require the Node output produced by the package build',
   );
   assert(
     zeropsMaterializer.includes('normalizeRuntimePackageDependencies'),

@@ -156,12 +156,13 @@ advisory. Existing unrelated `.codex/skills/*` directories are preserved. Set
 `pnpm skills:check` is advisory when local skill bodies are missing so offline
 CI can still run the normal gate.
 
-The topology and ownership metadata are generated under `topology/`. The
-workspace also ships `.github/workflows/ultramodern-workspace-gates.yml` and
-`.github/renovate.json` with read-only workflow permissions, commit-pinned
-actions, frozen installs, StepSecurity audit-mode runner hardening, dependency
-dashboard review, one-day release age, grouped updates, and manual approval for
-major upgrades.
+The topology and ownership metadata are generated under `topology/`. GitHub only discovers Actions
+from the repository-root `.github/workflows/`, so this workspace's gate and stage-deploy workflow is
+maintained at `../.github/workflows/ultramodern-workspace-gates.yml`; this is the explicit exception
+to the otherwise `app/`-only ownership boundary. The workspace also ships `.github/renovate.json`
+with read-only workflow permissions, commit-pinned actions, frozen installs, StepSecurity audit-mode
+runner hardening, dependency dashboard review, one-day release age, grouped updates, and manual
+approval for major upgrades.
 
 Package source provenance is recorded in `.modernjs/ultramodern.json`. The
 default strategy keeps UltraModern.js runtime and tooling packages on

@@ -18,6 +18,7 @@
     "db:migrate": "drizzle-kit migrate --config drizzle.auth.config.ts",
     "db:verify": "node scripts/verify-auth-db-schema.mts",
     "serve": "modern serve",
+    "stage:bootstrap-demo": "node scripts/bootstrap-stage-demo.mts",
     "test:e2e": "playwright test",
     "test:integration": "node --test tests/integration/*.test.ts",
     "test:unit": "rstest",
