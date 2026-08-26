@@ -61,7 +61,7 @@ zerops:
         - 'app/packages/core-runtime/spicedb/stage-bootstrap.yaml'
         - 'app/scripts/run-zerops-spicedb.sh'
     deploy:
-      temporaryShutdown: false
+      temporaryShutdown: true
       readinessCheck:
         httpGet:
           port: 8443
