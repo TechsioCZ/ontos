@@ -54,13 +54,14 @@ zerops:
         httpGet:
           port: 8080
           path: '/ready'
-      start: cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" node scripts/run-zerops-migrator.mjs
+      start: sh -c 'cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" exec node scripts/run-zerops-migrator.mjs'
 
   - setup: 'spicedb'
     build:
       base: 'alpine@3.23'
       deployFiles:
         - 'app/packages/core-runtime/spicedb/stage-bootstrap.yaml'
+        - 'app/scripts/run-zerops-spicedb.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -87,31 +88,7 @@ zerops:
         httpGet:
           port: 8443
           path: '/healthz'
-      start: |
-        docker run --rm --network=host \
-          -e SPICEDB_DATASTORE_ENGINE \
-          -e SPICEDB_DATASTORE_CONN_URI \
-          authzed/spicedb:v1.56.0 datastore migrate head
-        schema_count="$(docker run --rm --network=host \
-          -e SPICEDB_DATASTORE_CONN_URI \
-          postgres:17-alpine sh -c \
-          'psql "$SPICEDB_DATASTORE_CONN_URI" --no-psqlrc --tuples-only --no-align --command "select count(*) from namespace_config"')"
-        if [ "$schema_count" = '0' ]; then
-          exec docker run --rm --network=host \
-            -e SPICEDB_DATASTORE_ENGINE \
-            -e SPICEDB_DATASTORE_CONN_URI \
-            -e SPICEDB_GRPC_PRESHARED_KEY \
-            -v /var/www/app/packages/core-runtime/spicedb/stage-bootstrap.yaml:/bootstrap/stage-bootstrap.yaml:ro \
-            authzed/spicedb:v1.56.0 serve \
-            --datastore-bootstrap-files=/bootstrap/stage-bootstrap.yaml \
-            --http-enabled
-        fi
-        exec docker run --rm --network=host \
-          -e SPICEDB_DATASTORE_ENGINE \
-          -e SPICEDB_DATASTORE_CONN_URI \
-          -e SPICEDB_GRPC_PRESHARED_KEY \
-          authzed/spicedb:v1.56.0 serve \
-          --http-enabled
+      start: sh app/scripts/run-zerops-spicedb.sh
 
   - setup: 'crm'
     build:
@@ -157,7 +134,7 @@ zerops:
         httpGet:
           port: 4101
           path: '/crm-api/crm/readiness'
-      start: cd 'app/.zerops/runtime/crm' && PATH="$HOME/.local/node-26.5.0/bin:$PATH" npm run serve
+      start: sh -c 'cd app/.zerops/runtime/crm && PATH="$HOME/.local/node-26.5.0/bin:$PATH" exec npm run serve'
 
   - setup: 'shellsuperapp'
     build:
@@ -203,4 +180,4 @@ zerops:
         httpGet:
           port: 3020
           path: '/'
-      start: cd 'app/.zerops/runtime/shell-super-app' && PATH="$HOME/.local/node-26.5.0/bin:$PATH" npm run serve
+      start: sh -c 'cd app/.zerops/runtime/shell-super-app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" exec npm run serve'

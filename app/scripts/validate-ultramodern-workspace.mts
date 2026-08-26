@@ -5946,6 +5946,7 @@ assert(
 );
 if (hasDeliveryUnits) {
   const zeropsYaml = readText('zerops.yaml');
+  const zeropsSpiceDbStart = readText('scripts/run-zerops-spicedb.sh');
   assert(zeropsYaml.includes('zerops:'), 'Zerops manifest must include zerops services');
   assert(
     zeropsYaml.includes(`setup: ${quoteYamlString('shellsuperapp')}`),
@@ -5961,7 +5962,7 @@ if (hasDeliveryUnits) {
   );
   assert(
     zeropsYaml.includes(
-      `start: cd ${quoteShellValue('app/.zerops/runtime/shell-super-app')} && PATH="$HOME/.local/node-26.5.0/bin:$PATH" npm run serve`,
+      `start: sh -c ${quoteYamlString('cd app/.zerops/runtime/shell-super-app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" exec npm run serve')}`,
     ),
     'Zerops shell service must start from materialized runtime package',
   );
@@ -5973,8 +5974,9 @@ if (hasDeliveryUnits) {
   assert(
     zeropsYaml.includes(`setup: ${quoteYamlString('migrator')}`) &&
       zeropsYaml.includes(`setup: ${quoteYamlString('spicedb')}`) &&
-      zeropsYaml.includes('authzed/spicedb:v1.56.0') &&
-      zeropsYaml.includes('--network=host'),
+      zeropsYaml.includes(`start: sh app/scripts/run-zerops-spicedb.sh`) &&
+      zeropsSpiceDbStart.includes('authzed/spicedb:v1.56.0') &&
+      zeropsSpiceDbStart.includes('--network=host'),
     'Zerops manifest must include the pinned remote migration and SpiceDB services',
   );
   for (const vertical of fullStackVerticals) {
