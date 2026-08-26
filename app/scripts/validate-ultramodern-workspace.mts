@@ -4915,6 +4915,17 @@ assert(
   'pnpm-workspace.yaml must keep deployable dependency trees independent of the host global virtual store',
 );
 assert(
+  pnpmWorkspace.includes("'@vercel/nft@0.29.2': patches/@vercel__nft@0.29.2.patch"),
+  'pnpm-workspace.yaml must patch the deployment tracer for missing pnpm project markers',
+);
+const vercelNftPatch = readText('patches/@vercel__nft@0.29.2.patch');
+assert(
+  vercelNftPatch.includes('isMissingPnpmProjectMarker') &&
+    vercelNftPatch.includes('pnpm[\\\\/]store[\\\\/]v\\d+') &&
+    vercelNftPatch.includes("throw new Error('File ' + path + ' does not exist.')"),
+  'The deployment tracer patch must ignore only pnpm project markers while rejecting other missing files',
+);
+assert(
   pnpmWorkspace.includes(`'@effect/opentelemetry': ${expectedEffectVersion}`),
   'pnpm-workspace.yaml must override @effect/opentelemetry to the generated Effect cohort',
 );

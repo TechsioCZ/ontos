@@ -1,0 +1,27 @@
+diff --git a/out/node-file-trace.js b/out/node-file-trace.js
+index bd833eb..6565500 100644
+--- a/out/node-file-trace.js
++++ b/out/node-file-trace.js
+@@ -37,7 +37,10 @@ const fs_1 = require("./fs");
+ function inPath(path, parent) {
+     const pathWithSep = (0, path_1.join)(parent, path_1.sep);
+     return path.startsWith(pathWithSep) && path !== pathWithSep;
+ }
++function isMissingPnpmProjectMarker(path) {
++    return /[\\/]pnpm[\\/]store[\\/]v\d+[\\/]projects[\\/][0-9a-f]{32}$/.test(path);
++}
+ async function nodeFileTrace(files, opts = {}) {
+     const job = new Job(opts);
+     if (opts.readFile)
+@@ -333,7 +336,10 @@ class Job {
+         else {
+             const source = await this.readFile(path);
+-            if (source === null)
++            if (source === null) {
++                if (isMissingPnpmProjectMarker(path))
++                    return;
+                 throw new Error('File ' + path + ' does not exist.');
++            }
+             // analyze should not have any side-effects e.g. calling `job.emitFile`
+             // directly as this will not be included in the cachedAnalysis and won't
+             // be emit for successive runs that leverage the cache
