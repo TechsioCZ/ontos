@@ -28,8 +28,8 @@ zerops:
         httpGet:
           port: 8080
           path: '/ready'
-        failureTimeout: 600
-        retryPeriod: 10
+        failureTimeout: 10m
+        retryPeriod: 10s
     run:
       base: 'alpine@3.23'
       prepareCommands:
@@ -67,8 +67,8 @@ zerops:
         httpGet:
           port: 8443
           path: '/healthz'
-        failureTimeout: 300
-        retryPeriod: 10
+        failureTimeout: 5m
+        retryPeriod: 10s
     run:
       base: 'alpine/docker@26.1'
       prepareCommands:
@@ -135,8 +135,8 @@ zerops:
         httpGet:
           port: 4101
           path: '/crm-api/crm/readiness'
-        failureTimeout: 180
-        retryPeriod: 10
+        failureTimeout: 3m
+        retryPeriod: 10s
     run:
       base: 'alpine@3.23'
       prepareCommands:
@@ -181,8 +181,8 @@ zerops:
         httpGet:
           port: 3020
           path: '/'
-        failureTimeout: 180
-        retryPeriod: 10
+        failureTimeout: 3m
+        retryPeriod: 10s
     run:
       base: 'alpine@3.23'
       prepareCommands:
