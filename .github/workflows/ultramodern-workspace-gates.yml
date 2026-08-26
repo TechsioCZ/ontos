@@ -130,6 +130,16 @@ jobs:
           --setup migrator
           --version-name "$GITHUB_SHA"
 
+      - name: Show migrator runtime logs after failure
+        if: failure() && steps.migrator.outcome == 'failure'
+        continue-on-error: true
+        run: >-
+          zcli service log
+          --project-id "$ZEROPS_PROJECT_ID"
+          --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
+          --limit 200
+          --minimum-severity DEBUG
+
       - name: Stop migrator after verification
         if: always() && steps.migrator.outcome != 'skipped'
         continue-on-error: true
@@ -173,3 +183,9 @@ jobs:
           --service-id "$ZEROPS_SHELL_SERVICE_ID"
           --setup shellsuperapp
           --version-name "$GITHUB_SHA"
+
+      - name: Enable Zerops public subdomain
+        run: >-
+          zcli service enable-subdomain
+          --project-id "$ZEROPS_PROJECT_ID"
+          --service-id "$ZEROPS_SHELL_SERVICE_ID"
