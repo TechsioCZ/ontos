@@ -5978,6 +5978,16 @@ if (hasDeliveryUnits) {
     zeropsYaml.includes('deployFiles:'),
     'Zerops manifest must deploy package-pruned runtime directories',
   );
+  const localVirtualStoreInstall =
+    'pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm';
+  assert(
+    zeropsYaml.split(localVirtualStoreInstall).length - 1 === 3,
+    'Every Zerops Node build must replace stale host-global dependency links with a project-local virtual store',
+  );
+  assert(
+    zeropsYaml.split('--config.enable-global-virtual-store=false').length - 1 === 7,
+    'Every Zerops pnpm command must override higher-priority host global-virtual-store configuration',
+  );
   assert(
     zeropsYaml.includes(
       `start: sh -c ${quoteYamlString('cd app/.zerops/runtime/shell-super-app && PATH="/var/www/.local/node-26.5.0/bin:$PATH" exec npm run serve')}`,
@@ -6009,7 +6019,7 @@ if (hasDeliveryUnits) {
     );
     assert(
       zeropsYaml.includes(
-        `PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm run zerops:materialize -- --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`,
+        `PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app ${quoteShellValue(vertical.id)} --package ${quoteShellValue(vertical.packageName)} --package-dir ${quoteShellValue(vertical.path)}`,
       ),
       `${vertical.id} Zerops service must materialize its runtime package`,
     );
