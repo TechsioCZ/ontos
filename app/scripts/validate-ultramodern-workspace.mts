@@ -5967,7 +5967,7 @@ if (hasDeliveryUnits) {
   );
   assert(
     zeropsYaml.includes(
-      `start: sh -c ${quoteYamlString('cd app/.zerops/runtime/shell-super-app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" exec npm run serve')}`,
+      `start: sh -c ${quoteYamlString('cd app/.zerops/runtime/shell-super-app && PATH="${HOME:-/var/www}/.local/node-26.5.0/bin:$PATH" exec npm run serve')}`,
     ),
     'Zerops shell service must start from materialized runtime package',
   );
