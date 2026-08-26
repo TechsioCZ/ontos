@@ -149,6 +149,7 @@ jobs:
           --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
 
       - name: Deploy SpiceDB
+        id: spicedb
         run: >-
           zcli push
           --working-dir .
@@ -160,7 +161,18 @@ jobs:
           --setup spicedb
           --version-name "$GITHUB_SHA"
 
+      - name: Show SpiceDB runtime logs after failure
+        if: failure() && steps.spicedb.outcome == 'failure'
+        continue-on-error: true
+        run: >-
+          zcli service log
+          --project-id "$ZEROPS_PROJECT_ID"
+          --service-id "$ZEROPS_SPICEDB_SERVICE_ID"
+          --limit 200
+          --minimum-severity DEBUG
+
       - name: Deploy CRM
+        id: crm
         run: >-
           zcli push
           --working-dir .
@@ -172,7 +184,18 @@ jobs:
           --setup crm
           --version-name "$GITHUB_SHA"
 
+      - name: Show CRM runtime logs after failure
+        if: failure() && steps.crm.outcome == 'failure'
+        continue-on-error: true
+        run: >-
+          zcli service log
+          --project-id "$ZEROPS_PROJECT_ID"
+          --service-id "$ZEROPS_CRM_SERVICE_ID"
+          --limit 200
+          --minimum-severity DEBUG
+
       - name: Deploy shell super-app
+        id: shell
         run: >-
           zcli push
           --working-dir .
@@ -183,6 +206,16 @@ jobs:
           --service-id "$ZEROPS_SHELL_SERVICE_ID"
           --setup shellsuperapp
           --version-name "$GITHUB_SHA"
+
+      - name: Show shell runtime logs after failure
+        if: failure() && steps.shell.outcome == 'failure'
+        continue-on-error: true
+        run: >-
+          zcli service log
+          --project-id "$ZEROPS_PROJECT_ID"
+          --service-id "$ZEROPS_SHELL_SERVICE_ID"
+          --limit 200
+          --minimum-severity DEBUG
 
       - name: Enable Zerops public subdomain
         run: >-
