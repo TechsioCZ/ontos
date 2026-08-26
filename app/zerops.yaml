@@ -10,8 +10,6 @@ zerops:
         - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile
-      addToRunPrepare:
-        - 'app/scripts/install-zerops-node.sh'
       deployFiles:
         - 'app/.mise.toml'
         - 'app/apps/shell-super-app'
@@ -31,9 +29,8 @@ zerops:
         failureTimeout: 10m
         retryPeriod: 10s
     run:
-      base: 'alpine@3.23'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
+      base: 'nodejs@24'
+      initCommands:
         - sh app/scripts/install-zerops-node.sh --with-pnpm
       ports:
         - port: 8080
@@ -102,10 +99,9 @@ zerops:
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm run zerops:materialize -- --app 'crm' --package '@app/crm' --package-dir 'verticals/crm'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/crm/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/crm/local-overlay.json'
-      addToRunPrepare:
-        - 'app/scripts/install-zerops-node.sh'
       deployFiles:
         - 'app/.zerops/runtime/crm'
+        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -115,9 +111,8 @@ zerops:
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'alpine@3.23'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
+      base: 'nodejs@24'
+      initCommands:
         - sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4101
@@ -148,10 +143,9 @@ zerops:
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm run zerops:materialize -- --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/shell-super-app/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/shell-super-app/local-overlay.json'
-      addToRunPrepare:
-        - 'app/scripts/install-zerops-node.sh'
       deployFiles:
         - 'app/.zerops/runtime/shell-super-app'
+        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -161,9 +155,8 @@ zerops:
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'alpine@3.23'
-      prepareCommands:
-        - sudo apk add --no-cache curl libstdc++
+      base: 'nodejs@24'
+      initCommands:
         - sh app/scripts/install-zerops-node.sh
       ports:
         - port: 3020
