@@ -39,7 +39,7 @@ zerops:
       envVariables:
         BETTER_AUTH_SECRET: ${shellsuperapp_BETTER_AUTH_SECRET}
         BETTER_AUTH_URL: ${shellsuperapp_BETTER_AUTH_URL}
-        DATABASE_ADMIN_URL: ${db_connectionString}
+        DATABASE_ADMIN_URL: postgresql://${db_superUser}:${db_superUserPassword}@${db_hostname}:${db_port}/${db_dbName}
         MIGRATOR_PORT: '8080'
         NODE_ENV: production
         SPICEDB_ENDPOINT: 'spicedb:50051'
