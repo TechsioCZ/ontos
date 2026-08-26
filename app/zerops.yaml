@@ -9,6 +9,7 @@ zerops:
         - sudo apk add --no-cache curl libstdc++
         - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
       buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
       deployFiles:
         - 'app/.mise.toml'
@@ -94,6 +95,7 @@ zerops:
         - sudo apk add --no-cache curl libstdc++
         - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
       buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
         - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/crm' run build
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'crm' --package '@app/crm' --package-dir 'verticals/crm'
@@ -138,6 +140,7 @@ zerops:
         - sudo apk add --no-cache curl libstdc++
         - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm
       buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
         - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/shell-super-app' run build
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
