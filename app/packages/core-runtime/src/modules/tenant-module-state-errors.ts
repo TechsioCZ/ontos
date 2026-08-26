@@ -1,7 +1,7 @@
 /* eslint-disable max-classes-per-file -- One closed Core module-state failure vocabulary. */
 import { Schema } from 'effect';
 
-export class TenantModuleStateReadUnavailableError extends Schema.TaggedErrorClass<TenantModuleStateReadUnavailableError>()(
+export class TenantModuleStateReadUnavailableError extends Schema.TaggedError<TenantModuleStateReadUnavailableError>()(
   'TenantModuleStateReadUnavailableError',
   {
     code: Schema.Literal('tenant_module_state_read_unavailable'),
@@ -9,7 +9,7 @@ export class TenantModuleStateReadUnavailableError extends Schema.TaggedErrorCla
   },
 ) {}
 
-export class TenantModuleStatePersistenceUnavailableError extends Schema.TaggedErrorClass<TenantModuleStatePersistenceUnavailableError>()(
+export class TenantModuleStatePersistenceUnavailableError extends Schema.TaggedError<TenantModuleStatePersistenceUnavailableError>()(
   'TenantModuleStatePersistenceUnavailableError',
   {
     code: Schema.Literal('tenant_module_state_persistence_unavailable'),
@@ -17,7 +17,7 @@ export class TenantModuleStatePersistenceUnavailableError extends Schema.TaggedE
   },
 ) {}
 
-export class TenantModuleStateTenantMissingError extends Schema.TaggedErrorClass<TenantModuleStateTenantMissingError>()(
+export class TenantModuleStateTenantMissingError extends Schema.TaggedError<TenantModuleStateTenantMissingError>()(
   'TenantModuleStateTenantMissingError',
   {
     code: Schema.Literal('tenant_module_state_tenant_missing'),
@@ -25,7 +25,7 @@ export class TenantModuleStateTenantMissingError extends Schema.TaggedErrorClass
   },
 ) {}
 
-export class TenantModuleStateUnchangedError extends Schema.TaggedErrorClass<TenantModuleStateUnchangedError>()(
+export class TenantModuleStateUnchangedError extends Schema.TaggedError<TenantModuleStateUnchangedError>()(
   'TenantModuleStateUnchangedError',
   {
     code: Schema.Literal('tenant_module_state_unchanged'),
@@ -33,7 +33,7 @@ export class TenantModuleStateUnchangedError extends Schema.TaggedErrorClass<Ten
   },
 ) {}
 
-export class TenantModuleStateConcurrentChangeError extends Schema.TaggedErrorClass<TenantModuleStateConcurrentChangeError>()(
+export class TenantModuleStateConcurrentChangeError extends Schema.TaggedError<TenantModuleStateConcurrentChangeError>()(
   'TenantModuleStateConcurrentChangeError',
   {
     code: Schema.Literal('tenant_module_state_changed_concurrently'),
@@ -41,7 +41,7 @@ export class TenantModuleStateConcurrentChangeError extends Schema.TaggedErrorCl
   },
 ) {}
 
-export class TenantModuleStateUnsupportedChangeSourceError extends Schema.TaggedErrorClass<TenantModuleStateUnsupportedChangeSourceError>()(
+export class TenantModuleStateUnsupportedChangeSourceError extends Schema.TaggedError<TenantModuleStateUnsupportedChangeSourceError>()(
   'TenantModuleStateUnsupportedChangeSourceError',
   {
     code: Schema.Literal('tenant_module_state_change_source_unsupported'),
@@ -49,7 +49,7 @@ export class TenantModuleStateUnsupportedChangeSourceError extends Schema.Tagged
   },
 ) {}
 
-export class TenantModuleStateUnknownModuleError extends Schema.TaggedErrorClass<TenantModuleStateUnknownModuleError>()(
+export class TenantModuleStateUnknownModuleError extends Schema.TaggedError<TenantModuleStateUnknownModuleError>()(
   'TenantModuleStateUnknownModuleError',
   {
     code: Schema.Literal('tenant_module_state_module_unknown'),
@@ -57,7 +57,7 @@ export class TenantModuleStateUnknownModuleError extends Schema.TaggedErrorClass
   },
 ) {}
 
-export class TenantModuleStateUnsupportedStateError extends Schema.TaggedErrorClass<TenantModuleStateUnsupportedStateError>()(
+export class TenantModuleStateUnsupportedStateError extends Schema.TaggedError<TenantModuleStateUnsupportedStateError>()(
   'TenantModuleStateUnsupportedStateError',
   {
     code: Schema.Literal('tenant_module_state_unsupported'),
@@ -65,7 +65,7 @@ export class TenantModuleStateUnsupportedStateError extends Schema.TaggedErrorCl
   },
 ) {}
 
-export class TenantModuleStateValidationUnavailableError extends Schema.TaggedErrorClass<TenantModuleStateValidationUnavailableError>()(
+export class TenantModuleStateValidationUnavailableError extends Schema.TaggedError<TenantModuleStateValidationUnavailableError>()(
   'TenantModuleStateValidationUnavailableError',
   {
     code: Schema.Literal('tenant_module_state_validation_unavailable'),

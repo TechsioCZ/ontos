@@ -28,7 +28,7 @@ const renderExternalHttpAdapter = (
 import { Context, Effect, Layer, Schema } from 'effect';
 import { HttpClient } from 'effect/unstable/http';
 
-export class ${adapterType}NotImplemented extends Schema.TaggedErrorClass<${adapterType}NotImplemented>()(
+export class ${adapterType}NotImplemented extends Schema.TaggedError<${adapterType}NotImplemented>()(
   '${adapterType}NotImplemented',
   {
     code: Schema.Literal('external_http_adapter_not_implemented'),

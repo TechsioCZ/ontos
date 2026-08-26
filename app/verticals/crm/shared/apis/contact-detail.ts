@@ -43,7 +43,7 @@ export type EditContactPayload = typeof EditContactPayloadSchema.Type;
 export const ContactLifecyclePayloadSchema = Schema.Struct({ contactId: CrmUuidSchema });
 export type ContactLifecyclePayload = typeof ContactLifecyclePayloadSchema.Type;
 
-export class CrmContactNotFound extends Schema.TaggedErrorClass<CrmContactNotFound>()(
+export class CrmContactNotFound extends Schema.TaggedError<CrmContactNotFound>()(
   'CrmContactNotFound',
   {
     code: Schema.Literal('crm_contact_not_found'),

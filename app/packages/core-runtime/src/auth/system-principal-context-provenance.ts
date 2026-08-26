@@ -2,7 +2,7 @@ import { Effect, Schema, Predicate } from 'effect';
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 
-export class TrustedPrincipalContextDecodeError extends Schema.TaggedErrorClass<TrustedPrincipalContextDecodeError>()(
+export class TrustedPrincipalContextDecodeError extends Schema.TaggedError<TrustedPrincipalContextDecodeError>()(
   'TrustedPrincipalContextDecodeError',
   {},
 ) {}

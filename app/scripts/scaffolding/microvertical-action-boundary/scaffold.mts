@@ -38,27 +38,27 @@ export const ACTION_PRINCIPAL_BEARER_CHALLENGE = 'Bearer' as const;
 
 const errorFields = { reason: Schema.String };
 
-export class ActionPrincipalMissingError extends Schema.TaggedErrorClass<ActionPrincipalMissingError>()(
+export class ActionPrincipalMissingError extends Schema.TaggedError<ActionPrincipalMissingError>()(
   'ActionPrincipalMissingError',
   errorFields,
 ) {}
-export class ActionPrincipalInvalidError extends Schema.TaggedErrorClass<ActionPrincipalInvalidError>()(
+export class ActionPrincipalInvalidError extends Schema.TaggedError<ActionPrincipalInvalidError>()(
   'ActionPrincipalInvalidError',
   errorFields,
 ) {}
-export class ActionPrincipalExpiredError extends Schema.TaggedErrorClass<ActionPrincipalExpiredError>()(
+export class ActionPrincipalExpiredError extends Schema.TaggedError<ActionPrincipalExpiredError>()(
   'ActionPrincipalExpiredError',
   errorFields,
 ) {}
-export class ActionPrincipalScopeError extends Schema.TaggedErrorClass<ActionPrincipalScopeError>()(
+export class ActionPrincipalScopeError extends Schema.TaggedError<ActionPrincipalScopeError>()(
   'ActionPrincipalScopeError',
   errorFields,
 ) {}
-export class ActionPrincipalConfigurationError extends Schema.TaggedErrorClass<ActionPrincipalConfigurationError>()(
+export class ActionPrincipalConfigurationError extends Schema.TaggedError<ActionPrincipalConfigurationError>()(
   'ActionPrincipalConfigurationError',
   errorFields,
 ) {}
-export class ActionPrincipalUnavailableError extends Schema.TaggedErrorClass<ActionPrincipalUnavailableError>()(
+export class ActionPrincipalUnavailableError extends Schema.TaggedError<ActionPrincipalUnavailableError>()(
   'ActionPrincipalUnavailableError',
   errorFields,
 ) {}
@@ -323,7 +323,7 @@ export const planActionBoundaryScaffold = async (
   const dependencyMutation = withExactDependencies(vertical, {
     '@app/core-runtime': 'workspace:*',
     '@app/shared-contracts': 'workspace:*',
-    effect: '4.0.0-beta.97',
+    effect: '4.0.0-beta.107',
     jose: '6.2.5',
   });
   const mutations = [serverMutation, clientMutation, dependencyMutation].filter(

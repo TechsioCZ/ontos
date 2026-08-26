@@ -211,7 +211,7 @@ type GatewayContextApiGroups =
   typeof GatewayContextApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
 export type GatewayContextClient = HttpApiClient.Client<
-  Extract<GatewayContextApiGroups, HttpApiGroup.Any>,
+  Extract<GatewayContextApiGroups, HttpApiGroup.Constraint>,
   never,
   never
 >;

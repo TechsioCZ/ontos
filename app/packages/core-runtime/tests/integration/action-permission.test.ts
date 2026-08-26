@@ -35,7 +35,7 @@ import {
 } from '../../src/permissions/service.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 
-class TestWriteError extends Schema.TaggedErrorClass<TestWriteError>()('TestWriteError', {
+class TestWriteError extends Schema.TaggedError<TestWriteError>()('TestWriteError', {
   reason: Schema.String,
 }) {}
 

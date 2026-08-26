@@ -47,19 +47,16 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 
-class TestPersistenceError extends Schema.TaggedErrorClass<TestPersistenceError>()(
+class TestPersistenceError extends Schema.TaggedError<TestPersistenceError>()(
   'TestPersistenceError',
   {
     reason: Schema.String,
   },
 ) {}
 
-class TestDomainRejected extends Schema.TaggedErrorClass<TestDomainRejected>()(
-  'TestDomainRejected',
-  {
-    reason: Schema.String,
-  },
-) {}
+class TestDomainRejected extends Schema.TaggedError<TestDomainRejected>()('TestDomainRejected', {
+  reason: Schema.String,
+}) {}
 
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();

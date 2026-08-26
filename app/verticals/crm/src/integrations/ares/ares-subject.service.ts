@@ -38,7 +38,7 @@ export const AresSubjectSchema = Schema.Struct({
 });
 export type AresSubject = typeof AresSubjectSchema.Type;
 
-export class AresSubjectInvalidIco extends Schema.TaggedErrorClass<AresSubjectInvalidIco>()(
+export class AresSubjectInvalidIco extends Schema.TaggedError<AresSubjectInvalidIco>()(
   'AresSubjectInvalidIco',
   {
     code: Schema.Literal('ares_subject_invalid_ico'),
@@ -46,7 +46,7 @@ export class AresSubjectInvalidIco extends Schema.TaggedErrorClass<AresSubjectIn
   },
 ) {}
 
-export class AresSubjectNotFound extends Schema.TaggedErrorClass<AresSubjectNotFound>()(
+export class AresSubjectNotFound extends Schema.TaggedError<AresSubjectNotFound>()(
   'AresSubjectNotFound',
   {
     code: Schema.Literal('ares_subject_not_found'),
@@ -54,7 +54,7 @@ export class AresSubjectNotFound extends Schema.TaggedErrorClass<AresSubjectNotF
   },
 ) {}
 
-export class AresSubjectDenied extends Schema.TaggedErrorClass<AresSubjectDenied>()(
+export class AresSubjectDenied extends Schema.TaggedError<AresSubjectDenied>()(
   'AresSubjectDenied',
   {
     code: Schema.Literal('ares_subject_denied'),
@@ -62,7 +62,7 @@ export class AresSubjectDenied extends Schema.TaggedErrorClass<AresSubjectDenied
   },
 ) {}
 
-export class AresSubjectThrottled extends Schema.TaggedErrorClass<AresSubjectThrottled>()(
+export class AresSubjectThrottled extends Schema.TaggedError<AresSubjectThrottled>()(
   'AresSubjectThrottled',
   {
     code: Schema.Literal('ares_subject_throttled'),
@@ -70,7 +70,7 @@ export class AresSubjectThrottled extends Schema.TaggedErrorClass<AresSubjectThr
   },
 ) {}
 
-export class AresSubjectTimeout extends Schema.TaggedErrorClass<AresSubjectTimeout>()(
+export class AresSubjectTimeout extends Schema.TaggedError<AresSubjectTimeout>()(
   'AresSubjectTimeout',
   {
     code: Schema.Literal('ares_subject_timeout'),
@@ -78,7 +78,7 @@ export class AresSubjectTimeout extends Schema.TaggedErrorClass<AresSubjectTimeo
   },
 ) {}
 
-export class AresSubjectUnavailable extends Schema.TaggedErrorClass<AresSubjectUnavailable>()(
+export class AresSubjectUnavailable extends Schema.TaggedError<AresSubjectUnavailable>()(
   'AresSubjectUnavailable',
   {
     code: Schema.Literal('ares_subject_unavailable'),
@@ -86,7 +86,7 @@ export class AresSubjectUnavailable extends Schema.TaggedErrorClass<AresSubjectU
   },
 ) {}
 
-export class AresSubjectDecodeFailure extends Schema.TaggedErrorClass<AresSubjectDecodeFailure>()(
+export class AresSubjectDecodeFailure extends Schema.TaggedError<AresSubjectDecodeFailure>()(
   'AresSubjectDecodeFailure',
   {
     code: Schema.Literal('ares_subject_decode_failure'),

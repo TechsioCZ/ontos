@@ -14,7 +14,7 @@ import type {
   GatewayIssuerConfigValue,
 } from './gateway-issuer-config.ts';
 
-export class GatewayIssuerError extends Schema.TaggedErrorClass<GatewayIssuerError>()(
+export class GatewayIssuerError extends Schema.TaggedError<GatewayIssuerError>()(
   'GatewayIssuerError',
   {
     code: Schema.Literals(['gateway_audience_invalid', 'gateway_issuer_unavailable']),

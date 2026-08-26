@@ -471,7 +471,7 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
       event.ctrlKey ||
       event.shiftKey ||
       event.altKey ||
-      !router.history.canGoBack()
+      router.history.canGoBack() !== true
     ) {
       return;
     }

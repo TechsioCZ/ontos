@@ -288,6 +288,7 @@ export const makeOutboxRepository = (
                 .select({ correlationId: actionInvocations.correlationId })
                 .from(actionInvocations)
                 .where(eq(actionInvocations.actionInvocationId, candidate.actionInvocationId));
+        const correlationId = invocation?.correlationId;
         return withOptionalProperty(
           {
             attemptId: attempt.attemptId,
@@ -295,9 +296,9 @@ export const makeOutboxRepository = (
             claimId,
             consumerModuleKey: candidate.consumerModuleKey,
           },
-          !(invocation?.correlationId === null || invocation?.correlationId === undefined),
+          !(correlationId === null || correlationId === undefined),
           'correlationId',
-          invocation.correlationId,
+          correlationId ?? '',
           {
             deliveryId: candidate.deliveryId,
             domainEventId: candidate.domainEventId,

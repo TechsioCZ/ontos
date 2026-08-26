@@ -1,7 +1,7 @@
 /* eslint-disable max-classes-per-file -- One closed sanitized module-gate failure vocabulary. */
 import { Schema } from 'effect';
 
-export class ModuleStateDeniedError extends Schema.TaggedErrorClass<ModuleStateDeniedError>()(
+export class ModuleStateDeniedError extends Schema.TaggedError<ModuleStateDeniedError>()(
   'ModuleStateDeniedError',
   {
     code: Schema.Literal('module_state_denied'),
@@ -9,7 +9,7 @@ export class ModuleStateDeniedError extends Schema.TaggedErrorClass<ModuleStateD
   },
 ) {}
 
-export class ModuleStateCheckUnavailableError extends Schema.TaggedErrorClass<ModuleStateCheckUnavailableError>()(
+export class ModuleStateCheckUnavailableError extends Schema.TaggedError<ModuleStateCheckUnavailableError>()(
   'ModuleStateCheckUnavailableError',
   {
     code: Schema.Literal('module_state_check_unavailable'),

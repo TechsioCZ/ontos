@@ -7,12 +7,12 @@ import type {
 } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
-export class LegalEntitySelectionUnavailableError extends Schema.TaggedErrorClass<LegalEntitySelectionUnavailableError>()(
+export class LegalEntitySelectionUnavailableError extends Schema.TaggedError<LegalEntitySelectionUnavailableError>()(
   'LegalEntitySelectionUnavailableError',
   {},
 ) {}
 
-export class LegalEntitySelectionForbiddenError extends Schema.TaggedErrorClass<LegalEntitySelectionForbiddenError>()(
+export class LegalEntitySelectionForbiddenError extends Schema.TaggedError<LegalEntitySelectionForbiddenError>()(
   'LegalEntitySelectionForbiddenError',
   {},
 ) {}

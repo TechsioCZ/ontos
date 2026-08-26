@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { withModernConfig } from '@modern-js/adapter-rstest';
 import { defineConfig } from '@rstest/core';
-import { Schema } from 'effect';
+import * as Schema from 'effect/Schema';
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 

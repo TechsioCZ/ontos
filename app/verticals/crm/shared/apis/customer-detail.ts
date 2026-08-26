@@ -78,7 +78,7 @@ export type EditCustomerPayload = typeof EditCustomerPayloadSchema.Type;
 export const CustomerLifecyclePayloadSchema = Schema.Struct({ customerId: CrmUuidSchema });
 export type CustomerLifecyclePayload = typeof CustomerLifecyclePayloadSchema.Type;
 
-export class CrmCustomerNotFound extends Schema.TaggedErrorClass<CrmCustomerNotFound>()(
+export class CrmCustomerNotFound extends Schema.TaggedError<CrmCustomerNotFound>()(
   'CrmCustomerNotFound',
   {
     code: Schema.Literal('crm_customer_not_found'),
@@ -86,7 +86,7 @@ export class CrmCustomerNotFound extends Schema.TaggedErrorClass<CrmCustomerNotF
     reason: Schema.String,
   },
 ) {}
-export class CrmLifecycleConflict extends Schema.TaggedErrorClass<CrmLifecycleConflict>()(
+export class CrmLifecycleConflict extends Schema.TaggedError<CrmLifecycleConflict>()(
   'CrmLifecycleConflict',
   {
     code: Schema.Literal('crm_lifecycle_conflict'),
@@ -96,14 +96,14 @@ export class CrmLifecycleConflict extends Schema.TaggedErrorClass<CrmLifecycleCo
     resourceType: Schema.Literals(['customer', 'contact']),
   },
 ) {}
-export class CrmCustomerIcoConflict extends Schema.TaggedErrorClass<CrmCustomerIcoConflict>()(
+export class CrmCustomerIcoConflict extends Schema.TaggedError<CrmCustomerIcoConflict>()(
   'CrmCustomerIcoConflict',
   {
     code: Schema.Literal('crm_customer_ico_conflict'),
     reason: Schema.String,
   },
 ) {}
-export class CrmPersistenceUnavailable extends Schema.TaggedErrorClass<CrmPersistenceUnavailable>()(
+export class CrmPersistenceUnavailable extends Schema.TaggedError<CrmPersistenceUnavailable>()(
   'CrmPersistenceUnavailable',
   {
     code: Schema.Literal('crm_persistence_unavailable'),

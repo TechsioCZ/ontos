@@ -41,7 +41,7 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-export class IdentityLifecycleOperationError extends Schema.TaggedErrorClass<IdentityLifecycleOperationError>()(
+export class IdentityLifecycleOperationError extends Schema.TaggedError<IdentityLifecycleOperationError>()(
   'IdentityLifecycleOperationError',
   { code: Schema.Literal('identity_lifecycle_operation_failed'), reason: Schema.String },
 ) {}
@@ -350,14 +350,14 @@ export const makeIdentityLifecycleService = (
               {
                 authBindingId: input.oldAuthBindingId,
                 correlationId: input.correlationId,
-                expectedStatus: 'active',
+                expectedStatus: 'active' as const,
                 idempotencyKey: `${input.idempotencyKey}:old`,
               },
               !(input.oldManagedPrincipalId === undefined),
               'managedPrincipalId',
               input.oldManagedPrincipalId,
               {
-                newStatus: 'revoked',
+                newStatus: 'revoked' as const,
                 principal: input.principal,
                 reason: input.reason,
               },
@@ -383,14 +383,14 @@ export const makeIdentityLifecycleService = (
                                 {
                                   authBindingId: replacement.authBindingId,
                                   correlationId: input.correlationId,
-                                  expectedStatus: 'active',
+                                  expectedStatus: 'active' as const,
                                   idempotencyKey: `${input.idempotencyKey}:replacement-rollback`,
                                 },
                                 !(input.managedPrincipalId === undefined),
                                 'managedPrincipalId',
                                 input.managedPrincipalId,
                                 {
-                                  newStatus: 'revoked',
+                                  newStatus: 'revoked' as const,
                                   principal: input.principal,
                                   reason: 'Replacement rollback after old binding closure failed',
                                 },

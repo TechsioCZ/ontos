@@ -6,27 +6,27 @@ import { legalEntities } from '../db/schema.ts';
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
-export class LegalEntityContextMissingError extends Schema.TaggedErrorClass<LegalEntityContextMissingError>()(
+export class LegalEntityContextMissingError extends Schema.TaggedError<LegalEntityContextMissingError>()(
   'LegalEntityContextMissingError',
   {},
 ) {}
 
-export class LegalEntityContextInactiveError extends Schema.TaggedErrorClass<LegalEntityContextInactiveError>()(
+export class LegalEntityContextInactiveError extends Schema.TaggedError<LegalEntityContextInactiveError>()(
   'LegalEntityContextInactiveError',
   {},
 ) {}
 
-export class LegalEntityContextInvalidError extends Schema.TaggedErrorClass<LegalEntityContextInvalidError>()(
+export class LegalEntityContextInvalidError extends Schema.TaggedError<LegalEntityContextInvalidError>()(
   'LegalEntityContextInvalidError',
   {},
 ) {}
 
-export class LegalEntityContextAmbiguousError extends Schema.TaggedErrorClass<LegalEntityContextAmbiguousError>()(
+export class LegalEntityContextAmbiguousError extends Schema.TaggedError<LegalEntityContextAmbiguousError>()(
   'LegalEntityContextAmbiguousError',
   {},
 ) {}
 
-export class LegalEntityContextUnavailableError extends Schema.TaggedErrorClass<LegalEntityContextUnavailableError>()(
+export class LegalEntityContextUnavailableError extends Schema.TaggedError<LegalEntityContextUnavailableError>()(
   'LegalEntityContextUnavailableError',
   { reason: Schema.String },
 ) {}

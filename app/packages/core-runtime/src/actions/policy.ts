@@ -25,7 +25,7 @@ export interface ActionPolicyEvaluatorInput<Payload> {
   readonly transport: Readonly<Pick<ActionTransportMetadata, 'correlationId' | 'traceId'>>;
 }
 
-export class PolicyDenied extends Schema.TaggedErrorClass<PolicyDenied>()('PolicyDenied', {
+export class PolicyDenied extends Schema.TaggedError<PolicyDenied>()('PolicyDenied', {
   reason: Schema.String,
   reasonCode: Schema.String,
 }) {}

@@ -27,11 +27,11 @@ import type { AuthDatabaseExecutor } from './db/types.ts';
 import { AuthenticationService } from './service.ts';
 import type { AuthenticationServiceContract } from './service.ts';
 
-export class SupportImpersonationDeniedError extends Schema.TaggedErrorClass<SupportImpersonationDeniedError>()(
+export class SupportImpersonationDeniedError extends Schema.TaggedError<SupportImpersonationDeniedError>()(
   'SupportImpersonationDeniedError',
   { code: Schema.Literal('support_impersonation_denied'), reason: Schema.String },
 ) {}
-export class SupportImpersonationUnavailableError extends Schema.TaggedErrorClass<SupportImpersonationUnavailableError>()(
+export class SupportImpersonationUnavailableError extends Schema.TaggedError<SupportImpersonationUnavailableError>()(
   'SupportImpersonationUnavailableError',
   { code: Schema.Literal('support_impersonation_unavailable'), reason: Schema.String },
 ) {}
@@ -60,15 +60,15 @@ const mapProviderError = <Failure>(error: Failure) =>
   error instanceof APIError && error.statusCode < 500 ? denied() : unavailable();
 
 export interface SupportProviderSession {
-  readonly activeTenantId?: null | string;
+  readonly activeTenantId?: null | string | undefined;
   readonly id: string;
-  readonly impersonatedBy?: null | string;
-  readonly impersonationActionId?: null | string;
-  readonly impersonationOriginalAuthBindingId?: null | string;
-  readonly impersonationOriginalPrincipalId?: null | string;
-  readonly impersonationOriginalSessionId?: null | string;
-  readonly impersonationReason?: null | string;
-  readonly impersonationTargetPrincipalId?: null | string;
+  readonly impersonatedBy?: null | string | undefined;
+  readonly impersonationActionId?: null | string | undefined;
+  readonly impersonationOriginalAuthBindingId?: null | string | undefined;
+  readonly impersonationOriginalPrincipalId?: null | string | undefined;
+  readonly impersonationOriginalSessionId?: null | string | undefined;
+  readonly impersonationReason?: null | string | undefined;
+  readonly impersonationTargetPrincipalId?: null | string | undefined;
 }
 export type SupportRecoveryRecord = Omit<
   typeof supportImpersonationRecovery.$inferSelect,

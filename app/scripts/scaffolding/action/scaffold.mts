@@ -54,7 +54,7 @@ export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}Payloa
 export const ${actionType}ResultSchema = Schema.Struct({});
 export type ${actionType}Result = Schema.Schema.Type<typeof ${actionType}ResultSchema>;
 
-export class ${actionType}NotImplemented extends Schema.TaggedErrorClass<${actionType}NotImplemented>()(
+export class ${actionType}NotImplemented extends Schema.TaggedError<${actionType}NotImplemented>()(
   '${actionType}NotImplemented',
   {
     code: Schema.Literal('action_not_implemented'),
@@ -123,7 +123,7 @@ export type ${actionType}Payload = Schema.Schema.Type<typeof ${actionType}Payloa
 export const ${actionType}ResultSchema = Schema.Struct({});
 export type ${actionType}Result = Schema.Schema.Type<typeof ${actionType}ResultSchema>;
 
-export class ${actionType}NotImplemented extends Schema.TaggedErrorClass<${actionType}NotImplemented>()(
+export class ${actionType}NotImplemented extends Schema.TaggedError<${actionType}NotImplemented>()(
   '${actionType}NotImplemented',
   {
     code: Schema.Literal('action_not_implemented'),

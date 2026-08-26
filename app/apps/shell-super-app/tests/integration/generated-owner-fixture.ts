@@ -446,7 +446,7 @@ export const CreateRecordPayload = Schema.Struct({
   title: Schema.String,
 });
 export const CreateRecordResult = Schema.Struct({ created: Schema.Literal(true) });
-export class CreateRecordRejected extends Schema.TaggedErrorClass<CreateRecordRejected>()(
+export class CreateRecordRejected extends Schema.TaggedError<CreateRecordRejected>()(
   'CreateRecordRejected',
   { code: Schema.Literal('owner_write_rejected'), reason: Schema.String },
 ) {}

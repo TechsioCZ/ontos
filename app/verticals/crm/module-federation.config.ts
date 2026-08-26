@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 
 import { resolveEffectTsgoCompiler } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-import { Schema } from 'effect';
+import * as Schema from 'effect/Schema';
 
 import { dependencies } from './package.json';
 
@@ -10,8 +10,6 @@ const require = createRequire(import.meta.url);
 const PackageVersionSchema = Schema.Struct({ version: Schema.String });
 const packageVersion = (specifier: string): string =>
   Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
-const pluginI18nVersion = packageVersion('@modern-js/plugin-i18n/package.json');
-const pluginTanstackVersion = packageVersion('@modern-js/plugin-tanstack/package.json');
 const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
@@ -56,16 +54,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     name: 'verticalCrm',
     shared: {
-      '@modern-js/plugin-i18n/runtime/no-react-i18next': {
-        requiredVersion: pluginI18nVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      '@modern-js/plugin-tanstack/runtime': {
-        requiredVersion: pluginTanstackVersion,
-        singleton: true,
-        treeShaking: false,
-      },
       '@modern-js/runtime': {
         requiredVersion: runtimeVersion,
         singleton: true,

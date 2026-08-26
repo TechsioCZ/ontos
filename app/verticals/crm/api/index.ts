@@ -239,7 +239,7 @@ const verifyPrincipal = (authorization: string | undefined) =>
 const runCrmAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
   ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }, never>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<CrmActionError, never>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
   Services,

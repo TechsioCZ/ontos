@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-import { Schema } from 'effect';
+import * as Schema from 'effect/Schema';
 
 import { dependencies } from './package.json';
 

@@ -31,7 +31,11 @@ export { Effect, runEffectRequest } from '@modern-js/plugin-bff/effect-client';
 type CrmApiGroups =
   typeof crmApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
-export type CrmClient = HttpApiClient.Client<Extract<CrmApiGroups, HttpApiGroup.Any>, never, never>;
+export type CrmClient = HttpApiClient.Client<
+  Extract<CrmApiGroups, HttpApiGroup.Constraint>,
+  never,
+  never
+>;
 export type CrmClientError = HttpClientError.HttpClientError | Schema.SchemaError;
 export type CrmClientEffect<Success> = Effect.Effect<Success, CrmClientError, never>;
 

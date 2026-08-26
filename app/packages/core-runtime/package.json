@@ -23,7 +23,7 @@
     "@authzed/authzed-node": "1.6.1",
     "drizzle-orm": "0.45.2",
     "dotenv": "17.4.2",
-    "effect": "4.0.0-beta.97",
+    "effect": "4.0.0-beta.107",
     "pg": "8.22.0"
   },
   "devDependencies": {

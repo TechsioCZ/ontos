@@ -188,7 +188,7 @@ export interface OntosAuthoredPublicEvent<
 
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
-  readonly api: Readonly<Record<string, HttpApi.AnyWithProps>>;
+  readonly api: Readonly<Record<string, HttpApi.Top>>;
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
   readonly reports: readonly OntosReportDescriptor[];

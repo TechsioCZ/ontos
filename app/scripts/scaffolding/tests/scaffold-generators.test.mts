@@ -824,7 +824,7 @@ test('generates one immutable Action identity boundary and exact direct dependen
     assert.deepEqual(packageJson.dependencies, {
       '@app/core-runtime': 'workspace:*',
       '@app/shared-contracts': 'workspace:*',
-      effect: '4.0.0-beta.97',
+      effect: '4.0.0-beta.107',
       jose: '6.2.5',
       zeta: '1.0.0',
     });
@@ -1268,7 +1268,7 @@ export type CreateOrder2Payload = Schema.Schema.Type<typeof CreateOrder2PayloadS
 export const CreateOrder2ResultSchema = Schema.Struct({});
 export type CreateOrder2Result = Schema.Schema.Type<typeof CreateOrder2ResultSchema>;
 
-export class CreateOrder2NotImplemented extends Schema.TaggedErrorClass<CreateOrder2NotImplemented>()(
+export class CreateOrder2NotImplemented extends Schema.TaggedError<CreateOrder2NotImplemented>()(
   'CreateOrder2NotImplemented',
   {
     code: Schema.Literal('action_not_implemented'),
@@ -1400,7 +1400,7 @@ test('generates exactly one private owner-local external HTTP adapter', async ()
 import { Context, Effect, Layer, Schema } from 'effect';
 import { HttpClient } from 'effect/unstable/http';
 
-export class AresSubjectNotImplemented extends Schema.TaggedErrorClass<AresSubjectNotImplemented>()(
+export class AresSubjectNotImplemented extends Schema.TaggedError<AresSubjectNotImplemented>()(
   'AresSubjectNotImplemented',
   {
     code: Schema.Literal('external_http_adapter_not_implemented'),
@@ -2014,7 +2014,7 @@ import {
   outboxTopic,
 } from '@app/inventory-stock/outbox/orders-created';
 
-export class OrdersCreatedLoggerNotImplemented extends Schema.TaggedErrorClass<OrdersCreatedLoggerNotImplemented>()(
+export class OrdersCreatedLoggerNotImplemented extends Schema.TaggedError<OrdersCreatedLoggerNotImplemented>()(
   'OrdersCreatedLoggerNotImplemented',
   {
     code: Schema.Literal('outbox_worker_not_implemented'),

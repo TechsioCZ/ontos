@@ -1313,7 +1313,7 @@ test('rejects structural payloads, trusted context, and missing idempotency befo
 });
 
 test('preserves declared domain rejections and rolls back collected evidence', async () => {
-  class DomainRejected extends Schema.TaggedErrorClass<DomainRejected>()('DomainRejected', {
+  class DomainRejected extends Schema.TaggedError<DomainRejected>()('DomainRejected', {
     reason: Schema.String,
   }) {}
   const harness = makeHarness();
@@ -1462,7 +1462,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
 });
 
 test('sanitizes undeclared handler failures instead of widening the domain error contract', async () => {
-  class DeclaredDomainError extends Schema.TaggedErrorClass<DeclaredDomainError>()(
+  class DeclaredDomainError extends Schema.TaggedError<DeclaredDomainError>()(
     'DeclaredDomainError',
     { reason: Schema.String },
   ) {}

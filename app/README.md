@@ -308,8 +308,8 @@ from trusted-publisher metadata to provenance attestations.
 For older generated workspaces, run the framework migration command first:
 
 ```bash
-pnpm dlx @bleedingdev/modern-js-create@3.5.0-ultramodern.96 ultramodern \
-  migrate-strict-effect --version 3.5.0-ultramodern.96
+pnpm dlx @bleedingdev/modern-js-create@3.8.2-ultramodern.12 ultramodern \
+  migrate-strict-effect --version 3.8.2-ultramodern.12
 pnpm api:check
 pnpm contract:check
 ```

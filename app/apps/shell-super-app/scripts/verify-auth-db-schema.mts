@@ -6,7 +6,7 @@ import { AuthDatabase, AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { compareAuthCatalog } from '../api/auth/db/catalog.ts';
 import { AUTH_SCHEMA_NAME, AUTH_TABLES } from '../api/auth/db/schema.ts';
 
-class AuthDatabaseVerificationError extends Schema.TaggedErrorClass<AuthDatabaseVerificationError>()(
+class AuthDatabaseVerificationError extends Schema.TaggedError<AuthDatabaseVerificationError>()(
   'AuthDatabaseVerificationError',
   {
     reason: Schema.String,

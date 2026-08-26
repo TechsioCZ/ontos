@@ -16,7 +16,7 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-export class GatewayIssuerConfigError extends Schema.TaggedErrorClass<GatewayIssuerConfigError>()(
+export class GatewayIssuerConfigError extends Schema.TaggedError<GatewayIssuerConfigError>()(
   'GatewayIssuerConfigError',
   { reason: Schema.String },
 ) {}
@@ -66,10 +66,10 @@ const parsePrivateJwk = (encoded: string): Ed25519PrivateJwk => {
     throw new Error('Private JWK key_ops must contain only sign');
   }
 
-  return withOptionalProperty(
+  const privateJwk: Ed25519PrivateJwk = withOptionalProperty(
     {
-      alg: 'EdDSA',
-      crv: 'Ed25519',
+      alg: 'EdDSA' as const,
+      crv: 'Ed25519' as const,
       d: parsed['d'],
     },
     !(keyOperations === undefined),
@@ -77,11 +77,12 @@ const parsePrivateJwk = (encoded: string): Ed25519PrivateJwk => {
     ['sign'],
     {
       kid: parsed['kid'],
-      kty: 'OKP',
-      use: 'sig',
+      kty: 'OKP' as const,
+      use: 'sig' as const,
       x: parsed['x'],
     },
   );
+  return privateJwk;
 };
 
 export const parseGatewayIssuerConfig = (

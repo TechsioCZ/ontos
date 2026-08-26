@@ -3,37 +3,37 @@ import { Cause, Schema } from 'effect';
 
 const reason = { reason: Schema.String } as const;
 
-export class OutboxWorkerDescriptorError extends Schema.TaggedErrorClass<OutboxWorkerDescriptorError>()(
+export class OutboxWorkerDescriptorError extends Schema.TaggedError<OutboxWorkerDescriptorError>()(
   'OutboxWorkerDescriptorError',
   { code: Schema.Literal('outbox_worker_descriptor_invalid'), ...reason },
 ) {}
 
-export class OutboxPayloadDecodeError extends Schema.TaggedErrorClass<OutboxPayloadDecodeError>()(
+export class OutboxPayloadDecodeError extends Schema.TaggedError<OutboxPayloadDecodeError>()(
   'OutboxPayloadDecodeError',
   { code: Schema.Literal('outbox_payload_invalid'), ...reason },
 ) {}
 
-export class OutboxPersistenceError extends Schema.TaggedErrorClass<OutboxPersistenceError>()(
+export class OutboxPersistenceError extends Schema.TaggedError<OutboxPersistenceError>()(
   'OutboxPersistenceError',
   { code: Schema.Literal('outbox_persistence_failed'), ...reason },
 ) {}
 
-export class OutboxClaimLostError extends Schema.TaggedErrorClass<OutboxClaimLostError>()(
+export class OutboxClaimLostError extends Schema.TaggedError<OutboxClaimLostError>()(
   'OutboxClaimLostError',
   { code: Schema.Literal('outbox_claim_lost'), ...reason },
 ) {}
 
-export class OutboxModuleStateError extends Schema.TaggedErrorClass<OutboxModuleStateError>()(
+export class OutboxModuleStateError extends Schema.TaggedError<OutboxModuleStateError>()(
   'OutboxModuleStateError',
   { code: Schema.Literal('outbox_consumer_module_inactive'), ...reason },
 ) {}
 
-export class OutboxHandlerExecutionError extends Schema.TaggedErrorClass<OutboxHandlerExecutionError>()(
+export class OutboxHandlerExecutionError extends Schema.TaggedError<OutboxHandlerExecutionError>()(
   'OutboxHandlerExecutionError',
   { code: Schema.Literal('outbox_handler_execution_failed'), ...reason },
 ) {}
 
-export class OutboxPollerConfigError extends Schema.TaggedErrorClass<OutboxPollerConfigError>()(
+export class OutboxPollerConfigError extends Schema.TaggedError<OutboxPollerConfigError>()(
   'OutboxPollerConfigError',
   { code: Schema.Literal('outbox_poller_config_invalid'), ...reason },
 ) {}

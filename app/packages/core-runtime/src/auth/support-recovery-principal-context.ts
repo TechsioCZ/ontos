@@ -11,11 +11,11 @@ import { recordSupportImpersonationAction } from '../modules/actions/record-supp
 
 const uuid = Schema.String.check(Schema.isUUID());
 
-export class SupportRecoveryPrincipalContextDeniedError extends Schema.TaggedErrorClass<SupportRecoveryPrincipalContextDeniedError>()(
+export class SupportRecoveryPrincipalContextDeniedError extends Schema.TaggedError<SupportRecoveryPrincipalContextDeniedError>()(
   'SupportRecoveryPrincipalContextDeniedError',
   { code: Schema.Literal('support_recovery_context_denied'), reason: Schema.String },
 ) {}
-export class SupportRecoveryPrincipalContextUnavailableError extends Schema.TaggedErrorClass<SupportRecoveryPrincipalContextUnavailableError>()(
+export class SupportRecoveryPrincipalContextUnavailableError extends Schema.TaggedError<SupportRecoveryPrincipalContextUnavailableError>()(
   'SupportRecoveryPrincipalContextUnavailableError',
   { code: Schema.Literal('support_recovery_context_unavailable'), reason: Schema.String },
 ) {}

@@ -444,7 +444,7 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
       event.ctrlKey ||
       event.shiftKey ||
       event.altKey ||
-      !router.history.canGoBack()
+      router.history.canGoBack() !== true
     ) {
       return;
     }

@@ -7,15 +7,15 @@ import { trustResolvedSystemPrincipalContext } from './system-principal-context-
 import { principals, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor } from '../db/types.ts';
 
-export class SystemPrincipalContextInvalidError extends Schema.TaggedErrorClass<SystemPrincipalContextInvalidError>()(
+export class SystemPrincipalContextInvalidError extends Schema.TaggedError<SystemPrincipalContextInvalidError>()(
   'SystemPrincipalContextInvalidError',
   { code: Schema.Literal('system_principal_context_invalid'), reason: Schema.String },
 ) {}
-export class SystemPrincipalContextDeniedError extends Schema.TaggedErrorClass<SystemPrincipalContextDeniedError>()(
+export class SystemPrincipalContextDeniedError extends Schema.TaggedError<SystemPrincipalContextDeniedError>()(
   'SystemPrincipalContextDeniedError',
   { code: Schema.Literal('system_principal_context_denied'), reason: Schema.String },
 ) {}
-export class SystemPrincipalContextUnavailableError extends Schema.TaggedErrorClass<SystemPrincipalContextUnavailableError>()(
+export class SystemPrincipalContextUnavailableError extends Schema.TaggedError<SystemPrincipalContextUnavailableError>()(
   'SystemPrincipalContextUnavailableError',
   { code: Schema.Literal('system_principal_context_unavailable'), reason: Schema.String },
 ) {}

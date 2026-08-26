@@ -70,7 +70,7 @@ import {
   outboxTopic,
 } from '${contractPath}';
 
-export class ${workerType}NotImplemented extends Schema.TaggedErrorClass<${workerType}NotImplemented>()(
+export class ${workerType}NotImplemented extends Schema.TaggedError<${workerType}NotImplemented>()(
   '${workerType}NotImplemented',
   {
     code: Schema.Literal('outbox_worker_not_implemented'),

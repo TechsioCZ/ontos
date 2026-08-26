@@ -725,13 +725,15 @@ const legalEntityGroupLive = HttpApiBuilder.group(
           if (result.state === 'anonymous') {
             return yield* failLegalEntityProblem(tenantAuthenticationRequiredProblem());
           }
+          const selectedLegalEntityId =
+            result.state === 'authenticated' ? result.identity.legalEntityId : undefined;
           return withOptionalProperty(
             {
               legalEntities: result.availableLegalEntities,
             },
-            result.state === 'authenticated',
+            selectedLegalEntityId !== undefined,
             'selectedLegalEntityId',
-            result.identity.legalEntityId,
+            selectedLegalEntityId,
             {
               state: result.state,
             },

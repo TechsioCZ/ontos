@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 
 import { getBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
-import { Schema } from 'effect';
+import * as Schema from 'effect/Schema';
 
 import { dependencies } from './package.json';
 
@@ -52,8 +52,6 @@ const require = createRequire(import.meta.url);
 const PackageVersionSchema = Schema.Struct({ version: Schema.String });
 const packageVersion = (packageName: string): string =>
   Schema.decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
-const pluginI18nVersion = packageVersion('@modern-js/plugin-i18n');
-const pluginTanstackVersion = packageVersion('@modern-js/plugin-tanstack');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
 const reactDomVersion = packageVersion('react-dom');
@@ -77,16 +75,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       }),
     },
     shared: {
-      '@modern-js/plugin-i18n/runtime/no-react-i18next': {
-        requiredVersion: pluginI18nVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      '@modern-js/plugin-tanstack/runtime': {
-        requiredVersion: pluginTanstackVersion,
-        singleton: true,
-        treeShaking: false,
-      },
       '@modern-js/runtime': {
         requiredVersion: runtimeVersion,
         singleton: true,

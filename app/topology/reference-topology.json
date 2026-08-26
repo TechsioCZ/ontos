@@ -251,7 +251,7 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/crm",
-          "effectVersion": "4.0.0-beta.97",
+          "effectVersion": "4.0.0-beta.107",
           "moduleFederationVersion": "2.8.0"
         },
         "cache": {

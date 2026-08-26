@@ -43,7 +43,7 @@ export const ShellResourceDetailSchema = Schema.Struct({
 });
 export type ShellResourceDetail = Schema.Schema.Type<typeof ShellResourceDetailSchema>;
 
-export class ShellProviderUnavailableError extends Schema.TaggedErrorClass<ShellProviderUnavailableError>()(
+export class ShellProviderUnavailableError extends Schema.TaggedError<ShellProviderUnavailableError>()(
   'ShellProviderUnavailableError',
   {},
 ) {}

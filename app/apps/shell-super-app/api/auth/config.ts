@@ -4,7 +4,7 @@ import { APP_ENV_PATH } from '@app/core-runtime/workspace-environment';
 import { config as loadDotenv } from 'dotenv';
 import { Context, Effect, Layer, Schema } from 'effect';
 
-export class AuthConfigError extends Schema.TaggedErrorClass<AuthConfigError>()('AuthConfigError', {
+export class AuthConfigError extends Schema.TaggedError<AuthConfigError>()('AuthConfigError', {
   reason: Schema.String,
 }) {}
 

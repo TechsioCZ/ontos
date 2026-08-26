@@ -1,4 +1,5 @@
-import { Predicate, Schema } from 'effect';
+import * as Predicate from 'effect/Predicate';
+import * as Schema from 'effect/Schema';
 
 const contractPath = '/.well-known/ontos-module-manifest.json';
 

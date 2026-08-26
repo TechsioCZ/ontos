@@ -742,8 +742,8 @@ test.describe('Customer detail flows', () => {
     expect(englishResponse.status(), await englishResponse.text()).toBe(200);
     await expect(page.getByRole('heading', { name: e2eCustomers.active.name })).toBeVisible();
     await expect(page.getByText(e2eCustomers.active.customerId)).toBeVisible();
-    await expect(page.getByText('Active')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Back to Customers' })).toHaveAttribute(
+    await expect(page.getByTestId('customer-detail-results').getByText('Active')).toBeVisible();
+    await expect(page.getByRole('link', { exact: true, name: 'Back' })).toHaveAttribute(
       'href',
       '/en/crm/customers',
     );
@@ -759,7 +759,7 @@ test.describe('Customer detail flows', () => {
     await expect(page.getByRole('heading', { name: e2eCustomers.archived.name })).toBeVisible();
     await expect(page.getByText(e2eCustomers.archived.customerId)).toBeVisible();
     await expect(page.getByText('Archivovaný')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Zpět na zákazníky' })).toHaveAttribute(
+    await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
       'href',
       '/cs/crm/customers',
     );
@@ -1106,7 +1106,7 @@ test.describe('Contact detail flows', () => {
       'href',
       `tel:${e2eContacts.active.phone}`,
     );
-    await expect(page.getByRole('link', { name: 'Back to Customer' })).toHaveAttribute(
+    await expect(page.getByRole('link', { exact: true, name: 'Back' })).toHaveAttribute(
       'href',
       `/en/crm/customers/${e2eContacts.active.customerId}`,
     );
@@ -1125,7 +1125,7 @@ test.describe('Contact detail flows', () => {
     await expect(page.getByRole('heading', { name: e2eContacts.archived.name })).toBeVisible();
     await expect(page.getByText(e2eContacts.archived.email)).toBeVisible();
     await expect(page.getByText('Archivovaný')).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Zpět na zákazníka' })).toHaveAttribute(
+    await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
       'href',
       `/cs/crm/customers/${e2eContacts.archived.customerId}`,
     );
@@ -1353,7 +1353,7 @@ test.describe('Contact edit flows', () => {
     await expect(page.getByRole('textbox', { name: /^Jméno kontaktu/u })).toHaveValue(
       e2eContacts.active.name,
     );
-    await expect(page.getByRole('link', { name: 'Zpět na kontakt' })).toHaveAttribute(
+    await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
       'href',
       contactEditDetailUrl('cs'),
     );

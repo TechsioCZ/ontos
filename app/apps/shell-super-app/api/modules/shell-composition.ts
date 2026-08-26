@@ -26,7 +26,7 @@ const withOptionalProperty = <
 
 type ShellPageContribution = OntosShellContributions['pages'][number];
 
-export class ShellCompositionUnavailableError extends Schema.TaggedErrorClass<ShellCompositionUnavailableError>()(
+export class ShellCompositionUnavailableError extends Schema.TaggedError<ShellCompositionUnavailableError>()(
   'ShellCompositionUnavailableError',
   {},
 ) {}
@@ -151,7 +151,7 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
               },
               !unavailable,
               'href',
-              page.routePath,
+              page?.routePath ?? '',
               {
                 label: contract.manifest.module.displayName,
                 moduleId,

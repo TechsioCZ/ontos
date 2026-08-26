@@ -69,7 +69,7 @@ const ResolvedTarget = ({
 
 const ModuleTargetPage = () => {
   const { t } = useModernI18n();
-  const model = useLoaderData({ from: '/$lang/modules/$moduleId' });
+  const model: ModuleTargetPageModel = useLoaderData({ strict: false });
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined,
   );

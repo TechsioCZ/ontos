@@ -10,7 +10,7 @@ import { Context, Effect, Layer, Schema } from 'effect';
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
 import { deploymentAllowlist } from './deployment-allowlist.ts';
 
-export class InstalledModuleCatalogUnavailableError extends Schema.TaggedErrorClass<InstalledModuleCatalogUnavailableError>()(
+export class InstalledModuleCatalogUnavailableError extends Schema.TaggedError<InstalledModuleCatalogUnavailableError>()(
   'InstalledModuleCatalogUnavailableError',
   {
     code: Schema.Literal('installed_module_catalog_unavailable'),
@@ -18,7 +18,7 @@ export class InstalledModuleCatalogUnavailableError extends Schema.TaggedErrorCl
   },
 ) {}
 
-export class InstalledModuleCatalogInvalidError extends Schema.TaggedErrorClass<InstalledModuleCatalogInvalidError>()(
+export class InstalledModuleCatalogInvalidError extends Schema.TaggedError<InstalledModuleCatalogInvalidError>()(
   'InstalledModuleCatalogInvalidError',
   {
     code: Schema.Literal('installed_module_catalog_invalid'),

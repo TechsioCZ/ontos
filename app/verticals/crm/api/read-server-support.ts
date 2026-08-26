@@ -9,13 +9,20 @@ interface HttpProblem {
   readonly status: number;
 }
 
-interface ReadProblemSet {
-  readonly authentication: () => HttpProblem;
-  readonly forbidden: () => HttpProblem;
-  readonly internal: () => HttpProblem;
-  readonly invalid: () => HttpProblem;
-  readonly notFound?: () => HttpProblem;
-  readonly unavailable: () => HttpProblem;
+interface ReadProblemSet<
+  Authentication extends HttpProblem,
+  Forbidden extends HttpProblem,
+  Internal extends HttpProblem,
+  Invalid extends HttpProblem,
+  Unavailable extends HttpProblem,
+  NotFound extends HttpProblem,
+> {
+  readonly authentication: () => Authentication;
+  readonly forbidden: () => Forbidden;
+  readonly internal: () => Internal;
+  readonly invalid: () => Invalid;
+  readonly notFound?: () => NotFound;
+  readonly unavailable: () => Unavailable;
 }
 
 const bearerChallenge = HttpEffect.appendPreResponseHandler((_request, response) =>
@@ -62,40 +69,43 @@ export const verifyReadPrincipal = <
     }),
   );
 
-export const mapReadProblem = <Problems extends ReadProblemSet>(
+export const mapReadProblem = <
+  Authentication extends HttpProblem,
+  Forbidden extends HttpProblem,
+  Internal extends HttpProblem,
+  Invalid extends HttpProblem,
+  Unavailable extends HttpProblem,
+  NotFound extends HttpProblem = never,
+>(
   error: ReadCoreError,
-  problems: Problems,
-) => {
-  const select = <Key extends keyof Problems>(key: Key) => {
-    const factory = problems[key];
-    return factory === undefined ? problems.internal() : factory();
-  };
+  problems: ReadProblemSet<Authentication, Forbidden, Internal, Invalid, Unavailable, NotFound>,
+): Authentication | Forbidden | Internal | Invalid | Unavailable | NotFound => {
   switch (error._tag) {
     case 'ReadInputValidationError':
-      return select('invalid');
+      return problems.invalid();
     case 'OperationAuthenticationRequired':
-      return select('authentication');
+      return problems.authentication();
     case 'ModuleStateDeniedError':
     case 'OperationContextDenied':
     case 'OperationContextInvalid':
     case 'ReadPermissionDenied':
-      return select('forbidden');
+      return problems.forbidden();
     case 'ReadHandlerNotFound':
-      return problems.notFound === undefined ? select('internal') : select('notFound');
+      return problems.notFound === undefined ? problems.internal() : problems.notFound();
     case 'ReadPolicyDenied':
       // CRM read registrations have no policies; reaching this branch is an internal invariant breach.
-      return select('internal');
+      return problems.internal();
     case 'ModuleStateCheckUnavailableError':
     case 'OperationContextUnavailable':
     case 'ReadEvidencePersistenceError':
     case 'ReadHandlerUnavailable':
     case 'ReadPermissionUnavailable':
     case 'ReadPolicyEvaluationError':
-      return select('unavailable');
+      return problems.unavailable();
     case 'ReadHandlerExecutionError':
     case 'ReadEvidenceValidationError':
     case 'ReadResultValidationError':
-      return select('internal');
+      return problems.internal();
     default: {
       const exhaustive: never = error;
       return exhaustive;

@@ -1,0 +1,39 @@
+diff --git a/dist/cjs/ssr/types.d.cts b/dist/cjs/ssr/types.d.cts
+index 9050041c8dc7c5086f3b02126fab850d3d22c078..e1484446a3a699f5f49146a47bcf8e5d69041821 100644
+--- a/dist/cjs/ssr/types.d.cts
++++ b/dist/cjs/ssr/types.d.cts
+@@ -2,7 +2,7 @@ import { Manifest } from '../manifest.cjs';
+ import { MakeRouteMatch } from '../Matches.cjs';
+ export interface DehydratedMatch {
+     i: MakeRouteMatch['id'];
+-    b?: MakeRouteMatch['__beforeLoadContext'];
++    b?: Record<string, unknown>;
+     l?: MakeRouteMatch['loaderData'];
+     e?: MakeRouteMatch['error'];
+     u: MakeRouteMatch['updatedAt'];
+diff --git a/dist/esm/ssr/types.d.ts b/dist/esm/ssr/types.d.ts
+index 9f57d89eef903ea2c14adfa5ddc2e8083c721411..f71eaac2f7477f70d1b0f9dc91971432776e72cc 100644
+--- a/dist/esm/ssr/types.d.ts
++++ b/dist/esm/ssr/types.d.ts
+@@ -2,7 +2,7 @@ import { Manifest } from '../manifest.js';
+ import { MakeRouteMatch } from '../Matches.js';
+ export interface DehydratedMatch {
+     i: MakeRouteMatch['id'];
+-    b?: MakeRouteMatch['__beforeLoadContext'];
++    b?: Record<string, unknown>;
+     l?: MakeRouteMatch['loaderData'];
+     e?: MakeRouteMatch['error'];
+     u: MakeRouteMatch['updatedAt'];
+diff --git a/src/ssr/types.ts b/src/ssr/types.ts
+index 27bf111843058dcd08c5a6136692413f03302df5..b24c7800aec7fa9811be7fe5c744b8de7e7b40fe 100644
+--- a/src/ssr/types.ts
++++ b/src/ssr/types.ts
+@@ -3,7 +3,7 @@ import type { MakeRouteMatch } from '../Matches'
+ 
+ export interface DehydratedMatch {
+   i: MakeRouteMatch['id']
+-  b?: MakeRouteMatch['__beforeLoadContext']
++  b?: Record<string, unknown>
+   l?: MakeRouteMatch['loaderData']
+   e?: MakeRouteMatch['error']
+   u: MakeRouteMatch['updatedAt']

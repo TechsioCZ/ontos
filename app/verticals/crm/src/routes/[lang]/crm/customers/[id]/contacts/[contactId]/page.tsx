@@ -442,7 +442,8 @@ const ContactDetailQuery = ({
       consumeContactEditSuccess(queryClient, customerId, contactId);
     }
   }, [contactId, customerId, queryClient, saved]);
-  const refetch = () => query.refetch();
+  // oxlint-disable-next-line promise/prefer-await-to-then, no-void -- Effect's compiler rejects async UI callbacks; retain the retry promise while erasing its query result.
+  const refetch = (): Promise<void> => query.refetch().then((result) => void result);
   let view: ContactDetailViewState;
   if (query.isPending) {
     view = { state: 'loading' };
@@ -458,9 +459,7 @@ const ContactDetailQuery = ({
       backHref={backHref}
       copy={copy}
       editHref={`/${language}/crm/customers/${customerId}/contacts/${contactId}/edit`}
-      onRetry={async () => {
-        await refetch();
-      }}
+      onRetry={refetch}
       retrying={query.isFetching && !query.isPending}
       saved={saved}
       view={view}

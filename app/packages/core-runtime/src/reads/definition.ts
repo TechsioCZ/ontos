@@ -195,13 +195,12 @@ export const defineRead = <
   ) {
     throw new TypeError('Read policies must be an explicit array of Policy references');
   }
-  const registration = Object.freeze({
+  const registration = {
     [registrationFactory]: serviceFactory,
     [registrationHandler]: handler,
     [registrationMarker]: true as const,
     [registrationPermissionTargetResolver]: permissionTargetResolver,
     [registrationPolicies]: Object.freeze([...executablePolicies]),
-    [registrationResultPermissionTargetResolver]: resultPermissionTargetResolver,
     descriptor: Object.freeze({
       ...descriptor,
       entrypoint: descriptor.entrypoint,
@@ -210,8 +209,14 @@ export const defineRead = <
         descriptor.policies.map((reference) => Object.freeze({ ...reference })),
       ),
     }),
+  };
+  if (resultPermissionTargetResolver === undefined) {
+    return Object.freeze(registration);
+  }
+  return Object.freeze({
+    ...registration,
+    [registrationResultPermissionTargetResolver]: resultPermissionTargetResolver,
   });
-  return registration;
 };
 
 export const getReadPolicyImplementations = <

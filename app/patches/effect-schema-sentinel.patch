@@ -1,0 +1,12 @@
+diff --git a/dist/Schema.d.ts b/dist/Schema.d.ts
+index 1f86aac..b01e02d 100644
+--- a/dist/Schema.d.ts
++++ b/dist/Schema.d.ts
+@@ -10813,6 +10813,6 @@ export declare namespace Annotations {
+          * Reserved to internal use only.
+          */
+-        readonly "~sentinels"?: ReadonlyArray<SchemaAST.Sentinel> | undefined;
++        readonly "~sentinels"?: ReadonlyArray<unknown> | undefined;
+     }
+     /**
+      * Annotations for filter schema nodes (created via `Schema.filter`). Extends

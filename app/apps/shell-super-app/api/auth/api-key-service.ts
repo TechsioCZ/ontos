@@ -24,11 +24,11 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-export class ApiKeyCredentialInvalidError extends Schema.TaggedErrorClass<ApiKeyCredentialInvalidError>()(
+export class ApiKeyCredentialInvalidError extends Schema.TaggedError<ApiKeyCredentialInvalidError>()(
   'ApiKeyCredentialInvalidError',
   { code: Schema.Literal('api_key_invalid'), reason: Schema.String },
 ) {}
-export class ApiKeyRateLimitedError extends Schema.TaggedErrorClass<ApiKeyRateLimitedError>()(
+export class ApiKeyRateLimitedError extends Schema.TaggedError<ApiKeyRateLimitedError>()(
   'ApiKeyRateLimitedError',
   {
     code: Schema.Literal('api_key_rate_limited'),
@@ -36,11 +36,11 @@ export class ApiKeyRateLimitedError extends Schema.TaggedErrorClass<ApiKeyRateLi
     retryAfterSeconds: Schema.Finite,
   },
 ) {}
-export class ApiKeyProviderUnavailableError extends Schema.TaggedErrorClass<ApiKeyProviderUnavailableError>()(
+export class ApiKeyProviderUnavailableError extends Schema.TaggedError<ApiKeyProviderUnavailableError>()(
   'ApiKeyProviderUnavailableError',
   { code: Schema.Literal('api_key_provider_unavailable'), reason: Schema.String },
 ) {}
-export class ApiKeyStateInconsistentError extends Schema.TaggedErrorClass<ApiKeyStateInconsistentError>()(
+export class ApiKeyStateInconsistentError extends Schema.TaggedError<ApiKeyStateInconsistentError>()(
   'ApiKeyStateInconsistentError',
   { code: Schema.Literal('api_key_state_inconsistent'), reason: Schema.String },
 ) {}

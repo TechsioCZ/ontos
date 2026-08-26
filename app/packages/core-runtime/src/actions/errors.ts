@@ -10,7 +10,7 @@ const safeReason = {
   reason: Schema.String,
 } as const;
 
-export class ActionPayloadValidationError extends Schema.TaggedErrorClass<ActionPayloadValidationError>()(
+export class ActionPayloadValidationError extends Schema.TaggedError<ActionPayloadValidationError>()(
   'ActionPayloadValidationError',
   {
     code: Schema.Literal('action_payload_invalid'),
@@ -18,7 +18,7 @@ export class ActionPayloadValidationError extends Schema.TaggedErrorClass<Action
   },
 ) {}
 
-export class ActionResultValidationError extends Schema.TaggedErrorClass<ActionResultValidationError>()(
+export class ActionResultValidationError extends Schema.TaggedError<ActionResultValidationError>()(
   'ActionResultValidationError',
   {
     code: Schema.Literal('action_result_invalid'),
@@ -26,7 +26,7 @@ export class ActionResultValidationError extends Schema.TaggedErrorClass<ActionR
   },
 ) {}
 
-export class ActionTrustedContextValidationError extends Schema.TaggedErrorClass<ActionTrustedContextValidationError>()(
+export class ActionTrustedContextValidationError extends Schema.TaggedError<ActionTrustedContextValidationError>()(
   'ActionTrustedContextValidationError',
   {
     code: Schema.Literal('action_trusted_context_invalid'),
@@ -34,7 +34,7 @@ export class ActionTrustedContextValidationError extends Schema.TaggedErrorClass
   },
 ) {}
 
-export class ActionIdempotencyKeyRequired extends Schema.TaggedErrorClass<ActionIdempotencyKeyRequired>()(
+export class ActionIdempotencyKeyRequired extends Schema.TaggedError<ActionIdempotencyKeyRequired>()(
   'ActionIdempotencyKeyRequired',
   {
     code: Schema.Literal('action_idempotency_key_required'),
@@ -42,7 +42,7 @@ export class ActionIdempotencyKeyRequired extends Schema.TaggedErrorClass<Action
   },
 ) {}
 
-export class ActionPermissionDenied extends Schema.TaggedErrorClass<ActionPermissionDenied>()(
+export class ActionPermissionDenied extends Schema.TaggedError<ActionPermissionDenied>()(
   'ActionPermissionDenied',
   {
     code: Schema.Literal('action_permission_denied'),
@@ -50,7 +50,7 @@ export class ActionPermissionDenied extends Schema.TaggedErrorClass<ActionPermis
   },
 ) {}
 
-export class ActionPermissionCheckError extends Schema.TaggedErrorClass<ActionPermissionCheckError>()(
+export class ActionPermissionCheckError extends Schema.TaggedError<ActionPermissionCheckError>()(
   'ActionPermissionCheckError',
   {
     code: Schema.Literal('action_permission_check_failed'),
@@ -58,7 +58,7 @@ export class ActionPermissionCheckError extends Schema.TaggedErrorClass<ActionPe
   },
 ) {}
 
-export class ActionAlreadyCommitted extends Schema.TaggedErrorClass<ActionAlreadyCommitted>()(
+export class ActionAlreadyCommitted extends Schema.TaggedError<ActionAlreadyCommitted>()(
   'ActionAlreadyCommitted',
   {
     code: Schema.Literal('action_already_committed'),
@@ -66,7 +66,7 @@ export class ActionAlreadyCommitted extends Schema.TaggedErrorClass<ActionAlread
   },
 ) {}
 
-export class ActionRequestHashConflict extends Schema.TaggedErrorClass<ActionRequestHashConflict>()(
+export class ActionRequestHashConflict extends Schema.TaggedError<ActionRequestHashConflict>()(
   'ActionRequestHashConflict',
   {
     code: Schema.Literal('action_request_hash_conflict'),
@@ -74,7 +74,7 @@ export class ActionRequestHashConflict extends Schema.TaggedErrorClass<ActionReq
   },
 ) {}
 
-export class ActionInvocationPersistenceError extends Schema.TaggedErrorClass<ActionInvocationPersistenceError>()(
+export class ActionInvocationPersistenceError extends Schema.TaggedError<ActionInvocationPersistenceError>()(
   'ActionInvocationPersistenceError',
   {
     code: Schema.Literal('action_invocation_persistence_failed'),
@@ -82,7 +82,7 @@ export class ActionInvocationPersistenceError extends Schema.TaggedErrorClass<Ac
   },
 ) {}
 
-export class ActionInvocationNotFound extends Schema.TaggedErrorClass<ActionInvocationNotFound>()(
+export class ActionInvocationNotFound extends Schema.TaggedError<ActionInvocationNotFound>()(
   'ActionInvocationNotFound',
   {
     code: Schema.Literal('action_invocation_not_found'),
@@ -90,7 +90,7 @@ export class ActionInvocationNotFound extends Schema.TaggedErrorClass<ActionInvo
   },
 ) {}
 
-export class ActionInvocationStateError extends Schema.TaggedErrorClass<ActionInvocationStateError>()(
+export class ActionInvocationStateError extends Schema.TaggedError<ActionInvocationStateError>()(
   'ActionInvocationStateError',
   {
     code: Schema.Literal('action_invocation_state_invalid'),
@@ -98,7 +98,7 @@ export class ActionInvocationStateError extends Schema.TaggedErrorClass<ActionIn
   },
 ) {}
 
-export class ActionCollectorError extends Schema.TaggedErrorClass<ActionCollectorError>()(
+export class ActionCollectorError extends Schema.TaggedError<ActionCollectorError>()(
   'ActionCollectorError',
   {
     code: Schema.Literal('action_collector_invalid'),
@@ -106,7 +106,7 @@ export class ActionCollectorError extends Schema.TaggedErrorClass<ActionCollecto
   },
 ) {}
 
-export class ActionHandlerExecutionError extends Schema.TaggedErrorClass<ActionHandlerExecutionError>()(
+export class ActionHandlerExecutionError extends Schema.TaggedError<ActionHandlerExecutionError>()(
   'ActionHandlerExecutionError',
   {
     code: Schema.Literal('action_handler_execution_failed'),
@@ -114,7 +114,7 @@ export class ActionHandlerExecutionError extends Schema.TaggedErrorClass<ActionH
   },
 ) {}
 
-export class ActionPolicyDenied extends Schema.TaggedErrorClass<ActionPolicyDenied>()(
+export class ActionPolicyDenied extends Schema.TaggedError<ActionPolicyDenied>()(
   'ActionPolicyDenied',
   {
     code: Schema.Literal('action_policy_denied'),
@@ -123,7 +123,7 @@ export class ActionPolicyDenied extends Schema.TaggedErrorClass<ActionPolicyDeni
   },
 ) {}
 
-export class ActionPolicyEvaluationError extends Schema.TaggedErrorClass<ActionPolicyEvaluationError>()(
+export class ActionPolicyEvaluationError extends Schema.TaggedError<ActionPolicyEvaluationError>()(
   'ActionPolicyEvaluationError',
   {
     code: Schema.Literal('action_policy_evaluation_failed'),
@@ -131,7 +131,7 @@ export class ActionPolicyEvaluationError extends Schema.TaggedErrorClass<ActionP
   },
 ) {}
 
-export class ActionTransactionError extends Schema.TaggedErrorClass<ActionTransactionError>()(
+export class ActionTransactionError extends Schema.TaggedError<ActionTransactionError>()(
   'ActionTransactionError',
   {
     code: Schema.Literal('action_transaction_failed'),
@@ -139,7 +139,7 @@ export class ActionTransactionError extends Schema.TaggedErrorClass<ActionTransa
   },
 ) {}
 
-export class ActionCommitIndeterminate extends Schema.TaggedErrorClass<ActionCommitIndeterminate>()(
+export class ActionCommitIndeterminate extends Schema.TaggedError<ActionCommitIndeterminate>()(
   'ActionCommitIndeterminate',
   {
     code: Schema.Literal('action_commit_indeterminate'),

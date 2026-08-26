@@ -14,10 +14,9 @@ import type {
 } from '../../src/outbox/repository.ts';
 import { makeOutboxRuntime } from '../../src/outbox/runtime.ts';
 
-class TestHandlerFailure extends Schema.TaggedErrorClass<TestHandlerFailure>()(
-  'TestHandlerFailure',
-  { reason: Schema.String },
-) {}
+class TestHandlerFailure extends Schema.TaggedError<TestHandlerFailure>()('TestHandlerFailure', {
+  reason: Schema.String,
+}) {}
 
 class TestWorkerDependency extends Context.Service<
   TestWorkerDependency,

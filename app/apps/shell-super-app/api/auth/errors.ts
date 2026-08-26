@@ -1,27 +1,27 @@
 /* eslint-disable max-classes-per-file -- Authentication exposes one closed runtime failure vocabulary. */
 import { Schema } from 'effect';
 
-export class InvalidCredentialsError extends Schema.TaggedErrorClass<InvalidCredentialsError>()(
+export class InvalidCredentialsError extends Schema.TaggedError<InvalidCredentialsError>()(
   'InvalidCredentialsError',
   {},
 ) {}
 
-export class OntosIdentityForbiddenError extends Schema.TaggedErrorClass<OntosIdentityForbiddenError>()(
+export class OntosIdentityForbiddenError extends Schema.TaggedError<OntosIdentityForbiddenError>()(
   'OntosIdentityForbiddenError',
   {},
 ) {}
 
-export class TenantAccessForbiddenError extends Schema.TaggedErrorClass<TenantAccessForbiddenError>()(
+export class TenantAccessForbiddenError extends Schema.TaggedError<TenantAccessForbiddenError>()(
   'TenantAccessForbiddenError',
   {},
 ) {}
 
-export class AuthenticationUnavailableError extends Schema.TaggedErrorClass<AuthenticationUnavailableError>()(
+export class AuthenticationUnavailableError extends Schema.TaggedError<AuthenticationUnavailableError>()(
   'AuthenticationUnavailableError',
   {},
 ) {}
 
-export class AuthenticationInternalError extends Schema.TaggedErrorClass<AuthenticationInternalError>()(
+export class AuthenticationInternalError extends Schema.TaggedError<AuthenticationInternalError>()(
   'AuthenticationInternalError',
   {},
 ) {}

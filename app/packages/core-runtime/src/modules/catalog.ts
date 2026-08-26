@@ -11,7 +11,7 @@ import { decodeOntosModuleDeploymentContract } from './manifest.ts';
 import { validateShellContributions } from './shell-contribution.ts';
 import type { TenantModuleStateValidationUnavailableError } from './tenant-module-state-errors.ts';
 
-export class OntosModuleCatalogValidationError extends Schema.TaggedErrorClass<OntosModuleCatalogValidationError>()(
+export class OntosModuleCatalogValidationError extends Schema.TaggedError<OntosModuleCatalogValidationError>()(
   'OntosModuleCatalogValidationError',
   {
     code: Schema.Literal('ontos_module_catalog_invalid'),

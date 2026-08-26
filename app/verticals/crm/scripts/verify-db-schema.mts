@@ -6,7 +6,7 @@ import { CrmDatabase, CrmDatabaseLive } from '../src/db/client.ts';
 import { compareCrmCatalog } from '../src/db/catalog.ts';
 import { CRM_SCHEMA_NAME, CRM_TABLES, contacts, customers } from '../src/db/schema.ts';
 
-class CrmDatabaseVerificationError extends Schema.TaggedErrorClass<CrmDatabaseVerificationError>()(
+class CrmDatabaseVerificationError extends Schema.TaggedError<CrmDatabaseVerificationError>()(
   'CrmDatabaseVerificationError',
   {
     reason: Schema.String,

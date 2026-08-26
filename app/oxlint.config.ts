@@ -46,6 +46,9 @@ export default defineConfig({
     },
   ],
   rules: {
+    // Schema.TaggedError is a class factory invoked before `extends`; the Unicorn rule
+    // mistakes that canonical Effect syntax for throwing an Error constructor without `new`.
+    'unicorn/throw-new-error': 'off',
     // React Compiler correctness rules — the recommended set from the
     // oxc.rs 2026-08-18 announcement, pinned explicitly to match the
     // ultracite presets' explicit-rules philosophy.

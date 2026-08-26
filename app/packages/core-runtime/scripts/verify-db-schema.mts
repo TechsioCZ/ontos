@@ -27,7 +27,7 @@ import {
   workerCheckpoints,
 } from '../src/db/schema.ts';
 
-class DatabaseVerificationError extends Schema.TaggedErrorClass<DatabaseVerificationError>()(
+class DatabaseVerificationError extends Schema.TaggedError<DatabaseVerificationError>()(
   'DatabaseVerificationError',
   {
     reason: Schema.String,

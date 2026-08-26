@@ -19,27 +19,27 @@ export const ACTION_PRINCIPAL_BEARER_CHALLENGE = 'Bearer' as const;
 
 const errorFields = { reason: Schema.String };
 
-export class ActionPrincipalMissingError extends Schema.TaggedErrorClass<ActionPrincipalMissingError>()(
+export class ActionPrincipalMissingError extends Schema.TaggedError<ActionPrincipalMissingError>()(
   'ActionPrincipalMissingError',
   errorFields,
 ) {}
-export class ActionPrincipalInvalidError extends Schema.TaggedErrorClass<ActionPrincipalInvalidError>()(
+export class ActionPrincipalInvalidError extends Schema.TaggedError<ActionPrincipalInvalidError>()(
   'ActionPrincipalInvalidError',
   errorFields,
 ) {}
-export class ActionPrincipalExpiredError extends Schema.TaggedErrorClass<ActionPrincipalExpiredError>()(
+export class ActionPrincipalExpiredError extends Schema.TaggedError<ActionPrincipalExpiredError>()(
   'ActionPrincipalExpiredError',
   errorFields,
 ) {}
-export class ActionPrincipalScopeError extends Schema.TaggedErrorClass<ActionPrincipalScopeError>()(
+export class ActionPrincipalScopeError extends Schema.TaggedError<ActionPrincipalScopeError>()(
   'ActionPrincipalScopeError',
   errorFields,
 ) {}
-export class ActionPrincipalConfigurationError extends Schema.TaggedErrorClass<ActionPrincipalConfigurationError>()(
+export class ActionPrincipalConfigurationError extends Schema.TaggedError<ActionPrincipalConfigurationError>()(
   'ActionPrincipalConfigurationError',
   errorFields,
 ) {}
-export class ActionPrincipalUnavailableError extends Schema.TaggedErrorClass<ActionPrincipalUnavailableError>()(
+export class ActionPrincipalUnavailableError extends Schema.TaggedError<ActionPrincipalUnavailableError>()(
   'ActionPrincipalUnavailableError',
   errorFields,
 ) {}
@@ -74,17 +74,17 @@ interface VerificationConfiguration {
 const VerificationJwkSchema = Schema.Struct({
   alg: Schema.Literal('EdDSA'),
   crv: Schema.Literal('Ed25519'),
-  d: Schema.optional(Schema.String),
-  ext: Schema.optional(Schema.Boolean),
-  key_ops: Schema.optional(Schema.Array(Schema.Literal('verify'))),
+  d: Schema.optionalKey(Schema.String),
+  ext: Schema.optionalKey(Schema.Boolean),
+  key_ops: Schema.optionalKey(Schema.mutable(Schema.Array(Schema.Literal('verify')))),
   kid: Schema.String,
   kty: Schema.Literal('OKP'),
   use: Schema.Literal('sig'),
   x: Schema.String,
-  x5c: Schema.optional(Schema.Array(Schema.String)),
-  x5t: Schema.optional(Schema.String),
-  'x5t#S256': Schema.optional(Schema.String),
-  x5u: Schema.optional(Schema.String),
+  x5c: Schema.optionalKey(Schema.mutable(Schema.Array(Schema.String))),
+  x5t: Schema.optionalKey(Schema.String),
+  'x5t#S256': Schema.optionalKey(Schema.String),
+  x5u: Schema.optionalKey(Schema.String),
 });
 
 const VerificationJwksSchema = Schema.Struct({

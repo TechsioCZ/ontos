@@ -77,7 +77,6 @@ interface CustomerDetailReadyModel {
   readonly customerId: string;
   readonly dic: string;
   readonly dissolvedOn: string;
-  readonly edit: string;
   readonly dissolvedOnIso: null | string;
   readonly establishedOn: string;
   readonly establishedOnIso: null | string;
@@ -122,6 +121,7 @@ interface CustomerDetailCopy {
   readonly decode: string;
   readonly dic: string;
   readonly dissolvedOn: string;
+  readonly edit: string;
   readonly establishedOn: string;
   readonly forbidden: string;
   readonly ico: string;
@@ -1027,7 +1027,8 @@ const CustomerContactsQuery = ({
     readonly operation: 'archive' | 'unarchive';
     readonly uncertain: boolean;
   } | null>(null);
-  const refetch = () => query.refetch();
+  // oxlint-disable-next-line promise/prefer-await-to-then, no-void -- Effect's compiler rejects async UI callbacks; retain the retry promise while erasing its query result.
+  const refetch = (): Promise<void> => query.refetch().then((result) => void result);
   const toggleLifecycle = (contactId: string, lifecycle: 'active' | 'archived') => {
     const operation = lifecycle === 'active' ? 'archive' : 'unarchive';
     const previousAttempt = lifecycleAttemptRef.current;
@@ -1113,9 +1114,7 @@ const CustomerContactsQuery = ({
             )
           : null
       }
-      onRetry={async () => {
-        await refetch();
-      }}
+      onRetry={refetch}
       onStatusChange={(nextStatus) => {
         void navigate({
           to: buildCustomerContactListHref(language, customerId, search, nextStatus, 0),
@@ -1171,7 +1170,8 @@ const CustomerDetailQuery = ({
     queryKey: customerDetailQueryKey(customerId),
     retry: false,
   });
-  const refetch = () => query.refetch();
+  // oxlint-disable-next-line promise/prefer-await-to-then, no-void -- Effect's compiler rejects async UI callbacks; retain the retry promise while erasing its query result.
+  const refetch = (): Promise<void> => query.refetch().then((result) => void result);
   let view: CustomerDetailViewState;
   if (query.isPending) {
     view = { state: 'loading' };
@@ -1187,9 +1187,7 @@ const CustomerDetailQuery = ({
         backHref={backHref}
         copy={copy}
         editHref={`/${language}/crm/customers/${customerId}/edit`}
-        onRetry={async () => {
-          await refetch();
-        }}
+        onRetry={refetch}
         retrying={query.isFetching && !query.isPending}
         view={view}
       />

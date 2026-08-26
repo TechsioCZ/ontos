@@ -5,7 +5,7 @@ const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
 declare const ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: JsonValue;
 
-export class InstalledVerticalTopologyError extends Schema.TaggedErrorClass<InstalledVerticalTopologyError>()(
+export class InstalledVerticalTopologyError extends Schema.TaggedError<InstalledVerticalTopologyError>()(
   'InstalledVerticalTopologyError',
   { reason: Schema.String },
 ) {}
