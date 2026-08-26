@@ -132,6 +132,7 @@ jobs:
 
       - name: Stop migrator after verification
         if: always() && steps.migrator.outcome != 'skipped'
+        continue-on-error: true
         run: >-
           zcli service stop
           --project-id "$ZEROPS_PROJECT_ID"
