@@ -6012,6 +6012,16 @@ if (hasDeliveryUnits) {
       zeropsSpiceDbStart.includes('--network=host'),
     'Zerops manifest must include the pinned remote migration and SpiceDB services',
   );
+  const spiceDbSetupStart = zeropsYaml.indexOf(`  - setup: ${quoteYamlString('spicedb')}`);
+  const spiceDbSetupEnd = zeropsYaml.indexOf('\n  - setup:', spiceDbSetupStart + 1);
+  const spiceDbSetup = zeropsYaml.slice(
+    spiceDbSetupStart,
+    spiceDbSetupEnd === -1 ? undefined : spiceDbSetupEnd,
+  );
+  assert(
+    spiceDbSetup.includes('temporaryShutdown: true'),
+    'Zerops SpiceDB deploys must avoid overlapping database connection pools',
+  );
   assert(
     !zeropsMigrator.includes("run('pnpm'") &&
       zeropsMigrator.includes("'node_modules', '.bin', 'drizzle-kit'"),
