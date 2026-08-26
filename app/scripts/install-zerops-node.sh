@@ -4,7 +4,8 @@ set -eu
 node_version='26.5.0'
 node_archive="node-v${node_version}-linux-x64-musl.tar.gz"
 node_checksum='00f1398411a4216c5a6ecaad3b825a0da5ec00e79ee8c173ab65a094d97b9ad8'
-node_directory="${HOME:-/var/www}/.local/node-${node_version}"
+node_root="${ZEROPS_NODE_ROOT:-${HOME:-/var/www}}"
+node_directory="${node_root}/.local/node-${node_version}"
 temporary_directory="$(mktemp -d)"
 archive_path="${temporary_directory}/${node_archive}"
 archive_url="https://unofficial-builds.nodejs.org/download/release/v${node_version}/${node_archive}"
