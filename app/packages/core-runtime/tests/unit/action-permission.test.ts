@@ -128,6 +128,48 @@ test('requires complete configuration and explicit secure or localhost-insecure 
   );
 });
 
+test('allows insecure transport only for the exact Zerops stage private endpoint', async () => {
+  const stage = await Effect.runPromise(
+    parseSpiceDbConfig({
+      SPICEDB_ENDPOINT: 'spicedb:50051',
+      SPICEDB_INSECURE: 'true',
+      SPICEDB_PRESHARED_KEY: 'test-key',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+    }),
+  );
+  const rejected = await Promise.all(
+    [
+      {
+        SPICEDB_ENDPOINT: 'spicedb:50051',
+        SPICEDB_INSECURE: 'true',
+        SPICEDB_PRESHARED_KEY: 'test-key',
+      },
+      {
+        SPICEDB_ENDPOINT: 'spicedb:50052',
+        SPICEDB_INSECURE: 'true',
+        SPICEDB_PRESHARED_KEY: 'test-key',
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+      },
+      {
+        SPICEDB_ENDPOINT: 'spicedb:50051',
+        SPICEDB_INSECURE: 'true',
+        SPICEDB_PRESHARED_KEY: 'test-key',
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
+      },
+    ].map((environment) => Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment)))),
+  );
+
+  assert.deepEqual(stage, {
+    endpoint: 'spicedb:50051',
+    insecureLocal: true,
+    preSharedKey: 'test-key',
+  });
+  assert.deepEqual(
+    rejected.map((failure) => failure._tag),
+    ['SpiceDbConfigError', 'SpiceDbConfigError', 'SpiceDbConfigError'],
+  );
+});
+
 test('losslessly maps Action keys and exact principal identities using fully consistent requests', async () => {
   const requests: v1.CheckPermissionRequest[] = [];
   const service = makeActionPermissionService(

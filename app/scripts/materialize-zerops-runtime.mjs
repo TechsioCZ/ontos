@@ -54,10 +54,7 @@ function writeJson(filePath, value) {
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: options.cwd ?? workspaceRoot,
-    env: {
-      ...process.env,
-      MODERNJS_DEPLOY: 'node',
-    },
+    env: process.env,
     stdio: 'inherit',
   });
 
@@ -67,64 +64,6 @@ function run(command, commandArgs, options = {}) {
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
-  }
-}
-
-const sourceSnapshotSkipSegments = new Set([
-  '.git',
-  '.output',
-  '.zerops',
-  'dist',
-  'node_modules',
-  'repos',
-]);
-
-function shouldSnapshotSourcePath(relativePath) {
-  return !relativePath.split(path.sep).some((segment) => sourceSnapshotSkipSegments.has(segment));
-}
-
-function listWorkspaceSourceFiles() {
-  const files = [];
-  const queue = [workspaceRoot];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const absolute = path.join(current, entry.name);
-      const relativePath = path.relative(workspaceRoot, absolute);
-      if (!shouldSnapshotSourcePath(relativePath)) {
-        continue;
-      }
-      if (entry.isDirectory()) {
-        queue.push(absolute);
-      } else if (entry.isFile()) {
-        files.push(relativePath);
-      }
-    }
-  }
-  return files.sort();
-}
-
-function snapshotWorkspaceSourceFiles() {
-  return new Map(
-    listWorkspaceSourceFiles().map((relativePath) => [
-      relativePath,
-      fs.readFileSync(path.join(workspaceRoot, relativePath)),
-    ]),
-  );
-}
-
-function restoreWorkspaceSourceFiles(snapshot) {
-  for (const relativePath of listWorkspaceSourceFiles()) {
-    if (!snapshot.has(relativePath)) {
-      fs.rmSync(path.join(workspaceRoot, relativePath), { force: true });
-    }
-  }
-  for (const [relativePath, content] of snapshot) {
-    const absolute = path.join(workspaceRoot, relativePath);
-    fs.mkdirSync(path.dirname(absolute), { recursive: true });
-    if (!fs.existsSync(absolute) || !fs.readFileSync(absolute).equals(content)) {
-      fs.writeFileSync(absolute, content);
-    }
   }
 }
 
@@ -153,21 +92,15 @@ const runtimeDir = path.join(workspaceRoot, '.zerops/runtime', appId);
 assertInsideWorkspace('package directory', appRoot);
 assertInsideWorkspace('runtime directory', runtimeDir);
 
-const sourceSnapshot = snapshotWorkspaceSourceFiles();
-try {
-  run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', [
-    '--filter',
-    packageName,
-    'run',
-    'deploy',
-    '--skip-build',
-  ]);
-} finally {
-  restoreWorkspaceSourceFiles(sourceSnapshot);
+const appPackage = readJson(path.join(appRoot, 'package.json'));
+if (appPackage.name !== packageName) {
+  fail(`--package must match ${packageDir}/package.json name`);
 }
 
 if (!fs.existsSync(appOutputDir)) {
-  fail(`Modern.js Node deploy did not produce ${path.relative(workspaceRoot, appOutputDir)}`);
+  fail(
+    `Modern.js package build must produce ${path.relative(workspaceRoot, appOutputDir)} before runtime materialization`,
+  );
 }
 
 fs.rmSync(runtimeDir, { force: true, recursive: true });

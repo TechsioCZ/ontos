@@ -24,6 +24,13 @@ patchedDependencies:
 importers:
 
   .:
+    dependencies:
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
     devDependencies:
       '@effect/tsgo':
         specifier: 0.19.0
@@ -73,9 +80,6 @@ importers:
       oxlint:
         specifier: 1.79.0
         version: 1.79.0
-      pg:
-        specifier: 8.22.0
-        version: 8.22.0
       ultracite:
         specifier: 7.10.5
         version: 7.10.5(oxfmt@0.64.0)(oxlint@1.79.0)

@@ -14,6 +14,7 @@
     "env:local:ensure": "node ./scripts/ensure-local-environment.mts",
     "db:generate": "pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/crm db:generate",
     "db:bootstrap-runtime-role": "node ./scripts/postgres/bootstrap-runtime-role.mts",
+    "db:bootstrap-spicedb": "node ./scripts/postgres/bootstrap-spicedb-database.mts",
     "db:migrate": "pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/crm db:migrate && pnpm db:bootstrap-runtime-role",
     "db:test": "pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/crm db:test",
     "db:verify": "node ./scripts/verify-application-db-schema.mts",
@@ -31,6 +32,7 @@
     "performance:readiness": "node ./scripts/ultramodern-performance-readiness.mts",
     "migrate:strict-effect": "node ./scripts/migrate-strict-effect.mts",
     "zerops:materialize": "node ./scripts/materialize-zerops-runtime.mjs",
+    "stage:bootstrap-demo": "pnpm --filter @app/shell-super-app stage:bootstrap-demo",
     "scaffold:action": "node ./scripts/scaffolding/cli.mts action",
     "scaffold:action-service": "node ./scripts/scaffolding/cli.mts action-service",
     "scaffold:external-http-adapter": "node ./scripts/scaffolding/cli.mts external-http-adapter",
@@ -62,6 +64,10 @@
     "i18n:boundaries": "node ./scripts/check-ultramodern-i18n-boundaries.mts",
     "postinstall": "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt . '!repos/**'"
   },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "pg": "8.22.0"
+  },
   "devDependencies": {
     "@effect/tsgo": "0.19.0",
     "@modern-js/code-tools": "npm:@bleedingdev/modern-js-code-tools@3.8.2-ultramodern.12",
@@ -79,7 +85,6 @@
     "miniflare": "4.20260708.1",
     "oxfmt": "0.64.0",
     "oxlint": "1.79.0",
-    "pg": "8.22.0",
     "ultracite": "7.10.5",
     "wrangler": "4.110.0",
     "zephyr-agent": "1.1.1"
