@@ -5982,7 +5982,12 @@ if (hasDeliveryUnits) {
     'pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm';
   assert(
     zeropsYaml.split(localVirtualStoreInstall).length - 1 === 3,
-    'Every Zerops Node build must replace stale host-global dependency links with a project-local virtual store',
+    'Every Zerops Node build must install dependencies into a project-local virtual store',
+  );
+  const cleanWorkspaceDependencies = 'node scripts/reset-workspace-dependencies.mjs';
+  assert(
+    zeropsYaml.split(cleanWorkspaceDependencies).length - 1 === 3,
+    'Every Zerops Node build must remove cached dependency links before installing',
   );
   assert(
     zeropsYaml.split('--config.enable-global-virtual-store=false').length - 1 === 7,
