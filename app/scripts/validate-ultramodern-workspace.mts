@@ -4911,6 +4911,10 @@ assertAnyOf(['.agents/skills-lock.json', '.codex/skills-lock.json']);
 assertAnyOf(['.agents/rstackjs-agent-skills-LICENSE', '.codex/rstackjs-agent-skills-LICENSE']);
 const pnpmWorkspace = readText('pnpm-workspace.yaml');
 assert(
+  pnpmWorkspace.includes('enableGlobalVirtualStore: false'),
+  'pnpm-workspace.yaml must keep deployable dependency trees independent of the host global virtual store',
+);
+assert(
   pnpmWorkspace.includes(`'@effect/opentelemetry': ${expectedEffectVersion}`),
   'pnpm-workspace.yaml must override @effect/opentelemetry to the generated Effect cohort',
 );
