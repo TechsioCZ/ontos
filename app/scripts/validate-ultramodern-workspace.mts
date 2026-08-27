@@ -6152,6 +6152,13 @@ if (hasDeliveryUnits) {
     'Zerops materializer must normalize generated Modern package aliases before installing dependencies',
   );
   assert(
+    zeropsMaterializer.includes('removeIncompatiblePlatformDependencies') &&
+      zeropsMaterializer.includes('isCurrentPlatformSupported') &&
+      zeropsMaterializer.includes('process.platform') &&
+      zeropsMaterializer.includes('process.arch'),
+    'Zerops materializer must exclude traced dependencies that declare an incompatible runtime OS or CPU',
+  );
+  assert(
     zeropsMaterializer.includes('officialPackageName'),
     'Zerops materializer must add official Modern.js npm aliases for generated runtime imports',
   );
