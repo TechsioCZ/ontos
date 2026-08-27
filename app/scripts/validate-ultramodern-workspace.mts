@@ -4929,8 +4929,10 @@ assert(
     vercelNftPatch.includes('pnpm[\\\\/]store[\\\\/]v\\d+') &&
     vercelNftPatch.includes('(?:dev|etc|proc|run|sys)') &&
     vercelNftPatch.includes('^\\/var\\/run') &&
-    vercelNftPatch.includes('isBuildHostSystemPath(assetDirPath)') &&
-    vercelNftPatch.includes('isBuildHostSystemPath(wildcardDirPath)') &&
+    vercelNftPatch.includes('isBuildHostWildcardRoot') &&
+    vercelNftPatch.includes('os_1.default.homedir()') &&
+    vercelNftPatch.includes('isBuildHostWildcardRoot(assetDirPath)') &&
+    vercelNftPatch.includes('isBuildHostWildcardRoot(wildcardDirPath)') &&
     vercelNftPatch.includes('if (isBuildHostSystemPath(path))') &&
     vercelNftPatch.includes('const source = await this.readFile(path);') &&
     vercelNftPatch.includes("throw new Error('File ' + path + ' does not exist.')"),
@@ -4953,7 +4955,13 @@ if (process.platform !== 'win32') {
 
   fs.writeFileSync(
     tracerFixturePath,
-    'const path = require("node:path"); require(path.join("/etc", process.env.ULTRAMODERN_DYNAMIC_FILE));\n',
+    [
+      'const os = require("node:os");',
+      'const path = require("node:path");',
+      'require(path.join("/etc", process.env.ULTRAMODERN_DYNAMIC_SYSTEM_FILE));',
+      'require(path.join(os.homedir(), process.env.ULTRAMODERN_DYNAMIC_HOME_FILE));',
+      '',
+    ].join('\n'),
   );
   console.log = (...values: unknown[]) => {
     tracerLogs.push(values.map(String).join(' '));
@@ -4971,6 +4979,10 @@ if (process.platform !== 'win32') {
   assert(
     !tracerLogs.some((line) => line.startsWith('Globbing /etc')),
     'The deployment tracer must reject build-host system globs before filesystem enumeration',
+  );
+  assert(
+    !tracerLogs.some((line) => line.startsWith(`Globbing ${os.homedir()}`)),
+    'The deployment tracer must reject build-host home globs before filesystem enumeration',
   );
 }
 assert(
