@@ -1,5 +1,5 @@
 import { beforeEach, expect, rstest, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { ConfigProvider, Effect } from 'effect';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
@@ -22,7 +22,10 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
-  runEffectRequest: Effect.runPromise,
+  runEffectRequest: <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
+    Effect.runPromise(
+      effect.pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv())),
+    ),
   shellComposition: shellCompositionMock,
 }));
 
@@ -52,6 +55,23 @@ const request = () =>
   new Request('https://shell.example.test/en', {
     headers: { cookie: 'session=test-session' },
   });
+
+const withBetterAuthUrl = async <Value>(
+  baseUrl: string,
+  operation: () => Promise<Value>,
+): Promise<Value> => {
+  const previousBaseUrl = process.env['BETTER_AUTH_URL'];
+  process.env['BETTER_AUTH_URL'] = baseUrl;
+  try {
+    return await operation();
+  } finally {
+    if (previousBaseUrl === undefined) {
+      delete process.env['BETTER_AUTH_URL'];
+    } else {
+      process.env['BETTER_AUTH_URL'] = previousBaseUrl;
+    }
+  }
+};
 
 beforeEach(() => {
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
@@ -102,6 +122,30 @@ test('does not request composition for an anonymous session', async () => {
   expect(await loader({ request: request() })).toEqual({ state: 'anonymous' });
   expect(shellCompositionMock).not.toHaveBeenCalled();
   expect(availableTenantsMock).not.toHaveBeenCalled();
+});
+
+test('uses the configured HTTPS origin for the server-side session request', async () => {
+  currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
+
+  await withBetterAuthUrl('https://shell.stage.example.test', () =>
+    loader({ request: new Request('http://shell.stage.example.test/en') }),
+  );
+
+  expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
+    'https://shell.stage.example.test/shell-super-app-api',
+  );
+});
+
+test('keeps the configured local HTTP origin for the server-side session request', async () => {
+  currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
+
+  await withBetterAuthUrl('http://localhost:3020', () =>
+    loader({ request: new Request('http://localhost:3020/en') }),
+  );
+
+  expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
+    'http://localhost:3020/shell-super-app-api',
+  );
 });
 
 test('maps composition failure to unavailable without discarding verified context', async () => {

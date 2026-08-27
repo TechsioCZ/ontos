@@ -1,23 +1,10 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader preserves the typed Effect error channel until the framework boundary. */
 import { Effect } from 'effect';
 import type { ShellSearchResponse } from '../../../../shared/api.ts';
-import { shellAuthenticationApiContract } from '../../../../shared/api.ts';
 import { runEffectRequest, searchResources } from '../../../api/auth-client.ts';
+import { shellAuthenticationClientOptionsFromRequest } from '../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../page.data.ts';
 import type { HomePageModel } from '../page.data.ts';
-
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
-  base: Base,
-  condition: boolean,
-  key: Key,
-  value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 interface SearchLoaderArguments {
   readonly request: Request;
@@ -58,18 +45,9 @@ export const loader = async ({ request }: SearchLoaderArguments): Promise<Search
       state: 'ready',
     };
   }
-  const cookie = request.headers.get('cookie');
-  const options = withOptionalProperty(
-    {
-      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    },
-    !(cookie === null),
-    'cookie',
-    cookie,
-    {},
-  );
   return runEffectRequest(
-    searchResources({ query }, options).pipe(
+    shellAuthenticationClientOptionsFromRequest(request).pipe(
+      Effect.flatMap((options) => searchResources({ query }, options)),
       Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
       Effect.catch((error) =>
         Effect.succeed<SearchPageModel>({

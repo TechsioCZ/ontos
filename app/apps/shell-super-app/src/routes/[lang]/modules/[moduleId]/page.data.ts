@@ -3,7 +3,7 @@ import { Effect, Predicate } from 'effect';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget, runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
-import { shellAuthenticationApiContract } from '../../../../../shared/api.ts';
+import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-authentication-client-options.ts';
 import { loadHomePageModel } from '../../page.data.ts';
 import type { HomePageModel } from '../../page.data.ts';
 
@@ -95,30 +95,23 @@ export const loader = async ({
       state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
     } as const;
   }
-  const cookie = request.headers.get('cookie');
-  const options = withOptionalProperty(
-    {
-      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    },
-    !(cookie === null),
-    'cookie',
-    cookie,
-    {},
-  );
   const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
   return runEffectRequest(
-    resolveModuleTarget(
-      withOptionalProperty(
-        {},
-        !(params.entrypointKey === undefined),
-        'entrypointKey',
-        params.entrypointKey,
-        {
-          moduleId: params.moduleId,
-        },
+    shellAuthenticationClientOptionsFromRequest(request).pipe(
+      Effect.flatMap((options) =>
+        resolveModuleTarget(
+          withOptionalProperty(
+            {},
+            !(params.entrypointKey === undefined),
+            'entrypointKey',
+            params.entrypointKey,
+            {
+              moduleId: params.moduleId,
+            },
+          ),
+          options,
+        ),
       ),
-      options,
-    ).pipe(
       Effect.map((target): ModuleTargetPageModel => ({
         routeParams: boundedRouteParams,
         shell,
