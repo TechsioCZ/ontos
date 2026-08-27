@@ -75,7 +75,7 @@ const ModuleTargetPage = () => {
   );
   if (model.shell.state !== 'authenticated') {
     return (
-      <main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8">
+      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
           {t(
             model.shell.state === 'unavailable'

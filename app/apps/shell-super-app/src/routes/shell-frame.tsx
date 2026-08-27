@@ -133,10 +133,10 @@ export const AuthenticatedDashboardLayout = ({
         : null;
 
   return (
-    <div className="flex min-h-screen min-w-0 flex-col overflow-x-hidden bg-(--color-page-bg) text-(--color-page-fg) md:flex-row">
+    <div className="shell:flex shell:min-h-screen shell:min-w-0 shell:flex-col shell:overflow-x-hidden shell:bg-(--color-page-bg) shell:text-(--color-page-fg) shell:md:flex-row">
       <aside
         aria-label={t('shell.dashboard.sidebar.label')}
-        className="flex w-full shrink-0 flex-col gap-6 bg-(--color-surface) p-4 md:w-64"
+        className="shell:flex shell:w-full shell:shrink-0 shell:flex-col shell:gap-6 shell:bg-(--color-surface) shell:p-4 shell:md:w-64"
       >
         <p>{t('shell.dashboard.brand')}</p>
         <Select
@@ -249,7 +249,7 @@ export const AuthenticatedDashboardLayout = ({
           </SearchForm.Control>
         </SearchForm>
         <nav aria-label={t('shell.dashboard.navigation.label')}>
-          <ul className="flex flex-col gap-2">
+          <ul className="shell:flex shell:flex-col shell:gap-2">
             <li>
               <Link
                 aria-current={homeCurrent && currentModuleId === undefined ? 'page' : undefined}
@@ -260,7 +260,10 @@ export const AuthenticatedDashboardLayout = ({
               </Link>
             </li>
             {navigation.map((module) => (
-              <li className="flex flex-wrap items-center gap-2" key={module.moduleId}>
+              <li
+                className="shell:flex shell:flex-wrap shell:items-center shell:gap-2"
+                key={module.moduleId}
+              >
                 {module.enabled && module.href !== undefined ? (
                   <Link
                     aria-current={currentModuleId === module.moduleId ? 'page' : undefined}
@@ -292,7 +295,7 @@ export const AuthenticatedDashboardLayout = ({
           </ul>
         </nav>
       </aside>
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="shell:flex shell:min-w-0 shell:flex-1 shell:flex-col">
         <Header aria-label={t('shell.dashboard.header.label')}>
           {title === undefined ? null : (
             <Header.Container position="start">
@@ -316,7 +319,7 @@ export const AuthenticatedDashboardLayout = ({
             </Header.Actions>
           </Header.Container>
         </Header>
-        <div className="min-w-0 flex-1 px-2 py-4">{children}</div>
+        <div className="shell:min-w-0 shell:flex-1 shell:px-2 shell:py-4">{children}</div>
       </main>
     </div>
   );

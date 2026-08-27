@@ -31,7 +31,7 @@ const ResourcePage = () => {
   };
   if (model.shell.state !== 'authenticated') {
     return (
-      <main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8">
+      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
           {t(
             model.shell.state === 'unavailable'
@@ -48,22 +48,22 @@ const ResourcePage = () => {
         {t(`shell.resource.${model.state}`)}
       </StatusText>
     ) : (
-      <div className="grid w-full max-w-5xl gap-8">
-        <section className="grid gap-4" aria-labelledby="resource-title">
-          <h2 className="text-title-lg" id="resource-title">
+      <div className="shell:grid shell:w-full shell:max-w-5xl shell:gap-8">
+        <section className="shell:grid shell:gap-4" aria-labelledby="resource-title">
+          <h2 className="shell:text-title-lg" id="resource-title">
             {model.resource.detail.title}
           </h2>
-          <dl className="grid gap-3">
+          <dl className="shell:grid shell:gap-3">
             {model.resource.detail.fields.map((field) => (
-              <div className="grid gap-1" key={field.label}>
-                <dt className="font-semibold">{field.label}</dt>
+              <div className="shell:grid shell:gap-1" key={field.label}>
+                <dt className="shell:font-semibold">{field.label}</dt>
                 <dd>{field.value}</dd>
               </div>
             ))}
           </dl>
         </section>
-        <section className="grid gap-3" aria-labelledby="resource-media">
-          <h2 className="text-title-md" id="resource-media">
+        <section className="shell:grid shell:gap-3" aria-labelledby="resource-media">
+          <h2 className="shell:text-title-md" id="resource-media">
             {t('shell.resource.media.title')}
           </h2>
           <Button
@@ -92,8 +92,8 @@ const ResourcePage = () => {
             </StatusText>
           ) : null}
         </section>
-        <section className="grid gap-3" aria-labelledby="resource-timeline">
-          <h2 className="text-title-md" id="resource-timeline">
+        <section className="shell:grid shell:gap-3" aria-labelledby="resource-timeline">
+          <h2 className="shell:text-title-md" id="resource-timeline">
             {t('shell.resource.timeline.title')}
           </h2>
           {model.resource.projectionLagging ? (
@@ -104,7 +104,7 @@ const ResourcePage = () => {
           {model.resource.timeline.length === 0 ? (
             <StatusText status="default">{t('shell.resource.timeline.empty')}</StatusText>
           ) : (
-            <ol className="grid gap-3">
+            <ol className="shell:grid shell:gap-3">
               {model.resource.timeline.map((entry) => (
                 <li key={entry.timelineEntryId}>
                   <time dateTime={entry.occurredAt}>{entry.occurredAt}</time> — {entry.summary}

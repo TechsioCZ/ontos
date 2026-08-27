@@ -14,7 +14,7 @@ const SearchPage = () => {
   );
   if (model.shell.state !== 'authenticated') {
     return (
-      <main className="mx-auto grid w-full max-w-5xl gap-6 px-4 py-8">
+      <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
         <StatusText aria-live="polite" showIcon status="error">
           {t(
             model.shell.state === 'unavailable'
@@ -31,8 +31,11 @@ const SearchPage = () => {
         {t(`shell.search.${model.state}`)}
       </StatusText>
     ) : (
-      <section className="grid w-full max-w-5xl gap-6" aria-labelledby="search-results-title">
-        <h2 className="text-title-lg" id="search-results-title">
+      <section
+        className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
+        aria-labelledby="search-results-title"
+      >
+        <h2 className="shell:text-title-lg" id="search-results-title">
           {t('shell.search.title')}
         </h2>
         {model.response.partial ? (
@@ -43,7 +46,7 @@ const SearchPage = () => {
         {model.response.results.length === 0 ? (
           <StatusText status="default">{t('shell.search.empty')}</StatusText>
         ) : (
-          <ul className="grid gap-3">
+          <ul className="shell:grid shell:gap-3">
             {model.response.results.map((result) => (
               <li
                 key={`${result.ref.moduleId}:${result.ref.resourceType}:${result.ref.resourceId}`}

@@ -234,7 +234,14 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
   await expect(page.getByText('This page is ready for implementation.')).toHaveCount(0);
   await expect(page.getByText('No content has been added yet.')).toHaveCount(0);
   await expect(page.getByText('The module is temporarily unavailable. Try again.')).toHaveCount(0);
-  await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
+  const dashboardSidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
+  await expect(dashboardSidebar).toBeVisible();
+  const [sidebarBox, mainBox] = await Promise.all([
+    dashboardSidebar.boundingBox(),
+    page.locator('main').boundingBox(),
+  ]);
+  expect(sidebarBox?.width).toBe(256);
+  expect(mainBox?.x).toBe(256);
   expect(
     pageErrors.filter((message) =>
       message.includes('FederatedI18nBoundary must be used within ModernI18nProvider'),

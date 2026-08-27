@@ -130,7 +130,9 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
   );
 
   expect(audienceErrors.every((error) => error.code === 'gateway_audience_invalid')).toBe(true);
+  expect(audienceErrors.every((error) => error.stage === 'audience')).toBe(true);
   expect(timeError.code).toBe('gateway_issuer_unavailable');
+  expect(timeError.stage).toBe('clock');
 });
 
 test('rejects transport correlation or any other excess principal claim', async () => {
@@ -147,6 +149,37 @@ test('rejects transport correlation or any other excess principal claim', async 
     ),
   );
   expect(error.code).toBe('gateway_issuer_unavailable');
+  expect(error.stage).toBe('principal');
+});
+
+test('identifies configuration and signing failures without exposing key material', async () => {
+  const { configuration } = await makeConfiguration();
+  const configurationError = await Effect.runPromise(
+    Effect.flip(
+      issueGatewayContextAssertion(
+        { audience: 'property-registry', principal },
+        dependencies(configuration, {
+          loadConfig: parseGatewayIssuerConfig({}),
+        }),
+      ),
+    ),
+  );
+  const signingError = await Effect.runPromise(
+    Effect.flip(
+      issueGatewayContextAssertion(
+        { audience: 'property-registry', principal },
+        dependencies({
+          ...configuration,
+          privateJwk: { ...configuration.privateJwk, d: 'invalid' },
+        }),
+      ),
+    ),
+  );
+
+  expect(configurationError.stage).toBe('configuration');
+  expect(signingError.stage).toBe('signing');
+  expect(configurationError.reason).not.toContain('ONTOS_GATEWAY_PRIVATE_JWK');
+  expect(signingError.reason).not.toContain(configuration.privateJwk.d);
 });
 
 test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing key IDs', async () => {

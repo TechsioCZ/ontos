@@ -19,6 +19,7 @@ export class GatewayIssuerError extends Schema.TaggedError<GatewayIssuerError>()
   {
     code: Schema.Literals(['gateway_audience_invalid', 'gateway_issuer_unavailable']),
     reason: Schema.String,
+    stage: Schema.Literals(['audience', 'clock', 'configuration', 'principal', 'signing']),
   },
 ) {}
 
@@ -47,16 +48,18 @@ export const gatewayIssuerLiveDependencies: GatewayIssuerDependencies = {
       new GatewayIssuerError({
         code: 'gateway_issuer_unavailable',
         reason: 'The generated MicroVertical audience topology is unavailable',
+        stage: 'audience',
       }),
     try: () => import('../verticals/installed-verticals.ts'),
   }).pipe(Effect.flatMap((module) => module.installedVerticalIds)),
   loadConfig: loadGatewayIssuerConfig(),
 };
 
-const unavailable = () =>
+const unavailable = (stage: 'audience' | 'clock' | 'configuration' | 'principal' | 'signing') =>
   new GatewayIssuerError({
     code: 'gateway_issuer_unavailable',
     reason: 'The gateway assertion issuer is unavailable',
+    stage,
   });
 
 export const issueGatewayContextAssertion = <Principal>(
@@ -66,25 +69,30 @@ export const issueGatewayContextAssertion = <Principal>(
   Effect.gen(function* issueGatewayContextAssertionEffect() {
     const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
-    })(input.principal).pipe(Effect.mapError(unavailable));
-    const audiences = yield* dependencies.loadAudiences.pipe(Effect.mapError(unavailable));
+    })(input.principal).pipe(Effect.mapError(() => unavailable('principal')));
+    const audiences = yield* dependencies.loadAudiences.pipe(
+      Effect.mapError(() => unavailable('audience')),
+    );
     if (!audiences.has(input.audience)) {
       return yield* new GatewayIssuerError({
         code: 'gateway_audience_invalid',
         reason: 'The requested gateway audience is not a generated MicroVertical',
+        stage: 'audience',
       });
     }
 
-    const configuration = yield* dependencies.loadConfig.pipe(Effect.mapError(unavailable));
+    const configuration = yield* dependencies.loadConfig.pipe(
+      Effect.mapError(() => unavailable('configuration')),
+    );
     const issuedAt = yield* dependencies.currentTimeSeconds;
     if (!Number.isSafeInteger(issuedAt) || issuedAt < 0) {
-      return yield* unavailable();
+      return yield* unavailable('clock');
     }
     const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
     const jti = yield* dependencies.generateJti;
 
     const token = yield* Effect.tryPromise({
-      catch: unavailable,
+      catch: () => unavailable('signing'),
       try: async () => {
         const key = await importJWK(configuration.privateJwk, 'EdDSA');
         return new SignJWT({

@@ -111,14 +111,18 @@ const LoginPage = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <main className="flex min-h-screen items-center justify-center bg-(--color-page-bg) px-4 py-10 text-(--color-page-fg) md:px-20 md:pt-[120px] md:pb-10">
-        <section className="flex w-full max-w-[360px] flex-col">
-          <Link className="self-center" href={`/${language}`}>
+      <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:px-4 shell:py-10 shell:text-(--color-page-fg) shell:md:px-20 shell:md:pt-[120px] shell:md:pb-10">
+        <section className="shell:flex shell:w-full shell:max-w-[360px] shell:flex-col">
+          <Link className="shell:self-center" href={`/${language}`}>
             {t('shell.login.back')}
           </Link>
-          <div className="mt-6">
-            <h1 className="text-2xl font-bold">{t('shell.login.title')}</h1>
-            <form className="mt-4 flex flex-col gap-4" noValidate onSubmit={handleSubmit}>
+          <div className="shell:mt-6">
+            <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
+            <form
+              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+              noValidate
+              onSubmit={handleSubmit}
+            >
               <FormInput
                 aria-invalid={validation.loginMissing || undefined}
                 autoComplete="username"
