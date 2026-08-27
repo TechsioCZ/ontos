@@ -4920,6 +4920,21 @@ assert(
   pnpmWorkspace.includes("'@vercel/nft@0.29.2': patches/@vercel__nft@0.29.2.patch"),
   'pnpm-workspace.yaml must patch the deployment tracer for transient filesystem markers',
 );
+assert(
+  pnpmWorkspace.includes(
+    "'@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12': patches/@bleedingdev__modern-js-app-tools@3.8.2-ultramodern.12.patch",
+  ),
+  'pnpm-workspace.yaml must patch generated deploy entries for nested CommonJS defaults',
+);
+const modernAppToolsPatch = readText(
+  'patches/@bleedingdev__modern-js-app-tools@3.8.2-ultramodern.12.patch',
+);
+assert(
+  modernAppToolsPatch.split("typeof plugin_${index}_ns.default?.default === 'function'").length -
+    1 ===
+    3 && modernAppToolsPatch.includes('plugin_${index}_ns.default.default'),
+  'Modern.js deploy entries must unwrap callable direct and nested plugin defaults in CJS and ESM generators',
+);
 const vercelNftPatch = readText('patches/@vercel__nft@0.29.2.patch');
 assert(
   vercelNftPatch.split('isBuildHostSystemPath').length - 1 >= 4 &&

@@ -130,3 +130,4 @@ patchedDependencies:
   '@module-federation/bridge-react@2.8.0': patches/@module-federation__bridge-react@2.8.0.patch
   '@module-federation/modern-js-v3@2.8.0': patches/@module-federation__modern-js-v3@2.8.0.patch
   '@tanstack/router-core@1.171.21': patches/@tanstack__router-core@1.171.21.patch
+  '@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12': patches/@bleedingdev__modern-js-app-tools@3.8.2-ultramodern.12.patch
