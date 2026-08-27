@@ -11,13 +11,13 @@ import type {
   ShellCompositionClientError,
 } from '../../api/auth-client.ts';
 import { Effect } from 'effect';
-import { shellAuthenticationApiContract } from '../../../shared/api.ts';
 import type {
   AvailableTenant,
   LegalEntityChoice,
   SafeTenantIdentity,
   ShellNavigationItem,
 } from '../../../shared/api.ts';
+import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -83,79 +83,78 @@ const tenantRead = (error: AvailableTenantsClientError, tenantId: string) =>
     ? ({ state: 'stale' } as const)
     : unavailableTenants(tenantId);
 
-export const loadHomePageModel = (request: Request): Promise<HomePageModel> => {
-  const cookie = request.headers.get('cookie');
-  const options = withOptionalProperty(
-    {
-      baseUrl: new URL(shellAuthenticationApiContract.apiPrefix, request.url),
-    },
-    !(cookie === null),
-    'cookie',
-    cookie,
-    {},
-  );
-
-  return runEffectRequest(
-    currentSession(options).pipe(
-      Effect.flatMap((session) => {
-        if (session.state === 'anonymous') {
-          return Effect.succeed<HomePageModel>(anonymousModel);
-        }
-        const legalEntities =
-          session.state === 'authenticated'
-            ? availableLegalEntities(options).pipe(
-                Effect.map((response) => ({
-                  items: response.legalEntities,
-                  state: 'available' as const,
-                })),
-                Effect.orElseSucceed(() => ({ items: [] as const, state: 'unavailable' as const })),
-              )
-            : Effect.succeed({
-                items:
-                  session.state === 'selection_required'
-                    ? session.availableLegalEntities
-                    : ([] as const),
-                state: 'available' as const,
-              });
-        const navigation =
-          session.state === 'authenticated'
-            ? shellComposition(options).pipe(
-                Effect.map((composition) => ({
-                  items: composition.state === 'available' ? composition.navigation : ([] as const),
-                  state: 'available' as const,
-                })),
-                Effect.catch((error) => Effect.succeed(unavailableNavigation(error))),
-              )
-            : Effect.succeed({ items: [] as const, state: 'available' as const });
-        return Effect.all({
-          legalEntities,
-          navigation,
-          tenants: availableTenants(options).pipe(
-            Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
-            Effect.catch((error) => Effect.succeed(tenantRead(error, session.identity.tenantId))),
-          ),
-        }).pipe(
-          Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
-            tenants.state === 'stale'
-              ? anonymousModel
-              : withOptionalProperty(
-                  {
-                    contextState: session.state,
-                    identity: session.identity,
-                    legalEntities: choices,
-                    navigation: items,
-                  },
-                  session.state === 'authenticated',
-                  'selectedLegalEntityId',
-                  session.identity.legalEntityId,
-                  {
-                    state: 'authenticated',
-                    tenants,
-                  },
+export const loadHomePageModel = (request: Request): Promise<HomePageModel> =>
+  runEffectRequest(
+    shellAuthenticationClientOptionsFromRequest(request).pipe(
+      Effect.flatMap((options) =>
+        currentSession(options).pipe(
+          Effect.flatMap((session) => {
+            if (session.state === 'anonymous') {
+              return Effect.succeed<HomePageModel>(anonymousModel);
+            }
+            const legalEntities =
+              session.state === 'authenticated'
+                ? availableLegalEntities(options).pipe(
+                    Effect.map((response) => ({
+                      items: response.legalEntities,
+                      state: 'available' as const,
+                    })),
+                    Effect.orElseSucceed(() => ({
+                      items: [] as const,
+                      state: 'unavailable' as const,
+                    })),
+                  )
+                : Effect.succeed({
+                    items:
+                      session.state === 'selection_required'
+                        ? session.availableLegalEntities
+                        : ([] as const),
+                    state: 'available' as const,
+                  });
+            const navigation =
+              session.state === 'authenticated'
+                ? shellComposition(options).pipe(
+                    Effect.map((composition) => ({
+                      items:
+                        composition.state === 'available' ? composition.navigation : ([] as const),
+                      state: 'available' as const,
+                    })),
+                    Effect.catch((error) => Effect.succeed(unavailableNavigation(error))),
+                  )
+                : Effect.succeed({ items: [] as const, state: 'available' as const });
+            return Effect.all({
+              legalEntities,
+              navigation,
+              tenants: availableTenants(options).pipe(
+                Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+                Effect.catch((error) =>
+                  Effect.succeed(tenantRead(error, session.identity.tenantId)),
                 ),
-          ),
-        );
-      }),
+              ),
+            }).pipe(
+              Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
+                tenants.state === 'stale'
+                  ? anonymousModel
+                  : withOptionalProperty(
+                      {
+                        contextState: session.state,
+                        identity: session.identity,
+                        legalEntities: choices,
+                        navigation: items,
+                      },
+                      session.state === 'authenticated',
+                      'selectedLegalEntityId',
+                      session.identity.legalEntityId,
+                      {
+                        state: 'authenticated',
+                        tenants,
+                      },
+                    ),
+              ),
+            );
+          }),
+        ),
+      ),
       Effect.catch((error) =>
         Effect.succeed<HomePageModel>(
           error._tag === 'InvalidCredentialsProblem' ? anonymousModel : unavailableModel,
@@ -163,7 +162,6 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> => {
       ),
     ),
   );
-};
 
 export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
   loadHomePageModel(request);
