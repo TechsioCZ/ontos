@@ -534,9 +534,8 @@ export const makeReadRuntime = (
                 ).pipe(
                   Effect.tapError((error) =>
                     input.registration.descriptor.readKey === 'core.shell.composition'
-                      ? Effect.annotateLogs(
-                          Effect.logError('Shell composition result schema validation failed'),
-                          { validationError: String(error) },
+                      ? Effect.logError(
+                          `Shell composition result schema validation failed: ${String(error).replaceAll('\n', ' | ')}`,
                         )
                       : Effect.void,
                   ),
