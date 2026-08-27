@@ -192,6 +192,9 @@ test('logs a user in without any server-error response', async ({ page }, testIn
 });
 
 test('loads localized English and Czech CRM pages only after login', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+
   await page.goto('/en/crm');
   await expect(page.getByRole('heading', { name: 'CRM' })).toHaveCount(0);
   await page.goto('/cs/crm');
@@ -230,7 +233,13 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
   );
   await expect(page.getByText('This page is ready for implementation.')).toHaveCount(0);
   await expect(page.getByText('No content has been added yet.')).toHaveCount(0);
+  await expect(page.getByText('The module is temporarily unavailable. Try again.')).toHaveCount(0);
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeVisible();
+  expect(
+    pageErrors.filter((message) =>
+      message.includes('FederatedI18nBoundary must be used within ModernI18nProvider'),
+    ),
+  ).toEqual([]);
 });
 
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({

@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const PackageVersionSchema = Schema.Struct({ version: Schema.String });
 const packageVersion = (specifier: string): string =>
   Schema.decodeUnknownSync(PackageVersionSchema)(require(specifier)).version;
+const i18nVersion = packageVersion('@modern-js/plugin-i18n/package.json');
 const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
@@ -54,6 +55,13 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     name: 'verticalCrm',
     shared: {
+      '@modern-js/plugin-i18n/runtime': {
+        import: '@modern-js/plugin-i18n/runtime/no-react-i18next',
+        requiredVersion: i18nVersion,
+        singleton: true,
+        strictVersion: true,
+        treeShaking: false,
+      },
       '@modern-js/runtime': {
         requiredVersion: runtimeVersion,
         singleton: true,

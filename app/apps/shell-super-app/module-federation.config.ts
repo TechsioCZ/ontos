@@ -52,6 +52,7 @@ const require = createRequire(import.meta.url);
 const PackageVersionSchema = Schema.Struct({ version: Schema.String });
 const packageVersion = (packageName: string): string =>
   Schema.decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
+const i18nVersion = packageVersion('@modern-js/plugin-i18n');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
 const reactDomVersion = packageVersion('react-dom');
@@ -75,6 +76,13 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       }),
     },
     shared: {
+      '@modern-js/plugin-i18n/runtime': {
+        import: '@modern-js/plugin-i18n/runtime/no-react-i18next',
+        requiredVersion: i18nVersion,
+        singleton: true,
+        strictVersion: true,
+        treeShaking: false,
+      },
       '@modern-js/runtime': {
         requiredVersion: runtimeVersion,
         singleton: true,
