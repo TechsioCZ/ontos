@@ -1,30 +1,32 @@
 diff --git a/out/analyze.js b/out/analyze.js
-index 6913ef2b4cc8bce64321fe0f74423053ce66dec2..e029e882c085fa938b8c8a024481fdb4488ece73 100644
+index 6913ef2b4cc8bce64321fe0f74423053ce66dec2..d6264a3827df07fa5cd6aa0992e884d191ed34ac 100644
 --- a/out/analyze.js
 +++ b/out/analyze.js
-@@ -234,6 +234,8 @@ async function analyze(id, code, job) {
+@@ -234,6 +234,10 @@ async function analyze(id, code, job) {
      const dir = path_1.default.dirname(id);
      // if (typeof options.production === 'boolean' && staticProcess.env.NODE_ENV === UNKNOWN)
      //  staticProcess.env.NODE_ENV = options.production ? 'production' : 'dev';
 +    const isBuildHostSystemPath = (path) => /^\/(?:dev|etc|proc|run|sys)(?:\/|$)/.test(path) ||
 +        /^\/var\/run(?:\/|$)/.test(path);
++    const isBuildHostWildcardRoot = (path) => isBuildHostSystemPath(path) ||
++        path_1.default.resolve(path) === path_1.default.resolve(os_1.default.homedir());
      cwd = job.cwd;
      const pkgBase = (0, get_package_base_1.getPackageBase)(id);
      const emitAssetDirectory = (wildcardPath) => {
-@@ -251,6 +253,8 @@ async function analyze(id, code, job) {
+@@ -251,6 +255,8 @@ async function analyze(id, code, job) {
              return patternPath[index - 1] === path_1.default.posix.sep ? '**/*' : '*';
          })
              .replace(repeatGlobRegEx, '/**/*') || '/**/*';
-+        if (isBuildHostSystemPath(assetDirPath))
++        if (isBuildHostWildcardRoot(assetDirPath))
 +            return;
          if (job.ignoreFn(path_1.default.relative(job.base, assetDirPath + wildcardPattern)))
              return;
          assetEmissionPromises = assetEmissionPromises.then(async () => {
-@@ -424,6 +428,8 @@ async function analyze(id, code, job) {
+@@ -424,6 +430,8 @@ async function analyze(id, code, job) {
          if (!wildcardPattern.endsWith('*'))
              wildcardPattern +=
                  '?(' + (job.ts ? '.ts|.tsx|' : '') + '.js|.json|.node)';
-+        if (isBuildHostSystemPath(wildcardDirPath))
++        if (isBuildHostWildcardRoot(wildcardDirPath))
 +            return;
          if (job.ignoreFn(path_1.default.relative(job.base, wildcardDirPath + wildcardPattern)))
              return;
