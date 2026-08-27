@@ -115,6 +115,7 @@ if (!fs.existsSync(entryPath)) {
 const packageJsonPath = path.join(runtimeDir, 'package.json');
 const runtimePackage = fs.existsSync(packageJsonPath) ? readJson(packageJsonPath) : {};
 normalizeRuntimePackageDependencies(runtimePackage);
+removeIncompatiblePlatformDependencies(runtimePackage);
 
 runtimePackage.private = true;
 runtimePackage.name ??= `${appId}-zerops-runtime`;
@@ -159,6 +160,95 @@ function normalizeRuntimePackageDependencies(packageJson) {
       }
     }
   }
+}
+
+function removeIncompatiblePlatformDependencies(packageJson) {
+  for (const section of ['dependencies', 'optionalDependencies']) {
+    const dependencies = packageJson[section];
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+      continue;
+    }
+
+    for (const [dependencyName, dependencyVersion] of Object.entries(dependencies)) {
+      const dependencyPackage = readInstalledDependencyPackage(dependencyName, dependencyVersion);
+      if (!dependencyPackage || isCurrentPlatformSupported(dependencyPackage)) {
+        continue;
+      }
+
+      delete dependencies[dependencyName];
+      console.log(
+        `[ultramodern:zerops] excluded ${dependencyName}@${dependencyVersion} from ${process.platform}/${process.arch} runtime`,
+      );
+    }
+  }
+}
+
+function readInstalledDependencyPackage(dependencyName, dependencyVersion) {
+  if (typeof dependencyVersion !== 'string') {
+    return undefined;
+  }
+
+  const dependencySegments = dependencyName.split('/');
+  const directCandidates = [
+    path.join(appRoot, 'node_modules', ...dependencySegments, 'package.json'),
+    path.join(workspaceRoot, 'node_modules', ...dependencySegments, 'package.json'),
+  ];
+  for (const candidate of directCandidates) {
+    const dependencyPackage = readOptionalJson(candidate);
+    if (
+      dependencyPackage?.name === dependencyName &&
+      dependencyPackage.version === dependencyVersion
+    ) {
+      return dependencyPackage;
+    }
+  }
+
+  const virtualStore = path.join(workspaceRoot, 'node_modules/.pnpm');
+  if (!fs.existsSync(virtualStore)) {
+    return undefined;
+  }
+
+  const encodedName = dependencyName.replaceAll('/', '+');
+  for (const entry of fs.readdirSync(virtualStore)) {
+    if (!entry.startsWith(`${encodedName}@`)) {
+      continue;
+    }
+
+    const candidate = path.join(
+      virtualStore,
+      entry,
+      'node_modules',
+      ...dependencySegments,
+      'package.json',
+    );
+    const dependencyPackage = readOptionalJson(candidate);
+    if (
+      dependencyPackage?.name === dependencyName &&
+      dependencyPackage.version === dependencyVersion
+    ) {
+      return dependencyPackage;
+    }
+  }
+
+  return undefined;
+}
+
+function isCurrentPlatformSupported(packageJson) {
+  return (
+    platformFieldAllows(packageJson.os, process.platform) &&
+    platformFieldAllows(packageJson.cpu, process.arch)
+  );
+}
+
+function platformFieldAllows(field, currentValue) {
+  const values = Array.isArray(field) ? field : typeof field === 'string' ? [field] : [];
+  const excluded = values.some((value) => value === `!${currentValue}` || value === '!*');
+  if (excluded) {
+    return false;
+  }
+
+  const allowed = values.filter((value) => !value.startsWith('!'));
+  return allowed.length === 0 || allowed.includes(currentValue) || allowed.includes('any');
 }
 
 function installRuntimeDependencies(runtimePackage) {
