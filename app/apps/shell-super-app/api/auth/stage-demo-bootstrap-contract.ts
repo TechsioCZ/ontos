@@ -1,39 +1,45 @@
 import { Effect, Schema } from 'effect';
 
-export const STAGE_DEMO = Object.freeze({
-  authBindingId: '73000000-0000-4000-8000-000000000001',
-  defaultLocale: 'cs',
-  email: 'demo@test.com',
-  legalEntityId: '71000000-0000-4000-8000-000000000001',
-  legalName: 'TechsioCZ',
-  moduleId: 'crm.core',
-  moduleStateId: '74000000-0000-4000-8000-000000000001',
-  principalDisplayName: 'Techsio Demo',
-  principalId: '72000000-0000-4000-8000-000000000001',
-  registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-TECHSIOCZ',
-  tenantId: '70000000-0000-4000-8000-000000000001',
-  tenantName: 'Techsio',
-  tenantSlug: 'techsio',
-} as const);
+export const STAGE_DEMO_ACCOUNTS = Object.freeze([
+  Object.freeze({
+    email: 'demo@test.com',
+    passwordEnvironmentKey: 'STAGE_DEMO_PASSWORD',
+    principalDisplayName: 'Techsio Demo',
+  }),
+  Object.freeze({
+    email: 'siampark01@test.com',
+    passwordEnvironmentKey: 'STAGE_SIAMPARK_PASSWORD',
+    principalDisplayName: 'Siampark 01',
+  }),
+] as const);
 
 export type StageDemoEnvironment = Readonly<Record<string, string | undefined>>;
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
 
 export interface StageDemoBootstrapConfig {
+  readonly accounts: readonly [StageDemoAccountConfig, StageDemoAccountConfig];
   readonly authBaseUrl: string;
   readonly authSecret: string;
   readonly databaseAdminUrl: string;
+}
+
+export interface StageDemoAccountConfig {
+  readonly email: string;
   readonly password: string;
+  readonly principalDisplayName: string;
+}
+
+export interface StageDemoAccountResult {
+  readonly authUser: 'created' | 'existing';
+  readonly email: string;
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
 }
 
 export interface StageDemoBootstrapResult {
-  readonly authUser: 'created' | 'existing';
-  readonly email: typeof STAGE_DEMO.email;
-  readonly legalEntityId: typeof STAGE_DEMO.legalEntityId;
-  readonly principalId: typeof STAGE_DEMO.principalId;
-  readonly tenantId: typeof STAGE_DEMO.tenantId;
+  readonly accounts: readonly StageDemoAccountResult[];
 }
 
 export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()(
@@ -91,15 +97,28 @@ export const parseStageDemoBootstrapConfig = (
       if (authSecret.length < 32) {
         throw configurationFailure('BETTER_AUTH_SECRET must contain at least 32 characters');
       }
-      const password = required(environment, 'STAGE_DEMO_PASSWORD');
-      if (password.length < 8) {
-        throw configurationFailure('STAGE_DEMO_PASSWORD must contain at least 8 characters');
-      }
+      const accountConfiguration = (account: (typeof STAGE_DEMO_ACCOUNTS)[number]) => {
+        const password = required(environment, account.passwordEnvironmentKey);
+        if (password.length < 8) {
+          throw configurationFailure(
+            `${account.passwordEnvironmentKey} must contain at least 8 characters`,
+          );
+        }
+        return {
+          email: account.email,
+          password,
+          principalDisplayName: account.principalDisplayName,
+        };
+      };
+      const accounts = [
+        accountConfiguration(STAGE_DEMO_ACCOUNTS[0]),
+        accountConfiguration(STAGE_DEMO_ACCOUNTS[1]),
+      ] as const;
       return {
+        accounts,
         authBaseUrl: parseHttpOrigin(required(environment, 'BETTER_AUTH_URL')),
         authSecret,
         databaseAdminUrl: parsePostgresUrl(required(environment, 'DATABASE_ADMIN_URL')),
-        password,
       };
     },
   });

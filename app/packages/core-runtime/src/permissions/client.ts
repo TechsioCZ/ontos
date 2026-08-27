@@ -1,7 +1,9 @@
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { Effect } from 'effect';
 import type { Scope } from 'effect';
+import { allowsInsecureSpiceDbTransport } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
+import { SpiceDbConfigError } from './config-error.ts';
 
 export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
@@ -25,6 +27,19 @@ export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
   ) => Promise<v1.CheckPermissionResponse>;
 }
 
+export const spiceDbClientSecurity = (
+  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
+): v1.ClientSecurity => {
+  if (!allowsInsecureSpiceDbTransport(configuration)) {
+    throw new SpiceDbConfigError({
+      reason: 'Insecure SpiceDB client credentials are not allowed for this endpoint',
+    });
+  }
+  return configuration.insecureLocal
+    ? v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS
+    : v1.ClientSecurity.SECURE;
+};
+
 export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
@@ -32,9 +47,7 @@ export const createSpiceDbPermissionClient = (
   const client = v1.NewClient(
     configuration.preSharedKey,
     configuration.endpoint,
-    configuration.insecureLocal
-      ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED
-      : v1.ClientSecurity.SECURE,
+    spiceDbClientSecurity(configuration),
     undefined,
     { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
   );

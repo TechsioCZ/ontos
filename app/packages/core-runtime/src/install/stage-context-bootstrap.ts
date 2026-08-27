@@ -17,31 +17,53 @@ import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '../permissions/context-access.ts';
+import { spiceDbClientSecurity } from '../permissions/client.ts';
 import { parseSpiceDbConfig } from '../permissions/config.ts';
 
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
 
-const STAGE_CONTEXT = Object.freeze({
-  authBindingId: '73000000-0000-4000-8000-000000000001',
-  defaultLocale: 'cs',
-  legalEntityId: '71000000-0000-4000-8000-000000000001',
-  legalName: 'TechsioCZ',
-  moduleId: 'crm.core',
-  moduleStateId: '74000000-0000-4000-8000-000000000001',
-  principalDisplayName: 'Techsio Demo',
-  principalId: '72000000-0000-4000-8000-000000000001',
-  registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-TECHSIOCZ',
-  tenantId: '70000000-0000-4000-8000-000000000001',
-  tenantName: 'Techsio',
-  tenantSlug: 'techsio',
-} as const);
+export const STAGE_CONTEXTS = Object.freeze({
+  siampark: Object.freeze({
+    authBindingId: '73000000-0000-4000-8000-000000000002',
+    defaultLocale: 'cs',
+    legalEntityId: '71000000-0000-4000-8000-000000000002',
+    legalName: 'Siampark',
+    moduleId: 'crm.core',
+    moduleStateId: '74000000-0000-4000-8000-000000000002',
+    principalDisplayName: 'Siampark 01',
+    principalId: '72000000-0000-4000-8000-000000000002',
+    registrationCountry: 'CZ',
+    registrationNumber: 'DEMO-SIAMPARK',
+    tenantId: '70000000-0000-4000-8000-000000000002',
+    tenantName: 'Siampark',
+    tenantSlug: 'siampark',
+  }),
+  techsio: Object.freeze({
+    authBindingId: '73000000-0000-4000-8000-000000000001',
+    defaultLocale: 'cs',
+    legalEntityId: '71000000-0000-4000-8000-000000000001',
+    legalName: 'TechsioCZ',
+    moduleId: 'crm.core',
+    moduleStateId: '74000000-0000-4000-8000-000000000001',
+    principalDisplayName: 'Techsio Demo',
+    principalId: '72000000-0000-4000-8000-000000000001',
+    registrationCountry: 'CZ',
+    registrationNumber: 'DEMO-TECHSIOCZ',
+    tenantId: '70000000-0000-4000-8000-000000000001',
+    tenantName: 'Techsio',
+    tenantSlug: 'techsio',
+  }),
+});
+
+type StageContextKey = keyof typeof STAGE_CONTEXTS;
+type StageContext = (typeof STAGE_CONTEXTS)[StageContextKey];
 
 interface StageContextBootstrapConfiguration {
   readonly databaseAdminUrl: string;
   readonly spiceDbEndpoint: string;
   readonly spiceDbPreSharedKey: string;
+  readonly spiceDbSecurity: v1.ClientSecurity;
 }
 
 interface StageContextBootstrapRelationship {
@@ -53,10 +75,16 @@ interface StageContextBootstrapRelationship {
 }
 
 export interface StageContextBootstrapResult {
-  readonly legalEntityId: typeof STAGE_CONTEXT.legalEntityId;
-  readonly principalId: typeof STAGE_CONTEXT.principalId;
-  readonly tenantId: typeof STAGE_CONTEXT.tenantId;
+  readonly legalEntityId: StageContext['legalEntityId'];
+  readonly principalId: StageContext['principalId'];
+  readonly tenantId: StageContext['tenantId'];
 }
+
+export type StageContextBootstrapProviderUserIds = readonly [string, string];
+export type StageContextBootstrapResults = readonly [
+  StageContextBootstrapResult,
+  StageContextBootstrapResult,
+];
 
 export class StageContextBootstrapError extends Schema.TaggedError<StageContextBootstrapError>()(
   'StageContextBootstrapError',
@@ -95,6 +123,7 @@ const loadConfiguration = (): Effect.Effect<
       databaseAdminUrl,
       spiceDbEndpoint: spiceDb.endpoint,
       spiceDbPreSharedKey: spiceDb.preSharedKey,
+      spiceDbSecurity: spiceDbClientSecurity(spiceDb),
     };
   });
 
@@ -119,6 +148,7 @@ const classifyExactRecord = <Expected extends ExactRecord>(
 
 const reconcilePostgresContext = async (
   database: ReturnType<typeof drizzle<typeof coreDatabaseSchema>>,
+  context: StageContext,
   authUserId: string,
 ): Promise<void> => {
   await database.transaction(async (transaction) => {
@@ -131,22 +161,17 @@ const reconcilePostgresContext = async (
         tenantId: tenants.tenantId,
       })
       .from(tenants)
-      .where(
-        or(
-          eq(tenants.tenantId, STAGE_CONTEXT.tenantId),
-          eq(tenants.slug, STAGE_CONTEXT.tenantSlug),
-        ),
-      )
+      .where(or(eq(tenants.tenantId, context.tenantId), eq(tenants.slug, context.tenantSlug)))
       .limit(2);
     if (tenantCandidates.length > 1) {
       throw new Error('The stage tenant identity conflicts');
     }
     const expectedTenant = {
-      defaultLocale: STAGE_CONTEXT.defaultLocale,
-      name: STAGE_CONTEXT.tenantName,
-      slug: STAGE_CONTEXT.tenantSlug,
+      defaultLocale: context.defaultLocale,
+      name: context.tenantName,
+      slug: context.tenantSlug,
       status: 'active',
-      tenantId: STAGE_CONTEXT.tenantId,
+      tenantId: context.tenantId,
     } as const;
     if (classifyExactRecord('tenant', tenantCandidates[0], expectedTenant) === 'create') {
       await transaction.insert(tenants).values(expectedTenant);
@@ -164,11 +189,11 @@ const reconcilePostgresContext = async (
       .from(legalEntities)
       .where(
         or(
-          eq(legalEntities.legalEntityId, STAGE_CONTEXT.legalEntityId),
+          eq(legalEntities.legalEntityId, context.legalEntityId),
           and(
-            eq(legalEntities.tenantId, STAGE_CONTEXT.tenantId),
-            eq(legalEntities.registrationCountry, STAGE_CONTEXT.registrationCountry),
-            eq(legalEntities.registrationNumber, STAGE_CONTEXT.registrationNumber),
+            eq(legalEntities.tenantId, context.tenantId),
+            eq(legalEntities.registrationCountry, context.registrationCountry),
+            eq(legalEntities.registrationNumber, context.registrationNumber),
           ),
         ),
       )
@@ -177,12 +202,12 @@ const reconcilePostgresContext = async (
       throw new Error('The stage legal-entity identity conflicts');
     }
     const expectedLegalEntity = {
-      legalEntityId: STAGE_CONTEXT.legalEntityId,
-      legalName: STAGE_CONTEXT.legalName,
-      registrationCountry: STAGE_CONTEXT.registrationCountry,
-      registrationNumber: STAGE_CONTEXT.registrationNumber,
+      legalEntityId: context.legalEntityId,
+      legalName: context.legalName,
+      registrationCountry: context.registrationCountry,
+      registrationNumber: context.registrationNumber,
       status: 'active',
-      tenantId: STAGE_CONTEXT.tenantId,
+      tenantId: context.tenantId,
     } as const;
     if (
       classifyExactRecord('legal entity', legalEntityCandidates[0], expectedLegalEntity) ===
@@ -192,11 +217,11 @@ const reconcilePostgresContext = async (
     }
 
     const expectedPrincipal = {
-      displayName: STAGE_CONTEXT.principalDisplayName,
+      displayName: context.principalDisplayName,
       kind: 'human',
-      principalId: STAGE_CONTEXT.principalId,
+      principalId: context.principalId,
       status: 'active',
-      tenantId: STAGE_CONTEXT.tenantId,
+      tenantId: context.tenantId,
     } as const;
     const principalCandidates = await transaction
       .select({
@@ -207,7 +232,7 @@ const reconcilePostgresContext = async (
         tenantId: principals.tenantId,
       })
       .from(principals)
-      .where(eq(principals.principalId, STAGE_CONTEXT.principalId))
+      .where(eq(principals.principalId, context.principalId))
       .limit(1);
     if (classifyExactRecord('principal', principalCandidates[0], expectedPrincipal) === 'create') {
       await transaction.insert(principals).values(expectedPrincipal);
@@ -226,9 +251,9 @@ const reconcilePostgresContext = async (
       .from(principalAuthBindings)
       .where(
         or(
-          eq(principalAuthBindings.principalAuthBindingId, STAGE_CONTEXT.authBindingId),
+          eq(principalAuthBindings.principalAuthBindingId, context.authBindingId),
           and(
-            eq(principalAuthBindings.tenantId, STAGE_CONTEXT.tenantId),
+            eq(principalAuthBindings.tenantId, context.tenantId),
             eq(principalAuthBindings.provider, 'better_auth'),
             eq(principalAuthBindings.subjectType, 'user'),
             eq(principalAuthBindings.providerSubjectId, authUserId),
@@ -240,13 +265,13 @@ const reconcilePostgresContext = async (
       throw new Error('The stage authentication binding conflicts');
     }
     const expectedBinding = {
-      principalAuthBindingId: STAGE_CONTEXT.authBindingId,
-      principalId: STAGE_CONTEXT.principalId,
+      principalAuthBindingId: context.authBindingId,
+      principalId: context.principalId,
       provider: 'better_auth',
       providerSubjectId: authUserId,
       status: 'active',
       subjectType: 'user',
-      tenantId: STAGE_CONTEXT.tenantId,
+      tenantId: context.tenantId,
     } as const;
     if (
       classifyExactRecord('authentication binding', bindingCandidates[0], expectedBinding) ===
@@ -265,10 +290,10 @@ const reconcilePostgresContext = async (
       .from(tenantModuleStates)
       .where(
         or(
-          eq(tenantModuleStates.tenantModuleStateId, STAGE_CONTEXT.moduleStateId),
+          eq(tenantModuleStates.tenantModuleStateId, context.moduleStateId),
           and(
-            eq(tenantModuleStates.tenantId, STAGE_CONTEXT.tenantId),
-            eq(tenantModuleStates.moduleKey, STAGE_CONTEXT.moduleId),
+            eq(tenantModuleStates.tenantId, context.tenantId),
+            eq(tenantModuleStates.moduleKey, context.moduleId),
           ),
         ),
       )
@@ -277,10 +302,10 @@ const reconcilePostgresContext = async (
       throw new Error('The stage module-state identity conflicts');
     }
     const expectedModuleState = {
-      moduleKey: STAGE_CONTEXT.moduleId,
+      moduleKey: context.moduleId,
       state: 'active',
-      tenantId: STAGE_CONTEXT.tenantId,
-      tenantModuleStateId: STAGE_CONTEXT.moduleStateId,
+      tenantId: context.tenantId,
+      tenantModuleStateId: context.moduleStateId,
     } as const;
     if (
       classifyExactRecord('module state', moduleStateCandidates[0], expectedModuleState) ===
@@ -291,15 +316,14 @@ const reconcilePostgresContext = async (
   });
 };
 
-const buildRelationships = (): readonly StageContextBootstrapRelationship[] => {
-  const legalEntityObjectId = toLegalEntityAccessObjectId(
-    STAGE_CONTEXT.tenantId,
-    STAGE_CONTEXT.legalEntityId,
-  );
+const buildRelationships = (
+  context: StageContext,
+): readonly StageContextBootstrapRelationship[] => {
+  const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
   const moduleObjectId = toModuleAccessObjectId(
-    STAGE_CONTEXT.tenantId,
-    STAGE_CONTEXT.legalEntityId,
-    STAGE_CONTEXT.moduleId,
+    context.tenantId,
+    context.legalEntityId,
+    context.moduleId,
   );
   if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
     throw new Error('The stage authorization object IDs are invalid');
@@ -307,23 +331,23 @@ const buildRelationships = (): readonly StageContextBootstrapRelationship[] => {
   return [
     {
       relation: 'member',
-      resourceId: STAGE_CONTEXT.tenantId,
+      resourceId: context.tenantId,
       resourceType: 'tenant',
-      subjectId: STAGE_CONTEXT.principalId,
+      subjectId: context.principalId,
       subjectType: 'principal',
     },
     {
       relation: 'tenant',
       resourceId: legalEntityObjectId,
       resourceType: 'legal_entity',
-      subjectId: STAGE_CONTEXT.tenantId,
+      subjectId: context.tenantId,
       subjectType: 'tenant',
     },
     {
       relation: 'member',
       resourceId: legalEntityObjectId,
       resourceType: 'legal_entity',
-      subjectId: STAGE_CONTEXT.principalId,
+      subjectId: context.principalId,
       subjectType: 'principal',
     },
     {
@@ -337,7 +361,7 @@ const buildRelationships = (): readonly StageContextBootstrapRelationship[] => {
       relation: 'accessor',
       resourceId: moduleObjectId,
       resourceType: 'module_access',
-      subjectId: STAGE_CONTEXT.principalId,
+      subjectId: context.principalId,
       subjectType: 'principal',
     },
   ];
@@ -345,16 +369,17 @@ const buildRelationships = (): readonly StageContextBootstrapRelationship[] => {
 
 const touchRelationships = async (
   configuration: StageContextBootstrapConfiguration,
+  context: StageContext,
 ): Promise<void> => {
   const client = v1.NewClient(
     configuration.spiceDbPreSharedKey,
     configuration.spiceDbEndpoint,
-    v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED,
+    configuration.spiceDbSecurity,
   );
   try {
     await client.promises.writeRelationships(
       v1.WriteRelationshipsRequest.create({
-        updates: buildRelationships().map((item) =>
+        updates: buildRelationships(context).map((item) =>
           v1.RelationshipUpdate.create({
             operation: v1.RelationshipUpdate_Operation.TOUCH,
             relationship: v1.Relationship.create({
@@ -380,16 +405,24 @@ const touchRelationships = async (
 };
 
 /**
- * Reconciles the one fixed stage context before an Action principal/tenant can exist.
- * The only caller-provided value is the Shell-owned Better Auth provider user ID.
+ * Reconciles the complete fixed set of stage contexts before their principals/tenants can exist.
+ * The caller supplies only the Shell-owned Better Auth user IDs in the documented fixed order.
  */
-export const reconcileStageContextBootstrap = (
-  authUserId: string,
-): Effect.Effect<StageContextBootstrapResult, StageContextBootstrapError> =>
-  Effect.gen(function* reconcileFixedStageContext() {
-    if (authUserId.trim().length === 0) {
-      return yield* failure('The Better Auth provider user ID is required');
+export const reconcileStageContextBootstraps = (
+  providerUserIds: StageContextBootstrapProviderUserIds,
+): Effect.Effect<StageContextBootstrapResults, StageContextBootstrapError> =>
+  Effect.gen(function* reconcileFixedStageContexts() {
+    const [techsioProviderUserId, siamparkProviderUserId] = providerUserIds;
+    if (techsioProviderUserId.trim().length === 0 || siamparkProviderUserId.trim().length === 0) {
+      return yield* failure('Both Better Auth provider user IDs are required');
     }
+    if (techsioProviderUserId === siamparkProviderUserId) {
+      return yield* failure('The stage contexts require distinct Better Auth provider user IDs');
+    }
+    const contexts = [
+      { context: STAGE_CONTEXTS.techsio, providerUserId: techsioProviderUserId },
+      { context: STAGE_CONTEXTS.siampark, providerUserId: siamparkProviderUserId },
+    ] as const;
     const configuration = yield* loadConfiguration();
     yield* Effect.tryPromise({
       catch: (cause) =>
@@ -402,16 +435,29 @@ export const reconcileStageContextBootstrap = (
         const pool = new Pool({ connectionString: configuration.databaseAdminUrl });
         try {
           const database = drizzle({ client: pool, schema: coreDatabaseSchema });
-          await reconcilePostgresContext(database, authUserId);
-          await touchRelationships(configuration);
+          for (const { context, providerUserId } of contexts) {
+            // The fixed installation set is intentionally reconciled in order to avoid racing
+            // cross-store bootstrap writes and to make a retry's stopping point deterministic.
+            // eslint-disable-next-line no-await-in-loop
+            await reconcilePostgresContext(database, context, providerUserId);
+            // eslint-disable-next-line no-await-in-loop
+            await touchRelationships(configuration, context);
+          }
         } finally {
           await pool.end();
         }
       },
     });
-    return {
-      legalEntityId: STAGE_CONTEXT.legalEntityId,
-      principalId: STAGE_CONTEXT.principalId,
-      tenantId: STAGE_CONTEXT.tenantId,
-    };
+    return [
+      {
+        legalEntityId: STAGE_CONTEXTS.techsio.legalEntityId,
+        principalId: STAGE_CONTEXTS.techsio.principalId,
+        tenantId: STAGE_CONTEXTS.techsio.tenantId,
+      },
+      {
+        legalEntityId: STAGE_CONTEXTS.siampark.legalEntityId,
+        principalId: STAGE_CONTEXTS.siampark.principalId,
+        tenantId: STAGE_CONTEXTS.siampark.tenantId,
+      },
+    ];
   });

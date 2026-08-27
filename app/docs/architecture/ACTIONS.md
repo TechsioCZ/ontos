@@ -20,13 +20,17 @@ receive or import a database executor.
   value is published in the owner-authored manifest and bound to its private handler only in the
   owner-local runtime registration. See [OntOS Module Manifests](./MODULE_MANIFESTS.md).
 
-The only installation exception is the first operator-invoked creation of a deployment's initial
-Tenant, legal entity, human Principal/Auth binding, module state, and matching authorization
-relationships. An Action cannot perform that transition because its trusted tenant and Principal do
-not exist yet. This bootstrap must be stage/environment gated, idempotent and conflict detecting,
-must stay inside a Core-owned Effect boundary, and must never run from normal application startup or
-an automatic deployment. Shell may create the matching Better Auth credential, then pass only the
-provider user ID to that Core installation boundary. Every later state change uses an Action.
+The only installation exceptions are the first operator-invoked creation of a deployment's initial
+Tenant context and a statically defined, operator-invoked stage bootstrap context set. Each context
+may include its legal entity, human Principal/Auth binding, module state, and matching authorization
+relationships. An Action cannot perform these transitions because their trusted tenant and Principal
+do not exist yet. The stage set must be fixed in source control; callers cannot supply arbitrary
+Tenant or context data. Every bootstrap must be stage/environment gated, idempotent and conflict
+detecting, must stay inside a Core-owned Effect boundary, and must never run from normal application
+startup or an automatic deployment. Shell may create the matching Better Auth credentials, then pass
+only their provider user IDs in the fixed documented order to that Core installation boundary. Core
+owns the context definitions and their provider-user mapping. Every later or non-fixed state change
+uses an Action.
 
 Better Auth credential and session lifecycle operations—sign-in, sign-out or revocation, refresh,
 active tenant selection, API-key provider mechanics, and mechanical impersonation-session

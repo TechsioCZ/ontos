@@ -9,6 +9,7 @@ export const SPICEDB_ROOT_ENV_PATH = APP_ENV_PATH;
 type Environment = Readonly<Record<string, string | undefined>>;
 
 export interface SpiceDbConfigValue {
+  readonly deploymentEnvironment?: string;
   readonly endpoint: string;
   readonly insecureLocal: boolean;
   readonly preSharedKey: string;
@@ -72,9 +73,15 @@ const isLocalhostEndpoint = (endpoint: string): boolean => {
   }
 };
 
-const isStagePrivateEndpoint = (endpoint: string, environment: Environment): boolean =>
-  environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim() === 'stage' &&
-  endpoint === 'spicedb:50051';
+const isStagePrivateEndpoint = (endpoint: string, deploymentEnvironment?: string): boolean =>
+  deploymentEnvironment === 'stage' && endpoint === 'spicedb:50051';
+
+export const allowsInsecureSpiceDbTransport = (
+  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
+): boolean =>
+  !configuration.insecureLocal ||
+  isLocalhostEndpoint(configuration.endpoint) ||
+  isStagePrivateEndpoint(configuration.endpoint, configuration.deploymentEnvironment);
 
 const isValidEndpoint = (endpoint: string): boolean => {
   try {
@@ -98,6 +105,7 @@ export const parseSpiceDbConfig = (
   const endpoint = environment['SPICEDB_ENDPOINT']?.trim();
   const preSharedKey = environment['SPICEDB_PRESHARED_KEY']?.trim();
   const insecureFlag = environment['SPICEDB_INSECURE']?.trim().toLowerCase();
+  const deploymentEnvironment = environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']?.trim();
 
   if (endpoint === undefined || endpoint.length === 0) {
     return Effect.fail(configFailure('SPICEDB_ENDPOINT is required'));
@@ -111,11 +119,11 @@ export const parseSpiceDbConfig = (
   if (insecureFlag !== 'true' && insecureFlag !== 'false') {
     return Effect.fail(configFailure('SPICEDB_INSECURE must be explicitly true or false'));
   }
-  if (
-    insecureFlag === 'true' &&
-    !isLocalhostEndpoint(endpoint) &&
-    !isStagePrivateEndpoint(endpoint, environment)
-  ) {
+  const transportConfiguration =
+    deploymentEnvironment === undefined
+      ? { endpoint, insecureLocal: insecureFlag === 'true' }
+      : { deploymentEnvironment, endpoint, insecureLocal: insecureFlag === 'true' };
+  if (insecureFlag === 'true' && !allowsInsecureSpiceDbTransport(transportConfiguration)) {
     return Effect.fail(
       configFailure(
         'Insecure SpiceDB transport is allowed only for an explicit localhost port or the stage private endpoint',
@@ -123,11 +131,16 @@ export const parseSpiceDbConfig = (
     );
   }
 
-  return Effect.succeed({
+  const configuration: SpiceDbConfigValue = {
     endpoint,
     insecureLocal: insecureFlag === 'true',
     preSharedKey,
-  });
+  };
+  return Effect.succeed(
+    deploymentEnvironment === undefined
+      ? configuration
+      : { ...configuration, deploymentEnvironment },
+  );
 };
 
 export const loadSpiceDbConfig = (

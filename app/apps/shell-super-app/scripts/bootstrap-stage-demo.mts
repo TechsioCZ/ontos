@@ -4,9 +4,11 @@ import { bootstrapStageDemo } from '../api/auth/stage-demo-bootstrap-runtime-inf
 
 try {
   const result = await Effect.runPromise(bootstrapStageDemo());
-  console.log(
-    `Stage demo bootstrap complete (${result.authUser} auth user): tenant=${result.tenantId} legalEntity=${result.legalEntityId} principal=${result.principalId} email=${result.email}`,
-  );
+  for (const account of result.accounts) {
+    console.log(
+      `Stage demo bootstrap complete (${account.authUser} auth user): tenant=${account.tenantId} legalEntity=${account.legalEntityId} principal=${account.principalId} email=${account.email}`,
+    );
+  }
 } catch (error) {
   const message = error instanceof Error ? error.message : 'Unknown stage demo bootstrap failure';
   console.error(`Stage demo bootstrap failed: ${message}`);
