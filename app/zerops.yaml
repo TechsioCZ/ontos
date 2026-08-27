@@ -122,6 +122,7 @@ zerops:
           httpSupport: true
       envVariables:
         NODE_ENV: production
+        PORT: '4101'
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
@@ -167,6 +168,7 @@ zerops:
           httpSupport: true
       envVariables:
         NODE_ENV: production
+        PORT: '3020'
         SHELL_SUPER_APP_PORT: '3020'
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'

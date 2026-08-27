@@ -6094,9 +6094,11 @@ if (hasDeliveryUnits) {
     'Zerops shell service must start from materialized runtime package',
   );
   assert(
-    zeropsYaml.includes('SHELL_SUPER_APP_PORT:') &&
+    zeropsYaml.includes("PORT: '4101'") &&
+      zeropsYaml.includes("PORT: '3020'") &&
+      zeropsYaml.includes('SHELL_SUPER_APP_PORT:') &&
       zeropsYaml.includes('ULTRAMODERN_ZEROPS_SERVICE:'),
-    'Zerops manifest must expose service identity and ports',
+    'Zerops manifest must expose service identity and bind Modern.js runtimes to their declared ports',
   );
   assert(
     zeropsYaml.includes(`setup: ${quoteYamlString('migrator')}`) &&
