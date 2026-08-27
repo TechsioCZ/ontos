@@ -2,7 +2,7 @@ diff --git a/out/node-file-trace.js b/out/node-file-trace.js
 index bd833eb..6565500 100644
 --- a/out/node-file-trace.js
 +++ b/out/node-file-trace.js
-@@ -37,7 +37,13 @@ const fs_1 = require("./fs");
+@@ -37,7 +37,19 @@ const fs_1 = require("./fs");
  function inPath(path, parent) {
      const pathWithSep = (0, path_1.join)(parent, path_1.sep);
      return path.startsWith(pathWithSep) && path !== pathWithSep;
@@ -13,10 +13,16 @@ index bd833eb..6565500 100644
 +function isTransientFilesystemEntry(path) {
 +    return /[\\/]pnpm[\\/]store[\\/]v\d+[\\/]projects[\\/][0-9a-f]{32}$/.test(path);
 +}
++async function processInBatches(items, handler, batchSize = 16) {
++    const values = [...items];
++    for (let index = 0; index < values.length; index += batchSize) {
++        await Promise.all(values.slice(index, index + batchSize).map(handler));
++    }
++}
  async function nodeFileTrace(files, opts = {}) {
      const job = new Job(opts);
      if (opts.readFile)
-@@ -333,7 +339,12 @@ class Job {
+@@ -333,7 +345,12 @@ class Job {
          else {
 -            const source = await this.readFile(path);
 -            if (source === null)
@@ -31,3 +37,49 @@ index bd833eb..6565500 100644
              // analyze should not have any side-effects e.g. calling `job.emitFile`
              // directly as this will not be included in the cachedAnalysis and won't
              // be emit for successive runs that leverage the cache
+@@ -348,27 +365,25 @@ class Job {
+         const { deps, imports, assets, isESM } = analyzeResult;
+         if (isESM) {
+             this.esmFileList.add((0, path_1.relative)(this.base, path));
+         }
+-        await Promise.all([
+-            ...[...assets].map(async (asset) => {
+-                const ext = (0, path_1.extname)(asset);
+-                if (ext === '.js' ||
+-                    ext === '.mjs' ||
+-                    ext === '.node' ||
+-                    ext === '' ||
+-                    (this.ts &&
+-                        (ext === '.ts' || ext === '.tsx') &&
+-                        asset.startsWith(this.base) &&
+-                        asset
+-                            .slice(this.base.length)
+-                            .indexOf(path_1.sep + 'node_modules' + path_1.sep) === -1))
+-                    await this.emitDependency(asset, path);
+-                else
+-                    await this.emitFile(asset, 'asset', path);
+-            }),
+-            ...[...deps].map(async (dep) => this.maybeEmitDep(dep, path, !isESM)),
+-            ...[...imports].map(async (dep) => this.maybeEmitDep(dep, path, false)),
+-        ]);
++        await processInBatches(assets, async (asset) => {
++            const ext = (0, path_1.extname)(asset);
++            if (ext === '.js' ||
++                ext === '.mjs' ||
++                ext === '.node' ||
++                ext === '' ||
++                (this.ts &&
++                    (ext === '.ts' || ext === '.tsx') &&
++                    asset.startsWith(this.base) &&
++                    asset
++                        .slice(this.base.length)
++                        .indexOf(path_1.sep + 'node_modules' + path_1.sep) === -1))
++                await this.emitDependency(asset, path);
++            else
++                await this.emitFile(asset, 'asset', path);
++        });
++        await processInBatches(deps, async (dep) => this.maybeEmitDep(dep, path, !isESM));
++        await processInBatches(imports, async (dep) => this.maybeEmitDep(dep, path, false));
+     }
+ }
+ exports.Job = Job;

@@ -4922,12 +4922,14 @@ const vercelNftPatch = readText('patches/@vercel__nft@0.29.2.patch');
 assert(
   vercelNftPatch.includes('isTransientProcessDescriptor') &&
     vercelNftPatch.includes('isTransientFilesystemEntry') &&
+    vercelNftPatch.includes('processInBatches') &&
+    vercelNftPatch.includes('batchSize = 16') &&
     vercelNftPatch.includes('pnpm[\\\\/]store[\\\\/]v\\d+') &&
     vercelNftPatch.includes('^\\/proc\\/(?:self|\\d+)\\/fd\\/\\d+$') &&
     vercelNftPatch.includes('if (isTransientProcessDescriptor(path))') &&
     vercelNftPatch.includes('const source = await this.readFile(path);') &&
     vercelNftPatch.includes("throw new Error('File ' + path + ' does not exist.')"),
-  'The deployment tracer patch must skip process descriptors before reading, ignore only missing pnpm markers, and reject other missing files',
+  'The deployment tracer patch must bound dependency expansion, skip process descriptors before reading, ignore only missing pnpm markers, and reject other missing files',
 );
 assert(
   pnpmWorkspace.includes(`'@effect/opentelemetry': ${expectedEffectVersion}`),
