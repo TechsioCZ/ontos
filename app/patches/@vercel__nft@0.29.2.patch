@@ -2,32 +2,27 @@ diff --git a/out/node-file-trace.js b/out/node-file-trace.js
 index bd833eb..6565500 100644
 --- a/out/node-file-trace.js
 +++ b/out/node-file-trace.js
-@@ -37,7 +37,11 @@ const fs_1 = require("./fs");
+@@ -37,7 +37,13 @@ const fs_1 = require("./fs");
  function inPath(path, parent) {
      const pathWithSep = (0, path_1.join)(parent, path_1.sep);
      return path.startsWith(pathWithSep) && path !== pathWithSep;
  }
++function isTransientProcessDescriptor(path) {
++    return /^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(path);
++}
 +function isTransientFilesystemEntry(path) {
-+    return /[\\/]pnpm[\\/]store[\\/]v\d+[\\/]projects[\\/][0-9a-f]{32}$/.test(path) ||
-+        /^\/proc\/(?:self|\d+)\/fd\/\d+$/.test(path);
++    return /[\\/]pnpm[\\/]store[\\/]v\d+[\\/]projects[\\/][0-9a-f]{32}$/.test(path);
 +}
  async function nodeFileTrace(files, opts = {}) {
      const job = new Job(opts);
      if (opts.readFile)
-@@ -333,7 +336,19 @@ class Job {
+@@ -333,7 +339,12 @@ class Job {
          else {
 -            const source = await this.readFile(path);
 -            if (source === null)
-+            let source;
-+            try {
-+                source = await this.readFile(path);
-+            }
-+            catch (error) {
-+                if (isTransientFilesystemEntry(path) &&
-+                    (error?.code === 'EACCES' || error?.code === 'EPERM'))
-+                    return;
-+                throw error;
-+            }
++            if (isTransientProcessDescriptor(path))
++                return;
++            const source = await this.readFile(path);
 +            if (source === null) {
 +                if (isTransientFilesystemEntry(path))
 +                    return;
