@@ -188,6 +188,7 @@ test('logout clears the authenticated composition together', async () => {
   render(<HomeView initialModel={authenticatedModel()} />);
   await user.click(screen.getByRole('button', { name: 'Ada Lovelace' }));
   await user.click(await screen.findByRole('menuitem', { name: 'Logout' }));
-  expect(await screen.findByRole('link', { name: 'Login' })).toBeTruthy();
-  expect(screen.queryByRole('link', { name: 'Inventory' })).toBeNull();
+  await waitFor(() =>
+    expect(navigateMock).toHaveBeenCalledWith({ reloadDocument: true, to: '/en/login' }),
+  );
 });

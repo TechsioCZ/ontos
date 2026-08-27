@@ -3,7 +3,6 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { useState } from 'react';
 import type { HomePageModel } from './page.data.ts';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
@@ -15,10 +14,8 @@ interface HomeViewProps {
 
 export const HomeView = ({ initialModel }: HomeViewProps) => {
   const { language, t } = useModernI18n();
-  const [model, setModel] = useState(initialModel);
-  const controls = useShellControls(model.state === 'authenticated' ? model : undefined, () =>
-    setModel({ state: 'anonymous' }),
-  );
+  const model = initialModel;
+  const controls = useShellControls(model.state === 'authenticated' ? model : undefined);
 
   if (model.state === 'anonymous') {
     return (

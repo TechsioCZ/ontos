@@ -277,6 +277,7 @@ test('persists an English session, logs out, clears the cookie, and stays anonym
     .then(() => expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
     .then(() => page.getByRole('button', { name: 'E2E user' }).click())
     .then(() => page.getByRole('menuitem', { name: 'Logout' }).click())
+    .then(() => expect(page).toHaveURL(/\/en\/login\/?$/u))
     .then(() =>
       Promise.all([
         expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
@@ -417,7 +418,7 @@ test('keeps keyboard logout operable after a Czech failure and succeeds on retry
       ),
     )
     .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
-    .then(() => expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible());
+    .then(() => expect(page).toHaveURL(/\/cs\/login\/?$/u));
 });
 
 test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
