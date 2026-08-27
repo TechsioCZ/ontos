@@ -6010,6 +6010,10 @@ if (hasDeliveryUnits) {
     'Every Zerops pnpm command must propagate local virtual-store configuration to child processes',
   );
   assert(
+    zeropsYaml.split('NODE_OPTIONS=--max-old-space-size=6144').length - 1 === 2,
+    'Every Modern.js Zerops deployment build must reserve enough Node.js heap for dependency tracing',
+  );
+  assert(
     zeropsYaml.includes(
       `start: sh -c ${quoteYamlString('cd app/.zerops/runtime/shell-super-app && PATH="/var/www/.local/node-26.5.0/bin:$PATH" exec npm run serve')}`,
     ),
