@@ -155,7 +155,7 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
               {
                 label: contract.manifest.module.displayName,
                 moduleId,
-                order: contribution.order,
+                order: Number(contribution.order),
                 state,
                 unavailable,
                 writable: state === 'active',
