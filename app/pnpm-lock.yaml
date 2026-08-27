@@ -19,7 +19,7 @@ patchedDependencies:
   '@module-federation/bridge-react@2.8.0': 54bfc79e097473222f83cbfa6d717792e3026bf16b5097c2ed91715b7da126be
   '@module-federation/modern-js-v3@2.8.0': 56ff0f8c26c40b18be1de105abd019422ebaa648941607d1d30b94cd620b57f3
   '@tanstack/router-core@1.171.21': 413c2453d06aa521ed65ab7fcfb16bac8700e58e97693c2ba4d40727d7c9790d
-  '@vercel/nft@0.29.2': 32af59b999fd765b7ad7b16de3e8bc2b0df690e6ec1c5ba89fbb3f79f6c9f691
+  '@vercel/nft@0.29.2': 4a4b0a76c2b0cf9fcc827f7f1a8dc107c88cecd2f4adbcd2a93ae9fc376572a2
   effect@4.0.0-beta.107: ba67c866590cfab0c3cbbab16475ec80811dce9a0add857294c0053d9149640f
 
 importers:
@@ -11059,7 +11059,7 @@ snapshots:
 
   '@ungap/structured-clone@1.3.3': {}
 
-  '@vercel/nft@0.29.2(patch_hash=32af59b999fd765b7ad7b16de3e8bc2b0df690e6ec1c5ba89fbb3f79f6c9f691)(supports-color@10.2.2)':
+  '@vercel/nft@0.29.2(patch_hash=4a4b0a76c2b0cf9fcc827f7f1a8dc107c88cecd2f4adbcd2a93ae9fc376572a2)(supports-color@10.2.2)':
     dependencies:
       '@mapbox/node-pre-gyp': 2.0.3(supports-color@10.2.2)
       '@rollup/pluginutils': 5.4.0
@@ -13314,7 +13314,7 @@ snapshots:
 
   ndepe@0.1.13(supports-color@10.2.2):
     dependencies:
-      '@vercel/nft': 0.29.2(patch_hash=32af59b999fd765b7ad7b16de3e8bc2b0df690e6ec1c5ba89fbb3f79f6c9f691)(supports-color@10.2.2)
+      '@vercel/nft': 0.29.2(patch_hash=4a4b0a76c2b0cf9fcc827f7f1a8dc107c88cecd2f4adbcd2a93ae9fc376572a2)(supports-color@10.2.2)
       debug: 4.4.3(supports-color@10.2.2)
       fs-extra: 11.3.6
       mlly: 1.6.1
