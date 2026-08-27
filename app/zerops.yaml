@@ -137,6 +137,8 @@ zerops:
   - setup: 'shellsuperapp'
     build:
       base: 'alpine@3.23'
+      envVariables:
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
         - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm

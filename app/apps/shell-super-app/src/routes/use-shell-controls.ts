@@ -15,10 +15,7 @@ const tenantSwitchFailureState = (error: SwitchTenantClientError): SwitchFailure
 const legalEntitySwitchFailureState = (error: SwitchLegalEntityClientError): SwitchFailureState =>
   error._tag === 'TenantAuthenticationRequiredProblem' ? 'authentication-required' : 'failed';
 
-export const useShellControls = (
-  model: AuthenticatedHomePageModel | undefined,
-  onSignedOut?: () => void,
-) => {
+export const useShellControls = (model: AuthenticatedHomePageModel | undefined) => {
   const { language } = useModernI18n();
   const navigate = useNavigate();
   const [logoutPending, setLogoutPending] = useState(false);
@@ -40,11 +37,7 @@ export const useShellControls = (
     setLogoutFailed(false);
     void runEffectRequest(signOut({ locale: language }))
       .then(() => {
-        if (onSignedOut === undefined) {
-          void navigate({ reloadDocument: true, to: `/${language}/login` });
-        } else {
-          onSignedOut();
-        }
+        void navigate({ reloadDocument: true, to: `/${language}/login` });
       })
       .catch(() => setLogoutFailed(true))
       .finally(() => setLogoutPending(false));

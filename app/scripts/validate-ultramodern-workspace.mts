@@ -2160,6 +2160,28 @@ const formatJson = (value) =>
   value === undefined ? 'undefined' : JSON.stringify(canonicalizeJson(value));
 const quoteYamlString = (value) => `'${String(value).replace(/'/gu, "''")}'`;
 const quoteShellValue = (value) => `'${String(value).replace(/'/gu, "'\\''")}'`;
+const yamlListItemBlock = (source, key, value) => {
+  const marker = `  - ${key}: ${quoteYamlString(value)}`;
+  const start = source.indexOf(marker);
+  if (start === -1) {
+    return '';
+  }
+  const end = source.indexOf('\n  - ', start + marker.length);
+  return source.slice(start, end === -1 ? undefined : end);
+};
+const yamlMappingBlock = (source, key, indent) => {
+  const indentation = ' '.repeat(indent);
+  const marker = `${indentation}${key}:`;
+  const start = source.indexOf(marker);
+  if (start === -1) {
+    return '';
+  }
+  const nextSibling = source
+    .slice(start + marker.length)
+    .search(new RegExp(`\\n${indentation}\\S`, 'u'));
+  const end = nextSibling === -1 ? undefined : start + marker.length + nextSibling;
+  return source.slice(start, end);
+};
 const selfCheckFailure = (contract, message, fixArea) =>
   `MicroVertical contract self-check failed: ${contract}. ${message}. Fix area: ${fixArea}.`;
 const assertSelfCheck = (condition, contract, message, fixArea) => {
@@ -6043,6 +6065,13 @@ if (hasDeliveryUnits) {
     zeropsYaml.includes(`setup: ${quoteYamlString('shellsuperapp')}`),
     'Zerops manifest must include shell service',
   );
+  const shellSetup = yamlListItemBlock(zeropsYaml, 'setup', 'shellsuperapp');
+  const shellBuild = yamlMappingBlock(shellSetup, 'build', 4);
+  const shellBuildEnvironment = yamlMappingBlock(shellBuild, 'envVariables', 6);
+  assert(
+    shellBuildEnvironment.includes('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage'),
+    'Zerops shell builds must compile stage module discovery from project deployment URLs',
+  );
   assert(
     zeropsYaml.includes(`base: ${quoteYamlString('alpine@3.23')}`),
     'Zerops manifest must use the provisioned Alpine runtime version',
@@ -6108,12 +6137,7 @@ if (hasDeliveryUnits) {
       zeropsSpiceDbStart.includes('--network=host'),
     'Zerops manifest must include the pinned remote migration and SpiceDB services',
   );
-  const spiceDbSetupStart = zeropsYaml.indexOf(`  - setup: ${quoteYamlString('spicedb')}`);
-  const spiceDbSetupEnd = zeropsYaml.indexOf('\n  - setup:', spiceDbSetupStart + 1);
-  const spiceDbSetup = zeropsYaml.slice(
-    spiceDbSetupStart,
-    spiceDbSetupEnd === -1 ? undefined : spiceDbSetupEnd,
-  );
+  const spiceDbSetup = yamlListItemBlock(zeropsYaml, 'setup', 'spicedb');
   assert(
     spiceDbSetup.includes('temporaryShutdown: true'),
     'Zerops SpiceDB deploys must avoid overlapping database connection pools',
