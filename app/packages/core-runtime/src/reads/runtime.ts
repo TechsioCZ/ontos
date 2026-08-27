@@ -532,13 +532,6 @@ export const makeReadRuntime = (
                 Schema.decodeUnknownEffect(input.registration.descriptor.resultSchema)(
                   handlerExit.value.result,
                 ).pipe(
-                  Effect.tapError((error) =>
-                    input.registration.descriptor.readKey === 'core.shell.composition'
-                      ? Effect.logError(
-                          `Shell composition result schema validation failed: ${String(error).replaceAll('\n', ' | ')}`,
-                        )
-                      : Effect.void,
-                  ),
                   Effect.mapError(
                     () =>
                       new ReadResultValidationError({

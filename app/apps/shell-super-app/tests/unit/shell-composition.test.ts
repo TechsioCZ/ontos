@@ -7,8 +7,9 @@ import type {
   InstalledModuleCatalog,
   TenantModuleState,
 } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { makeShellComposition } from '../../api/modules/shell-composition.ts';
+import { ShellCompositionSchema } from '../../shared/api.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -107,6 +108,37 @@ const catalog = (): InstalledModuleCatalog =>
     },
   ]);
 
+const numberLikeOrder = (value: number): number => {
+  const runtimeValue: unknown = Reflect.construct(Number, [value]);
+  // SAFETY: This test deliberately reproduces the validated number-like value observed at runtime.
+  return runtimeValue as number;
+};
+
+const catalogWithNumberLikeOrder = (): InstalledModuleCatalog => {
+  const base = catalog();
+  return {
+    ...base,
+    contracts: base.contracts.map((contract) => ({
+      ...contract,
+      manifest: {
+        ...contract.manifest,
+        publicSurface: {
+          ...contract.manifest.publicSurface,
+          shellContributions: {
+            ...contract.manifest.publicSurface.shellContributions,
+            navigation: contract.manifest.publicSurface.shellContributions.navigation.map(
+              (contribution) => ({
+                ...contribution,
+                order: numberLikeOrder(contribution.order),
+              }),
+            ),
+          },
+        },
+      },
+    })),
+  };
+};
+
 const catalogWithSecondPropertyPage = (): InstalledModuleCatalog => {
   const property = deployment('property-registry', 'property.registry', 'Property', 20);
   property.manifest.publicSurface.components.push({
@@ -202,6 +234,26 @@ test('composes one deterministic state and permission batch with lifecycle affor
     state: 'available',
   });
   expect({ permissionBatches, stateBatches }).toEqual({ permissionBatches: 1, stateBatches: 1 });
+});
+
+test('normalizes number-like module order before returning the public composition', async () => {
+  const result = await Effect.runPromise(
+    makeShellComposition({
+      catalog: Effect.succeed(catalogWithNumberLikeOrder()),
+      contextAccess: contextAccess({
+        'documents.center': 'allowed',
+        'property.registry': 'allowed',
+      }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+    }).compose(context),
+  );
+
+  expect(result.navigation.map(({ order }) => order)).toEqual([10, 20]);
+  expect(result.navigation.every(({ order }) => Object.is(order, Number(order)))).toBe(true);
+  expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
 });
 
 test.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
