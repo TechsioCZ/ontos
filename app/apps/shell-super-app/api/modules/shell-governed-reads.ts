@@ -163,6 +163,11 @@ const makeRegistrations = (
     },
     (_input, context) =>
       context.services.composition.compose(context.scope).pipe(
+        Effect.tap((result) =>
+          Effect.annotateLogs(Effect.logError('Shell composition candidate'), {
+            candidate: JSON.stringify(result),
+          }),
+        ),
         Effect.map((result) => ({
           evidence: { resultCount: result.navigation.length },
           result,
