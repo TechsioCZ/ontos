@@ -160,6 +160,7 @@ test('allows insecure transport only for the exact Zerops stage private endpoint
   );
 
   assert.deepEqual(stage, {
+    deploymentEnvironment: 'stage',
     endpoint: 'spicedb:50051',
     insecureLocal: true,
     preSharedKey: 'test-key',
