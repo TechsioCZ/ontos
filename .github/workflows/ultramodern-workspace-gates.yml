@@ -195,6 +195,7 @@ jobs:
           --minimum-severity DEBUG
 
       - name: Enable CRM Zerops public subdomain
+        continue-on-error: true
         run: >-
           zcli service enable-subdomain
           --project-id "$ZEROPS_PROJECT_ID"
@@ -224,6 +225,7 @@ jobs:
           --minimum-severity DEBUG
 
       - name: Enable shell Zerops public subdomain
+        continue-on-error: true
         run: >-
           zcli service enable-subdomain
           --project-id "$ZEROPS_PROJECT_ID"
