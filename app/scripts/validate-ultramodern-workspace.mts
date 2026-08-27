@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import os from 'node:os';
 import path from 'node:path';
 import { tailwindPrefixForNamespace } from './scaffolding/tailwind-prefix.mts';
 import {
@@ -4920,18 +4922,57 @@ assert(
 );
 const vercelNftPatch = readText('patches/@vercel__nft@0.29.2.patch');
 assert(
-  vercelNftPatch.includes('isBuildHostSystemPath') &&
+  vercelNftPatch.split('isBuildHostSystemPath').length - 1 >= 4 &&
     vercelNftPatch.includes('isTransientFilesystemEntry') &&
     vercelNftPatch.includes('processInBatches') &&
     vercelNftPatch.includes('batchSize = 16') &&
     vercelNftPatch.includes('pnpm[\\\\/]store[\\\\/]v\\d+') &&
     vercelNftPatch.includes('(?:dev|etc|proc|run|sys)') &&
     vercelNftPatch.includes('^\\/var\\/run') &&
+    vercelNftPatch.includes('isBuildHostSystemPath(assetDirPath)') &&
+    vercelNftPatch.includes('isBuildHostSystemPath(wildcardDirPath)') &&
     vercelNftPatch.includes('if (isBuildHostSystemPath(path))') &&
     vercelNftPatch.includes('const source = await this.readFile(path);') &&
     vercelNftPatch.includes("throw new Error('File ' + path + ' does not exist.')"),
-  'The deployment tracer patch must bound dependency expansion, exclude build-host system paths, ignore only missing pnpm markers, and reject other missing files',
+  'The deployment tracer patch must reject build-host globs before enumeration, bound dependency expansion, exclude build-host system paths, ignore only missing pnpm markers, and reject other missing files',
 );
+if (process.platform !== 'win32') {
+  const crmRequire = createRequire(path.join(root, 'verticals/crm/package.json'));
+  const appToolsRequire = createRequire(crmRequire.resolve('@modern-js/app-tools'));
+  const ndepeRequire = createRequire(appToolsRequire.resolve('ndepe'));
+  const { nodeFileTrace } = ndepeRequire('@vercel/nft') as {
+    nodeFileTrace: (
+      files: string[],
+      options: { base: string; log: boolean; processCwd: string },
+    ) => Promise<unknown>;
+  };
+  const tracerFixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'ultramodern-system-glob-'));
+  const tracerFixturePath = path.join(tracerFixtureDirectory, 'entry.cjs');
+  const tracerLogs: string[] = [];
+  const originalConsoleLog = console.log;
+
+  fs.writeFileSync(
+    tracerFixturePath,
+    'const path = require("node:path"); require(path.join("/etc", process.env.ULTRAMODERN_DYNAMIC_FILE));\n',
+  );
+  console.log = (...values: unknown[]) => {
+    tracerLogs.push(values.map(String).join(' '));
+  };
+  try {
+    await nodeFileTrace([tracerFixturePath], {
+      base: '/',
+      log: true,
+      processCwd: tracerFixtureDirectory,
+    });
+  } finally {
+    console.log = originalConsoleLog;
+    fs.rmSync(tracerFixtureDirectory, { force: true, recursive: true });
+  }
+  assert(
+    !tracerLogs.some((line) => line.startsWith('Globbing /etc')),
+    'The deployment tracer must reject build-host system globs before filesystem enumeration',
+  );
+}
 assert(
   pnpmWorkspace.includes(`'@effect/opentelemetry': ${expectedEffectVersion}`),
   'pnpm-workspace.yaml must override @effect/opentelemetry to the generated Effect cohort',
