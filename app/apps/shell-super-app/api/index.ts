@@ -622,6 +622,17 @@ const shellListReadProblem = (error: ReadCoreError) => {
     : mappedProblem;
 };
 
+const logShellReadFailure = (
+  operation: 'composition' | 'module_target' | 'resource' | 'search',
+  correlationId: string,
+  error: ReadCoreError,
+) =>
+  Effect.annotateLogs(Effect.logError('Shell governed read failed'), {
+    correlationId,
+    failureTag: error._tag,
+    operation,
+  });
+
 type ShellProblem =
   | ShellAuthenticationRequiredProblem
   | ShellCapabilityUnavailableProblem
@@ -850,12 +861,16 @@ const compositionGroupLive = HttpApiBuilder.group(
             return { navigation: [], state: 'selection_required' } as const;
           }
           const governedReads = yield* ShellGovernedReads;
+          const correlationId = request.headers['x-correlation-id'] ?? 'missing';
           return yield* governedReads
             .composition({
-              correlationId: request.headers['x-correlation-id'] ?? 'missing',
+              correlationId,
               principal: session.principal,
             })
-            .pipe(Effect.catch((error) => failShellProblem(shellListReadProblem(error))));
+            .pipe(
+              Effect.tapError((error) => logShellReadFailure('composition', correlationId, error)),
+              Effect.catch((error) => failShellProblem(shellListReadProblem(error))),
+            );
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
