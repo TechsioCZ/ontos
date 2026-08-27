@@ -371,6 +371,18 @@ const gatewayIssuerProblem = (
         type: 'https://ontos.dev/problems/gateway-unavailable',
       };
 
+const logGatewayIssuerFailure = (
+  operation: 'api_key' | 'session',
+  correlationId: string,
+  error: GatewayIssuerError,
+) =>
+  Effect.annotateLogs(Effect.logError('Shell gateway assertion issuance failed'), {
+    correlationId,
+    failureCode: error.code,
+    failureStage: error.stage,
+    operation,
+  });
+
 const authenticationInternalProblem = (): AuthenticationInternalProblem => ({
   _tag: 'AuthenticationInternalProblem',
   detail: 'Authentication could not complete.',
@@ -1506,7 +1518,16 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
               principal: sessionResult.principal,
             },
             issuerDependencies,
-          ).pipe(Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)));
+          ).pipe(
+            Effect.tapError((error) =>
+              logGatewayIssuerFailure(
+                'session',
+                request.headers['x-correlation-id'] ?? 'missing',
+                error,
+              ),
+            ),
+            Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
+          );
         }).pipe(
           Effect.catchDefect((defect) =>
             Effect.annotateLogs(
@@ -1609,7 +1630,16 @@ const makeGatewayContextGroupLive = (issuerDependencies: GatewayIssuerDependenci
               ),
             },
             issuerDependencies,
-          ).pipe(Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)));
+          ).pipe(
+            Effect.tapError((error) =>
+              logGatewayIssuerFailure(
+                'api_key',
+                request.headers['x-correlation-id'] ?? 'missing',
+                error,
+              ),
+            ),
+            Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
+          );
         }).pipe(
           Effect.catchDefect((defect) =>
             Effect.annotateLogs(
