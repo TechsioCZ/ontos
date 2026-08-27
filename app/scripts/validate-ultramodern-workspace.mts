@@ -4920,11 +4920,13 @@ assert(
 );
 const vercelNftPatch = readText('patches/@vercel__nft@0.29.2.patch');
 assert(
-  vercelNftPatch.includes('isTransientMissingFile') &&
+  vercelNftPatch.includes('isTransientFilesystemEntry') &&
     vercelNftPatch.includes('pnpm[\\\\/]store[\\\\/]v\\d+') &&
     vercelNftPatch.includes('^\\/proc\\/(?:self|\\d+)\\/fd\\/\\d+$') &&
+    vercelNftPatch.includes("error?.code === 'EACCES'") &&
+    vercelNftPatch.includes("error?.code === 'EPERM'") &&
     vercelNftPatch.includes("throw new Error('File ' + path + ' does not exist.')"),
-  'The deployment tracer patch must ignore only transient pnpm and process markers while rejecting other missing files',
+  'The deployment tracer patch must ignore only transient pnpm and process markers while rejecting other missing or unreadable files',
 );
 assert(
   pnpmWorkspace.includes(`'@effect/opentelemetry': ${expectedEffectVersion}`),
