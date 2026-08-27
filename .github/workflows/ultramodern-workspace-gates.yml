@@ -101,23 +101,81 @@ jobs:
       - name: Checkout stage revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Detect changed deployment units
+        id: changes
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          crm=false
+          migrator=false
+          shell=false
+          spicedb=false
+
+          while IFS= read -r path; do
+            case "$path" in
+              app/zerops.yaml|app/pnpm-lock.yaml|app/pnpm-workspace.yaml|app/package.json|app/scripts/install-zerops-node.sh)
+                crm=true
+                migrator=true
+                shell=true
+                spicedb=true
+                ;;
+              app/packages/core-runtime/spicedb/*|app/scripts/run-zerops-spicedb.sh)
+                crm=true
+                migrator=true
+                shell=true
+                spicedb=true
+                ;;
+              app/packages/core-runtime/*|app/scripts/run-zerops-migrator.mjs)
+                crm=true
+                migrator=true
+                shell=true
+                ;;
+              app/packages/*|app/topology/*)
+                crm=true
+                shell=true
+                ;;
+              app/apps/shell-super-app/*)
+                shell=true
+                ;;
+              app/verticals/crm/*)
+                crm=true
+                ;;
+            esac
+          done < <(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
+
+          any=false
+          if [[ "$crm" == true || "$migrator" == true || "$shell" == true || "$spicedb" == true ]]; then
+            any=true
+          fi
+          {
+            echo "any=$any"
+            echo "crm=$crm"
+            echo "migrator=$migrator"
+            echo "shell=$shell"
+            echo "spicedb=$spicedb"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
+        if: steps.changes.outputs.any == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '26.5.0'
 
       - name: Install Zerops CLI
+        if: steps.changes.outputs.any == 'true'
         run: npm install --global @zerops/zcli@1.1.0
 
       - name: Authenticate to Zerops
+        if: steps.changes.outputs.any == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: zcli login "$ZEROPS_TOKEN"
 
       - name: Run verified database migrations
+        if: steps.changes.outputs.migrator == 'true'
         id: migrator
         run: >-
           zcli push
@@ -149,6 +207,7 @@ jobs:
           --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
 
       - name: Deploy SpiceDB
+        if: steps.changes.outputs.spicedb == 'true'
         id: spicedb
         run: >-
           zcli push
@@ -172,6 +231,7 @@ jobs:
           --minimum-severity DEBUG
 
       - name: Deploy CRM
+        if: steps.changes.outputs.crm == 'true'
         id: crm
         run: >-
           zcli push
@@ -195,6 +255,7 @@ jobs:
           --minimum-severity DEBUG
 
       - name: Enable CRM Zerops public subdomain
+        if: steps.changes.outputs.crm == 'true'
         continue-on-error: true
         run: >-
           zcli service enable-subdomain
@@ -202,6 +263,7 @@ jobs:
           --service-id "$ZEROPS_CRM_SERVICE_ID"
 
       - name: Deploy shell super-app
+        if: steps.changes.outputs.shell == 'true'
         id: shell
         run: >-
           zcli push
@@ -225,6 +287,7 @@ jobs:
           --minimum-severity DEBUG
 
       - name: Enable shell Zerops public subdomain
+        if: steps.changes.outputs.shell == 'true'
         continue-on-error: true
         run: >-
           zcli service enable-subdomain

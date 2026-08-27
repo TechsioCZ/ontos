@@ -19,8 +19,6 @@ import type {
 import { Context, Effect, Layer, Schema } from 'effect';
 import {
   ResourceRefSchema,
-  ResolvedModuleTargetSchema,
-  ResolveModuleTargetPayloadSchema,
   ShellResourceResponseSchema,
   ShellSearchPayloadSchema,
   ShellSearchResponseSchema,
@@ -32,6 +30,10 @@ import type {
   ShellResourceResponse,
   ShellSearchResponse,
 } from '../../shared/api.ts';
+import {
+  GovernedResolvedModuleTargetSchema,
+  GovernedResolveModuleTargetPayloadSchema,
+} from './shell-governed-read-schemas.ts';
 import { ShellInstalledModuleCatalog } from './installed-module-catalog.ts';
 import type { ShellInstalledModuleCatalogService } from './installed-module-catalog.ts';
 import { ShellCompositionFactory, ShellCompositionFactoryLive } from './shell-composition.ts';
@@ -249,13 +251,13 @@ const makeRegistrations = (
         captureMode: 'metadata_only',
         policyKey: 'core.shell.module-target.evidence.v1',
       },
-      inputSchema: ResolveModuleTargetPayloadSchema,
+      inputSchema: GovernedResolveModuleTargetPayloadSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
       permissionTarget: 'module',
       policies: [],
       readKey: 'core.shell.module-target',
-      resultSchema: ResolvedModuleTargetSchema,
+      resultSchema: GovernedResolvedModuleTargetSchema,
       schemaVersion: '1',
     },
     ({ entrypointKey, moduleId }, context) =>
