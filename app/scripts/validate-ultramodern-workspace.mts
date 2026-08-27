@@ -6013,7 +6013,7 @@ if (hasDeliveryUnits) {
     'Every Zerops pnpm command must propagate local virtual-store configuration to child processes',
   );
   assert(
-    zeropsYaml.split('NODE_OPTIONS=--max-old-space-size=6144').length - 1 === 2,
+    zeropsYaml.split('NODE_OPTIONS=--max-old-space-size=4096').length - 1 === 2,
     'Every Modern.js Zerops deployment build must reserve enough Node.js heap for dependency tracing',
   );
   assert(
