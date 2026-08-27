@@ -194,6 +194,12 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
+      - name: Enable CRM Zerops public subdomain
+        run: >-
+          zcli service enable-subdomain
+          --project-id "$ZEROPS_PROJECT_ID"
+          --service-id "$ZEROPS_CRM_SERVICE_ID"
+
       - name: Deploy shell super-app
         id: shell
         run: >-
@@ -217,7 +223,7 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Enable Zerops public subdomain
+      - name: Enable shell Zerops public subdomain
         run: >-
           zcli service enable-subdomain
           --project-id "$ZEROPS_PROJECT_ID"
