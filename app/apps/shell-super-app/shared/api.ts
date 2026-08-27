@@ -3,9 +3,9 @@ import {
   HttpApiEndpoint,
   HttpApiGroup,
   HttpApiSchema,
-  Schema,
 } from '@modern-js/plugin-bff/effect-client';
 import { GatewayContextApiGroup } from '@app/shared-contracts';
+import { Schema } from 'effect';
 
 export interface SafeTenantIdentity {
   readonly displayName: string;
