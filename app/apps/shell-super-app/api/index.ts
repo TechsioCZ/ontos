@@ -629,6 +629,7 @@ const logShellReadFailure = (
 ) =>
   Effect.annotateLogs(Effect.logError('Shell governed read failed'), {
     correlationId,
+    failureReason: error.reason,
     failureTag: error._tag,
     operation,
   });
@@ -905,11 +906,12 @@ const compositionGroupLive = HttpApiBuilder.group(
             return yield* failShellProblem(shellSelectionRequiredProblem());
           }
           const governedReads = yield* ShellGovernedReads;
+          const correlationId = request.headers['x-correlation-id'] ?? 'missing';
           return yield* governedReads
             .moduleTarget(
               withOptionalProperty(
                 {
-                  correlationId: request.headers['x-correlation-id'] ?? 'missing',
+                  correlationId,
                 },
                 !(payload.entrypointKey === undefined),
                 'entrypointKey',
@@ -920,7 +922,12 @@ const compositionGroupLive = HttpApiBuilder.group(
                 },
               ),
             )
-            .pipe(Effect.catch((error) => failShellProblem(shellReadProblem(error))));
+            .pipe(
+              Effect.tapError((error) =>
+                logShellReadFailure('module_target', correlationId, error),
+              ),
+              Effect.catch((error) => failShellProblem(shellReadProblem(error))),
+            );
         }).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause)
