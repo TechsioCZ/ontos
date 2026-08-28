@@ -6,11 +6,11 @@ Mermaid Markdown diagrams are in `diagrams/`. The prose below is authoritative; 
 
 ## Level 1 — System Context
 
-OntOS is the encompassing modular business product used by internal operators, customer users, accountants, administrators, customers, and external operational roles. ERP and Commerce are Application Compositions of OntOS Foundational and Business Modules. Commerce is first configured for Akros and then N1.
+OntOS is the encompassing modular business product used by internal operators, portal customers, accountants, administrators, and external operational roles. ERP and Commerce are Application Compositions of OntOS Foundational and Business Modules. Commerce is one shared B2C/B2B backend first configured for Akros and then N1.
 
 The external systems around OntOS include Symmy, accounting software behind Symmy, bank statement sources, customer reservation websites, object storage, payment and delivery providers, and specialist systems such as Pulsar Solutions.
 
-The system boundary is important. OntOS owns Core, reusable business capabilities, the back office, and the canonical facts assigned to its modules. It does not automatically replace statutory accounting software, Storefront Channel Applications, Symmy, or specialist machine-prediction platforms.
+The system boundary is important. OntOS owns Core, reusable business capabilities, the Commerce Storefront API, Portal Account registration/authentication, Commerce Operations, and the canonical facts assigned to its modules. Independently deployed Storefront Applications, their local BFF/proxies, statutory accounting software, Symmy, and specialist machine-prediction platforms remain outside the standard OntOS deployment.
 
 ## Level 2 — Containers
 
@@ -19,6 +19,12 @@ The system boundary is important. OntOS owns Core, reusable business capabilitie
 The Shell composes installed, authorized module contributions from allowlisted serialized deployment contracts. Each MicroVertical delivery unit contains one Foundational or Business Module's UI, Actions, handlers, schema, and private owner-local runtime registration and remains independently deployable. Co-location is a Deployment Topology choice, not a change in logical ownership or trust.
 
 Each delivery unit is where the MicroVertical implementation concept lives. It owns UI, actions, backend behavior, domain model declarations, migrations, tests, and public descriptors. Its public activation and cross-module contract is declared through the OntOS Module Manifest and projected into a safe serialized deployment contract.
+
+### Commerce channel and operations applications
+
+The thin Commerce Storefront API is an OntOS channel edge over public module contracts. Each external Storefront Application reaches it through a storefront-local BFF/proxy and a distinct tenant-bound Storefront Client credential, while a separate portal session or bounded guest context identifies the shopper. A temporary Medusa Store Compatibility Facade may translate existing hook shapes; native Commerce contracts remain authoritative.
+
+Commerce Operations is a purpose-built staff application over public module Actions and the staff Shell authentication boundary. It is not the Shell, Core, or an alternative fact owner. Future MCP/UCP Agentic Shopping Adapters sit beside the Storefront API over native contracts.
 
 ### Module-owned Worker Processes
 
@@ -42,7 +48,7 @@ Object storage stores file blobs. OntOS keeps media metadata, links, permissions
 
 ### External Systems
 
-External systems include Symmy, accounting software, banks/statement files, reservation websites, payment/delivery providers, and future Pulsar integration. OntOS reaches provider systems through the Symmy Connector; provider-specific routes such as Symmy–POHODA Integration stay downstream. Integrations should normally be mediated by outbox/import/export workers rather than inline calls in user-facing handlers.
+External systems include Symmy, accounting software, banks/statement files, reservation websites, payment/delivery providers, and future Pulsar integration. One Integration Route is chosen per system and fact family: One-time Migration, a Symmy Route, or an owner-local Direct Provider Route. Integrations should normally be mediated by module-owned outbox/import/export workers rather than inline calls in user-facing handlers. Transport does not grant authority.
 
 ## Level 3 — OntOS runtime components
 
@@ -56,7 +62,7 @@ The Shell/Core runtime discovers allowlisted serialized deployment contracts, bu
 
 ### Core Runtime Services
 
-Core runtime services include BetterAuth binding, principal context, authorization adapter, business policy layer, tenant-level module state, action invocation recording, audit/event/outbox recording, media asset/link services, search index entries, worker checkpoints, and projection descriptors.
+Core runtime services include staff BetterAuth binding, principal context, authorization adapter, business policy layer, tenant-level module state, action invocation recording, audit/event/outbox recording, media asset/link services, search index entries, worker checkpoints, and projection descriptors. Commerce owns its separate Portal Account BetterAuth realm and links its accounts to tenant-scoped Principals and Party/Counterparty references through governed contracts.
 
 ### MicroVertical Packages
 

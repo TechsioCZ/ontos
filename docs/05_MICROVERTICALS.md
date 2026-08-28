@@ -50,9 +50,15 @@ Each MicroVertical is installed through an allowlisted deployment contract. A mo
 
 Adding a new MicroVertical requires building and deploying its delivery unit. Later versions may support generated/schema-defined or sandboxed modules, but that is not a launch requirement.
 
-An Application Composition owns a versioned, dependency-closed DAG of Foundational and Business Modules. Core validates installation and activation closure. A module activates only when its required dependencies are installed, compatible, and active. A dependency outage degrades affected entrypoints explicitly without rewriting or cascading stored module states; unrelated modules continue operating.
+An Application Composition owns a continuously delivered, dependency-closed DAG of Foundational and Business Modules. Core validates installation, compatibility, implementation selection, and activation closure. A module activates only when its required dependencies are installed, compatible, and active. A dependency outage degrades affected entrypoints explicitly without rewriting or cascading stored module states; unrelated modules continue operating.
+
+A Module Contract Identity names stable public capability semantics; a Module Implementation Identity names one catalogued executable implementation. Customer Configuration may select a permitted implementation declaratively. Compatible alternatives may share a contract identity only while public semantics remain the same; different semantics require a distinct module identity. The Installed Module Catalog records implementation identity, immutable build revision, contract hash/version, migrations, owner, and health. Invisible same-identity forks are forbidden.
+
+This is accepted target architecture. The current app manifest/catalog supports one implicit `standard` implementation per module and must be extended through its generators and validation before a second implementation is added.
 
 All module entrypoints must be invoked through Shell/Core gateways. Direct entrypoint loading is forbidden: modules should not bypass Shell/Core by directly loading Module Federation remotes, private routes, public components, Action handlers, or worker handlers. This keeps tenant module state enforcement at the boundary before module code is loaded or dispatched.
+
+Commerce channel applications are an explicit boundary exception to Shell UI composition, not to module governance. Independently deployed Storefront Applications call a thin Commerce Storefront API over published module contracts; Commerce Operations is a purpose-built staff application over the same governed entrypoints. Neither imports module-private code or becomes a canonical owner. See [ADR-0017](adr/0017-commerce-application-boundaries.md).
 
 ## Activation states
 
@@ -94,7 +100,7 @@ Public component reuse across modules still goes through the Shell/Core componen
 
 The current app enforces the seam with Codesmith-generated contracts and private registrations, deterministic serialized deployment contracts, topology allowlisting, an all-or-nothing Installed Module Catalog, static private-import and database-boundary checks, structured entrypoint gateways, module-state enforcement, audience-scoped Shell assertions, contract-derived Effect clients, owner-local schemas/migrations, and module-owned Outbox workers.
 
-These are implemented mechanisms, not complete production evidence. Production acceptance must still prove equivalent local and network behavior; independent compatible build, migration, rollout, rollback, and recovery; timeout, partition, crash, and backpressure handling; typed degradation limited to affected dependency closures; unrelated-module continuity; version-skew rejection; health/readiness and observability; and backup/restore and incident procedures. Foundational Module catalog support and complete versioned Application Composition closure enforcement remain implementation work.
+These are implemented mechanisms, not complete production evidence. Production acceptance must still prove equivalent local and network behavior; independent compatible build, migration, rollout, rollback, and recovery; timeout, partition, crash, and backpressure handling; typed degradation limited to affected dependency closures; unrelated-module continuity; version-skew rejection; health/readiness and observability; and backup/restore and incident procedures. Foundational Module catalog support and complete contract-compatible Application Composition closure enforcement remain implementation work.
 
 ## MicroVertical Forge
 
