@@ -6,13 +6,13 @@ The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-appl
 
 ## Application inventory
 
-| Application/edge | Deployment and ownership |
-| --- | --- |
-| **Storefront Application** | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts. |
+| Application/edge               | Deployment and ownership                                                                                                                                                               |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Storefront Application**     | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts.  |
 | **Storefront-local BFF/proxy** | Deployed with one storefront. Holds its Storefront Client credential server-side, provides a same-origin browser edge, and performs presentation-oriented request shaping/aggregation. |
-| **Commerce Storefront API** | Thin OntOS channel edge over public Commerce module contracts. Authenticates, authorizes, translates, aggregates bounded reads, and invokes governed Actions. |
-| **Commerce Operations** | Purpose-built staff application over published MicroVertical clients and governed entrypoints. Uses staff authentication; owns no canonical commerce facts. |
-| **Agentic Shopping Adapter** | Future peer channel adapter over native Commerce contracts, for example MCP or UCP. It is not implemented by this decision. |
+| **Commerce Storefront API**    | Thin OntOS channel edge over public Commerce module contracts. Authenticates, authorizes, translates, aggregates bounded reads, and invokes governed Actions.                          |
+| **Commerce Operations**        | Purpose-built staff application over published MicroVertical clients and governed entrypoints. Uses staff authentication; owns no canonical commerce facts.                            |
+| **Agentic Shopping Adapter**   | Future peer channel adapter over native Commerce contracts, for example MCP or UCP. It is not implemented by this decision.                                                            |
 
 Shell/Core remains business-neutral. Do not add commerce orchestration, portal account lifecycle, Storefront rendering, provider mapping, or Commerce Operations workflows to Shell/Core merely because several modules or channels need them.
 
