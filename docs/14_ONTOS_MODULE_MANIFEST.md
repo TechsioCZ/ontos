@@ -1,5 +1,7 @@
 # OntOS Module Manifest
 
+This product-level contract follows [ADR-0016](adr/0016-independently-deployable-microverticals.md). Current implementation details and generators are authoritative under `app/docs/architecture/`; older MVP examples in this document are illustrative only.
+
 The OntOS Module Manifest is an OntOS-specific public contract for a module. It is not part of the standard UltraModern.js MicroVertical concept.
 
 UltraModern.js MicroVerticals describe how one full-stack business capability is organized behind an independently deployable seam. OntOS adds a manifest because the runtime needs a typed, machine-readable contract for deployment identity, module activation, Application Composition dependencies, public Actions/APIs/components, resources, events, search, and reports.
@@ -16,8 +18,9 @@ Use these terms precisely:
 | OntOS Business Module | Product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. |
 | OntOS System Module | Core-owned capability such as `core.identity`, `core.authz`, `core.audit`, or `core.search`. |
 | OntOS Module Manifest | Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. |
-| Vertical Runtime Registration | Private per-MicroVertical runtime registration that binds the public manifest to private installed-module hooks such as routes, navigation, handlers, migrations, workers, search, and reports. |
-| Installed Vertical Registry | Shell/Core-owned internal registry of installed Vertical Runtime Registrations. |
+| Serialized Deployment Contract | Deterministic safe-data projection of one deployment's public manifest and descriptors, fetched only from a topology allowlist. |
+| Vertical Runtime Registration | Private owner-local binding from the public contract to executable routes, Actions, Policies, migrations, workers, search, and reports. It never crosses the deployment seam. |
+| Installed Module Catalog | Immutable Shell/Core catalog built atomically from allowlisted serialized deployment contracts; it contains no executable registrations. |
 
 Avoid saying "MicroVertical Manifest" unless talking loosely. The precise term is "OntOS Module Manifest".
 
@@ -59,9 +62,9 @@ Domain tables, routes, navigation, handlers, fixtures, tests, and projection job
 
 ## Runtime Registration
 
-The Shell and Core discover runnable installed modules from the private Installed Vertical Registry, not from public manifests alone.
+Shell/Core discovers installed module contracts from topology-authorized serialized deployment-contract URLs. It validates the complete snapshot and builds an immutable Installed Module Catalog indexed independently by deployment `appId` and business `moduleId`. A reachable service cannot install or register itself, and one invalid contract rejects the whole candidate snapshot.
 
-Each MicroVertical should keep two paired contract files at the vertical root:
+Each MicroVertical keeps two paired owner files at the vertical root:
 
 ```text
 verticals/property-registry/
@@ -69,38 +72,26 @@ verticals/property-registry/
   vertical.registration.ts
 ```
 
-`vertical.manifest.ts` contains the public OntOS Module Manifest. `vertical.registration.ts` contains the private Vertical Runtime Registration that binds the public manifest to private hooks needed by the installed application runtime. The MicroVertical owns its route subtree, pages, and components; Shell composes registered route and navigation contributions, applies shared layout, and filters visibility through activation/module-state rules.
+`vertical.manifest.ts` contains the owner-authored typed OntOS Module Manifest. Its build emits a deterministic serialized deployment contract containing safe data only. `vertical.registration.ts` binds that contract to private executable behavior inside the owning deployment. Neither Shell/Core nor another MicroVertical imports either source file from a different deployment.
 
 ```ts
 export const propertyRegistryRegistration =
   defineVerticalRuntimeRegistration({
     manifest: propertyRegistryManifest,
-    shell: {
-      nav: {
-        label: "Property Registry",
-        path: "/property"
-      },
-      routes: [PropertyRegistryRoute]
-    },
     actions: {
       [createUnitAction.key]: createUnitHandler
     },
-    migrations: [],
-    handlers: {},
-    search: [],
-    reports: []
+    entrypoints: {
+      pages: {
+        "page-property-overview": () =>
+          import("./src/routes/property/overview/page")
+      }
+    },
+    outboxWorkers: {}
   })
 ```
 
-The public manifest remains the public contract. The runtime registration is an internal wiring surface for Shell/Core only. Other MicroVerticals should depend on public Action/API/client/component values exposed through manifests, not on another module's runtime registration.
-
-For the MVP, the Installed Vertical Registry can be a statically imported list owned by the Shell/Core, named `installed.registry.ts`:
-
-```text
-apps/shell/src/verticals/installed.registry.ts
-```
-
-This is an explicit installed-module allowlist, not a runtime plugin marketplace.
+The runtime registration is private wiring for the owning process only. Executable Actions, Policies, workers, migrations, routes, repositories, search implementations, and report implementations remain owner-local. Synchronous consumers use the provider's generated typed client; asynchronous consumers import only published schema contracts. Shell composes safe serialized contributions and invokes structured gateways without loading private registrations.
 
 Day 1/2 should represent tenant module state with a fixture that mirrors `CORE_TENANT_MODULE_STATES`. Both MVP MicroVerticals, `property.registry` and `accounting.core`, should be `active` for the demo tenant until persistent module state is implemented. Normal Shell navigation should include `active`, `read_only`, and `deprecated` modules and hide `inactive`, `suspended`, `quarantined`, and `archived` modules. Each MVP MicroVertical route should visibly show its module id, filesystem folder name, tenant module state, and that the route/page is rendered by the owning MicroVertical.
 
@@ -469,24 +460,23 @@ Manifest validation should check:
 - public events have payload schemas
 - no private implementation fields are present
 
-Package exports and import rules should separate public and private vertical surfaces:
+Package exports and import rules separate public contracts from deployment-private implementation:
 
-- Other MicroVerticals may import public manifest values, Action descriptors, public API clients, public component values, and public resource/event/search/report descriptors.
-- Shell/Core may import `vertical.registration.ts` for the Installed Vertical Registry.
-- Ordinary MicroVertical consumers must not import `vertical.registration.ts`.
-- No consumer should import private handlers, private routes, private tables, private migrations, fixtures, or tests from another MicroVertical.
-- Generated package exports should expose public surfaces such as `./vertical.manifest` and selected public descriptors, while keeping `./vertical.registration` unavailable except through the Shell/Core allowlist.
+- Other MicroVerticals consume generated typed clients, schema-only Outbox contracts, and governed public entrypoint descriptors.
+- Shell/Core and other deployments must not import another deployment's `vertical.manifest.ts`, `vertical.registration.ts`, or private source.
+- No consumer imports private handlers, routes, tables, migrations, repositories, fixtures, tests, or executable Policies from another MicroVertical.
+- Generated package exports expose only stable contract surfaces. The topology allowlist names serialized deployment-contract URLs, never source import paths.
 
 The MVP should expose one stable command for these checks: `pnpm check:boundaries`. If UltraModern generates a boundary checker, `check:boundaries` should call that generated checker and add any OntOS-specific rules that are not covered. If the generated scaffold has no suitable checker, `check:boundaries` can be a small import-scanning script. In either case, `pnpm check` should run `check:boundaries`.
 
 Build-time validation should additionally check import boundaries:
 
-- Other modules may use only Action/API/client/component/resource values exposed through producer manifests.
+- Other modules may use only published Action/API/client/component/resource contracts exposed by the producer.
 - Private module paths are blocked.
 - A consumer cannot import a public component unless it is exposed through the producer manifest.
 - A consumer cannot call a public API unless the producing module declares it.
 - A consumer cannot invoke an Action unless the producing module declares it.
-- Only Shell/Core may import vertical runtime registrations.
+- Runtime registrations remain owner-local and are never imported across a deployment seam.
 - Activation dependency checks can be generated from manifest dependencies.
 
 ## Open Questions

@@ -18,7 +18,7 @@ Core is the reason MicroVerticals can be cohesive without becoming isolated. It 
 | SpiceDB adapter | Yes | Authorization decisions must be consistent. |
 | Policy hook framework | Yes | Business policies require common enforcement points. |
 | Module state | Yes | Activation state is tenant-level runtime configuration. |
-| Action registry | Yes | All writes must use registered actions. |
+| Action invocation governance and descriptor catalog | Yes | All writes use governed owner-local Actions without importing their handlers. |
 | ResourceRef convention | Yes | Cross-module references need a common value shape, but not a central business registry. |
 | Audit and domain event recording | Yes | Evidence and event history must be consistent. |
 | Outbox | Yes | Side-effect dispatch must be consistent. |
@@ -40,9 +40,11 @@ The key difference is activation. Business modules can be active/read-only/suspe
 
 ## Core extension points
 
-Core should expose narrow extension points to business modules. The important extension points are OntOS Module Manifest registration, public API registration, public component registration, action registration, public resource type descriptors, permission mapping, policy hooks, search descriptors, report descriptors, migration registration, and outbox/projection handlers.
+Core exposes narrow data and invocation extension points to modules: serialized deployment-contract discovery, public Action/API/component/resource/event/search/report descriptors, permission and Policy references, structured entrypoint gateways, and Outbox delivery contracts. These surfaces let Core validate, gate, route, and observe calls without acquiring business implementation.
 
-These extension points need to be explicit because they are the future foundation for Forge and later vibemodule capabilities. If modules can mutate runtime behavior through ad hoc imports or global side effects, generation and review become impossible.
+Executable Actions, Policies, migrations, handlers, workers, repositories, routes, search implementations, reports, and private registrations stay inside the owning MicroVertical deployment. Shell/Core must not import another deployment's `vertical.manifest.ts`, `vertical.registration.ts`, or private source. It builds the Installed Module Catalog from allowlisted serialized contracts and invokes the owner through governed entrypoints and published clients.
+
+These extension points need to be explicit because they are the future foundation for Forge and later vibemodule capabilities. If modules can mutate runtime behavior through ad hoc imports, central executable registration, or global side effects, generation and review become impossible.
 
 Shell/Core gateways must be the only way to invoke module entrypoints. Page loads, public component loads, Actions, and worker dispatch all pass through the Module State Gate before Shell/Core loads or dispatches the target module entrypoint.
 

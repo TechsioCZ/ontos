@@ -16,13 +16,13 @@ The system boundary is important. OntOS owns Core, reusable business capabilitie
 
 ### OntOS Shell and MicroVertical delivery units
 
-The Shell composes installed, authorized Business Module contributions. Each MicroVertical delivery unit contains one Business Module's UI, Actions, handlers, schema, and private runtime registration and remains independently deployable. Co-location is a Deployment Topology choice, not a change in logical ownership.
+The Shell composes installed, authorized module contributions from allowlisted serialized deployment contracts. Each MicroVertical delivery unit contains one Foundational or Business Module's UI, Actions, handlers, schema, and private owner-local runtime registration and remains independently deployable. Co-location is a Deployment Topology choice, not a change in logical ownership or trust.
 
-This container is where the MicroVertical implementation concept lives. Each OntOS Business Module contributes UI, actions, backend behavior, domain model declarations, migrations, tests, and public descriptors. Its public activation and cross-module contract is declared through the OntOS Module Manifest.
+Each delivery unit is where the MicroVertical implementation concept lives. It owns UI, actions, backend behavior, domain model declarations, migrations, tests, and public descriptors. Its public activation and cross-module contract is declared through the OntOS Module Manifest and projected into a safe serialized deployment contract.
 
-### OntOS Worker Runtime
+### Module-owned Worker Processes
 
-The worker runtime processes asynchronous work: outbox dispatch, Neo4j projection, search projection, reporting refreshes, import/export processing, scheduled reminders, and later integration jobs. It should share code/contracts with the application runtime but it is operationally separate so that long-running or retryable work does not block user-facing actions.
+Core owns Outbox delivery state, leases, attempts, retries, dead letters, and checkpoints. Each consuming module owns its executable worker registration and handler inside its deployment. Worker processes consume only published schemas and remain operationally separate from user-facing requests; co-location does not turn them into centrally registered Shell/Core executables.
 
 ### Postgres
 
@@ -44,7 +44,7 @@ Object storage stores file blobs. OntOS keeps media metadata, links, permissions
 
 External systems include Symmy, accounting software, banks/statement files, reservation websites, payment/delivery providers, and future Pulsar integration. OntOS reaches provider systems through the Symmy Connector; provider-specific routes such as Symmy–POHODA Integration stay downstream. Integrations should normally be mediated by outbox/import/export workers rather than inline calls in user-facing handlers.
 
-## Level 3 — OntOS Application Runtime components
+## Level 3 — OntOS runtime components
 
 ### Application Shell
 
@@ -52,7 +52,7 @@ The shell provides navigation, layout, tenant/legal-entity context selection, Mi
 
 ### Module Runtime
 
-The runtime discovers allowlisted OntOS Module Manifests, validates the active Application Composition DAG, checks activation state per Tenant, and exposes public Actions, APIs, components, resource contracts, search, and reports. Deployment installation and Tenant activation remain separate. Adding new code requires a new module delivery-unit build and deployment.
+The Shell/Core runtime discovers allowlisted serialized deployment contracts, builds the Installed Module Catalog atomically, validates the active Application Composition DAG, checks activation state per Tenant, and routes governed public Actions, APIs, components, resource contracts, search, and reports. It never imports another deployment's private manifest source or runtime registration. Deployment installation and Tenant activation remain separate.
 
 ### Core Runtime Services
 
@@ -68,9 +68,9 @@ The action execution pipeline receives action invocations from UI, API, imports,
 
 ## Level 3 — Worker Runtime components
 
-### Outbox Dispatcher
+### Outbox Delivery Runtime
 
-Reads pending outbox messages, claims work idempotently, dispatches to registered handlers, tracks attempts, handles retries, and moves failed messages into a dead-letter state.
+Matches pending Outbox Messages to declared schema-only subscriptions, creates delivery work, tracks attempts and leases, handles retries, and moves failed deliveries into a dead-letter state. Owner processes claim work and invoke only their private handlers.
 
 ### Projection Workers
 

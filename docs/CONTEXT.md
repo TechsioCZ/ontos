@@ -42,7 +42,7 @@ _Avoid_: Ordinary business module, customer vertical, unguarded admin bypass
 
 **UltraModern.js MicroVertical**:
 The framework-level full-stack vertical slice concept in the UltraModern.js fork. It keeps one capability's frontend and backend behavior together behind a strict independently deployable seam. Co-location is permitted, but changing placement must not change consuming business logic. By itself, a MicroVertical does not define an OntOS manifest or become a separate product.
-_Avoid_: OntOS-specific manifest, product, frontend-only module, mandatory co-location
+_Avoid_: OntOS-specific manifest, product, frontend-only module, modular monolith, jointly deployable application, mandatory co-location
 
 **OntOS Business Module**:
 A product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. It exposes a public OntOS Module Manifest so Core, activation logic, tooling, and other modules can reason about its public contract.
@@ -89,12 +89,12 @@ A module-owned asynchronous consumer of Outbox Messages for declared event topic
 _Avoid_: Picker, deployment unit, Worker Runtime, synchronous subscriber
 
 **Vertical Runtime Registration**:
-The private per-MicroVertical runtime registration that binds the vertical's public OntOS Module Manifest to implementation hooks such as routes, navigation contributions, action handlers, migrations, workers, search implementations, and report implementations. In the MVP this lives beside the vertical manifest as `vertical.registration.ts`.
-_Avoid_: Public manifest, plugin marketplace, cross-module import surface, generic implementation file
+The private owner-local runtime registration that binds one MicroVertical's public contract to its executable Actions, routes, Policies, migrations, workers, search implementations, and report implementations. It never crosses the deployment seam or becomes a Shell/Core or cross-module import surface.
+_Avoid_: Public manifest, plugin marketplace, Installed Module Catalog entry, cross-module import surface
 
-**Installed Vertical Registry**:
-The Shell/Core-owned internal registry of installed Vertical Runtime Registrations. In the MVP this is a statically imported allowlist named `installed.registry.ts`, not a runtime plugin marketplace.
-_Avoid_: Public manifest catalog, module marketplace, dynamic plugin loader
+**Installed Module Catalog**:
+The immutable Shell/Core catalog built atomically from allowlisted serialized deployment contracts. It indexes deployment and business-module identities independently and never contains another deployment's executable runtime registration.
+_Avoid_: Installed Vertical Registry, executable plugin registry, module marketplace, self-registration
 
 **Principal**:
 An actor that can authenticate, invoke actions, or appear in audit and authorization. A Principal may represent internal staff, external manager staff, accountants, guests with portal access, integrations, service accounts, agents, or the system itself.

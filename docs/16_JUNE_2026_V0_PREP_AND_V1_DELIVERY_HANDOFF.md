@@ -1,5 +1,7 @@
 # June 2026 V0 Prep And V1 Delivery Handoff
 
+> **Historical handoff notice (superseded 2026-08-28):** This plan predates [ADR-0016](adr/0016-independently-deployable-microverticals.md). References to an Installed Vertical Registry, Shell/Core-imported runtime registrations, or centrally registered executable migrations/handlers are preserved as historical planning evidence and must not guide current implementation. Use `app/docs/architecture/` for the owner-local independently deployable contract.
+
 Date: 2026-06-04
 Branch model: trunk-based development on `main`
 
