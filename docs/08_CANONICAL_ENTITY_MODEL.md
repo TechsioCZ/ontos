@@ -38,13 +38,14 @@ Examples:
 - `property.registry` owns properties, buildings, and units/spaces.
 - `billing.core` owns invoices, invoice lines, numbering series, and invoice line source allocations.
 - `organization.registry` owns legal-entity groups and group membership views.
+- `party.registry` owns tenant-scoped Party identity, official identifiers, Contact Points, Party Relationships, Counterparties and their roles, matching, correction, and merge.
 - Core owns tenants, managed legal entities, principals, auth bindings, module state, actions, audit, events, outbox, media assets, media links, search index entries, and worker checkpoints.
 
 ## Full resource vs child row
 
 A full resource has independent business identity over time. It may be addressable, searchable, linkable, auditable, visible in timelines, or referenced by other modules. Examples include property, building, unit/space, lease contract, reservation, invoice, payment, media asset, service ticket, accounting export batch, party, project, and ticket.
 
-A child row or value object exists inside a parent and should not be independently addressable by default. Examples include invoice lines, tax breakdown rows, price breakdown rows, payment schedule items, contact methods, checklist items, and export lines.
+A child row or value object exists inside a parent and should not be independently addressable by default. Examples include invoice lines, tax breakdown rows, price breakdown rows, payment schedule items, module-private contact presentation values, checklist items, and export lines.
 
 A child row can later become addressable if it develops its own lifecycle, permissions, document links, workflow, reporting, or external identity. That decision belongs to the owning module, not Core.
 
@@ -59,6 +60,16 @@ For example, `BILLING_INVOICE_LINE_SOURCES` can point to a `property.registry` u
 `organization.registry` is a Foundational Module, not Core. It models shared organizational business structure such as legal-entity groups, holdings, portfolios, acquisition batches, and similar views over managed legal entities.
 
 In V0 it is a group/view model. It is not a full ownership/control ledger. If legal ownership percentages, control rights, shareholders, or bitemporal corporate history become real product requirements, they should be added in Organization Registry as domain tables, not in Core.
+
+## Party Registry
+
+`party.registry` is a Foundational Module and the System of Record for tenant-scoped Party identities and shared Counterparty relationships. It accepts sparse or Unresolved Parties, owns official identifiers, Contact Points, provenance-backed time-bounded Party Relationships, Counterparty Roles, and identity matching, correction, and merge; a merge preserves old references as aliases or redirects rather than breaking consumers.
+
+Other modules address Parties through public Party ResourceRefs and Party Registry contracts rather than owning duplicate person or organization identity. Party Registry publishes identity and relationship lifecycle events so CRM, Commerce, search, integrations, and analytical projections can update their own profiles or views; Connector Registries retain provider-issued external-ID mappings, while Principal authorization remains separate from Party Relationships.
+
+CRM is a later module set and may own engagement profiles and workflows that reference Parties. Commerce owns Retail Customer and other commerce profiles plus B2B purchasing authority while referencing foundational Parties and Counterparties without redefining them.
+
+Cross-tenant correlation links independently governed tenant records and never turns them into one mutable global Party. Stable ResourceRefs, provenance, temporal relationships, and explicit cross-tenant links preserve a future seam for authorized company-knowledge analytics, but reputation scoring and platform-wide analytics policy are outside the current Commerce delivery.
 
 ## Graph projection
 
