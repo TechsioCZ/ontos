@@ -39,7 +39,9 @@ CoreSDK should resolve tenant, legal entity, and principal only from trusted aut
 The current MVP2 direction remains valid:
 
 - Shell BFF reads BetterAuth session state from request cookies/headers.
-- Shell maps the BetterAuth user to OntOS tenant, legal entity, principal, and auth binding.
+- Shell reads the session-selected Tenant and asks Core to resolve the BetterAuth user through the exact active Principal Auth Binding for that Tenant.
+- Core revalidates the binding, tenant-scoped Principal, and Tenant on every trusted-context resolution; the selected Tenant grants no authority and an invalid non-null selection fails closed.
+- Shell resolves the active Legal Entity only inside that trusted Tenant context. Switching Tenant clears the prior Legal Entity selection.
 - Shell strips raw browser identity headers such as `x-tenant`, `x-user`, `x-legal-entity`, and `x-ontos-operation-context`.
 - Shell signs a short-lived gateway token when forwarding to a MicroVertical BFF.
 - CoreSDK verifies the gateway token internally and creates `OperationalContext`.

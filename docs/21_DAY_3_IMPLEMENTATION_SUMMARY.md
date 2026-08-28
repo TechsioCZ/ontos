@@ -2,6 +2,9 @@
 
 Date: 2026-06-10
 
+> [!IMPORTANT]
+> **Historical record:** The one-BetterAuth-user/one-Tenant/no-selector model described here was superseded by [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [ADR-0014](./adr/0014-authenticated-principal-session.md). This document records the Day 3 implementation and is not current identity architecture.
+
 Day 3 now implements the MVP foundation for tenant-scoped auth/context/authz probes without implementing Actions, audit, domain events, outbox, canonical writes, or module-owned business-row writes.
 
 ## Implemented

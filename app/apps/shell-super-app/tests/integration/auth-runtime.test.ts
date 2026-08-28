@@ -1338,6 +1338,12 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       );
     }
 
+    const sessionsBeforeSwitch = await authDatabase
+      .select({ activeLegalEntityId: session.activeLegalEntityId })
+      .from(session)
+      .where(eq(session.userId, betterAuthUserId));
+    assert.equal(sessionsBeforeSwitch[0]?.activeLegalEntityId, firstLegalEntityId);
+
     const switchResponse = await runtime.handler(
       new Request(`${configuration.baseUrl}/auth/tenant/switch`, {
         body: JSON.stringify({ tenantId: secondTenantId }),
@@ -1352,10 +1358,14 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     assert.equal(switchResponse.status, 200);
     assert.deepEqual(await switchResponse.json(), { selectedTenantId: secondTenantId });
     const sessionsAfterSwitch = await authDatabase
-      .select({ activeTenantId: session.activeTenantId })
+      .select({
+        activeLegalEntityId: session.activeLegalEntityId,
+        activeTenantId: session.activeTenantId,
+      })
       .from(session)
       .where(eq(session.userId, betterAuthUserId));
     assert.equal(sessionsAfterSwitch[0]?.activeTenantId, secondTenantId);
+    assert.equal(sessionsAfterSwitch[0]?.activeLegalEntityId, null);
     const currentSessionAfterSwitch = await Effect.runPromise(
       authentication.currentSession(authenticatedHeaders),
     );
@@ -1499,6 +1509,27 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       Effect.flip(authentication.currentSession(authenticatedHeaders)),
     );
     assert.equal(revokedSession._tag, 'OntosIdentityForbiddenError');
+    await coreDatabase
+      .update(principalAuthBindings)
+      .set({ revokedAt: null, status: 'active' })
+      .where(eq(principalAuthBindings.tenantId, secondTenantId));
+    const restoredSession = await Effect.runPromise(
+      authentication.currentSession(authenticatedHeaders),
+    );
+    assert.equal(restoredSession.identity?.tenantId, secondTenantId);
+
+    // Production evidence retains referenced bindings. Clear only this fixture's evidence so the
+    // resolver can still prove that an existing selected session rejects a genuinely missing row.
+    await coreDatabase
+      .delete(dataAccessEvents)
+      .where(eq(dataAccessEvents.tenantId, secondTenantId));
+    await coreDatabase
+      .delete(principalAuthBindings)
+      .where(eq(principalAuthBindings.tenantId, secondTenantId));
+    const sessionWithRemovedBinding = await Effect.runPromise(
+      Effect.flip(authentication.currentSession(authenticatedHeaders)),
+    );
+    assert.equal(sessionWithRemovedBinding._tag, 'OntosIdentityForbiddenError');
   } finally {
     await Promise.all(handlers.map(({ dispose }) => dispose()));
     await cleanup();

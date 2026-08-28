@@ -6,6 +6,9 @@ created: 2026-07-30
 
 # Feature: Better Auth Shell/Core tenant login
 
+> [!IMPORTANT]
+> **Historical scope:** [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [the Tenant switcher specification](./feature-tenant-switcher.md) supersede this feature's one-active-binding/no-selector constraint. The feature remains a record of the original login delivery, not the current account-tenancy model.
+
 ## Feature Description
 
 Add email-and-password authentication to OntOS with Better Auth as a Shell/Core
