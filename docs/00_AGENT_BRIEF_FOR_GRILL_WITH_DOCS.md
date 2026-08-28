@@ -16,7 +16,7 @@ An UltraModern.js MicroVertical is a full-stack vertical slice behind a strict i
 
 A MicroVertical may be co-located with other modules, but moving it to another server or process must require deployment configuration or Adapter selection only. A separate worker runtime may process outbox work, projections, imports, exports, and scheduled work. Independent deployability does not turn modules into separate products.
 
-OntOS is the product. ERP and Commerce are Application Compositions of reusable Foundational and Business Modules. Commerce is one dependency-closed composition; Akros and N1 are declarative Customer Configurations of it. Core and module forks are forbidden.
+OntOS is the product. ERP and Commerce are Application Compositions of reusable Foundational and Business Modules. Commerce is one continuously delivered dependency-closed B2C/B2B composition; Akros and N1 are declarative Customer Configurations of it. Core and invisible module forks are forbidden. A Customer Configuration may select an explicit catalogued Module Implementation Identity, while different public semantics require a distinct module identity. Commerce Storefront Applications deploy outside the standard Shell deployment; see [ADR-0017](adr/0017-commerce-application-boundaries.md).
 
 ## Constraints to respect
 

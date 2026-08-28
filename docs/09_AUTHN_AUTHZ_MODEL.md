@@ -1,18 +1,28 @@
 # Authentication and authorization model
 
-OntOS should separate authentication, principal modeling, relationship authorization, and business policy.
+OntOS separates authentication, principal modeling, relationship authorization, and business policy. [ADR-0017](adr/0017-commerce-application-boundaries.md) also separates the staff, Storefront Client, commerce portal, and guest trust boundaries.
 
 ## Authentication
 
-BetterAuth is the proposed authentication/session/API key layer. Its responsibility is login, sessions, authentication methods, API key lifecycle and verification, and developer experience around user authentication. OntOS should not make BetterAuth the only source of business authorization semantics.
+BetterAuth is the authentication/session/API-key framework, not one shared account realm. Shell owns the staff BetterAuth configuration, schema, accounts, cookies, sessions, tenant selection, and staff API-key lifecycle. Commerce owns a separate BetterAuth configuration/schema, Portal Accounts, cookies, sessions, and portal account lifecycle. Credentials and sessions never cross realms.
 
-An authenticated BetterAuth user is resolved through a Core principal auth binding to a tenant-scoped OntOS principal. One BetterAuth user may have active bindings to distinct human principals in multiple tenants, while an API key resolves through exactly one binding to one principal and tenant. The OntOS principal is the identity used in audit, authorization, and action execution.
+An authenticated staff BetterAuth user is resolved through a Core principal auth binding to a tenant-scoped OntOS Principal. One staff user may have active bindings to distinct human Principals in multiple Tenants, while a staff API key resolves through exactly one binding to one Principal and Tenant. The OntOS Principal is the identity used in audit, authorization, and action execution. This staff contract is not reused as the Portal Account lifecycle.
 
 ## Authenticated Principal Session
 
 An Authenticated Principal Session activates exactly one tenant for the current BetterAuth session. The selected tenant is session context, not authorization: Core must revalidate the exact active principal auth binding, principal, and tenant whenever trusted context is resolved. An invalid or stale non-null selection fails closed and must never silently fall back to another tenant.
 
 A new or legacy session with no selected tenant uses the oldest eligible binding, breaking ties by tenant ID. Switching tenant changes only that session and clears its active legal entity so legal-entity context must be selected again inside the new tenant. Separate concurrent sessions may activate different tenants.
+
+## Commerce portal and Storefront Client authentication
+
+Portal registration and customer authentication are Commerce-owned capabilities inside OntOS. A Commerce Portal Account maps through a Commerce-owned binding/profile lifecycle to a tenant-scoped retail or B2B Principal and stable Party/Counterparty references. Party Registry remains the shared identity owner; BetterAuth remains the credential/session owner; Commerce owns portal enrollment, verification, recovery, suspension, and commerce profile linkage.
+
+Each external Storefront Application authenticates separately as a tenant-bound Storefront Client service Principal with its own rotatable credential. This application credential does not identify or authorize the shopper. A protected storefront request therefore validates two independent contexts: Storefront Client identity and either a portal customer token/session or a bounded anonymous guest/cart context.
+
+The Commerce Storefront API never infers customer authority from Storefront Client identity, a Tenant selection, or a Party Relationship. B2B access requires an approved Principal-to-Counterparty permission/binding; B2C portal access is scoped to the permitted retail profile and resources. Anonymous context cannot access durable portal history or Counterparty-specific terms.
+
+Portal Account lifecycle events and stable references support authorized CRM, support/ticketing, analytics, and Commerce consumers without sharing credentials, cookies, or a mutable account record. Raw credentials, tokens, and cookies never enter Party Registry, CRM, analytics, or event payloads.
 
 ## Principal model
 
@@ -22,7 +32,7 @@ Agent principals do not imply autonomous agent product features in V0. They simp
 
 ## Principal auth bindings
 
-`CORE_PRINCIPAL_AUTH_BINDINGS` maps an authenticated external subject to a tenant-scoped OntOS principal. It is not a credential table. BetterAuth owns user records, sessions, API keys, API key verification, expiration, rate limits, and admin-created impersonation sessions. Core only stores the non-secret bindings required to answer: "which OntOS principal is acting in the Tenant active for this session?"
+`CORE_PRINCIPAL_AUTH_BINDINGS` maps an authenticated staff-realm subject to a tenant-scoped OntOS principal. It is not a credential table or the Portal Account binding store. Staff BetterAuth owns user records, sessions, API keys, verification, expiration, rate limits, and admin-created impersonation sessions. Core only stores the non-secret staff bindings required to answer: "which OntOS principal is acting in the Tenant active for this staff session?"
 
 The table should contain stable identity bindings, not runtime credentials. A BetterAuth session, session token, raw API key, or one-off support impersonation session should not be stored here.
 

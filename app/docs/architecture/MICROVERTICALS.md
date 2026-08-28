@@ -7,6 +7,15 @@ business capability and owns Actions, resources, events, Outbox contracts, Polic
 module state. Follow [OntOS Module Manifests](./MODULE_MANIFESTS.md); never infer one identity from
 the other.
 
+For Customer Configuration alternatives, `moduleId` is the stable Module Contract Identity and
+`implementationId` identifies one explicit catalogued executable implementation. Different public
+semantics require a different `moduleId`; invisible same-identity forks are forbidden. Follow
+[Commerce Application Boundaries](./COMMERCE_APPLICATIONS.md).
+
+The current generated manifest/catalog does not yet implement `implementationId`; the only safe
+current state is one implicit `standard` implementation per `moduleId`. Do not encode alternatives
+with ad hoc fields or branches. Extend the generator and validation contract first.
+
 ## Seam Model
 
 OntOS has two different kinds of seams. Do not treat them as equivalent.
@@ -93,13 +102,19 @@ Route and feature integration preserves the BFF client's typed Effect success an
 
 Follow [Frontend Architecture Rules](../frontend/FRONTEND.md) for the complete frontend module and presentation interfaces.
 
-## Authentication Boundary
+## Staff Authentication Boundary
 
-Authentication is a cross-cutting Shell/Core capability, never a MicroVertical. The
-Shell owns credentials, Better Auth sessions and cookies, the strict Effect
+Staff authentication is a cross-cutting Shell/Core capability, never a MicroVertical. The
+Shell owns staff credentials, Better Auth sessions and cookies, the strict Effect
 authentication BFF, and the private `auth` schema. Core owns only non-secret
 principal auth bindings and active principal/tenant resolution. Do not create an
 Auth vertical, remote, package, delivery unit, or Module Federation boundary.
+
+Commerce Portal Accounts are the deliberate separate-realm exception, not an Auth MicroVertical:
+Commerce owns their distinct BetterAuth configuration/schema, cookies, sessions, account lifecycle,
+and owner-local Principal/Party linkage. They never enter the Shell staff realm. Storefront Clients
+are separately bound service Principals and never identify portal users. Follow
+[Commerce Application Boundaries](./COMMERCE_APPLICATIONS.md).
 
 One Better Auth user may have active bindings to multiple tenant-scoped Principals. Exactly one
 nullable active tenant ID on the current Better Auth session selects which eligible Principal and

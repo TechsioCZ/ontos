@@ -1,6 +1,6 @@
 # OntOS Module Manifest
 
-This product-level contract follows [ADR-0016](adr/0016-independently-deployable-microverticals.md). Current implementation details and generators are authoritative under `app/docs/architecture/`; older MVP examples in this document are illustrative only.
+This product-level contract follows [ADR-0016](adr/0016-independently-deployable-microverticals.md) and the contract/implementation identity split in [ADR-0017](adr/0017-commerce-application-boundaries.md). Current implementation details and generators are authoritative under `app/docs/architecture/`; older MVP examples in this document are illustrative only.
 
 The OntOS Module Manifest is an OntOS-specific public contract for a module. It is not part of the standard UltraModern.js MicroVertical concept.
 
@@ -18,6 +18,9 @@ Use these terms precisely:
 | OntOS Business Module | Product/business capability in OntOS, usually implemented as an UltraModern.js MicroVertical in V0. |
 | OntOS System Module | Core-owned capability such as `core.identity`, `core.authz`, `core.audit`, or `core.search`. |
 | OntOS Module Manifest | Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. |
+| Module Contract Identity | Stable identity of one public capability and its semantics. |
+| Module Implementation Identity | Explicit catalog identity of one executable implementation of a Module Contract Identity. |
+| Build Revision | Immutable source/artifact identity used for compatibility evidence, canary, audit, and rollback; not a customer product version. |
 | Serialized Deployment Contract | Deterministic safe-data projection of one deployment's public manifest and descriptors, fetched only from a topology allowlist. |
 | Vertical Runtime Registration | Private owner-local binding from the public contract to executable routes, Actions, Policies, migrations, workers, search, and reports. It never crosses the deployment seam. |
 | Installed Module Catalog | Immutable Shell/Core catalog built atomically from allowlisted serialized deployment contracts; it contains no executable registrations. |
@@ -32,7 +35,8 @@ The manifest exposes only the public surface that other modules, Core, tooling, 
 
 It should include:
 
-- module identity
+- module contract identity and implementation identity
+- contract compatibility metadata and immutable build revision in generated output
 - activation behavior
 - module dependencies
 - public Action descriptors
@@ -103,6 +107,8 @@ The manifest should rely on inference wherever TypeScript, Effect Schema, React 
 
 String keys are acceptable only when they are stable business/runtime identifiers, such as module ids, dependency ids, resource type keys, event keys, search descriptor keys, and report keys. They should not be used as a substitute for typed values.
 
+The `implementationId` below is the accepted target shape. The current generated app contract still supports one implicit `standard` implementation per `moduleId`; extend Codesmith, schemas, serialized contracts, catalog validation, Customer Configuration resolution, and tests together before adding this field or a second implementation.
+
 ```ts
 import { defineOntosModuleManifest } from "@ontos/core/module-manifest"
 import { createUnitAction } from "./src/actions/create-unit.action"
@@ -112,6 +118,7 @@ import { PropertyUnitCard } from "./public-components"
 export const PropertyRegistryManifest = defineOntosModuleManifest({
   module: {
     id: "property.registry",
+    implementationId: "standard",
     kind: "business_module",
     implementedAs: "ultramodern_microvertical",
     displayName: "Property Registry",
@@ -164,7 +171,9 @@ export const PropertyRegistryManifest = defineOntosModuleManifest({
 
 `defineOntosModuleManifest` should validate the value with Effect Schema and preserve enough literal type information for build-time tooling.
 
-Package version, Module Federation build metadata, package ownership, and code ownership should be derived from `package.json`, Module Federation metadata, workspace metadata, or CODEOWNERS. Do not duplicate them in the source manifest. If generated catalogs need that information later, tooling can merge it into generated output.
+`module.id` is the Module Contract Identity. `module.implementationId` is explicit and stable for one executable implementation; Customer Configuration may select only an implementation permitted by its Application Composition. Different public semantics require a different `module.id`, while compatible implementations of the same contract require distinct `implementationId` values. Invisible same-identity forks are invalid.
+
+Package version, build revision/digest, public-contract hash/version, migration-set identity, Module Federation build metadata, package ownership, code ownership, and health should be derived from build and repository evidence where possible rather than duplicated by hand. The generated deployment contract and Installed Module Catalog must record the resolved implementation identity and immutable artifact/compatibility evidence needed for skew detection, canary, audit, and rollback. These revisions are not customer-selectable whole-product versions.
 
 Generated outputs may include:
 

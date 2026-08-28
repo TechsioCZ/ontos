@@ -12,6 +12,8 @@ Party Registry is a Foundational Module and the System of Record for tenant-scop
 
 Other modules address Parties and Counterparties through public ResourceRefs and Party Registry contracts. CRM owns engagement profiles and workflows; Commerce owns retail, channel, and B2B purchasing profiles and workflows. Neither duplicates shared Party identity. Connector Registries own provider-issued external-ID correlations, and Principal authorization owns permission to buy, approve, or administer access; a Party Relationship grants no authorization by itself.
 
+Commerce also owns its separate Portal Account lifecycle and links each account/profile to stable Party/Counterparty references. Registration and authentication do not move Party identity into BetterAuth or Commerce; lifecycle events let CRM, support/ticketing, analytics, and other authorized consumers project the linkage without sharing an account realm.
+
 Party Registry publishes identity and relationship lifecycle events for consumer projections. Imports contribute observations and match candidates but cannot write a competing canonical Party.
 
 Party records remain independently governed per tenant. A future authorized analytical projection may correlate them through explicit provenance-backed cross-tenant links, but it must not collapse them into one mutable global Party. Platform-wide reputation or risk scoring is outside this decision and the current Commerce delivery.
