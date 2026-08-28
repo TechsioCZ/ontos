@@ -1,6 +1,6 @@
 # ADR-0008: Module activation and state model
 
-Status: Superseded in deployment and dependency details on 2026-08-23. The state vocabulary and fail-closed entrypoint gate remain; current installation uses deployment manifests, and Application Composition dependency closure governs activation.
+Status: Superseded in deployment and registration details by [ADR-0016](0016-independently-deployable-microverticals.md). The state vocabulary and fail-closed entrypoint gate remain; current installation uses serialized deployment contracts, and Application Composition dependency closure governs activation.
 
 ## Context
 

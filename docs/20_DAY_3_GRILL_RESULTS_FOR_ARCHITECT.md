@@ -2,6 +2,8 @@
 
 Date: 2026-06-10
 
+> **Historical deployment notice (superseded 2026-08-28):** This MVP session predates [ADR-0016](adr/0016-independently-deployable-microverticals.md). Installed Vertical Registry and central executable-registration references are historical; current discovery uses the allowlisted serialized Installed Module Catalog while executable behavior remains owner-local.
+
 > [!IMPORTANT]
 > **Historical record:** Decisions 16 and 17 were superseded by [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [ADR-0014](./adr/0014-authenticated-principal-session.md). One BetterAuth user may now access multiple Tenants through distinct tenant-scoped Principals, while each session activates exactly one Tenant. Do not use the one-user/one-Tenant or no-selector statements below as current architecture.
 
