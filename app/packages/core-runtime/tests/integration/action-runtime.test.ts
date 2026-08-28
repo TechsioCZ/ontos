@@ -23,6 +23,8 @@ import {
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
+import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import { makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
@@ -41,6 +43,7 @@ import {
   domainEvents,
   legalEntities,
   outboxMessages,
+  principalAuthBindings,
   principals,
   tenantModuleStateChanges,
   tenantModuleStates,
@@ -61,8 +64,11 @@ class TestDomainRejected extends Schema.TaggedError<TestDomainRejected>()('TestD
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
+const authBindingId = randomUUID();
 
 const principal = {
+  authBindingId,
+  authContextRef: `better-auth-session:${randomUUID()}`,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -228,6 +234,15 @@ before(async () => {
       status: 'active',
       tenantId,
     });
+    await database.executor.insert(principalAuthBindings).values({
+      principalAuthBindingId: authBindingId,
+      principalId,
+      provider: 'better_auth',
+      providerSubjectId: `action-runtime-${principalId}`,
+      status: 'active',
+      subjectType: 'user',
+      tenantId,
+    });
     await database.executor.insert(tenantModuleStates).values({
       moduleKey: 'inventory.stock',
       state: 'active',
@@ -251,6 +266,9 @@ after(async () => {
     await database.executor
       .delete(actionInvocations)
       .where(eq(actionInvocations.tenantId, tenantId));
+    await database.executor
+      .delete(principalAuthBindings)
+      .where(eq(principalAuthBindings.tenantId, tenantId));
     await database.executor.delete(principals).where(eq(principals.tenantId, tenantId));
     await database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
     await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
@@ -437,12 +455,16 @@ test('rechecks business module state under the tenant lock and retries after Cor
           handlerExecutions += 1;
         }),
     );
+    const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      {
+        moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+        moduleStateGate,
+      },
     );
     const firstAttempt = Effect.runPromise(
       Effect.exit(
@@ -1612,12 +1634,16 @@ test('persists no invocation or evidence for every non-writable business module 
           handlerExecutions += 1;
         }),
     );
+    const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      {
+        moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+        moduleStateGate,
+      },
     );
     await Effect.runPromise(
       runtime.runAction({

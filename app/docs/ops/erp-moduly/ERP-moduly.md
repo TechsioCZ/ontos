@@ -266,7 +266,7 @@
   - statistiky nemovitostí
   - Napojení na Účetní modul
   - Napojení na Organizace a plánování
-  - Napojení na CRM
+  - Napojení na Projects
   - …..napojení na všechny moduly, reporting se bude řešit jako meta-modul
 
 - Interní komunikace
@@ -275,7 +275,7 @@
   - sdílení médií
   - reference na jednotlivé elementy kompatibilních modulů
 
-- CRM
+- Projects
 
   - Evidence zákazníků / kontaktů
 

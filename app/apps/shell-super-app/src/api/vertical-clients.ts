@@ -16,40 +16,44 @@ export interface ApprovedVerticalPageClient {
 export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
   // @ontos-codegen-start shell-page-clients
   {
-    appId: 'crm',
-    componentKey: 'crm.core.page-contact-create',
-    load: () => import('crm/PageContactCreate'),
+    appId: 'projects',
+    componentKey: 'projects.core.page-contact-create',
+    load: () => import('projects/PageContactCreate'),
   },
   {
-    appId: 'crm',
-    componentKey: 'crm.core.page-contact-detail',
-    load: () => import('crm/PageContactDetail'),
+    appId: 'projects',
+    componentKey: 'projects.core.page-contact-detail',
+    load: () => import('projects/PageContactDetail'),
   },
   {
-    appId: 'crm',
-    componentKey: 'crm.core.page-contact-edit',
-    load: () => import('crm/PageContactEdit'),
-  },
-  { appId: 'crm', componentKey: 'crm.core.page-crm', load: () => import('crm/PageCrm') },
-  {
-    appId: 'crm',
-    componentKey: 'crm.core.page-customer-create',
-    load: () => import('crm/PageCustomerCreate'),
+    appId: 'projects',
+    componentKey: 'projects.core.page-contact-edit',
+    load: () => import('projects/PageContactEdit'),
   },
   {
-    appId: 'crm',
-    componentKey: 'crm.core.page-customer-detail',
-    load: () => import('crm/PageCustomerDetail'),
+    appId: 'projects',
+    componentKey: 'projects.core.page-projects',
+    load: () => import('projects/PageProjects'),
   },
   {
-    appId: 'crm',
-    componentKey: 'crm.core.page-customer-edit',
-    load: () => import('crm/PageCustomerEdit'),
+    appId: 'projects',
+    componentKey: 'projects.core.page-customer-create',
+    load: () => import('projects/PageCustomerCreate'),
   },
   {
-    appId: 'crm',
-    componentKey: 'crm.core.page-customers-list',
-    load: () => import('crm/PageCustomersList'),
+    appId: 'projects',
+    componentKey: 'projects.core.page-customer-detail',
+    load: () => import('projects/PageCustomerDetail'),
+  },
+  {
+    appId: 'projects',
+    componentKey: 'projects.core.page-customer-edit',
+    load: () => import('projects/PageCustomerEdit'),
+  },
+  {
+    appId: 'projects',
+    componentKey: 'projects.core.page-customers-list',
+    load: () => import('projects/PageCustomersList'),
   },
   // @ontos-codegen-end shell-page-clients
 ];

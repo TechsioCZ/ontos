@@ -269,6 +269,13 @@ const makeRegistrations = (
           }),
         )
         .pipe(
+          Effect.mapError(
+            () =>
+              new ReadHandlerUnavailable({
+                code: 'read_handler_unavailable',
+                reason: 'The Shell module target is temporarily unavailable',
+              }),
+          ),
           Effect.flatMap(
             (
               resolution,
