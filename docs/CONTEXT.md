@@ -57,7 +57,7 @@ A named, reusable, versioned, dependency-closed directed acyclic graph of OntOS 
 _Avoid_: Customer deployment, product fork, module bundle without dependency rules
 
 **Customer Configuration**:
-A declarative customer-specific configuration of an Application Composition. It may select permitted optional modules and define policies, settings, branding, locales, Connectors, and integration participation, but it cannot fork Core, change shared module contracts, or create customer-specific module implementations. Akros and N1 are Customer Configurations of the Commerce Application Composition.
+A declarative customer-specific configuration of an Application Composition that may select permitted optional modules and define policies, settings, branding, locales, Connectors, and integration participation. It cannot fork Core, change shared module contracts, or create customer-specific module implementations; a company named by one configuration may separately be a Party and Counterparty in another, while Akros and N1 are Customer Configurations of the Commerce Application Composition.
 _Avoid_: Customer fork, separate product, customer-named module family
 
 **Environment**:
@@ -75,6 +75,10 @@ _Avoid_: Business Module, System of Record, mandatory Shell route
 **Organization Registry**:
 The Foundational Module that models shared organizational business structure such as legal-entity groups, holdings, portfolios, acquisition batches, and similar views over managed Legal Entities. In V0 it is a group/view model, not a corporate ownership or control ledger; Core only owns the minimal Legal Entity boundary needed for context, audit, and isolation.
 _Avoid_: Core organization model, company registry, legal-entity registry, holding registry, ownership ledger
+
+**Party Registry**:
+The Foundational Module that owns tenant-scoped stable Party identities and shared Counterparty relationships across Application Compositions, including official identifiers, identity matching, correction, and merge. Cross-tenant correlation may link independently governed Parties but never collapses them into one shared tenant-independent identity.
+_Avoid_: CRM customer registry, global party directory, Organization Registry, integration-owned identity
 
 **OntOS Module Manifest**:
 The OntOS-specific Effect Schema-defined public contract for an OntOS Business Module, Foundational Module, or selected System Module. It declares public identity, activation, dependencies, Action descriptors, APIs, components, public resource types, public events, search, and reports. It should rely on TypeScript/Effect/React inference wherever possible, using real typed values instead of manually-authored import/export strings. It does not publish a permission model or a static relation catalog; authorization is owned by SpiceDB, the OntOS Policy Layer, and API/action enforcement, while relations are dynamic runtime/domain data. It must not declare private implementation details such as database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, or tests.
@@ -121,24 +125,60 @@ Provider-enforced immutability for stored artifact bytes, usually through retent
 _Avoid_: DB trigger as legal WORM, immutable URL, filename convention, ordinary no-delete permission
 
 **Party**:
-A real-world person or organization OntOS deals with. A Party may be a guest, tenant, supplier, accountant office, external management company, owned company, contact person, or commercial counterparty.
+A real-world person or organization OntOS deals with; its kind may remain Unresolved while evidence is incomplete. A Party may initially be sparsely known or unverified, so missing business details do not prevent its identity from being recorded and later corrected or merged.
 _Avoid_: Account, user, legal entity
+
+**Party Relationship**:
+A provenance-backed, time-bounded association between two Parties, such as representative, employee, owner, billing contact, or advisor. Several relationships may coexist between the same Parties, and none grants authorization by itself.
+_Avoid_: Embedded person, Principal permission, permanent affiliation
+
+**Contact Point**:
+An email address, telephone number, or postal address through which a Party may be contacted. A Contact Point may be associated with several Parties and does not by itself prove identity or authorization.
+_Avoid_: Person identity, unique Party key, Principal credential
 
 **Legal Entity**:
 A managed accounting or operating company inside an OntOS tenant. Legal entities may own, operate, bill, report, or account for parts of the business, but external organizations are modeled as Parties unless the tenant manages them as part of its own operating structure.
 _Avoid_: Every company, external manager, counterparty
 
 **Counterparty**:
-A Party in a commercial or contractual relationship with a managed Legal Entity. Counterparties can include tenants, guests, suppliers, external managers, corporate buyers, wholesalers, or accounting offices.
-_Avoid_: Legal entity, principal
+The commercial or contractual relationship between one Party and one managed Legal Entity. A Counterparty may carry several Counterparty Roles at the same time without duplicating the Party's identity.
+_Avoid_: Party copy, legal entity, principal
+
+**Counterparty Role**:
+A time-bounded capacity in which a Counterparty relates to a managed Legal Entity, such as customer, supplier, external manager, corporate buyer, wholesaler, or accounting office. Roles may coexist and end independently.
+_Avoid_: Party identity, permanent customer type, Principal permission
+
+**System of Record**:
+The system authorized to decide a specific business fact or lifecycle transition. Authority is assigned per fact or transition and need not belong to one system globally.
+_Avoid_: Master system, source system
+
+**External Business System**:
+A live upstream or downstream system that exchanges business facts with a Customer Configuration, such as an ERP, accounting system, WMS, PIM, CRM, or bespoke service. Its product and system type must be observed rather than assumed.
+_Avoid_: ERP, when the actual system or role has not been verified
+
+**Connector Registry**:
+The module-owned record that correlates an OntOS resource with identifiers issued by one External Business System, including the provenance and lifecycle needed for dependable exchange. Owning the mapping does not make OntOS the issuer of the external identifier.
+_Avoid_: Master identifier, shared external ID field
+
+**Integration Hub**:
+An External Business System that coordinates business exchanges with multiple third-party systems. It may route or transform facts but is not automatically their System of Record.
+_Avoid_: Connector, ERP, System of Record
+
+**Symmy**:
+The preferred, non-exclusive Integration Hub for external invoicing, accounting, ERP, WMS/PIM, and comparable business-system integrations that Symmy provides. Its coordinating role does not give it authority over exchanged facts, and it is not the route for every external provider.
+_Avoid_: ERP, Connector, universal provider gateway, universal System of Record
 
 **Symmy Connector**:
-The single OntOS-to-Symmy integration seam. OntOS Business Modules publish provider-neutral business handoff contracts; the Symmy Connector adapts them to Symmy without owning business facts or lifecycle authority. OntOS does not maintain target direct Connectors to POHODA, ABRA, HELIOS, or similar provider systems.
-_Avoid_: Direct provider Connector, System of Record, Core capability
+The OntOS-to-Symmy boundary through which owning Foundational and Business Modules exchange provider-neutral business facts with Symmy. It does not own those facts or provider-specific downstream behavior.
+_Avoid_: Universal external-provider gateway, System of Record, Core capability
 
 **Symmy–Provider Integration**:
-A provider-specific integration operated downstream through Symmy, named for the concrete external system, such as Symmy–POHODA Integration or Symmy–ABRA Integration. N1's current direct POHODA integration is legacy and migration evidence, not the target architecture.
-_Avoid_: OntOS Connector, Core adapter, unnamed ERP integration
+A provider-specific route operated downstream through Symmy, such as Symmy–POHODA Integration or Symmy–HELIOS Integration.
+_Avoid_: OntOS-owned provider adapter, unnamed ERP integration
+
+**Direct Provider Adapter**:
+An owner-local external adapter used for a provider family intentionally outside Symmy, or when Symmy does not supply the required integration. It implements an owning module's external contract without gaining authority over the exchanged facts.
+_Avoid_: Direct legacy Connector, Core integration, System of Record
 
 **External Operator**:
 A Party outside the tenant's managed legal-entity structure that receives scoped operational access, such as an external property manager or external accountant.
@@ -319,6 +359,160 @@ _Avoid_: Free-text contact text
 **Phone Task Property**:
 A Task Property Type for phone numbers. Non-empty Phone values use light normalization and validation because phone formats vary internationally.
 _Avoid_: Country-specific phone-only field
+
+## Commerce Delivery Language
+
+These terms describe the Commerce Application Composition first configured for Akros and then N1. Current deployments supply evidence; they do not dictate the replacement's implementation or integration topology.
+
+### Delivery and customer configurations
+
+**Akros**:
+A Customer Configuration of the Commerce Application Composition and its first production delivery. The Akros organization may separately be a Party and customer-role Counterparty in another Customer Configuration, such as Techsio's.
+_Avoid_: Separate product, Core fork, Akros module family, Party when referring to the configuration
+
+**N1**:
+The second confirmed Customer Configuration of the Commerce Application Composition and an existing bikeshop customer on the legacy WRShop engine. The N1 organization may separately be a Party and customer-role Counterparty elsewhere, while its direct POHODA integration remains legacy and migration evidence.
+_Avoid_: Separate product, POHODA-specific OntOS fork, Party when referring to the configuration
+
+**Commerce Application Composition**:
+The reusable OntOS Application Composition that supplies commerce capability to Akros, N1, and later Customer Configurations. It contains no third-party commerce-engine runtime or derived source.
+_Avoid_: Akros product, module fork, customer-specific commerce foundation
+
+**Production Deployment Snapshot**:
+The Akros package captured approximately five days before the Wayfinder session and confirmed by the operator as live and in use. It proves which code, routes, customizations, and connector seams were deployed at capture time, but not their database-controlled enablement, traffic, schedules, or operator use.
+_Avoid_: Historical archive, when referring specifically to the current Akros package
+
+**Deployed Capability**:
+Behavior or a connector seam present in the Production Deployment Snapshot whose activation or use has not yet been established from runtime state.
+_Avoid_: Active feature, requirement
+
+**Active Behavior**:
+Behavior established by current public observation, runtime configuration or telemetry, or explicit operator confirmation. Active Behavior is evidence for the replacement cutline, not an automatic decision to preserve it unchanged.
+_Avoid_: Supported feature
+
+**ABRA**:
+A named External Business System family represented by several connector generations in the Production Deployment Snapshot. Its actual production role and activity remain facts to verify; it is neither the assumed current ERP nor a predetermined target dependency.
+
+**Production-complete Launch**:
+The release at which the replacement can safely take over every accepted Akros launch channel and its required end-to-end business outcomes. It does not imply parity with every capability deployed or historically available in WRShop.
+_Avoid_: Feature parity, complete platform
+
+**Launch Capability**:
+A capability required at Production-complete Launch because it is active, revenue-critical, operationally necessary, legally required, or explicitly confirmed as part of the product promise.
+
+**Later Capability**:
+A useful capability intentionally deferred beyond Production-complete Launch because no launch-critical outcome depends on it.
+
+**Archived Capability**:
+Historical behavior or data retained read-only for customer service, audit, accounting, or legal obligations, without preserving its original write workflow.
+
+**Retired Capability**:
+A capability deliberately absent from the replacement because it is unused, obsolete, unsafe, or generic legacy breadth with no accepted Akros value.
+
+### Commerce customers and channels
+
+**B2C Channel**:
+The Akros retail selling channel. Visitors may browse and complete a purchase as a guest or as an authenticated Retail Portal Principal.
+
+**Retail Customer**:
+A Party buying or considering a purchase through the B2C Channel. A Retail Customer may purchase as a guest or use a Retail Portal Principal for durable portal access.
+_Avoid_: Customer Account, consumer user
+
+**Retail Portal Principal**:
+A Principal authorized to access a Retail Customer's saved addresses, commerce history, aftercare, favorites, and notifications. It is optional for B2C checkout.
+_Avoid_: Customer Account, user account
+
+**B2B Channel**:
+The Akros trade selling channel. Public visitors may see neutral product information and request access, but Counterparty-specific assortment, prices, availability, and ordering require an approved Principal acting for that Counterparty.
+
+**Counterparty Buyer**:
+A Principal authorized to prepare and submit purchases for a Counterparty within its assigned limits and approval rules.
+_Avoid_: Company Buyer, Company User
+
+**Counterparty Approver**:
+A Principal authorized to approve or return purchases that require Counterparty approval.
+_Avoid_: Company Approver
+
+**Counterparty Access Administrator**:
+A Principal authorized to manage which Principals may act for a Counterparty and with which permissions.
+_Avoid_: Company Account Administrator, account owner
+
+**Repeat Order**:
+A request to construct a new Cart from a historical Order's still-sellable items and configurations. Current commercial rules apply; historical price, tax, availability, shipping, and payment terms are not reinstated.
+_Avoid_: Duplicate order, reorder at original price
+
+**Assisted Support**:
+An audited staff capability that exposes the customer's channel and commercial context without silently assuming the customer's identity. Any customer-affecting action remains explicit, attributed to the operator, and permission-checked.
+_Avoid_: Impersonation, login as customer
+
+**Customer Archive**:
+The authorized read-only experience through which a customer or operator can access retained historical Orders, documents, and Claims. It is not itself the statutory accounting or tax archive.
+
+### Commerce domains
+
+**Product**:
+A good or service with a stable commercial identity that can be described, classified, related, and made available through one or more Channels. Its current offer conditions are not part of its identity.
+_Avoid_: Price, stock item, Order line
+
+**Catalog**:
+The commerce domain that owns Product identity, variants and configurations, classification, descriptive facts, media references, and Product relationships.
+_Avoid_: Assortment, price list, content-management screen
+
+**Assortment**:
+The set of Products eligible for visibility or purchase in a specific Channel or for a specific Counterparty under current policy.
+_Avoid_: Catalog, Inventory, price list
+
+**Pricing**:
+The commerce domain that determines applicable prices, discounts, fees, tax inputs, quantity tiers, and commercial quotations for an explicit commercial context.
+_Avoid_: Product identity, invoice, accepted Order price
+
+**Inventory**:
+The commerce domain that records or represents stock and reservations when the owning Customer Configuration owns those lifecycles. Inventory is distinct from the customer-facing delivery promise.
+_Avoid_: Availability, Assortment
+
+**Availability**:
+The current promise that a Product can be sold and delivered under an explicit commercial context. It may depend on Inventory or facts supplied by an External Business System without owning those facts.
+_Avoid_: Inventory, Assortment, raw stock count
+
+**Cart**:
+A prospective set of Product selections and configurations assembled under an explicit commercial context. A Cart is mutable and does not preserve accepted commercial terms as an Order does.
+_Avoid_: Order, basket when naming the canonical domain concept
+
+**Checkout**:
+The commerce process that coordinates final validation, required customer choices, and submission of a Cart. Checkout does not own source commercial facts or the resulting Order.
+_Avoid_: Order creation domain, Payment domain
+
+**Order**:
+The durable record of an accepted purchase, including the accepted commercial snapshot and its governed lifecycle.
+_Avoid_: Cart, invoice, Payment
+
+**Payment**:
+The commerce domain that represents collection, authorization, settlement, cancellation, refund, and reconciliation outcomes associated with an Order.
+_Avoid_: Order status, invoice, payment-provider callback
+
+**Fulfillment**:
+The commerce domain that represents preparation, handoff, delivery, tracking, and delivery exceptions for accepted Order quantities.
+_Avoid_: Order, shipping-provider adapter
+
+**Aftercare**:
+Customer- and operator-facing post-purchase work permitted by the Order, Payment, Fulfillment, and Claim lifecycles. It coordinates those lifecycles without replacing their ownership.
+_Avoid_: Unrestricted Order editing, customer service database
+
+**Claim**:
+A governed request concerning one or more durable Order lines, with its own evidence, communication, status, deadlines, and resolution history.
+_Avoid_: Order note, generic support ticket
+
+**Akros Commerce Policy**:
+The declarative Akros Customer Configuration of shared commerce policy for its B2C and B2B Channels, Counterparty purchasing, quantities and packages, markets, and legal obligations. A reusable behavior change belongs in an OntOS Business Module rather than an Akros fork.
+_Avoid_: Core policy, provider-specific mapping, generic settings
+
+**Storefront**:
+The customer-facing composition and presentation of commerce journeys, including Channel rendering, URLs, and SEO. It consumes commerce decisions but does not own canonical commerce facts.
+_Avoid_: Commerce domain, System of Record
+
+**Commerce Operations**:
+The staff-facing composition of permissioned commerce workflows and Assisted Support. It invokes domain-owned behavior and does not provide an unrestricted alternative mutation surface.
+_Avoid_: Admin, Back Office, direct database editor
 
 ## Flagged Ambiguities
 
