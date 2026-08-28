@@ -9,10 +9,10 @@ import type {
 export interface LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> {
   readonly authorize: Effect.Effect<void, AuthorizationError, Requirements>;
   readonly entrypoint: ModuleEntrypointDescriptor<'page' | 'public_component'>;
-  readonly load: () => Effect.Effect<Value, LoadError, Requirements>;
+  readonly load: Effect.Effect<Value, LoadError, Requirements>;
 }
 
-/** Shell-only composition seam. Callers pass typed descriptors and lazy thunks, never remote strings. */
+/** Shell-only composition seam. Callers pass typed descriptors and lazy Effects, never remote strings. */
 export const loadModuleEntrypointComposition = <Value, AuthorizationError, LoadError, Requirements>(
   gateway: ModuleEntrypointGatewayService,
   context: Readonly<TrustedPrincipalContext>,
@@ -46,4 +46,4 @@ export const resolveThenLoadModuleTarget = <
   resolution: Effect.Effect<Target, ResolutionError, Requirements>,
   load: (target: Target) => Effect.Effect<Value, LoadError, Requirements>,
 ): Effect.Effect<Value, ResolutionError | LoadError, Requirements> =>
-  resolution.pipe(Effect.flatMap((target) => Effect.suspend(() => load(target))));
+  resolution.pipe(Effect.flatMap(load));

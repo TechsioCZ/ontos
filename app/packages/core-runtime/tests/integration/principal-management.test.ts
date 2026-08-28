@@ -20,7 +20,7 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 
-test('persists managed key lifecycle without credential material and enforces global key cardinality', async () => {
+void test('persists managed key lifecycle without credential material and enforces global key cardinality', async () => {
   const tenantId = randomUUID();
   const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
   const configuration = await Effect.runPromise(loadDatabaseConfig());
@@ -43,76 +43,82 @@ test('persists managed key lifecycle without credential material and enforces gl
       status: 'active',
       tenantId,
     });
-    const first = await database.transaction((transaction) =>
-      Effect.runPromise(
-        createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
-          displayName: 'Managed integration',
-          kind: 'integration',
-          tenantId,
-        }),
-      ),
+    const first = await database.transaction(
+      async (transaction) =>
+        await Effect.runPromise(
+          createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
+            displayName: 'Managed integration',
+            kind: 'integration',
+            tenantId,
+          }),
+        ),
     );
-    const second = await database.transaction((transaction) =>
-      Effect.runPromise(
-        createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
-          displayName: 'Managed service',
-          kind: 'service',
-          tenantId,
-        }),
-      ),
+    const second = await database.transaction(
+      async (transaction) =>
+        await Effect.runPromise(
+          createNonHumanPrincipal(principalManagementRepositoryFromTransaction(transaction), {
+            displayName: 'Managed service',
+            kind: 'service',
+            tenantId,
+          }),
+        ),
     );
-    const binding = await database.transaction((transaction) =>
-      Effect.runPromise(
-        bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
-          managed: true,
-          principalId: first.principalId,
-          providerSubjectId: providerKeyId,
-          tenantId,
-        }),
-      ),
-    );
-    const duplicate = await database.transaction((transaction) =>
-      Effect.runPromise(
-        Effect.flip(
+    const binding = await database.transaction(
+      async (transaction) =>
+        await Effect.runPromise(
           bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
             managed: true,
-            principalId: second.principalId,
+            principalId: first.principalId,
             providerSubjectId: providerKeyId,
             tenantId,
           }),
         ),
-      ),
+    );
+    const duplicate = await database.transaction(
+      async (transaction) =>
+        await Effect.runPromise(
+          Effect.flip(
+            bindApiKey(principalManagementRepositoryFromTransaction(transaction), {
+              managed: true,
+              principalId: second.principalId,
+              providerSubjectId: providerKeyId,
+              tenantId,
+            }),
+          ),
+        ),
     );
     assert.equal(duplicate._tag, 'IdentityLifecycleConflictError');
 
-    const missingReason = await database.transaction((transaction) =>
-      Effect.runPromise(
-        Effect.flip(
+    const missingReason = await database.transaction(
+      async (transaction) =>
+        await Effect.runPromise(
+          Effect.flip(
+            setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
+              authBindingId: binding.authBindingId,
+              expectedStatus: 'active',
+              managed: true,
+              newStatus: 'revoked',
+              principalId: first.principalId,
+              tenantId,
+            }),
+          ),
+        ),
+    );
+    assert.equal(missingReason._tag, 'IdentityTargetInvalidError');
+
+    await database.transaction(
+      async (transaction) =>
+        await Effect.runPromise(
           setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
             authBindingId: binding.authBindingId,
             expectedStatus: 'active',
             managed: true,
             newStatus: 'revoked',
             principalId: first.principalId,
+            reason: 'Integration lifecycle proof',
             tenantId,
           }),
         ),
-      ),
-    );
-    assert.equal(missingReason._tag, 'IdentityTargetInvalidError');
-
-    await database.transaction((transaction) =>
-      Effect.runPromise(
-        setApiKeyBindingStatus(principalManagementRepositoryFromTransaction(transaction), {
-          authBindingId: binding.authBindingId,
-          expectedStatus: 'active',
-          managed: true,
-          newStatus: 'revoked',
-          principalId: first.principalId,
-          reason: 'Integration lifecycle proof',
-          tenantId,
-        }),
-      ),
     );
     const [stored] = await database
       .select()

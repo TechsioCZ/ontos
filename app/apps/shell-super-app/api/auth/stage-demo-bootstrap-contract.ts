@@ -86,7 +86,7 @@ export const parseStageDemoBootstrapConfig = (
 ): Effect.Effect<StageDemoBootstrapConfig, StageDemoBootstrapError> =>
   Effect.try({
     catch: (cause) =>
-      cause instanceof StageDemoBootstrapError
+      Schema.is(StageDemoBootstrapError)(cause)
         ? cause
         : configurationFailure('The stage demo configuration is invalid'),
     try: () => {
@@ -131,9 +131,9 @@ export const classifyExactStageDemoRecord = <Expected extends ExactRecord>(
   if (existing === undefined) {
     return 'create';
   }
-  const conflictingFields = Object.entries(expected)
-    .filter(([key, value]) => existing[key] !== value)
-    .map(([key]) => key);
+  const conflictingFields = Object.entries(expected).flatMap(([key, value]) =>
+    existing[key] === value ? [] : [key],
+  );
   if (conflictingFields.length > 0) {
     throw new StageDemoBootstrapError({
       code: 'stage_demo_conflict',

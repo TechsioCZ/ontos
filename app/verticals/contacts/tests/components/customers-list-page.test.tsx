@@ -40,7 +40,7 @@ const {
     archiveCustomerMock: rstest.fn(),
     getCustomerListMock: rstest.fn(),
     localeState: state,
-    navigateMock: rstest.fn(() => Promise.resolve()),
+    navigateMock: rstest.fn(async () => {}),
     runEffectRequestMock: rstest.fn(),
     searchState: { current: '' },
     unarchiveCustomerMock: rstest.fn(),
@@ -223,8 +223,8 @@ beforeEach(() => {
   navigateMock.mockResolvedValue();
   archiveCustomerMock.mockReturnValue(Effect.succeed({ ...activeCustomer, archivedAt: 'now' }));
   getCustomerListMock.mockReturnValue(success());
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
   unarchiveCustomerMock.mockReturnValue(Effect.succeed({ ...archivedCustomer, archivedAt: null }));
 });

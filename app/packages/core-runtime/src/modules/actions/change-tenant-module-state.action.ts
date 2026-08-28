@@ -75,7 +75,7 @@ export const ChangeTenantModuleStateError = Schema.Union([
 ]);
 
 type ChangeTenantModuleStateDomainEvents = Readonly<
-  Record<never, Schema.ConstraintDecoder<unknown, never>>
+  Record<never, Schema.ConstraintDecoder<unknown>>
 >;
 
 interface ChangeTenantModuleStateServices {
@@ -102,7 +102,7 @@ const handleChangeTenantModuleState = (
             actionInvocationId: context.actionInvocationId,
             authMethod: context.scope.authMethod,
           },
-          !(payload.expectedState === undefined),
+          payload.expectedState !== undefined,
           'expectedState',
           payload.expectedState,
           {
@@ -111,7 +111,7 @@ const handleChangeTenantModuleState = (
             principalId: context.scope.principalId,
           },
         ),
-        !(payload.reason === undefined),
+        payload.reason !== undefined,
         'reason',
         payload.reason,
         {

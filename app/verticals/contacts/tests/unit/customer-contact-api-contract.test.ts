@@ -113,10 +113,10 @@ test('publishes the exact Contacts contract-derived operation surface', async ()
   ]
     .map((match) => match.groups?.['constant'] ?? match.groups?.['functionName'])
     .filter(
-      (name) =>
+      (name): name is string =>
         name !== undefined && name !== 'createContactsClient' && name !== 'getContactsReadiness',
     )
-    .toSorted();
+    .toSorted((left, right) => left.localeCompare(right));
   assert.deepEqual(
     exportedMethods,
     expectedOperations.filter((name) => name !== 'readiness'),

@@ -24,8 +24,8 @@ interface PrivateVerticalRuntime {
 const privateRuntime = new WeakMap<object, PrivateVerticalRuntime>();
 
 export interface VerticalRuntimeRegistration<ModuleId extends string = string> {
-  readonly [runtimeRegistrationBrand]: true;
   readonly moduleId: ModuleId;
+  readonly [runtimeRegistrationBrand]: true;
 }
 
 export interface VerticalRuntimeRegistrationInput<
@@ -106,8 +106,8 @@ export const defineVerticalRuntimeRegistration = <const Manifest extends OntosMo
     }
   }
   const registration = Object.freeze({
-    [runtimeRegistrationBrand]: true as const,
     moduleId: input.manifest.module.id,
+    [runtimeRegistrationBrand]: true as const,
   });
   privateRuntime.set(registration, {
     actions: Object.freeze([...input.actions]),
@@ -128,7 +128,7 @@ const requirePrivateRuntime = (
   registration: VerticalRuntimeRegistration,
 ): PrivateVerticalRuntime => {
   const value = privateRuntime.get(registration);
-  if (value === undefined || registration[runtimeRegistrationBrand] !== true) {
+  if (value === undefined || !registration[runtimeRegistrationBrand]) {
     throw new TypeError('invalid Vertical Runtime Registration');
   }
   return value;

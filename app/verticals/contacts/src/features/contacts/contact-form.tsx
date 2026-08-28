@@ -3,7 +3,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { PhoneInput } from '@techsio/ui-kit/molecules/phone-input';
 import { useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { SubmitEvent } from 'react';
 
 export interface ContactFormValues {
   readonly email: string;
@@ -19,8 +19,8 @@ export interface ContactFormCopy {
   readonly nameInvalid: string;
   readonly nameLabel: string;
   readonly nameRequired: string;
-  readonly phoneInvalid: string;
   readonly phoneCountryLabel: string;
+  readonly phoneInvalid: string;
   readonly phoneLabel: string;
   readonly phonePlaceholder: string;
   readonly phoneRequired: string;
@@ -155,7 +155,7 @@ export const ContactForm = ({
     onValuesChange?.(nextValues);
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (controlsDisabled || submittingRef.current) {
       return;
@@ -187,7 +187,7 @@ export const ContactForm = ({
     const releaseSubmission = () => {
       submittingRef.current = false;
     };
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React form callbacks stay synchronous, and both outcomes release the interaction guard.
+    // oxlint-disable-next-line promise/prefer-await-to-then -- React form callbacks stay synchronous, and both outcomes release the interaction guard.
     void Promise.resolve(submission).then(releaseSubmission, releaseSubmission);
   };
 

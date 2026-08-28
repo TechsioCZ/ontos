@@ -3,9 +3,7 @@ import { Schema } from 'effect';
 const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const nonNegativeInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
 
-export type DomainEventContractMap = Readonly<
-  Record<string, Schema.ConstraintDecoder<unknown, never>>
->;
+export type DomainEventContractMap = Readonly<Record<string, Schema.ConstraintDecoder<unknown>>>;
 
 export type ActionAccessEvidencePolicy =
   | {

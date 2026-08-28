@@ -1,4 +1,3 @@
-/* eslint-disable promise/prefer-await-to-callbacks -- Authzed exposes Promise APIs contained by Effect. */
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 import { fullyConsistent } from '../permissions/client.ts';
@@ -113,17 +112,20 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
       'The denied verification Principal must be outside the fixed context set',
     );
   }
-  const explicitActionKeys = actions
-    .filter(({ provisioning }) => provisioning === 'explicit')
-    .map(({ actionKey }) => actionKey);
+  const explicitActionKeys = new Set<string>();
+  for (const { actionKey, provisioning } of actions) {
+    if (provisioning === 'explicit') {
+      explicitActionKeys.add(actionKey);
+    }
+  }
   const explicitActionAssertions = (input.explicitActionAssertions ?? []).toSorted((left, right) =>
     left.actionKey.localeCompare(right.actionKey),
   );
   if (
-    explicitActionAssertions.length !== explicitActionKeys.length ||
+    explicitActionAssertions.length !== explicitActionKeys.size ||
     explicitActionAssertions.some(
       ({ actionKey, assertions }) =>
-        !explicitActionKeys.includes(actionKey) ||
+        !explicitActionKeys.has(actionKey) ||
         assertions.length < 2 ||
         new Set(assertions.map(({ principalId }) => principalId)).size !== assertions.length ||
         assertions.some(
@@ -260,9 +262,9 @@ export const provisionActionAuthorization = (
       );
     }
 
-    const defaultActionKeys = actions
-      .filter(({ provisioning }) => provisioning === 'tenant_membership_default')
-      .map(({ actionKey }) => actionKey);
+    const defaultActionKeys = actions.flatMap(({ actionKey, provisioning }) =>
+      provisioning === 'tenant_membership_default' ? [actionKey] : [],
+    );
     const relationships = buildActionAuthorizationRelationships(defaultActionKeys, contexts);
     yield* callClient(() =>
       client.writeRelationships(

@@ -33,7 +33,7 @@ const stripLanguagePrefix = (pathname: string) => {
   return `/${segments.join('/')}`;
 };
 
-const escapeRegExp = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+const escapeRegExp = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
 
 const paramName = (segment: string) => segment.slice(1).replace(/\?$/u, '');
 
@@ -91,11 +91,12 @@ const absoluteUrl = (pathname: string) => {
   return `${origin}${pathname}`;
 };
 
-const sanitiseJsonLd = (value: RouteJsonLd) => JSON.stringify(value).replaceAll('<', '\\u003c');
+const sanitiseJsonLd = (value: RouteJsonLd) =>
+  JSON.stringify(value).replaceAll('<', String.raw`\u003c`);
 
 export const UltramodernRouteHead = () => {
   const { language, t } = useModernI18n();
-  const { canonical, alternates } = useLocalizedLocation();
+  const { alternates, canonical } = useLocalizedLocation();
   const route = resolveRouteMetadata(canonical);
   const title = route === undefined ? appName : t(route.titleKey);
   const description = route === undefined ? appName : t(route.descriptionKey);
@@ -110,7 +111,7 @@ export const UltramodernRouteHead = () => {
       <meta content={indexable ? 'index, follow' : 'noindex, nofollow'} name="robots" />
       {indexable && (
         <>
-          <link rel="canonical" href={canonicalUrl} />
+          <link href={canonicalUrl} rel="canonical" />
           {supportedLanguages.map((code) => (
             <link
               href={absoluteUrl(alternates[code] ?? `/${code}`)}

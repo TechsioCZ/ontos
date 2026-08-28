@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+// @ts-expect-error -- Node 26 exposes registerHooks, but the installed declarations lag it.
 import { createRequire, registerHooks } from 'node:module';
 import { strict as assert } from 'node:assert';
 import test from 'node:test';
@@ -14,8 +15,29 @@ const applicationPackageJsonUrls = new Set([
   new URL('../../../../verticals/contacts/package.json', import.meta.url).href,
 ]);
 
+interface ModuleLoadContext {
+  readonly conditions: readonly string[];
+  readonly format?: string;
+  readonly importAttributes: Readonly<Record<string, string>>;
+}
+
+interface ModuleLoadResult {
+  readonly format: string;
+  readonly shortCircuit?: boolean;
+  readonly source?: string;
+}
+
+type NextModuleLoad = (
+  url: string,
+  context: ModuleLoadContext,
+) => ModuleLoadResult | Promise<ModuleLoadResult>;
+
 registerHooks({
-  load(url, context, nextLoad) {
+  load(
+    url: string,
+    context: ModuleLoadContext,
+    nextLoad: NextModuleLoad,
+  ): ModuleLoadResult | Promise<ModuleLoadResult> {
     if (!applicationPackageJsonUrls.has(url)) {
       return nextLoad(url, context);
     }

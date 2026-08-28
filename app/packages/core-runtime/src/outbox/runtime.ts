@@ -127,7 +127,7 @@ const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
         claimId: claim.claimId,
         consumerModuleKey: claim.consumerModuleKey,
       },
-      !(claim.correlationId === undefined),
+      claim.correlationId !== undefined,
       'correlationId',
       claim.correlationId,
       {
@@ -135,7 +135,7 @@ const claimAnnotations = (claim: OutboxClaim, outcome?: string) =>
         messageId: claim.messageId,
       },
     ),
-    !(outcome === undefined),
+    outcome !== undefined,
     'outcome',
     outcome,
     {
@@ -171,7 +171,7 @@ const handlerContext = (claim: OutboxClaim): OutboxWorkerHandlerContext =>
       attemptNumber: claim.attemptNumber,
       claimId: claim.claimId,
     },
-    !(claim.correlationId === undefined),
+    claim.correlationId !== undefined,
     'correlationId',
     claim.correlationId,
     {

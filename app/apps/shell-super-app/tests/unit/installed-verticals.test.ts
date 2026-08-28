@@ -46,7 +46,9 @@ test('rejects malformed, non-vertical, invalid, and duplicate installed entries'
     },
   ];
   const errors = await Promise.all(
-    inputs.map((input) => Effect.runPromise(Effect.flip(deriveInstalledVerticalIds(input)))),
+    inputs.map(
+      async (input) => await Effect.runPromise(Effect.flip(deriveInstalledVerticalIds(input))),
+    ),
   );
   expect(errors.every((error) => error._tag === 'InstalledVerticalTopologyError')).toBe(true);
 });

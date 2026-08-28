@@ -155,8 +155,8 @@ export const makeReadRuntime = (
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
 
   const runRead = <
-    InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-    ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+    InputSchema extends Schema.ConstraintDecoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
     Owner extends string,
     Services,
     HandlerError,
@@ -235,7 +235,7 @@ export const makeReadRuntime = (
               legalEntityScope: input.registration.descriptor.legalEntityScope,
               principal,
             },
-            !(transport.traceId === undefined),
+            transport.traceId !== undefined,
             'traceId',
             transport.traceId,
             {},
@@ -350,7 +350,7 @@ export const makeReadRuntime = (
               outcomeStage: 'authz',
               policyKey: input.registration.descriptor.evidencePolicy.policyKey,
             },
-            !(queryHash === undefined),
+            queryHash !== undefined,
             'queryHash',
             queryHash,
             {
@@ -384,12 +384,13 @@ export const makeReadRuntime = (
           });
         }
         const { denialStatus } = policyDescriptor;
+        const { descriptor } = input.registration;
         const policyExit = yield* Effect.exit(
           policy.evaluate({
             action: {
-              actionKey: input.registration.descriptor.readKey,
-              owningModuleKey: input.registration.descriptor.owningModuleKey,
-              schemaVersion: input.registration.descriptor.schemaVersion,
+              actionKey: descriptor.readKey,
+              owningModuleKey: descriptor.owningModuleKey,
+              schemaVersion: descriptor.schemaVersion,
             },
             payload: decodedInput,
             principal: scope,
@@ -398,7 +399,7 @@ export const makeReadRuntime = (
               {
                 correlationId: transport.correlationId,
               },
-              !(transport.traceId === undefined),
+              transport.traceId !== undefined,
               'traceId',
               transport.traceId,
               {},
@@ -426,7 +427,7 @@ export const makeReadRuntime = (
                 outcomeStage: 'policy',
                 policyKey: input.registration.descriptor.evidencePolicy.policyKey,
               },
-              !(queryHash === undefined),
+              queryHash !== undefined,
               'queryHash',
               queryHash,
               {
@@ -470,8 +471,8 @@ export const makeReadRuntime = (
                 }),
                 Cause.die(error),
               ),
-        try: () =>
-          database.executor.transaction(async (transaction: CoreTransaction) => {
+        try: async () =>
+          await database.executor.transaction(async (transaction: CoreTransaction) => {
             const scoped = unwrapCore(
               await Effect.runPromiseExit(installOperationalScope(transaction, scope)),
             );
@@ -648,7 +649,7 @@ export const makeReadRuntime = (
                           outcomeStage: 'evidence',
                           policyKey: input.registration.descriptor.evidencePolicy.policyKey,
                         },
-                        !(queryHash === undefined),
+                        queryHash !== undefined,
                         'queryHash',
                         queryHash,
                         {
@@ -656,12 +657,12 @@ export const makeReadRuntime = (
                           resultCount: evidence.resultCount,
                         },
                       ),
-                      !(evidence.resultFingerprintHash === undefined),
+                      evidence.resultFingerprintHash !== undefined,
                       'resultFingerprintHash',
                       evidence.resultFingerprintHash,
                       {},
                     ),
-                    !(evidence.resultFingerprintSchema === undefined),
+                    evidence.resultFingerprintSchema !== undefined,
                     'resultFingerprintSchema',
                     evidence.resultFingerprintSchema,
                     {
@@ -700,7 +701,7 @@ export const makeReadRuntime = (
                     outcomeStage: 'authz',
                     policyKey: input.registration.descriptor.evidencePolicy.policyKey,
                   },
-                  !(queryHash === undefined),
+                  queryHash !== undefined,
                   'queryHash',
                   queryHash,
                   {

@@ -33,10 +33,10 @@ const withDatabase = <Value, Error>(
     }),
   );
 
-const databasePromise = <Value>(
+const databasePromise = async <Value>(
   operation: (database: DatabaseService) => PromiseLike<Value>,
 ): Promise<Value> =>
-  Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
+  await Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
 const unavailableStateService = (reason: string): TenantModuleStateServiceContract => {
   const failure = new TenantModuleStateReadUnavailableError({
@@ -50,7 +50,7 @@ const unavailableStateService = (reason: string): TenantModuleStateServiceContra
   };
 };
 
-test('batches tenant-isolated states once, rejects malformed/unavailable reads, and rechecks transactionally', async () => {
+void test('batches tenant-isolated states once, rejects malformed/unavailable reads, and rechecks transactionally', async () => {
   const tenantOne = randomUUID();
   const tenantTwo = randomUUID();
   const moduleKey = `gate.integration-${tenantOne}`;
@@ -134,10 +134,12 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
       );
       assert.equal(selects, 1);
       const persistedStateExits = await Promise.all(
-        TENANT_MODULE_STATES.map((_, index) => {
+        TENANT_MODULE_STATES.map(async (_, index) => {
           const descriptor = persistedStateDescriptors[index];
           assert.ok(descriptor);
-          return Effect.runPromise(Effect.exit(gate.check(persistedStateSnapshot, descriptor)));
+          return await Effect.runPromise(
+            Effect.exit(gate.check(persistedStateSnapshot, descriptor)),
+          );
         }),
       );
       for (const [index, state] of TENANT_MODULE_STATES.entries()) {
@@ -171,8 +173,9 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
       );
       assert.equal(missing._tag, 'ModuleStateDeniedError');
 
-      await database.executor.transaction((transaction) =>
-        Effect.runPromise(gate.recheckWrite(transaction, tenantOne, write)),
+      await database.executor.transaction(
+        async (transaction) =>
+          await Effect.runPromise(gate.recheckWrite(transaction, tenantOne, write)),
       );
       await database.executor
         .update(tenantModuleStates)
@@ -183,8 +186,9 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
             eq(tenantModuleStates.moduleKey, moduleKey),
           ),
         );
-      const lockedDenial = await database.executor.transaction((transaction) =>
-        Effect.runPromise(Effect.flip(gate.recheckWrite(transaction, tenantOne, write))),
+      const lockedDenial = await database.executor.transaction(
+        async (transaction) =>
+          await Effect.runPromise(Effect.flip(gate.recheckWrite(transaction, tenantOne, write))),
       );
       assert.equal(lockedDenial._tag, 'ModuleStateDeniedError');
 

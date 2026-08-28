@@ -22,11 +22,31 @@ const contactEditUrl = (language: 'cs' | 'en') =>
 const contactEditDetailUrl = (language: 'cs' | 'en') =>
   `/${language}/contacts/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`;
 
+interface ActionEvidenceHeaders {
+  correlationId?: string;
+  idempotencyKey?: string;
+}
+
+const actionEvidenceHeaders = (
+  headers: Readonly<Record<string, string>>,
+): ActionEvidenceHeaders => {
+  const correlationId = headers['x-correlation-id'];
+  const idempotencyKey = headers['idempotency-key'];
+  const evidence: ActionEvidenceHeaders = {};
+  if (correlationId !== undefined) {
+    evidence.correlationId = correlationId;
+  }
+  if (idempotencyKey !== undefined) {
+    evidence.idempotencyKey = idempotencyKey;
+  }
+  return evidence;
+};
+
 const mockContactsGateway = async (page: Page) => {
   const payloads: unknown[] = [];
-  await page.route(`**${shellGatewayContextContract.issueGatewayContextPath}`, (route) => {
+  await page.route(`**${shellGatewayContextContract.issueGatewayContextPath}`, async (route) => {
     payloads.push(route.request().postDataJSON());
-    return route.fulfill({
+    await route.fulfill({
       body: JSON.stringify({ expiresAt: 2_000_000_000, token: 'e2e-contacts-gateway-token' }),
       contentType: 'application/json',
       status: 200,
@@ -53,17 +73,17 @@ const gotoHydratedLogin = async (page: Page, language: 'cs' | 'en') => {
       return false;
     }
     for (const form of forms) {
-      delete form.dataset.e2eHydratedLogin;
+      delete form.dataset['e2eHydratedLogin'];
     }
-    const hydratedSince = Number(hydratedForm.dataset.e2eHydratedSince);
+    const hydratedSince = Number(hydratedForm.dataset['e2eHydratedSince']);
     if (!Number.isFinite(hydratedSince)) {
-      hydratedForm.dataset.e2eHydratedSince = String(performance.now());
+      hydratedForm.dataset['e2eHydratedSince'] = String(performance.now());
       return false;
     }
     if (performance.now() - hydratedSince < 1000) {
       return false;
     }
-    hydratedForm.dataset.e2eHydratedLogin = 'true';
+    hydratedForm.dataset['e2eHydratedLogin'] = 'true';
     return true;
   });
 };
@@ -109,46 +129,49 @@ const contactDetailResponse = (
 
 let cleanupFixture: (() => Promise<void>) | undefined;
 
-test.beforeAll(() =>
-  createAuthenticationFixture().then((cleanup) => {
-    cleanupFixture = cleanup;
-  }),
+test.beforeAll(
+  async () =>
+    await createAuthenticationFixture().then((cleanup) => {
+      cleanupFixture = cleanup;
+    }),
 );
 
-test.afterAll(() => cleanupFixture?.());
+test.afterAll(async () => await cleanupFixture?.());
 
-test('renders the exact anonymous English and Czech home states', ({ page }) =>
-  page
+test('renders the exact anonymous English and Czech home states', async ({ page }) =>
+  await page
     .goto('/en/')
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
-        expect(page.getByRole('link')).toHaveCount(1),
-        expect(page.getByRole('button')).toHaveCount(0),
-        expect(page.getByRole('checkbox')).toHaveCount(0),
-        expect(page.locator('header[aria-label]')).toHaveCount(0),
-        expect(page.getByRole('complementary')).toHaveCount(0),
-        expect(page.getByRole('region')).toHaveCount(0),
-      ]),
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('link', { name: 'Login' })).toBeVisible(),
+          expect(page.getByRole('link')).toHaveCount(1),
+          expect(page.getByRole('button')).toHaveCount(0),
+          expect(page.getByRole('checkbox')).toHaveCount(0),
+          expect(page.locator('header[aria-label]')).toHaveCount(0),
+          expect(page.getByRole('complementary')).toHaveCount(0),
+          expect(page.getByRole('region')).toHaveCount(0),
+        ]),
     )
-    .then(() => page.goto('/cs/'))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible(),
-        expect(page.getByRole('link')).toHaveCount(1),
-        expect(page.getByRole('button')).toHaveCount(0),
-        expect(page.getByRole('checkbox')).toHaveCount(0),
-        expect(page.locator('header[aria-label]')).toHaveCount(0),
-        expect(page.getByRole('complementary')).toHaveCount(0),
-        expect(page.getByRole('region')).toHaveCount(0),
-      ]),
+    .then(async () => await page.goto('/cs/'))
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('link', { name: 'Přihlásit se' })).toBeVisible(),
+          expect(page.getByRole('link')).toHaveCount(1),
+          expect(page.getByRole('button')).toHaveCount(0),
+          expect(page.getByRole('checkbox')).toHaveCount(0),
+          expect(page.locator('header[aria-label]')).toHaveCount(0),
+          expect(page.getByRole('complementary')).toHaveCount(0),
+          expect(page.getByRole('region')).toHaveCount(0),
+        ]),
     ));
 
 test('keeps English and Czech login pages free of authenticated dashboard chrome', async ({
   page,
 }) => {
-  const expectDashboardAbsent = () =>
-    Promise.all([
+  const expectDashboardAbsent = async () =>
+    await Promise.all([
       expect(page.locator('header[aria-label]')).toHaveCount(0),
       expect(page.getByRole('complementary')).toHaveCount(0),
       expect(page.locator('button[aria-haspopup="menu"]')).toHaveCount(0),
@@ -160,24 +183,27 @@ test('keeps English and Czech login pages free of authenticated dashboard chrome
   await expectDashboardAbsent();
 });
 
-test('shows one generic error for invalid English credentials', ({ page }) =>
-  gotoHydratedLogin(page, 'en')
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByRole('textbox', { name: /^Login\s*\*$/u })
-        .fill(e2eCredentials.email),
+test('shows one generic error for invalid English credentials', async ({ page }) =>
+  await gotoHydratedLogin(page, 'en')
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .fill(e2eCredentials.email),
     )
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByLabel(/^Password/u)
-        .fill('wrong-password'),
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByLabel(/^Password/u)
+          .fill('wrong-password'),
     )
-    .then(() => hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
-    .then(() =>
-      Promise.all([
-        expect(page.getByText('The email address or password is invalid.')).toHaveCount(1),
-        expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
-      ]),
+    .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByText('The email address or password is invalid.')).toHaveCount(1),
+          expect(page.getByRole('textbox', { name: /^Login\s*\*$/u })).toBeFocused(),
+        ]),
     ));
 
 test('logs a user in without any server-error response', async ({ page }, testInfo) => {
@@ -310,42 +336,48 @@ test('keeps authenticated Shell chrome on search and guarded direct-target route
   );
 });
 
-test('persists an English session, logs out, clears the cookie, and stays anonymous', ({ page }) =>
-  gotoHydratedLogin(page, 'en')
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByRole('textbox', { name: /^Login\s*\*$/u })
-        .fill(e2eCredentials.email),
+test('persists an English session, logs out, clears the cookie, and stays anonymous', async ({
+  page,
+}) =>
+  await gotoHydratedLogin(page, 'en')
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByRole('textbox', { name: /^Login\s*\*$/u })
+          .fill(e2eCredentials.email),
     )
-    .then(() =>
-      hydratedLoginForm(page)
-        .getByLabel(/^Password/u)
-        .fill(e2eCredentials.password),
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .getByLabel(/^Password/u)
+          .fill(e2eCredentials.password),
     )
-    .then(() => hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
-    .then(() => expect(page).toHaveURL(/\/en\/?$/u))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
-        expect(page.getByText(e2eCredentials.email)).toBeVisible(),
-        expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
-      ]),
+    .then(async () => await hydratedLoginForm(page).getByRole('button', { name: 'Login' }).click())
+    .then(async () => await expect(page).toHaveURL(/\/en\/?$/u))
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
+          expect(page.getByText(e2eCredentials.email)).toBeVisible(),
+          expect(page.getByRole('link', { name: 'Home' })).toHaveCount(1),
+        ]),
     )
-    .then(() => page.reload())
-    .then(() => expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
-    .then(() => page.getByRole('button', { name: 'E2E user' }).click())
-    .then(() => page.getByRole('menuitem', { name: 'Logout' }).click())
-    .then(() => expect(page).toHaveURL(/\/en\/login\/?$/u))
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('heading', { name: 'Login' })).toBeVisible(),
-        expect(page.getByRole('button', { name: 'Login' })).toBeVisible(),
-        expect(page.locator('header[aria-label]')).toHaveCount(0),
-        expect(page.getByRole('complementary')).toHaveCount(0),
-      ]),
+    .then(async () => await page.reload())
+    .then(async () => await expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible())
+    .then(async () => await page.getByRole('button', { name: 'E2E user' }).click())
+    .then(async () => await page.getByRole('menuitem', { name: 'Logout' }).click())
+    .then(async () => await expect(page).toHaveURL(/\/en\/login\/?$/u))
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('heading', { name: 'Login' })).toBeVisible(),
+          expect(page.getByRole('button', { name: 'Login' })).toBeVisible(),
+          expect(page.locator('header[aria-label]')).toHaveCount(0),
+          expect(page.getByRole('complementary')).toHaveCount(0),
+        ]),
     )
-    .then(() => page.reload())
-    .then(() => expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()));
+    .then(async () => await page.reload())
+    .then(async () => await expect(page.getByRole('heading', { name: 'Login' })).toBeVisible()));
 
 test('switches tenant by pointer, fully reloads, and persists the selected context', async ({
   page,
@@ -398,12 +430,13 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   await form.getByLabel(/^Heslo/u).fill(e2eCredentials.password);
   await form.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
-  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, (route) => {
+  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, async (route) => {
     if (failSwitch) {
       failSwitch = false;
-      return route.abort('failed');
+      await route.abort('failed');
+      return;
     }
-    return route.continue();
+    await route.continue();
   });
 
   const tenant = page.getByRole('combobox', { name: 'Aktuální tenant' });
@@ -432,50 +465,66 @@ test('retains Czech tenant context after one failed switch and supports keyboard
   );
 });
 
-test('keeps keyboard logout operable after a Czech failure and succeeds on retry', ({ page }) => {
+test('keeps keyboard logout operable after a Czech failure and succeeds on retry', async ({
+  page,
+}) => {
   let failLogout = true;
 
-  return gotoHydratedLogin(page, 'cs')
-    .then(() => hydratedLoginForm(page).locator('input[name="login"]').fill(e2eCredentials.email))
-    .then(() =>
-      hydratedLoginForm(page).locator('input[name="password"]').fill(e2eCredentials.password),
+  await gotoHydratedLogin(page, 'cs')
+    .then(
+      async () =>
+        await hydratedLoginForm(page).locator('input[name="login"]').fill(e2eCredentials.email),
     )
-    .then(() => hydratedLoginForm(page).getByRole('button', { name: 'Přihlásit se' }).click())
-    .then(() => expect(page).toHaveURL(/\/cs\/?$/u))
-    .then(() =>
-      page.route('**/shell-super-app-api/auth/sign-out', (route) => {
-        if (failLogout) {
-          failLogout = false;
-          return route.abort('failed');
-        }
-        return route.continue();
-      }),
+    .then(
+      async () =>
+        await hydratedLoginForm(page)
+          .locator('input[name="password"]')
+          .fill(e2eCredentials.password),
     )
-    .then(() => page.getByRole('button', { name: 'E2E user' }).focus())
-    .then(() => page.keyboard.press('Enter'))
-    .then(() =>
-      expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
-        'data-highlighted',
-        '',
-      ),
+    .then(
+      async () =>
+        await hydratedLoginForm(page).getByRole('button', { name: 'Přihlásit se' }).click(),
     )
-    .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
-    .then(() =>
-      Promise.all([
-        expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
-        expect(page.getByText('Odhlášení selhalo. Zkuste to znovu.')).toBeVisible(),
-        expect(page.getByRole('button', { name: 'E2E user' })).toBeFocused(),
-      ]),
+    .then(async () => await expect(page).toHaveURL(/\/cs\/?$/u))
+    .then(
+      async () =>
+        await page.route('**/shell-super-app-api/auth/sign-out', async (route) => {
+          if (failLogout) {
+            failLogout = false;
+            await route.abort('failed');
+            return;
+          }
+          await route.continue();
+        }),
     )
-    .then(() => page.keyboard.press('Enter'))
-    .then(() =>
-      expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
-        'data-highlighted',
-        '',
-      ),
+    .then(async () => await page.getByRole('button', { name: 'E2E user' }).focus())
+    .then(async () => await page.keyboard.press('Enter'))
+    .then(
+      async () =>
+        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
+          'data-highlighted',
+          '',
+        ),
     )
-    .then(() => page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
-    .then(() => expect(page).toHaveURL(/\/cs\/login\/?$/u));
+    .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
+    .then(
+      async () =>
+        await Promise.all([
+          expect(page.getByRole('button', { name: 'E2E user' })).toBeVisible(),
+          expect(page.getByText('Odhlášení selhalo. Zkuste to znovu.')).toBeVisible(),
+          expect(page.getByRole('button', { name: 'E2E user' })).toBeFocused(),
+        ]),
+    )
+    .then(async () => await page.keyboard.press('Enter'))
+    .then(
+      async () =>
+        await expect(page.getByRole('menuitem', { name: 'Odhlásit se' })).toHaveAttribute(
+          'data-highlighted',
+          '',
+        ),
+    )
+    .then(async () => await page.getByRole('menuitem', { name: 'Odhlásit se' }).click())
+    .then(async () => await expect(page).toHaveURL(/\/cs\/login\/?$/u));
 });
 
 test('keeps the login form keyboard- and mobile-usable', async ({ page }) => {
@@ -508,8 +557,9 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await form.getByLabel(/^Password/u).fill(e2eCredentials.password);
   await form.getByRole('button', { name: 'Login' }).click();
   await expect(page).toHaveURL(/\/en\/?$/u);
-  await page.route(`**${shellAuthenticationApiContract.switchTenantPath}`, (route) =>
-    route.abort('failed'),
+  await page.route(
+    `**${shellAuthenticationApiContract.switchTenantPath}`,
+    async (route) => await route.abort('failed'),
   );
 
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
@@ -598,12 +648,14 @@ test('customers stay private anonymously and load real localized BFF data after 
 
 test('customers empty state keeps the table and omits the pager', async ({ page }) => {
   await login(page);
-  await page.route(`**${customerListPath}`, (route) =>
-    route.fulfill({
-      body: JSON.stringify({ items: [], nextOffset: null }),
-      contentType: 'application/json',
-      status: 200,
-    }),
+  await page.route(
+    `**${customerListPath}`,
+    async (route) =>
+      await route.fulfill({
+        body: JSON.stringify({ items: [], nextOffset: null }),
+        contentType: 'application/json',
+        status: 200,
+      }),
   );
 
   await page.goto('/en/contacts/customers');
@@ -646,10 +698,10 @@ test('customers retry a temporary BFF failure from the keyboard and restore resu
 }) => {
   await login(page);
   let attempts = 0;
-  await page.route(`**${customerListPath}`, (route) => {
+  await page.route(`**${customerListPath}`, async (route) => {
     attempts += 1;
     if (attempts === 1) {
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify({
           _tag: 'CustomerListUnavailableProblem',
           detail: 'The E2E customer list is temporarily unavailable.',
@@ -661,8 +713,9 @@ test('customers retry a temporary BFF failure from the keyboard and restore resu
         contentType: 'application/problem+json',
         status: 503,
       });
+      return;
     }
-    return route.fulfill({
+    await route.fulfill({
       body: JSON.stringify({ items: [customerResponse(e2eCustomers.active)], nextOffset: null }),
       contentType: 'application/json',
       status: 200,
@@ -689,10 +742,10 @@ test('customers keep filter and pagination in the URL without page overflow at 3
     ...customerResponse(e2eCustomers.archived),
     name: `${e2eCustomers.archived.name} with a deliberately long business name`,
   };
-  await page.route(`**${customerListPath}`, (route) => {
+  await page.route(`**${customerListPath}`, async (route) => {
     const payload = route.request().postDataJSON();
     payloads.push(payload);
-    return route.fulfill({
+    await route.fulfill({
       body: JSON.stringify({
         items: [longCustomer],
         nextOffset: payload.offset === 0 ? 25 : null,
@@ -853,18 +906,20 @@ test.describe('Customer detail flows', () => {
   ] as const) {
     test(`Customer detail renders a declared ${state} response without retry`, async ({ page }) => {
       await login(page);
-      await page.route(`**${customerDetailPath}`, (route) =>
-        route.fulfill({
-          body: JSON.stringify({
-            _tag: tag,
-            detail: message,
+      await page.route(
+        `**${customerDetailPath}`,
+        async (route) =>
+          await route.fulfill({
+            body: JSON.stringify({
+              _tag: tag,
+              detail: message,
+              status,
+              title: message,
+              type: `https://ontos.dev/problems/contacts/customer-detail-${status}`,
+            }),
+            contentType: 'application/problem+json',
             status,
-            title: message,
-            type: `https://ontos.dev/problems/contacts/customer-detail-${status}`,
           }),
-          contentType: 'application/problem+json',
-          status,
-        }),
       );
 
       await page.goto(`/en/contacts/customers/${e2eCustomers.active.customerId}`);
@@ -879,11 +934,11 @@ test.describe('Customer detail flows', () => {
     await login(page);
     const payloads: unknown[] = [];
     let attempts = 0;
-    await page.route(`**${customerDetailPath}`, (route) => {
+    await page.route(`**${customerDetailPath}`, async (route) => {
       attempts += 1;
       payloads.push(route.request().postDataJSON());
       if (attempts === 1) {
-        return route.fulfill({
+        await route.fulfill({
           body: JSON.stringify({
             _tag: 'CustomerDetailUnavailableProblem',
             detail: 'The E2E Customer is temporarily unavailable.',
@@ -895,8 +950,9 @@ test.describe('Customer detail flows', () => {
           contentType: 'application/problem+json',
           status: 503,
         });
+        return;
       }
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify(customerResponse(e2eCustomers.active)),
         contentType: 'application/json',
         status: 200,
@@ -956,12 +1012,13 @@ test.describe('Contact create flows', () => {
 
     await login(page);
     const gatewayPayloads = await mockContactsGateway(page);
-    await page.route(`**${contactCreatePath}`, (route) => {
+    await page.route(`**${contactCreatePath}`, async (route) => {
       if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
+        await route.fallback();
+        return;
       }
       payloads.push(route.request().postDataJSON());
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify(contactResponse),
         contentType: 'application/json',
         headers: contactCorsHeaders,
@@ -1024,18 +1081,16 @@ test.describe('Contact create flows', () => {
     const gatewayPayloads = await mockContactsGateway(page);
     let attempts = 0;
     const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
-    await page.route(`**${contactCreatePath}`, (route) => {
+    await page.route(`**${contactCreatePath}`, async (route) => {
       if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
+        await route.fallback();
+        return;
       }
       attempts += 1;
       const requestHeaders = route.request().headers();
-      headers.push({
-        correlationId: requestHeaders['x-correlation-id'],
-        idempotencyKey: requestHeaders['idempotency-key'],
-      });
+      headers.push(actionEvidenceHeaders(requestHeaders));
       if (attempts === 1) {
-        return route.fulfill({
+        await route.fulfill({
           body: JSON.stringify({
             _tag: 'ContactsUnavailableProblem',
             detail: 'The E2E Contact service is unavailable.',
@@ -1048,8 +1103,9 @@ test.describe('Contact create flows', () => {
           headers: contactCorsHeaders,
           status: 503,
         });
+        return;
       }
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify(contactResponse),
         contentType: 'application/json',
         headers: contactCorsHeaders,
@@ -1202,7 +1258,7 @@ test.describe('Contact detail flows', () => {
         range.selectNodeContents(element);
         const style = getComputedStyle(element);
         return {
-          className: element.className,
+          className: element.getAttribute('class'),
           display: style.display,
           parentClientWidth: element.parentElement?.clientWidth,
           parentScrollWidth: element.parentElement?.scrollWidth,
@@ -1278,18 +1334,20 @@ test.describe('Contact detail flows', () => {
   ] as const) {
     test(`Contact detail renders a declared ${state} response without retry`, async ({ page }) => {
       await login(page);
-      await page.route(`**${contactDetailPath}`, (route) =>
-        route.fulfill({
-          body: JSON.stringify({
-            _tag: tag,
-            detail: message,
+      await page.route(
+        `**${contactDetailPath}`,
+        async (route) =>
+          await route.fulfill({
+            body: JSON.stringify({
+              _tag: tag,
+              detail: message,
+              status,
+              title: message,
+              type: `https://ontos.dev/problems/contacts/contact-detail-${status}`,
+            }),
+            contentType: 'application/problem+json',
             status,
-            title: message,
-            type: `https://ontos.dev/problems/contacts/contact-detail-${status}`,
           }),
-          contentType: 'application/problem+json',
-          status,
-        }),
       );
 
       await page.goto(
@@ -1306,11 +1364,11 @@ test.describe('Contact detail flows', () => {
     await login(page);
     const payloads: unknown[] = [];
     let attempts = 0;
-    await page.route(`**${contactDetailPath}`, (route) => {
+    await page.route(`**${contactDetailPath}`, async (route) => {
       attempts += 1;
       payloads.push(route.request().postDataJSON());
       if (attempts === 1) {
-        return route.fulfill({
+        await route.fulfill({
           body: JSON.stringify({
             _tag: 'ContactDetailUnavailableProblem',
             detail: 'The E2E Contact is temporarily unavailable.',
@@ -1322,8 +1380,9 @@ test.describe('Contact detail flows', () => {
           contentType: 'application/problem+json',
           status: 503,
         });
+        return;
       }
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
         contentType: 'application/json',
         status: 200,
@@ -1384,29 +1443,28 @@ test.describe('Contact edit flows', () => {
     const detailPayloads: unknown[] = [];
     const editPayloads: unknown[] = [];
     const editHeaders: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
-    await page.route(`**${contactDetailPath}`, (route) => {
+    await page.route(`**${contactDetailPath}`, async (route) => {
       if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
+        await route.fallback();
+        return;
       }
       detailPayloads.push(route.request().postDataJSON());
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
         contentType: 'application/json',
         headers: contactCorsHeaders,
         status: 200,
       });
     });
-    await page.route(`**${contactEditPath}`, (route) => {
+    await page.route(`**${contactEditPath}`, async (route) => {
       if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
+        await route.fallback();
+        return;
       }
       editPayloads.push(route.request().postDataJSON());
       const headers = route.request().headers();
-      editHeaders.push({
-        correlationId: headers['x-correlation-id'],
-        idempotencyKey: headers['idempotency-key'],
-      });
-      return route.fulfill({
+      editHeaders.push(actionEvidenceHeaders(headers));
+      await route.fulfill({
         body: JSON.stringify(editedContact),
         contentType: 'application/json',
         headers: contactCorsHeaders,
@@ -1472,26 +1530,26 @@ test.describe('Contact edit flows', () => {
     await mockContactsGateway(page);
     let attempts = 0;
     const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
-    await page.route(`**${contactDetailPath}`, (route) =>
-      route.fulfill({
-        body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
-        contentType: 'application/json',
-        headers: contactCorsHeaders,
-        status: 200,
-      }),
+    await page.route(
+      `**${contactDetailPath}`,
+      async (route) =>
+        await route.fulfill({
+          body: JSON.stringify(contactDetailResponse(e2eContacts.active)),
+          contentType: 'application/json',
+          headers: contactCorsHeaders,
+          status: 200,
+        }),
     );
-    await page.route(`**${contactEditPath}`, (route) => {
+    await page.route(`**${contactEditPath}`, async (route) => {
       if (route.request().method() === 'OPTIONS') {
-        return route.fallback();
+        await route.fallback();
+        return;
       }
       attempts += 1;
       const requestHeaders = route.request().headers();
-      headers.push({
-        correlationId: requestHeaders['x-correlation-id'],
-        idempotencyKey: requestHeaders['idempotency-key'],
-      });
+      headers.push(actionEvidenceHeaders(requestHeaders));
       if (attempts === 1) {
-        return route.fulfill({
+        await route.fulfill({
           body: JSON.stringify({
             _tag: 'ContactsUnavailableProblem',
             detail: 'The E2E Contact service is unavailable.',
@@ -1504,8 +1562,9 @@ test.describe('Contact edit flows', () => {
           headers: contactCorsHeaders,
           status: 503,
         });
+        return;
       }
-      return route.fulfill({
+      await route.fulfill({
         body: JSON.stringify(editedContact),
         contentType: 'application/json',
         headers: contactCorsHeaders,

@@ -69,12 +69,12 @@ export interface ShellGovernedReadsService {
   readonly composition: (
     input: ShellReadInvocation,
   ) => Effect.Effect<ShellComposition, ReadCoreError>;
-  readonly resourceDetail: (
-    input: ShellReadInvocation & { readonly ref: ResourceRef },
-  ) => Effect.Effect<ShellResourceResponse, ReadCoreError>;
   readonly moduleTarget: (
     input: ShellReadInvocation & { readonly entrypointKey?: string; readonly moduleId: string },
   ) => Effect.Effect<ResolvedModuleTarget, ReadCoreError>;
+  readonly resourceDetail: (
+    input: ShellReadInvocation & { readonly ref: ResourceRef },
+  ) => Effect.Effect<ShellResourceResponse, ReadCoreError>;
   readonly search: (
     input: ShellReadInvocation & { readonly query: string },
   ) => Effect.Effect<ShellSearchResponse, ReadCoreError>;
@@ -268,7 +268,7 @@ const makeRegistrations = (
       context.services.composition
         .resolveModuleTarget(
           context.scope,
-          withOptionalProperty({}, !(entrypointKey === undefined), 'entrypointKey', entrypointKey, {
+          withOptionalProperty({}, entrypointKey !== undefined, 'entrypointKey', entrypointKey, {
             moduleId,
           }),
         )
@@ -441,7 +441,7 @@ export const createShellGovernedReadsLayer = (
           runtime.runRead({
             input: withOptionalProperty(
               {},
-              !(entrypointKey === undefined),
+              entrypointKey !== undefined,
               'entrypointKey',
               entrypointKey,
               {

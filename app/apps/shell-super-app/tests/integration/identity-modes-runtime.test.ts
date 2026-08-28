@@ -53,7 +53,7 @@ const cookieHeader = (setCookieHeaders: readonly string[]): string => {
   return [...cookies.values()].join('; ');
 };
 
-test('verifies provider keys and completes live support impersonation with durable stopped evidence', async () => {
+void test('verifies provider keys and completes live support impersonation with durable stopped evidence', async () => {
   const baseConfiguration = await Effect.runPromise(loadAuthConfig());
   const authPool = new Pool({ connectionString: baseConfiguration.connectionString });
   const corePool = new Pool({ connectionString: baseConfiguration.connectionString });
@@ -407,7 +407,10 @@ test('verifies provider keys and completes live support impersonation with durab
       .from(session)
       .where(and(eq(session.userId, targetUserId), eq(session.impersonatedBy, originalUserId)))
       .limit(1);
-    assert.ok(impersonationSession);
+    assert.notEqual(impersonationSession, undefined);
+    if (impersonationSession === undefined) {
+      throw new TypeError('The support impersonation session was not persisted');
+    }
     assert.equal(Predicate.isString(impersonationSession.actionId), true);
     if (!Predicate.isString(impersonationSession.actionId)) {
       throw new TypeError('The approved support start did not persist its Action correlation');

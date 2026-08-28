@@ -1,4 +1,5 @@
 /* eslint-disable max-classes-per-file, no-nested-ternary, unicorn/no-nested-ternary -- The legal-entity context owns one closed failure vocabulary and classification expression. */
+// @effect-diagnostics asyncFunction:off
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
@@ -88,8 +89,9 @@ export const classifyActiveLegalEntities = (
   validateRecords(records, tenantId).pipe(
     Effect.map((validated) =>
       validated
-        .filter((record) => record.status === 'active')
-        .map(({ legalEntityId, legalName }) => ({ legalEntityId, legalName }))
+        .flatMap(({ legalEntityId, legalName, status }) =>
+          status === 'active' ? [{ legalEntityId, legalName }] : [],
+        )
         .toSorted(
           (left, right) =>
             compareText(left.legalName, right.legalName) ||
@@ -188,7 +190,7 @@ export const legalEntityContextFromRepository = (
         new LegalEntityContextUnavailableError({
           reason: 'Unable to resolve the legal-entity context',
         }),
-      try: () => repository.load(tenantId, legalEntityId),
+      try: async () => await repository.load(tenantId, legalEntityId),
     });
 
   return {

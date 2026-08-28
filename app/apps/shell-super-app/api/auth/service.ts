@@ -1,4 +1,5 @@
-/* eslint-disable prefer-destructuring, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/no-useless-undefined -- Better Auth hooks are Promise callbacks while the public service remains Effect-based. */
+// @effect-diagnostics asyncFunction:off
+/* eslint-disable prefer-destructuring, promise/prefer-await-to-callbacks -- Better Auth hooks are Promise callbacks while the public service remains Effect-based. */
 import type {
   AvailableTenant,
   ContextAccessService,
@@ -70,9 +71,9 @@ const hasSupportLifecycleVerifier = (
 export interface SafeTenantIdentity {
   readonly displayName: string;
   readonly email: string;
+  readonly impersonating?: true;
   readonly principalId: string;
   readonly tenantId: string;
-  readonly impersonating?: true;
 }
 
 export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {
@@ -192,10 +193,6 @@ export interface AuthenticationServiceContract {
   readonly signOut: (
     requestHeaders: Headers,
   ) => Effect.Effect<SignOutResult, AuthenticationRuntimeError>;
-  readonly switchTenant: (
-    tenantId: string,
-    requestHeaders: Headers,
-  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError>;
   readonly switchLegalEntity: (
     legalEntityId: string,
     requestHeaders: Headers,
@@ -203,6 +200,10 @@ export interface AuthenticationServiceContract {
     { readonly selectedLegalEntityId: string; readonly setCookieHeaders: readonly string[] },
     AuthenticationRuntimeError | LegalEntitySelectionForbiddenError
   >;
+  readonly switchTenant: (
+    tenantId: string,
+    requestHeaders: Headers,
+  ) => Effect.Effect<SwitchTenantResult, SwitchTenantRuntimeError>;
 }
 
 export class AuthenticationService extends Context.Service<
@@ -223,11 +224,11 @@ const mapResolverError = (
     ? new AuthenticationUnavailableError()
     : new OntosIdentityForbiddenError();
 
-const resolveForSession = (
+const resolveForSession = async (
   resolver: PrincipalResolverService,
   betterAuthUserId: string,
 ): Promise<ResolvedPrincipalIdentity> =>
-  Effect.runPromise(resolver.resolveDefaultBetterAuthUser(betterAuthUserId)).catch(
+  await Effect.runPromise(resolver.resolveDefaultBetterAuthUser(betterAuthUserId)).catch(
     <Failure>(error: Failure) => {
       if (isResolverUnavailable(error)) {
         throw new APIError('SERVICE_UNAVAILABLE', {
@@ -368,8 +369,8 @@ export const makeAuthenticationService = (
     databaseHooks: {
       session: {
         create: {
-          before: (session) =>
-            resolveForSession(resolver, session.userId).then((principal) => ({
+          before: async (session) =>
+            await resolveForSession(resolver, session.userId).then((principal) => ({
               data: {
                 ...session,
                 activeLegalEntityId: null,
@@ -577,8 +578,8 @@ export const makeAuthenticationService = (
   const getSession = (requestHeaders: Headers) =>
     Effect.tryPromise({
       catch: mapRuntimeError,
-      try: () =>
-        auth.api.getSession({
+      try: async () =>
+        await auth.api.getSession({
           headers: requestHeaders,
           returnHeaders: true,
         }),
@@ -663,8 +664,8 @@ export const makeAuthenticationService = (
           Effect.flatMap(({ identity, principal }) =>
             Effect.tryPromise({
               catch: mapSessionUpdateError,
-              try: () =>
-                auth.api.updateSession({
+              try: async () =>
+                await auth.api.updateSession({
                   body: { activeTenantId: identity.tenantId },
                   headers: requestHeaders,
                   returnHeaders: true,
@@ -718,7 +719,7 @@ export const makeAuthenticationService = (
           {
             principalId: resolved.identity.principalId,
           },
-          !(resolved.savedLegalEntityId === undefined),
+          resolved.savedLegalEntityId !== undefined,
           'savedLegalEntityId',
           resolved.savedLegalEntityId,
           {
@@ -732,8 +733,8 @@ export const makeAuthenticationService = (
         }
         const updated = yield* Effect.tryPromise({
           catch: mapSessionUpdateError,
-          try: () =>
-            auth.api.updateSession({
+          try: async () =>
+            await auth.api.updateSession({
               body: { activeLegalEntityId: null },
               headers: requestHeaders,
               returnHeaders: true,
@@ -779,8 +780,8 @@ export const makeAuthenticationService = (
       }
       const updated = yield* Effect.tryPromise({
         catch: mapSessionUpdateError,
-        try: () =>
-          auth.api.updateSession({
+        try: async () =>
+          await auth.api.updateSession({
             body: { activeLegalEntityId: selection.selected.legalEntityId },
             headers: requestHeaders,
             returnHeaders: true,
@@ -812,8 +813,8 @@ export const makeAuthenticationService = (
       options.allowFixtureSignUp === true
         ? Effect.tryPromise({
             catch: mapRuntimeError,
-            try: () =>
-              auth.api.signUpEmail({
+            try: async () =>
+              await auth.api.signUpEmail({
                 body: {
                   email,
                   name,
@@ -860,8 +861,8 @@ export const makeAuthenticationService = (
     signIn: (email, password, requestHeaders) =>
       Effect.tryPromise({
         catch: mapRuntimeError,
-        try: () =>
-          auth.api.signInEmail({
+        try: async () =>
+          await auth.api.signInEmail({
             body: {
               email,
               password,
@@ -883,8 +884,8 @@ export const makeAuthenticationService = (
     signOut: (requestHeaders) =>
       Effect.tryPromise({
         catch: mapRuntimeError,
-        try: () =>
-          auth.api.signOut({
+        try: async () =>
+          await auth.api.signOut({
             headers: requestHeaders,
             returnHeaders: true,
           }),
@@ -904,8 +905,7 @@ export const makeAuthenticationService = (
     switchLegalEntity: (legalEntityId, requestHeaders) =>
       authenticatedSession(requestHeaders).pipe(
         Effect.flatMap((resolved) => {
-          const legalEntityContext = options.legalEntityContext;
-          const contextAccess = options.contextAccess;
+          const { contextAccess, legalEntityContext } = options;
           if (legalEntityContext === undefined || contextAccess === undefined) {
             return Effect.fail(new AuthenticationUnavailableError());
           }
@@ -927,8 +927,8 @@ export const makeAuthenticationService = (
                   })
                 : Effect.tryPromise({
                     catch: mapSessionUpdateError,
-                    try: () =>
-                      auth.api.updateSession({
+                    try: async () =>
+                      await auth.api.updateSession({
                         body: { activeLegalEntityId: selected.legalEntityId },
                         headers: requestHeaders,
                         returnHeaders: true,
@@ -963,8 +963,8 @@ export const makeAuthenticationService = (
                   })
                 : Effect.tryPromise({
                     catch: mapSessionUpdateError,
-                    try: () =>
-                      auth.api.updateSession({
+                    try: async () =>
+                      await auth.api.updateSession({
                         body: { activeLegalEntityId: null, activeTenantId: tenantId },
                         headers: requestHeaders,
                         returnHeaders: true,

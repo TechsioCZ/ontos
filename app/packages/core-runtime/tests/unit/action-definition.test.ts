@@ -14,7 +14,7 @@ import {
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
 
-test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
+void test('defines an immutable typed descriptor and decodes typed payloads and results', async () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
@@ -54,7 +54,7 @@ test('defines an immutable typed descriptor and decodes typed payloads and resul
   assert.equal(Object.isFrozen(registration.descriptor.policies), true);
 });
 
-test('uses Schema.Void for a no-payload Action', async () => {
+void test('uses Schema.Void for a no-payload Action', async () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'cache.read.v1' },
@@ -92,7 +92,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
   assert.equal(invalid._tag, 'ActionPayloadValidationError');
 });
 
-test('keeps the private handler outside the public Action registration', () => {
+void test('keeps the private handler outside the public Action registration', () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
@@ -122,7 +122,7 @@ test('keeps the private handler outside the public Action registration', () => {
   assert.deepEqual(Object.keys(registration), ['descriptor']);
 });
 
-test('rejects invalid declared results through a typed error', async () => {
+void test('rejects invalid declared results through a typed error', async () => {
   const error = await Effect.runPromise(
     Effect.flip(decodeActionResult(Schema.Struct({ id: Schema.String }), { id: 1 })),
   );
@@ -131,7 +131,7 @@ test('rejects invalid declared results through a typed error', async () => {
   assert.equal(error.code, 'action_result_invalid');
 });
 
-test('accepts global and same-owner Policy references and copies the collection', () => {
+void test('accepts global and same-owner Policy references and copies the collection', () => {
   const globalPolicy = defineGlobalPolicy<{ readonly amount: number }>({
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
@@ -174,7 +174,7 @@ test('accepts global and same-owner Policy references and copies the collection'
   assert.equal(registration.descriptor.policies[1], modulePolicy);
 });
 
-test('rejects cross-owner, string, copied, and missing Policy references at definition time', () => {
+void test('rejects cross-owner, string, copied, and missing Policy references at definition time', () => {
   const foreignPolicy = defineMicroverticalPolicy<unknown, 'billing.invoice'>({
     evaluate: () => Effect.void,
     owningModuleKey: 'billing.invoice',
@@ -246,7 +246,7 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
   assert.throws(() => validateActionDescriptorInput(descriptor));
 });
 
-test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
+void test('rejects Action entrypoint owner, scope, role/access, and forged immutability mismatches', () => {
   const registration = defineAction(
     {
       accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'stock.read.v1' },

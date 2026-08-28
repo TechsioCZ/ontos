@@ -39,21 +39,21 @@ const makeClient = (
   handle: (request: v1.CheckBulkPermissionsRequest) => Promise<v1.CheckBulkPermissionsResponse>,
 ): SpiceDbPermissionClient => ({
   checkBulkPermissions: handle,
-  checkPermission: () => Promise.reject(new Error('Action check must not run')),
+  checkPermission: async () => {
+    throw new Error('Action check must not run');
+  },
   close: () => {},
 });
 
-test('uses one fully consistent batch and correlates allowed and denied module decisions', async () => {
+void test('uses one fully consistent batch and correlates allowed and denied module decisions', async () => {
   const requests: v1.CheckBulkPermissionsRequest[] = [];
   const access = makeContextAccess(
-    makeClient((request) => {
+    makeClient(async (request) => {
       requests.push(request);
-      return Promise.resolve(
-        responseFor(request, [
-          v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-          v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-        ]),
-      );
+      return responseFor(request, [
+        v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+        v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+      ]);
     }),
   );
 
@@ -81,14 +81,12 @@ test('uses one fully consistent batch and correlates allowed and denied module d
   assert.equal(requests[0]?.items[0]?.subject?.object?.objectId, principalId);
 });
 
-test('checks resource writes independently from resource reads', async () => {
+void test('checks resource writes independently from resource reads', async () => {
   const permissions: string[] = [];
   const service = makeContextAccess(
-    makeClient((request) => {
+    makeClient(async (request) => {
       permissions.push(...request.items.map(({ permission }) => permission));
-      return Promise.resolve(
-        responseFor(request, [v1.CheckPermissionResponse_Permissionship.NO_PERMISSION]),
-      );
+      return responseFor(request, [v1.CheckPermissionResponse_Permissionship.NO_PERMISSION]);
     }),
   );
   const target = { moduleId: 'property.registry', resourceId: 'unit-1', resourceType: 'unit' };
@@ -107,7 +105,7 @@ test('checks resource writes independently from resource reads', async () => {
   assert.deepEqual(permissions, ['write']);
 });
 
-test('creates lossless tenant and legal-entity-qualified object identities', () => {
+void test('creates lossless tenant and legal-entity-qualified object identities', () => {
   const resource = {
     moduleId: 'property.registry',
     resourceId: 'unit:with/slashes',
@@ -130,17 +128,15 @@ test('creates lossless tenant and legal-entity-qualified object identities', () 
   );
 });
 
-test('supports empty batches and exact resource filtering', async () => {
+void test('supports empty batches and exact resource filtering', async () => {
   let requests = 0;
   const access = makeContextAccess(
-    makeClient((request) => {
+    makeClient(async (request) => {
       requests += 1;
-      return Promise.resolve(
-        responseFor(request, [
-          v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
-          v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
-        ]),
-      );
+      return responseFor(request, [
+        v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+        v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+      ]);
     }),
   );
   assert.deepEqual(
@@ -167,26 +163,24 @@ test('supports empty batches and exact resource filtering', async () => {
   assert.equal(requests, 1);
 });
 
-test('classifies client, partial, duplicate, malformed, and conditional results as unavailable', async () => {
+void test('classifies client, partial, duplicate, malformed, and conditional results as unavailable', async () => {
   const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
   const failures = [
-    makeClient(() => Promise.reject(new Error('secret SpiceDB diagnostic'))),
-    makeClient(() => Promise.resolve(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
-    makeClient((request) =>
-      Promise.resolve(
-        responseFor(request, [v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION]),
-      ),
+    makeClient(async () => {
+      throw new Error('secret SpiceDB diagnostic');
+    }),
+    makeClient(async () => v1.CheckBulkPermissionsResponse.create({ pairs: [] })),
+    makeClient(async (request) =>
+      responseFor(request, [v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION]),
     ),
-    makeClient((request) => {
+    makeClient(async (request) => {
       const response = responseFor(request, [
         v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
       ]);
       const [pair] = response.pairs;
-      return Promise.resolve(
-        v1.CheckBulkPermissionsResponse.create({
-          pairs: pair === undefined ? [] : [{ response: pair.response }],
-        }),
-      );
+      return v1.CheckBulkPermissionsResponse.create({
+        pairs: pair === undefined ? [] : [{ response: pair.response }],
+      });
     }),
   ];
   for (const client of failures) {

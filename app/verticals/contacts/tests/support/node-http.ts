@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import type { IncomingHttpHeaders } from 'node:http';
 
 export const appendRequestChunk = (chunks: Uint8Array[], chunk: string | Uint8Array): void => {

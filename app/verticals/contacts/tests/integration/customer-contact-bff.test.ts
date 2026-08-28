@@ -1,4 +1,4 @@
-/* eslint-disable no-promise-executor-return, promise/avoid-new, promise/no-multiple-resolved, promise/prefer-await-to-callbacks -- Node HTTP lifecycle callbacks are adapted once at the test boundary. */
+/* eslint-disable no-promise-executor-return, promise/avoid-new -- Node HTTP lifecycle callbacks are adapted once at the test boundary. */
 // @effect-diagnostics asyncFunction:off anyUnknownInErrorContext:off globalDate:off newPromise:off nodeBuiltinImport:off processEnv:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +16,7 @@ import {
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
 import { Effect, Layer, Schema } from '@modern-js/plugin-bff/effect-edge';
+import { isObject } from 'effect/Predicate';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeContactsApiRuntime } from '../../api/index.ts';
 import { parseJsonObject } from '../support/json-value.ts';
@@ -144,11 +145,11 @@ const startServer = async (
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  assert.ok(address instanceof Object);
+  assert.ok(isObject(address));
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
+    close: async () =>
+      await new Promise<void>((resolve, reject) =>
         server.close((error) => (error === undefined ? resolve() : reject(error))),
       ),
   };
@@ -161,8 +162,8 @@ test('runs every Contacts client operation through the real governed BFF boundar
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const publicJwk = await exportJWK(publicKey);
   const now = Math.floor(Date.now() / 1000);
-  const issueAssertion = () =>
-    new SignJWT({ principal, ver: 1 })
+  const issueAssertion = async () =>
+    await new SignJWT({ principal, ver: 1 })
       .setProtectedHeader({ alg: 'EdDSA', kid: 'contacts-bff', typ: 'JWT' })
       .setIssuer(issuer)
       .setAudience('contacts')
@@ -447,14 +448,12 @@ test('runs every Contacts client operation through the real governed BFF boundar
     let malformedGatewayIssues = 0;
     const malformedServer = await startServer(
       {
-        handler: () =>
-          Promise.resolve(
-            Response.json(
-              { ...completeCustomer, ico: 'malformed' },
-              {
-                status: 200,
-              },
-            ),
+        handler: async () =>
+          Response.json(
+            { ...completeCustomer, ico: 'malformed' },
+            {
+              status: 200,
+            },
           ),
       },
       issueAssertion,

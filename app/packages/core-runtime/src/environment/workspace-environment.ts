@@ -1,4 +1,4 @@
-/* eslint-disable node/no-process-env -- Workspace discovery may use the package-manager invocation directory. */
+// @effect-diagnostics nodeBuiltinImport:off processEnv:off
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 

@@ -1,4 +1,4 @@
-/* eslint-disable no-await-in-loop, node/no-process-env, typescript/no-non-null-assertion, unicorn/consistent-function-scoping -- The integration fixture owns isolated live SpiceDB state. */
+/* eslint-disable no-await-in-loop, typescript/no-non-null-assertion, unicorn/consistent-function-scoping -- The integration fixture owns isolated live SpiceDB state. */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -18,7 +18,7 @@ import {
 } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 
-test('isolates live legal-entity, module, and resource batches by tenant and entity', async () => {
+void test('isolates live legal-entity, module, and resource batches by tenant and entity', async () => {
   const configuration = await Effect.runPromise(loadSpiceDbConfig());
   const tenantId = randomUUID();
   const otherTenantId = randomUUID();

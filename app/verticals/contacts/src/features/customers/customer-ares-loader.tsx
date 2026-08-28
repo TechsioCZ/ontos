@@ -2,14 +2,14 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { SubmitEvent } from 'react';
 
 export interface CustomerAresLoaderCopy {
   readonly formLabel: string;
   readonly icoInvalid: string;
   readonly icoLabel: string;
-  readonly lookup: string;
   readonly lookingUp: string;
+  readonly lookup: string;
 }
 
 export interface CustomerAresLoaderStatus {
@@ -41,7 +41,7 @@ export const CustomerAresLoader = ({
   const controlsDisabled = disabled || pending;
   const icoErrorId = 'customer-ares-ico-error';
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (controlsDisabled || lookupInFlightRef.current) {
       return;
@@ -66,7 +66,7 @@ export const CustomerAresLoader = ({
     const releaseLookup = () => {
       lookupInFlightRef.current = false;
     };
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React form callbacks stay synchronous, and both outcomes release the interaction guard.
+    // oxlint-disable-next-line promise/prefer-await-to-then -- React form callbacks stay synchronous, and both outcomes release the interaction guard.
     void Promise.resolve(lookup).then(releaseLookup, releaseLookup);
   };
 

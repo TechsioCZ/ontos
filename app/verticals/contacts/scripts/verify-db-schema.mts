@@ -26,15 +26,15 @@ interface InfrastructureCatalogRow extends Readonly<Record<string, boolean | num
   readonly foreign_key_count: number;
   readonly journal_count: number;
   readonly policy_count: number;
+  readonly rls_count: number;
+  readonly role_bypass_rls: boolean;
+  readonly role_super: boolean;
   readonly runtime_create: boolean;
   readonly runtime_delete: boolean;
   readonly runtime_insert: boolean;
   readonly runtime_select: boolean;
   readonly runtime_update: boolean;
   readonly runtime_usage: boolean;
-  readonly role_bypass_rls: boolean;
-  readonly role_super: boolean;
-  readonly rls_count: number;
 }
 
 const expectedColumns = [

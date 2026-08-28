@@ -99,8 +99,8 @@ beforeEach(() => {
   getContactsQueryClient().clear();
   localeState.current = 'en';
   getContactMock.mockReturnValue(Effect.succeed(activeContact));
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
 });
 

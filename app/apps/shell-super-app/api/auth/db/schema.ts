@@ -1,4 +1,3 @@
-/* eslint-disable sort-keys -- Columns preserve the Better Auth CLI model order. */
 import { relations } from 'drizzle-orm';
 import { boolean, index, integer, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 

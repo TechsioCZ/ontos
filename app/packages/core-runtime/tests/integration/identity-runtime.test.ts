@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalDate:off
-/* eslint-disable no-await-in-loop, promise/prefer-await-to-callbacks -- Ordered checkpoint commits and the live SpiceDB fixture are deliberate. */
+/* eslint-disable no-await-in-loop -- Ordered checkpoint commits and the live SpiceDB fixture are deliberate. */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -39,7 +39,7 @@ import {
 } from '../../src/operations/context.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { openModuleStateGate } from '../support/open-module-state-gate.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -79,7 +79,7 @@ const relationship = (
     }),
   });
 
-test('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', async () => {
+void test('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', async () => {
   const connections = await Effect.runPromise(loadDatabaseConnectionPair());
   const spiceDbConfiguration = await Effect.runPromise(loadSpiceDbConfig());
   const adminPool = new Pool({ connectionString: connections.admin.connectionString });
@@ -124,7 +124,7 @@ test('runs identity mutations and tenant-isolated administration through live Ac
   );
   const readRuntime = makeReadRuntime(
     { executor: runtimeDatabase },
-    openModuleStateGate,
+    openModuleEntrypointGateway,
     operationalScope,
     contextAccess,
   );

@@ -22,32 +22,32 @@ export type ResourcePageModel =
       readonly state: 'ready';
     };
 
-export const loader = async ({ params, request }: ResourceLoaderArguments) => {
-  const shell = await loadHomePageModel(request);
-  if (shell.state !== 'authenticated') {
-    return {
-      shell,
-      state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-    } as const;
-  }
-  return runEffectRequest(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) => resourceDetail(params, options)),
-      Effect.map((resource): ResourcePageModel => ({ resource, shell, state: 'ready' })),
-      Effect.catch((error) =>
-        Effect.succeed<ResourcePageModel>({
-          shell,
-          state:
-            error._tag === 'ShellTargetForbiddenProblem'
-              ? 'forbidden'
-              : error._tag === 'ShellTargetNotFoundProblem'
-                ? 'not_found'
-                : error._tag === 'ShellSelectionRequiredProblem' ||
-                    error._tag === 'ShellAuthenticationRequiredProblem'
-                  ? 'selection_required'
-                  : 'unavailable',
-        }),
+export const loader = ({ params, request }: ResourceLoaderArguments) =>
+  loadHomePageModel(request).then((shell) => {
+    if (shell.state !== 'authenticated') {
+      return {
+        shell,
+        state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+      } as const;
+    }
+    return runEffectRequest(
+      shellAuthenticationClientOptionsFromRequest(request).pipe(
+        Effect.flatMap((options) => resourceDetail(params, options)),
+        Effect.map((resource): ResourcePageModel => ({ resource, shell, state: 'ready' })),
+        Effect.catch((error) =>
+          Effect.succeed<ResourcePageModel>({
+            shell,
+            state:
+              error._tag === 'ShellTargetForbiddenProblem'
+                ? 'forbidden'
+                : error._tag === 'ShellTargetNotFoundProblem'
+                  ? 'not_found'
+                  : error._tag === 'ShellSelectionRequiredProblem' ||
+                      error._tag === 'ShellAuthenticationRequiredProblem'
+                    ? 'selection_required'
+                    : 'unavailable',
+          }),
+        ),
       ),
-    ),
-  );
-};
+    );
+  });

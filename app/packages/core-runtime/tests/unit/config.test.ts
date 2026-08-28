@@ -10,7 +10,7 @@ import {
   parseDatabaseConnectionPair,
 } from '../../src/db/config.ts';
 
-test('loads the root environment independently of the invocation directory', async () => {
+void test('loads the root environment independently of the invocation directory', async () => {
   const originalDirectory = process.cwd();
   const rootExamplePath = ROOT_ENV_PATH.replace(/\.env$/u, '.env.example');
 
@@ -18,8 +18,8 @@ test('loads the root environment independently of the invocation directory', asy
     process.chdir('/');
     const configuration = await Effect.runPromise(
       loadDatabaseConfig({
-        envPath: rootExamplePath,
         environment: {},
+        envPath: rootExamplePath,
       }),
     );
 
@@ -33,7 +33,7 @@ test('loads the root environment independently of the invocation directory', asy
   }
 });
 
-test('parses valid local PostgreSQL connection settings', async () => {
+void test('parses valid local PostgreSQL connection settings', async () => {
   const configuration = await Effect.runPromise(
     parseDatabaseConfig({
       DATABASE_URL: 'postgresql://ontos:ontos@localhost:5433/ontos',
@@ -49,7 +49,7 @@ test('parses valid local PostgreSQL connection settings', async () => {
   });
 });
 
-test('keeps missing and malformed configuration in the typed error channel', async () => {
+void test('keeps missing and malformed configuration in the typed error channel', async () => {
   const missing = await Effect.runPromise(Effect.flip(parseDatabaseConfig({})));
   const malformed = await Effect.runPromise(
     Effect.flip(
@@ -63,7 +63,7 @@ test('keeps missing and malformed configuration in the typed error channel', asy
   assert.equal(malformed._tag, 'DatabaseConfigError');
 });
 
-test('requires distinct administrative and least-privilege runtime identities', async () => {
+void test('requires distinct administrative and least-privilege runtime identities', async () => {
   const valid = await Effect.runPromise(
     parseDatabaseConnectionPair({
       DATABASE_ADMIN_URL: 'postgresql://ontos_admin:admin@localhost:5433/ontos',
@@ -101,15 +101,14 @@ test('requires distinct administrative and least-privilege runtime identities', 
   assert.equal(superuserCompatible._tag, 'DatabaseConfigError');
 });
 
-test('finalizes the pool resource when its Effect scope closes', async () => {
+void test('finalizes the pool resource when its Effect scope closes', async () => {
   let finalized = false;
 
   await Effect.runPromise(
     Effect.scoped(
       acquirePoolResource(() => ({
-        end: () => {
+        end: async () => {
           finalized = true;
-          return Promise.resolve();
         },
       })),
     ),

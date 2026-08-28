@@ -181,17 +181,14 @@ export type OntosManifestActionValue = AnyActionRegistration;
 export type OntosManifestComponentValue = (...arguments_: never[]) => void;
 
 export interface OntosAuthoredPublicEvent<
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never> = Schema.ConstraintDecoder<
-    unknown,
-    never
-  >,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
 > extends Omit<OntosPublicEventContract, 'payloadContract'> {
   readonly payloadSchema: PayloadSchema;
 }
 
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
-  readonly api: Readonly<Record<string, HttpApi.Top>>;
+  readonly api: Readonly<Record<string, HttpApi.Constraint>>;
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
   readonly reports: readonly OntosReportDescriptor[];
@@ -209,7 +206,7 @@ export interface OntosModuleManifestInput {
 export type OntosModuleManifest<Input extends OntosModuleManifestInput = OntosModuleManifestInput> =
   Readonly<Input>;
 
-const exactDecode = <S extends Schema.ConstraintDecoder<unknown, never>, Value>(
+const exactDecode = <S extends Schema.ConstraintDecoder<unknown>, Value>(
   schema: S,
   value: Value,
 ): S['Type'] => Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(value);

@@ -70,16 +70,16 @@ const parsePrivateJwk = (encoded: string): Ed25519PrivateJwk => {
     {
       alg: 'EdDSA' as const,
       crv: 'Ed25519' as const,
-      d: parsed['d'],
+      d: parsed.d,
     },
-    !(keyOperations === undefined),
+    keyOperations !== undefined,
     'key_ops',
     ['sign'],
     {
-      kid: parsed['kid'],
+      kid: parsed.kid,
       kty: 'OKP' as const,
       use: 'sig' as const,
-      x: parsed['x'],
+      x: parsed.x,
     },
   );
   return privateJwk;

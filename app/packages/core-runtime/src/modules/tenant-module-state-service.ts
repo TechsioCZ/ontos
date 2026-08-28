@@ -1,4 +1,3 @@
-/* eslint-disable unicorn/no-array-method-this-argument -- Effect's dual forEach API is intentional. */
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { Clock, Context, DateTime, Effect, Layer, Schema } from 'effect';
 import { CoreDatabase } from '../db/client.ts';
@@ -315,14 +314,14 @@ export const persistTenantModuleStateChange = (
             withOptionalProperty(
               {
                 actionInvocationId: input.actionInvocationId,
-                changeSource,
                 changedByPrincipalId: input.principalId,
+                changeSource,
                 moduleKey: input.moduleKey,
                 newState: input.newState,
                 occurredAt: changedAt,
                 previousState,
               },
-              !(input.reason === undefined),
+              input.reason !== undefined,
               'reason',
               input.reason,
               {

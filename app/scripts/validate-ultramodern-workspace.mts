@@ -1950,7 +1950,7 @@ const workspaceValidationContract = {
     migrateStrictEffect: 'node ./scripts/migrate-strict-effect.mts',
     zeropsMaterialize: 'node ./scripts/materialize-zerops-runtime.mjs',
     contractCheck: 'node ./scripts/validate-ultramodern-workspace.mts',
-    typecheck: 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
+    typecheck: 'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json',
     check:
       'pnpm format:check && pnpm lint && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm contract:check && pnpm performance:readiness',
   },
@@ -1995,7 +1995,7 @@ const workspaceValidationContract = {
     'contract:check': 'node ./scripts/validate-ultramodern-workspace.mts',
     'module-entrypoints:check': 'node ./scripts/check-module-entrypoint-boundaries.mts',
     'check:module-contracts': 'node ./scripts/check-ontos-module-contracts.mts',
-    typecheck: 'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
+    typecheck: 'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json',
     check:
       'pnpm format:check && pnpm lint && pnpm action:test:unit && pnpm typecheck && pnpm skills:check && pnpm i18n:boundaries && pnpm api:check && pnpm database-access:check && pnpm module-entrypoints:check && pnpm check:module-contracts && pnpm contract:check && pnpm performance:readiness',
     'database-access:check': 'node ./scripts/check-database-access-boundaries.mts',
@@ -4617,7 +4617,7 @@ const assertPublicHeadContract = (appId, publicHead, headModule) => {
     'name="twitter:card"',
     'application/ld+json',
     'route?.jsonLd',
-    "replaceAll('<', '\\\\u003c')",
+    "replaceAll('<', String.raw`\\u003c`)",
   ]) {
     assert(headModule.includes(snippet), `${appId} route head module is missing ${snippet}`);
   }
@@ -6046,7 +6046,7 @@ if (bridgeConfig) {
 } else {
   assert(
     rootPackage.scripts?.typecheck ===
-      'node ./scripts/ultramodern-typecheck.mts --project tsconfig.json',
+      'node ./scripts/ultramodern-typecheck.mts --build tsconfig.json',
     'Root typecheck must run TS-Go across the root project reference graph',
   );
 }

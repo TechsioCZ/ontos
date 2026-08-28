@@ -16,6 +16,7 @@ import {
 import { ContactsUuidSchema } from '../../../../../../../../shared/apis/customer-detail.ts';
 import { getContact, runEffectRequest } from '../../../../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../../../../error-classification.ts';
 import {
   consumeContactEditSuccess,
   getContactsQueryClient,
@@ -74,9 +75,9 @@ interface ContactDetailCopy {
   readonly createdAt: string;
   readonly customerId: string;
   readonly decode: string;
+  readonly edit: string;
   readonly email: string;
   readonly emailLink: string;
-  readonly edit: string;
   readonly forbidden: string;
   readonly internal: string;
   readonly loading: string;
@@ -114,7 +115,7 @@ export const contactDetailQueryKey = (customerId: string, contactId: string) =>
   ['contacts', 'customers', customerId, 'contacts', 'detail', contactId] as const;
 
 export const classifyContactDetailError = (
-  error: ContactDetailClientError,
+  error: ErrorClassificationInput<ContactDetailClientError>,
 ): ContactDetailErrorState => {
   if (error._tag === 'HttpClientError') {
     if (error.reason._tag === 'TransportError') {

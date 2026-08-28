@@ -1,7 +1,9 @@
-export type LocaleCatalog = LocaleCatalogGroup | string;
-export type LocaleCatalogGroup = Readonly<Record<string, LocaleCatalog>>;
+import { Predicate } from 'effect';
 
-const isLocaleText = (value: LocaleCatalog): value is string => value === String(value);
+export type LocaleCatalog = LocaleCatalogGroup | string;
+export interface LocaleCatalogGroup extends Readonly<Record<string, LocaleCatalog>> {}
+
+const isLocaleText = (value: LocaleCatalog): value is string => Predicate.isString(value);
 const isRuntimeObject = <Value>(value: Value): value is Value & object =>
   value !== null && Object(value) === value;
 

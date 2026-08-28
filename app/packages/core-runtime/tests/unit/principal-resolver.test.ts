@@ -34,7 +34,7 @@ const failureTag = async (
   return error._tag;
 };
 
-test('lists safe eligible tenants by name and tenant ID', async () => {
+void test('lists safe eligible tenants by name and tenant ID', async () => {
   const records = [
     activeRecord,
     {
@@ -81,7 +81,7 @@ test('lists safe eligible tenants by name and tenant ID', async () => {
   ]);
 });
 
-test('lists and resolves one active tenant binding', async () => {
+void test('lists and resolves one active tenant binding', async () => {
   assert.deepEqual(await Effect.runPromise(classifyAvailableTenants([activeRecord])), [
     { name: 'Zeta tenant', tenantId: 'tenant-1' },
   ]);
@@ -101,7 +101,7 @@ test('lists and resolves one active tenant binding', async () => {
   });
 });
 
-test('chooses the oldest eligible binding and breaks creation ties by tenant ID', async () => {
+void test('chooses the oldest eligible binding and breaks creation ties by tenant ID', async () => {
   const result = await Effect.runPromise(
     classifyDefaultPrincipal([
       activeRecord,
@@ -129,7 +129,7 @@ test('chooses the oldest eligible binding and breaks creation ties by tenant ID'
   });
 });
 
-test('resolves only the exact eligible selected tenant', async () => {
+void test('resolves only the exact eligible selected tenant', async () => {
   const selected = {
     ...activeRecord,
     displayName: 'Grace Hopper',
@@ -152,7 +152,7 @@ test('resolves only the exact eligible selected tenant', async () => {
   );
 });
 
-test('rejects Better Auth user bindings to non-human principals', async () => {
+void test('rejects Better Auth user bindings to non-human principals', async () => {
   for (const principalKind of ['service', 'integration', 'agent', 'system'] as const) {
     const record = { ...activeRecord, principalKind };
     assert.equal(await failureTag(classifyDefaultPrincipal([record])), 'PrincipalInactiveError');
@@ -164,7 +164,7 @@ test('rejects Better Auth user bindings to non-human principals', async () => {
   }
 });
 
-test('resolves exactly one API-key subject for human, service, or integration principals', async () => {
+void test('resolves exactly one API-key subject for human, service, or integration principals', async () => {
   for (const principalKind of ['human', 'service', 'integration'] as const) {
     const resolved = await Effect.runPromise(
       classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]),
@@ -178,7 +178,7 @@ test('resolves exactly one API-key subject for human, service, or integration pr
   );
 });
 
-test('fails closed for empty, inactive, and duplicate eligible resolver states', async () => {
+void test('fails closed for empty, inactive, and duplicate eligible resolver states', async () => {
   assert.equal(await failureTag(classifyAvailableTenants([])), 'PrincipalBindingMissingError');
   assert.equal(
     await failureTag(classifyAvailableTenants([{ ...activeRecord, bindingStatus: 'revoked' }])),
@@ -211,12 +211,14 @@ test('fails closed for empty, inactive, and duplicate eligible resolver states',
   );
 });
 
-test('types database failures as resolver unavailability', async () => {
+void test('types database failures as resolver unavailability', async () => {
   const error = await Effect.runPromise(
     Effect.flip(
       listAvailableTenantsFromRepository(
         {
-          load: () => Promise.reject(new Error('secret database error')),
+          load: async () => {
+            throw new Error('secret database error');
+          },
         },
         'subject',
       ),

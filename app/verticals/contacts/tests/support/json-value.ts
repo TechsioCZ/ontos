@@ -1,9 +1,11 @@
 export type JsonScalar = boolean | null | number | string;
 export type JsonValue = JsonObject | JsonScalar | readonly JsonValue[];
-export type JsonObject = Readonly<Record<string, JsonValue>>;
+export interface JsonObject extends Readonly<Record<string, JsonValue>> {}
 
 const isRuntimeObject = <Value>(value: Value): value is Value & object =>
   value !== null && Object(value) === value;
+const isJsonObject = (value: JsonValue): value is JsonObject =>
+  isRuntimeObject(value) && !Array.isArray(value);
 
 export const parseJsonValue = <Input>(input: Input): JsonValue => {
   if (input === null) {
@@ -31,7 +33,7 @@ export const parseJsonValue = <Input>(input: Input): JsonValue => {
 
 export const parseJsonObject = <Input>(input: Input): JsonObject => {
   const value = parseJsonValue(input);
-  if (!isRuntimeObject(value) || Array.isArray(value)) {
+  if (!isJsonObject(value)) {
     throw new TypeError('Value is not a JSON object');
   }
   return value;

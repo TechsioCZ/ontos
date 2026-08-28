@@ -131,18 +131,16 @@ const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
 };
 const PENDING_BINDING_LEASE_MILLISECONDS = 5 * 60 * 1000;
 const PENDING_CLEANUP_BATCH_SIZE = 100;
-/* eslint-disable sort-keys -- The stable marker prefix is intentionally indexed and queried. */
 const pendingBindingMarker = (input: {
   readonly issuerPrincipalId: string;
   readonly lifecycleOperationId: string;
   readonly tenantId: string;
 }) => ({
-  ontosLifecycle: 'binding_pending_v1' as const,
-  tenantId: input.tenantId,
   issuerPrincipalId: input.issuerPrincipalId,
   lifecycleOperationId: input.lifecycleOperationId,
+  ontosLifecycle: 'binding_pending_v1' as const,
+  tenantId: input.tenantId,
 });
-/* eslint-enable sort-keys */
 interface PendingBindingMarker {
   readonly issuerPrincipalId: string;
   readonly lifecycleOperationId: string;
@@ -264,19 +262,19 @@ export const makeApiKeyService = (
     issue: (requestHeaders, input) =>
       Effect.tryPromise({
         catch: mapProviderError,
-        try: () =>
-          auth.api.createApiKey({
+        try: async () =>
+          await auth.api.createApiKey({
             body: withOptionalProperty(
               withOptionalProperty(
                 {
                   expiresIn: input.expiresIn ?? null,
                 },
-                !(input.name === undefined),
+                input.name !== undefined,
                 'name',
                 input.name,
                 {},
               ),
-              !(input.prefix === undefined),
+              input.prefix !== undefined,
               'prefix',
               input.prefix,
               {
@@ -353,7 +351,7 @@ export const makeApiKeyService = (
     verify: (rawKey) =>
       Effect.tryPromise({
         catch: mapProviderError,
-        try: () => auth.api.verifyApiKey({ body: { key: rawKey } }),
+        try: async () => await auth.api.verifyApiKey({ body: { key: rawKey } }),
       }).pipe(
         Effect.flatMap((result): Effect.Effect<VerifiedApiKey, ApiKeyProviderError> => {
           if (result.valid && result.key !== null) {

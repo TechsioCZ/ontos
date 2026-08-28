@@ -1,5 +1,4 @@
 // @effect-diagnostics asyncFunction:off
-/* eslint-disable require-await, promise/prefer-await-to-callbacks, unicorn/no-useless-undefined -- The fake transaction mirrors Drizzle's callback and CRUD surface. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -41,8 +40,8 @@ const makeHarness = (
       readonly resourceType: string;
     }) => void;
     readonly permissionDecision?: 'allowed' | 'denied' | 'unavailable';
-    readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resolvedScope?: typeof scope & { readonly legalEntityId?: string };
+    readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
   } = {},
 ) => {
   let evidence = 0;
@@ -157,7 +156,7 @@ const registration = (items: readonly string[] = []) =>
     () => ({ kind: 'module', moduleId: 'core.shell' }),
   );
 
-test('runs every gate before the handler and persists evidence before releasing zero results', async () => {
+void test('runs every gate before the handler and persists evidence before releasing zero results', async () => {
   const harness = makeHarness();
   const result = await Effect.runPromise(
     harness.runtime.runRead({
@@ -172,7 +171,7 @@ test('runs every gate before the handler and persists evidence before releasing 
   assert.deepEqual(harness.stages, READ_RUNTIME_STAGES);
 });
 
-test('uses each denying Policy reference own declared HTTP status', async () => {
+void test('uses each denying Policy reference own declared HTTP status', async () => {
   await Promise.all(
     ([409, 422] as const).map(async (denialStatus) => {
       const harness = makeHarness();
@@ -209,7 +208,7 @@ test('uses each denying Policy reference own declared HTTP status', async () => 
   );
 });
 
-test('executes every governed access kind and computes hash-only query evidence inside Core', async () => {
+void test('executes every governed access kind and computes hash-only query evidence inside Core', async () => {
   await Promise.all(
     (['detail', 'download', 'export', 'list', 'report', 'search'] as const).map(
       async (accessKind) => {
@@ -251,13 +250,13 @@ test('executes every governed access kind and computes hash-only query evidence 
           ),
           [],
         );
-        assert.match(String(harness.evidenceRows()[0]?.['queryHash']), /^[\da-f]{64}$/u);
+        assert.match(String(harness.evidenceRows()[0]?.queryHash), /^[\da-f]{64}$/u);
       },
     ),
   );
 });
 
-test('rejects invalid input before opening a transaction or executing a handler', async () => {
+void test('rejects invalid input before opening a transaction or executing a handler', async () => {
   const harness = makeHarness();
   const error = await Effect.runPromise(
     Effect.flip(
@@ -273,7 +272,7 @@ test('rejects invalid input before opening a transaction or executing a handler'
   assert.equal(harness.evidence(), 0);
 });
 
-test('preserves typed result-validation failure across transaction rollback', async () => {
+void test('preserves typed result-validation failure across transaction rollback', async () => {
   const harness = makeHarness();
   const invalidRegistration = defineRead(
     registration().descriptor,
@@ -306,7 +305,7 @@ test('preserves typed result-validation failure across transaction rollback', as
   assert.equal(harness.evidence(), 0);
 });
 
-test('never releases an allowed result when required evidence persistence fails', async () => {
+void test('never releases an allowed result when required evidence persistence fails', async () => {
   const harness = makeHarness({ failEvidence: true });
   const error = await Effect.runPromise(
     Effect.flip(
@@ -322,7 +321,7 @@ test('never releases an allowed result when required evidence persistence fails'
   assert.equal(harness.evidence(), 0);
 });
 
-test('preserves scoped service-factory unavailability and never invokes the handler', async () => {
+void test('preserves scoped service-factory unavailability and never invokes the handler', async () => {
   const harness = makeHarness();
   let handlerCalls = 0;
   const unavailableRegistration = defineRead(
@@ -355,7 +354,7 @@ test('preserves scoped service-factory unavailability and never invokes the hand
   assert.equal(harness.evidence(), 0);
 });
 
-test('persists sanitized permission denial and never invokes the private handler', async () => {
+void test('persists sanitized permission denial and never invokes the private handler', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   const harness = makeHarness({
     permissionDecision: 'denied',
@@ -397,7 +396,7 @@ test('persists sanitized permission denial and never invokes the private handler
   assert.equal(harness.evidence(), 1);
 });
 
-test('derives the authorized resource from decoded input and ignores conflicting transport hints', async () => {
+void test('derives the authorized resource from decoded input and ignores conflicting transport hints', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   let authorizedTarget: { moduleId: string; resourceId: string; resourceType: string } | undefined;
   const harness = makeHarness({
@@ -451,7 +450,7 @@ test('derives the authorized resource from decoded input and ignores conflicting
   assert.deepEqual(authorizedTarget, target);
 });
 
-test('rejects handler-controlled hashes in metadata-only evidence', async () => {
+void test('rejects handler-controlled hashes in metadata-only evidence', async () => {
   const harness = makeHarness();
   const unboundedEvidence = defineRead(
     registration().descriptor,
@@ -473,7 +472,7 @@ test('rejects handler-controlled hashes in metadata-only evidence', async () => 
   assert.equal(harness.evidence(), 0);
 });
 
-test('persists late definite denial after rolling back the owner transaction', async () => {
+void test('persists late definite denial after rolling back the owner transaction', async () => {
   const harness = makeHarness();
   const lateDenial = defineRead(
     registration().descriptor,
@@ -501,7 +500,7 @@ test('persists late definite denial after rolling back the owner transaction', a
   assert.equal(harness.evidence(), 1);
 });
 
-test('does not release generated search candidates denied by result-level authorization', async () => {
+void test('does not release generated search candidates denied by result-level authorization', async () => {
   const legalEntityId = '00000000-0000-4000-8000-000000000004';
   const candidate = {
     moduleId: 'inventory.stock',
@@ -550,7 +549,7 @@ test('does not release generated search candidates denied by result-level author
   assert.equal(harness.evidence(), 1);
 });
 
-test('preserves declared owner read availability and not-found failures but sanitizes defects', async () => {
+void test('preserves declared owner read availability and not-found failures but sanitizes defects', async () => {
   const failures = [
     new ReadHandlerUnavailable({
       code: 'read_handler_unavailable',

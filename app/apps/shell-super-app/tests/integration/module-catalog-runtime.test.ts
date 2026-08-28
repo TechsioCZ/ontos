@@ -214,7 +214,7 @@ const serve = async <Document>(document: Document) => {
   };
 };
 
-test('keeps discovered metadata separate from one complete owner-local runtime', async () => {
+void test('keeps discovered metadata separate from one complete owner-local runtime', async () => {
   const property = await serve(
     contract('property-registry', 'property.registry', {
       actions: propertySafeRuntime.actions,

@@ -42,7 +42,7 @@ const {
     historyBackMock: rstest.fn(),
     historyCanGoBack: { current: false },
     localeState: state,
-    navigateMock: rstest.fn(() => Promise.resolve()),
+    navigateMock: rstest.fn(async () => {}),
     runEffectRequestMock: rstest.fn(),
   };
 });
@@ -143,8 +143,8 @@ beforeEach(() => {
   navigateMock.mockResolvedValue();
   getCustomerDetailMock.mockReturnValue(Effect.succeed(customer));
   editCustomerMock.mockReturnValue(Effect.succeed(updatedCustomer));
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
 });
 

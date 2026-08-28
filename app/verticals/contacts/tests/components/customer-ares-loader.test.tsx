@@ -136,7 +136,7 @@ test('suppresses repeat activation while one lookup callback is unsettled', asyn
   const pending = new Promise<void>((resolve) => {
     settle = resolve;
   });
-  const onLookup = rstest.fn(() => pending);
+  const onLookup = rstest.fn(async () => await pending);
   const user = userEvent.setup();
   render(<CustomerAresLoader {...loaderProps({ onLookup })} />);
 
@@ -156,7 +156,7 @@ test('suppresses repeated Enter activation while one lookup callback is unsettle
   const pending = new Promise<void>((resolve) => {
     settle = resolve;
   });
-  const onLookup = rstest.fn(() => pending);
+  const onLookup = rstest.fn(async () => await pending);
   const user = userEvent.setup();
   render(<CustomerAresLoader {...loaderProps({ onLookup })} />);
 
@@ -171,7 +171,7 @@ test('suppresses repeated Enter activation while one lookup callback is unsettle
 
 test('releases the interaction guard after a rejected presentation callback', async () => {
   const onLookup = rstest
-    .fn(() => Promise.resolve())
+    .fn(async () => {})
     .mockRejectedValueOnce(new Error('presentation callback failed'))
     .mockResolvedValueOnce();
   const user = userEvent.setup();

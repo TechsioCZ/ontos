@@ -130,18 +130,21 @@ test('enforces Contacts constraints, tenant RLS, parent integrity, and durable a
         { dic: 'x'.repeat(21) },
         { legalFormCode: '11A' },
         { dissolvedOn: '2020-01-01', establishedOn: '2020-01-02' },
-      ].map((invalidBusinessFields) =>
-        assert.rejects(
-          runtime.transaction(async (transaction) => {
-            await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
-            await transaction.insert(customers).values({
-              name: 'Invalid business fields',
-              tenantId: tenantA,
-              ...invalidBusinessFields,
-            });
-          }),
-          hasPostgreSqlCode('23514'),
-        ),
+      ].map(
+        async (invalidBusinessFields) =>
+          await assert.rejects(
+            runtime.transaction(async (transaction) => {
+              await transaction.execute(
+                sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
+              );
+              await transaction.insert(customers).values({
+                name: 'Invalid business fields',
+                tenantId: tenantA,
+                ...invalidBusinessFields,
+              });
+            }),
+            hasPostgreSqlCode('23514'),
+          ),
       ),
     );
 
@@ -247,18 +250,21 @@ test('enforces Contacts constraints, tenant RLS, parent integrity, and durable a
           name: 'Empty phone',
           phone: '   ',
         },
-      ].map((invalidContact) =>
-        assert.rejects(
-          runtime.transaction(async (transaction) => {
-            await transaction.execute(sql`select set_config('ontos.tenant_id', ${tenantA}, true)`);
-            await transaction.insert(contacts).values({
-              customerId: customerA,
-              tenantId: tenantA,
-              ...invalidContact,
-            });
-          }),
-          hasPostgreSqlCode('23514'),
-        ),
+      ].map(
+        async (invalidContact) =>
+          await assert.rejects(
+            runtime.transaction(async (transaction) => {
+              await transaction.execute(
+                sql`select set_config('ontos.tenant_id', ${tenantA}, true)`,
+              );
+              await transaction.insert(contacts).values({
+                customerId: customerA,
+                tenantId: tenantA,
+                ...invalidContact,
+              });
+            }),
+            hasPostgreSqlCode('23514'),
+          ),
       ),
     );
 

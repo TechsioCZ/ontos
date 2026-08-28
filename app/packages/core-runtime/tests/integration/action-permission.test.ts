@@ -1,4 +1,4 @@
-/* eslint-disable max-classes-per-file, no-await-in-loop, node/no-process-env, promise/prefer-await-to-callbacks -- The integration test owns explicit local dependency configuration, sequential isolated scenarios, and controlled Drizzle transaction faults. */
+/* eslint-disable no-await-in-loop, promise/prefer-await-to-callbacks -- The integration test owns explicit local dependency configuration, sequential isolated scenarios, and controlled Drizzle transaction faults. */
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off processEnv:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -112,10 +112,10 @@ const withDatabase = <Value, Error>(
     }),
   );
 
-const databasePromise = <Value>(
+const databasePromise = async <Value>(
   operation: (database: ContextServiceContract) => PromiseLike<Value>,
 ): Promise<Value> =>
-  Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
+  await Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
 const relationshipActionKeys = new Set<string>();
 
@@ -455,17 +455,19 @@ test('allows direct Principal and Tenant-membership executor grants', async () =
     ] as const) {
       let executions = 0;
       const moduleStateKey = `${actionPrefix}.state.${kind}`;
-      await runWithLivePermission(database, (runtime) =>
-        Effect.runPromise(
-          runtime.runAction({
-            payload: undefined,
-            principal,
-            registration: registration(actionKey, moduleStateKey, () => {
-              executions += 1;
+      await runWithLivePermission(
+        database,
+        async (runtime) =>
+          await Effect.runPromise(
+            runtime.runAction({
+              payload: undefined,
+              principal,
+              registration: registration(actionKey, moduleStateKey, () => {
+                executions += 1;
+              }),
+              transport: transport(kind, moduleStateKey),
             }),
-            transport: transport(kind, moduleStateKey),
-          }),
-        ),
+          ),
       );
       const rows = await database.executor
         .select()
@@ -483,19 +485,21 @@ test('persists one normalized terminal denial and no business or collected evide
     let executions = 0;
     const key = 'missing';
     const moduleStateKey = `${actionPrefix}.state.missing`;
-    const failure = await runWithLivePermission(database, (runtime) =>
-      Effect.runPromise(
-        Effect.flip(
-          runtime.runAction({
-            payload: undefined,
-            principal,
-            registration: registration(actionKeys.missing, moduleStateKey, () => {
-              executions += 1;
+    const failure = await runWithLivePermission(
+      database,
+      async (runtime) =>
+        await Effect.runPromise(
+          Effect.flip(
+            runtime.runAction({
+              payload: undefined,
+              principal,
+              registration: registration(actionKeys.missing, moduleStateKey, () => {
+                executions += 1;
+              }),
+              transport: transport(key, moduleStateKey),
             }),
-            transport: transport(key, moduleStateKey),
-          }),
+          ),
         ),
-      ),
     );
     const [invocation] = await database.executor
       .select()
@@ -561,19 +565,21 @@ test('denies a legacy marker without an executor and membership-set outsiders', 
     ] as const) {
       let executions = 0;
       const moduleStateKey = `${actionPrefix}.state.${kind}`;
-      const failure = await runWithLivePermission(database, (runtime) =>
-        Effect.runPromise(
-          Effect.flip(
-            runtime.runAction({
-              payload: undefined,
-              principal: deniedPrincipal,
-              registration: registration(actionKey, moduleStateKey, () => {
-                executions += 1;
+      const failure = await runWithLivePermission(
+        database,
+        async (runtime) =>
+          await Effect.runPromise(
+            Effect.flip(
+              runtime.runAction({
+                payload: undefined,
+                principal: deniedPrincipal,
+                registration: registration(actionKey, moduleStateKey, () => {
+                  executions += 1;
+                }),
+                transport: transport(kind, moduleStateKey),
               }),
-              transport: transport(kind, moduleStateKey),
-            }),
+            ),
           ),
-        ),
       );
 
       assert.equal(failure._tag, 'ActionPermissionDenied', kind);
@@ -596,10 +602,12 @@ test('serializes concurrent denials into one Audit Event without executing the h
       transport: transport(key, moduleStateKey),
     };
     const results = await Promise.all(
-      [1, 2].map(() =>
-        runWithLivePermission(database, (runtime) =>
-          Effect.runPromise(Effect.flip(runtime.runAction(input))),
-        ),
+      [1, 2].map(
+        async () =>
+          await runWithLivePermission(
+            database,
+            async (runtime) => await Effect.runPromise(Effect.flip(runtime.runAction(input))),
+          ),
       ),
     );
     const [invocation] = await database.executor
@@ -629,8 +637,8 @@ const withDenialPersistenceFailure = (
   stage: DenialFailureStage,
 ): ContextServiceContract => {
   const transactionOverride = {
-    transaction: (callback, configuration) =>
-      database.executor.transaction((transaction) => {
+    transaction: async (callback, configuration) =>
+      await database.executor.transaction(async (transaction) => {
         const insert: typeof transaction.insert = (table) => {
           if (stage === 'audit' && Object.is(table, auditEvents)) {
             throw new Error(`Injected denial ${stage} failure`);
@@ -647,7 +655,7 @@ const withDenialPersistenceFailure = (
           insert,
           update,
         });
-        return callback(faultingTransaction);
+        return await callback(faultingTransaction);
       }, configuration),
   } satisfies Pick<ContextServiceContract['executor'], 'transaction'>;
   const executor: ContextServiceContract['executor'] = Object.assign(
@@ -676,8 +684,8 @@ test('rolls back both denial evidence writes when either persistence step fails'
       );
       const failure = await runWithLivePermission(
         withDenialPersistenceFailure(database, stage),
-        (runtime) =>
-          Effect.runPromise(
+        async (runtime) =>
+          await Effect.runPromise(
             Effect.flip(
               runtime.runAction({
                 payload: undefined,
@@ -716,8 +724,8 @@ test('fails closed for invalid SpiceDB credentials and leaves retryable received
     const moduleStateKey = `${actionPrefix}.state.invalid-credentials`;
     const failure = await runWithLivePermission(
       database,
-      (runtime) =>
-        Effect.runPromise(
+      async (runtime) =>
+        await Effect.runPromise(
           Effect.flip(
             runtime.runAction({
               payload: undefined,

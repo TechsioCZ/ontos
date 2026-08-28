@@ -36,14 +36,14 @@ const makeClient = (
 ): PermissionCheckClient => {
   let index = 0;
   return {
-    checkPermission: (request) => {
+    checkPermission: async (request) => {
       requests.push(request);
       const result = responses[index];
       index += 1;
       if (result instanceof Error) {
-        return Promise.reject(result);
+        throw result;
       }
-      return Promise.resolve(result);
+      return result;
     },
     close: () => {},
   };
@@ -56,7 +56,7 @@ test('loads the root SpiceDB environment independently of the invocation directo
   try {
     process.chdir('/');
     const configuration = await Effect.runPromise(
-      loadSpiceDbConfig({ envPath: rootExamplePath, environment: {} }),
+      loadSpiceDbConfig({ environment: {}, envPath: rootExamplePath }),
     );
 
     assert.equal(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env'), true);
@@ -110,7 +110,9 @@ test('requires complete configuration and explicit secure or localhost-insecure 
         SPICEDB_INSECURE: 'true',
         SPICEDB_PRESHARED_KEY: '   ',
       },
-    ].map((environment) => Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment)))),
+    ].map(
+      async (environment) => await Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment))),
+    ),
   );
 
   assert.deepEqual(validSecure, {
@@ -156,7 +158,9 @@ test('allows insecure transport only for the exact Zerops stage private endpoint
         SPICEDB_PRESHARED_KEY: 'test-key',
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
       },
-    ].map((environment) => Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment)))),
+    ].map(
+      async (environment) => await Effect.runPromise(Effect.flip(parseSpiceDbConfig(environment))),
+    ),
   );
 
   assert.deepEqual(stage, {
@@ -237,7 +241,13 @@ test('report-only compatibility distinguishes missing policy from an explicit re
       ],
       missingRequests,
     ),
-    { emit: (event) => events.push(event), nowEpochMs: () => nowEpochMs, rollout },
+    {
+      emit: (event) => {
+        events.push(event);
+      },
+      nowEpochMs: () => nowEpochMs,
+      rollout,
+    },
   );
   assert.equal(await Effect.runPromise(missing.checkActionPermission(input)), 'allowed');
   assert.deepEqual(
@@ -263,10 +273,11 @@ test('fails closed for conditional, unspecified, malformed, and client failures'
       makeClient([response(v1.CheckPermissionResponse_Permissionship.UNSPECIFIED)]),
       makeClient([undefined]),
       makeClient([new Error('ontos-local-development-key unavailable at internal host')]),
-    ].map((client) =>
-      Effect.runPromise(
-        Effect.flip(makeActionPermissionService(client).checkActionPermission(input)),
-      ),
+    ].map(
+      async (client) =>
+        await Effect.runPromise(
+          Effect.flip(makeActionPermissionService(client).checkActionPermission(input)),
+        ),
     ),
   );
 
@@ -293,8 +304,8 @@ test('constructs the live client with a bounded deadline and finalizes it with t
         (_configuration, timeoutMilliseconds) => {
           observedTimeout = timeoutMilliseconds;
           return {
-            checkPermission: () =>
-              Promise.resolve(response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)),
+            checkPermission: async () =>
+              response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
             close: () => {
               finalized = true;
             },
@@ -334,7 +345,9 @@ test('finalizes an acquired client even when its scoped use fails', async () => 
     Effect.flip(
       Effect.scoped(
         acquirePermissionClientResource(() => ({
-          checkPermission: () => Promise.reject(new Error('unavailable')),
+          checkPermission: async () => {
+            throw new Error('unavailable');
+          },
           close: () => {
             finalized = true;
           },

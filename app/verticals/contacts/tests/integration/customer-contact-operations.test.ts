@@ -1,4 +1,4 @@
-/* eslint-disable no-await-in-loop, promise/prefer-await-to-callbacks, typescript/no-explicit-any -- The live fixture injects one Drizzle transaction fault and cleans dependent tenant rows in foreign-key order. */
+/* eslint-disable no-await-in-loop, promise/prefer-await-to-callbacks -- The live fixture injects one Drizzle transaction fault and cleans dependent tenant rows in foreign-key order. */
 // @effect-diagnostics asyncFunction:off anyUnknownInErrorContext:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -6,14 +6,16 @@ import test from 'node:test';
 import {
   loadDatabaseConfig,
   loadDatabaseConnectionPair,
+  defineAction,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
-import { eq } from 'drizzle-orm';
+import { eq, getTableName } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { Pool } from 'pg';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
+import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { auditEvents, dataAccessEvents } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -106,16 +108,16 @@ type OperationsDatabase = Effect.Success<ReturnType<typeof makeCoreDatabase>>;
 
 const failingEvidenceDatabase = (database: OperationsDatabase): OperationsDatabase => {
   const executeTransaction = database.executor.transaction.bind(database.executor);
-  const transaction: typeof database.executor.transaction = (callback, configuration) =>
-    executeTransaction((executor) => {
+  const transaction: typeof database.executor.transaction = async (callback, configuration) =>
+    await executeTransaction(async (executor) => {
       const insert: typeof executor.insert = (table) => {
-        if (table === dataAccessEvents) {
+        if (getTableName(table) === getTableName(dataAccessEvents)) {
           throw new Error('Injected Contacts evidence persistence failure');
         }
         return executor.insert(table);
       };
       const faultingExecutor: typeof executor = Object.assign(Object.create(executor), { insert });
-      return callback(faultingExecutor);
+      return await callback(faultingExecutor);
     }, configuration);
   const executor: typeof database.executor = Object.assign(Object.create(database.executor), {
     transaction,
@@ -199,40 +201,41 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             scopeResolver,
             { moduleEntrypointGateway: moduleGateway, moduleStateGate },
           );
+          const rollbackCreateCustomerAction = defineAction(
+            createCustomerAction.descriptor,
+            getActionHandler(createCustomerAction),
+            (transaction, scope) =>
+              Effect.succeed({
+                create: (payload: CreateCustomerPayload) =>
+                  Effect.tryPromise({
+                    catch: () =>
+                      new ContactsPersistenceUnavailable({
+                        code: 'contacts_persistence_unavailable',
+                        reason: 'Injected failure after the Customer write',
+                      }),
+                    try: () =>
+                      transaction
+                        .insert(customers)
+                        .values({ ...payload, tenantId: scope.tenantId })
+                        .returning(),
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ContactsPersistenceUnavailable({
+                          code: 'contacts_persistence_unavailable',
+                          reason: 'Injected failure after the Customer write',
+                        }),
+                      ),
+                    ),
+                  ),
+              }),
+          );
           const rollbackActions = makeActionRuntime(
             database,
             makeActionRepository(),
             { checkActionPermission: () => Effect.succeed('allowed' as const) },
             scopeResolver,
-            {
-              moduleEntrypointGateway: moduleGateway,
-              moduleStateGate,
-              resolveServiceFactory: () => (transaction, scope) =>
-                Effect.succeed({
-                  create: (payload: CreateCustomerPayload) =>
-                    Effect.tryPromise({
-                      catch: () =>
-                        new ContactsPersistenceUnavailable({
-                          code: 'contacts_persistence_unavailable',
-                          reason: 'Injected failure after the Customer write',
-                        }),
-                      try: () =>
-                        transaction
-                          .insert(customers)
-                          .values({ ...payload, tenantId: scope.tenantId })
-                          .returning(),
-                    }).pipe(
-                      Effect.andThen(
-                        Effect.fail(
-                          new ContactsPersistenceUnavailable({
-                            code: 'contacts_persistence_unavailable',
-                            reason: 'Injected failure after the Customer write',
-                          }),
-                        ),
-                      ),
-                    ),
-                }),
-            },
+            { moduleEntrypointGateway: moduleGateway, moduleStateGate },
           );
           const reads = makeReadRuntime(database, moduleGateway, scopeResolver, contextAccess);
           const verifyReadEvidence = <Success, Failure, Requirements>(
@@ -247,8 +250,8 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             },
           ) =>
             Effect.gen(function* verifyOneReadEvidence() {
-              const selectEvidence = () =>
-                adminPool.query<{
+              const selectEvidence = async () =>
+                await adminPool.query<{
                   access_kind: string;
                   action_invocation_id: string | null;
                   auth_binding_id: string | null;
@@ -348,11 +351,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
           );
           assert.equal(conflictingReplay._tag, 'ActionRequestHashConflict');
 
-          const customersBeforeInvalidPayload = yield* Effect.promise(() =>
-            adminPool.query<{ count: string }>(
-              'select count(*) from contacts.customers where tenant_id = $1',
-              [tenantId],
-            ),
+          const customersBeforeInvalidPayload = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ count: string }>(
+                'select count(*) from contacts.customers where tenant_id = $1',
+                [tenantId],
+              ),
           );
           const invalidPayload = yield* Effect.flip(
             actions.runAction({
@@ -366,11 +370,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             }),
           );
           assert.equal(invalidPayload._tag, 'ActionPayloadValidationError');
-          const customersAfterInvalidPayload = yield* Effect.promise(() =>
-            adminPool.query<{ count: string }>(
-              'select count(*) from contacts.customers where tenant_id = $1',
-              [tenantId],
-            ),
+          const customersAfterInvalidPayload = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ count: string }>(
+                'select count(*) from contacts.customers where tenant_id = $1',
+                [tenantId],
+              ),
           );
           assert.equal(
             customersAfterInvalidPayload.rows[0]?.count,
@@ -395,26 +400,28 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
           });
           assert.equal(otherTenantCustomer.ico, completeCustomerFields.ico);
 
-          const customersBeforeRollback = yield* Effect.promise(() =>
-            adminPool.query<{ count: string }>(
-              'select count(*) from contacts.customers where tenant_id = $1',
-              [tenantId],
-            ),
+          const customersBeforeRollback = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ count: string }>(
+                'select count(*) from contacts.customers where tenant_id = $1',
+                [tenantId],
+              ),
           );
           const rollbackFailure = yield* Effect.flip(
             rollbackActions.runAction({
               payload: customerPayload('Must roll back'),
               principal,
-              registration: createCustomerAction,
+              registration: rollbackCreateCustomerAction,
               transport: transport('create-customer-rollback-after-write'),
             }),
           );
           assert.equal(rollbackFailure._tag, 'ContactsPersistenceUnavailable');
-          const customersAfterRollback = yield* Effect.promise(() =>
-            adminPool.query<{ count: string }>(
-              'select count(*) from contacts.customers where tenant_id = $1',
-              [tenantId],
-            ),
+          const customersAfterRollback = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ count: string }>(
+                'select count(*) from contacts.customers where tenant_id = $1',
+                [tenantId],
+              ),
           );
           assert.equal(
             customersAfterRollback.rows[0]?.count,
@@ -497,11 +504,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
           assert.equal(contact.customerId, customer.customerId);
           assert.equal(contact.email, 'ada@example.test');
 
-          const contactsBeforeMissingParent = yield* Effect.promise(() =>
-            adminPool.query<{ count: string }>(
-              'select count(*) from contacts.contacts where tenant_id = $1',
-              [tenantId],
-            ),
+          const contactsBeforeMissingParent = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ count: string }>(
+                'select count(*) from contacts.contacts where tenant_id = $1',
+                [tenantId],
+              ),
           );
           const missingParent = yield* Effect.flip(
             actions.runAction({
@@ -517,11 +525,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             }),
           );
           assert.equal(missingParent._tag, 'ContactsCustomerNotFound');
-          const contactsAfterMissingParent = yield* Effect.promise(() =>
-            adminPool.query<{ count: string }>(
-              'select count(*) from contacts.contacts where tenant_id = $1',
-              [tenantId],
-            ),
+          const contactsAfterMissingParent = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ count: string }>(
+                'select count(*) from contacts.contacts where tenant_id = $1',
+                [tenantId],
+              ),
           );
           assert.equal(
             contactsAfterMissingParent.rows[0]?.count,
@@ -666,7 +675,7 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             registration: archiveCustomerAction,
             transport: transport('archive-customer'),
           });
-          assert.ok(archivedCustomer.archivedAt);
+          assert.notEqual(archivedCustomer.archivedAt, null);
           assert.deepEqual(
             {
               dic: archivedCustomer.dic,
@@ -720,7 +729,7 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
               resultCount: () => 1,
             },
           );
-          assert.ok(archivedDetail.archivedAt);
+          assert.notEqual(archivedDetail.archivedAt, null);
           const activeCustomers = yield* verifyReadEvidence(
             reads.runRead({
               input: { limit: 10, offset: 0 },
@@ -772,11 +781,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             }),
           );
           assert.equal(duplicateEdit._tag, 'ContactsCustomerIcoConflict');
-          const duplicateTargetAfterConflict = yield* Effect.promise(() =>
-            adminPool.query<{ ico: string | null; name: string }>(
-              'select ico, name from contacts.customers where tenant_id = $1 and customer_id = $2',
-              [tenantId, duplicateEditTarget.customerId],
-            ),
+          const duplicateTargetAfterConflict = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ ico: string | null; name: string }>(
+                'select ico, name from contacts.customers where tenant_id = $1 and customer_id = $2',
+                [tenantId, duplicateEditTarget.customerId],
+              ),
           );
           assert.deepEqual(duplicateTargetAfterConflict.rows, [
             { ico: null, name: 'Duplicate edit target' },
@@ -864,11 +874,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
           assert.deepEqual(foreignList.items, [otherTenantCustomer]);
 
           for (const state of ['read_only', 'deprecated'] as const) {
-            yield* Effect.promise(() =>
-              adminPool.query(
-                "update core.tenant_module_states set state = $2 where tenant_id = $1 and module_key = 'contacts.core'",
-                [tenantId, state],
-              ),
+            yield* Effect.promise(
+              async () =>
+                await adminPool.query(
+                  "update core.tenant_module_states set state = $2 where tenant_id = $1 and module_key = 'contacts.core'",
+                  [tenantId, state],
+                ),
             );
             const stateRead = yield* verifyReadEvidence(
               reads.runRead({
@@ -896,11 +907,12 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             );
             assert.equal(deniedWrite._tag, 'ModuleStateDeniedError');
           }
-          yield* Effect.promise(() =>
-            adminPool.query(
-              "update core.tenant_module_states set state = 'active' where tenant_id = $1 and module_key = 'contacts.core'",
-              [tenantId],
-            ),
+          yield* Effect.promise(
+            async () =>
+              await adminPool.query(
+                "update core.tenant_module_states set state = 'active' where tenant_id = $1 and module_key = 'contacts.core'",
+                [tenantId],
+              ),
           );
 
           const evidenceFailingDatabase = failingEvidenceDatabase(database);
@@ -961,9 +973,10 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
           assert.equal(actionEvidence.length, 11);
           assert.deepEqual(
             actionEvidence
-              .filter((row) => row.queryHash?.includes('lifecycle-state'))
+              .filter((row) => row.queryHash?.includes('lifecycle-state') === true)
               .map((row) => row.targetResourceType)
-              .toSorted(),
+              .filter((resourceType): resourceType is string => resourceType !== null)
+              .toSorted((left, right) => left.localeCompare(right)),
             ['contact', 'contact', 'customer', 'customer'],
           );
           assert.ok(
@@ -1088,13 +1101,14 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
             editedAresCustomer,
           );
           assert.equal(editedAresCustomer.ico, '04803910');
-          const persistedAresCustomer = yield* Effect.promise(() =>
-            adminPool.query<{ record: JsonObject }>(
-              `select to_jsonb(customer) as record
+          const persistedAresCustomer = yield* Effect.promise(
+            async () =>
+              await adminPool.query<{ record: JsonObject }>(
+                `select to_jsonb(customer) as record
                from contacts.customers as customer
                where tenant_id = $1 and customer_id = $2`,
-              [tenantId, aresCreatedCustomer.customerId],
-            ),
+                [tenantId, aresCreatedCustomer.customerId],
+              ),
           );
           const persistedAresRecord = persistedAresCustomer.rows[0]?.record;
           assert.ok(persistedAresRecord !== undefined);

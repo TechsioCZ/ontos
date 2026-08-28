@@ -96,7 +96,7 @@ test('signs exact five-minute, audience-scoped EdDSA claims with the configured 
     sub: principal.principalId,
     ver: 1,
   });
-  expect(verified.payload.principal).toEqual(principal);
+  expect(verified.payload['principal']).toEqual(principal);
   expect(JSON.stringify(claims)).not.toMatch(
     /email|displayName|credential|cookie|sessionToken|actionKey|permission|policy|businessPayload/u,
   );
@@ -118,7 +118,7 @@ test('fails closed for unknown audiences and invalid Effect-managed time', async
           dependencies(configuration),
         ),
       ),
-    ].map((effect) => Effect.runPromise(effect)),
+    ].map(async (effect) => await Effect.runPromise(effect)),
   );
   const timeError = await Effect.runPromise(
     Effect.flip(
@@ -199,22 +199,23 @@ test('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missing ke
   ];
 
   const errors = await Promise.all(
-    invalidJwks.map((privateJwk) =>
-      Effect.runPromise(
-        Effect.flip(
-          parseGatewayIssuerConfig(
-            withOptionalProperty(
-              {
-                ONTOS_GATEWAY_ISSUER: issuer,
-              },
-              !(privateJwk === undefined),
-              'ONTOS_GATEWAY_PRIVATE_JWK',
-              JSON.stringify(privateJwk),
-              {},
+    invalidJwks.map(
+      async (privateJwk) =>
+        await Effect.runPromise(
+          Effect.flip(
+            parseGatewayIssuerConfig(
+              withOptionalProperty(
+                {
+                  ONTOS_GATEWAY_ISSUER: issuer,
+                },
+                privateJwk !== undefined,
+                'ONTOS_GATEWAY_PRIVATE_JWK',
+                JSON.stringify(privateJwk),
+                {},
+              ),
             ),
           ),
         ),
-      ),
     ),
   );
   expect(errors.every((error) => error._tag === 'GatewayIssuerConfigError')).toBe(true);

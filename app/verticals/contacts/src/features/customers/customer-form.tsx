@@ -2,7 +2,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { SubmitEvent } from 'react';
 
 export interface CustomerFormValues {
   readonly dic: string;
@@ -162,7 +162,7 @@ export const CustomerForm = ({
     onValuesChange({ ...values, [field]: value });
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (controlsDisabled || submittingRef.current) {
       return;
@@ -202,7 +202,7 @@ export const CustomerForm = ({
     const releaseSubmission = () => {
       submittingRef.current = false;
     };
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React form callbacks stay synchronous, and both outcomes release the interaction guard.
+    // oxlint-disable-next-line promise/prefer-await-to-then -- React form callbacks stay synchronous, and both outcomes release the interaction guard.
     void Promise.resolve(submission).then(releaseSubmission, releaseSubmission);
   };
 

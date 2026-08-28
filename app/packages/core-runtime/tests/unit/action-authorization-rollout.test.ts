@@ -26,7 +26,12 @@ const input = {
 test('active, baselined report-only compatibility preserves only missing-policy behavior', () => {
   const events: AuthorizationWouldDenyEvent[] = [];
   assert.equal(
-    decideAuthorizationRollout(input, { contract, emit: (event) => events.push(event) }),
+    decideAuthorizationRollout(input, {
+      contract,
+      emit: (event) => {
+        events.push(event);
+      },
+    }),
     'allowed',
   );
   assert.deepEqual(events, [
@@ -56,7 +61,9 @@ test('enforced, expired, and unbaselined entrypoints deny without evidence', () 
     assert.equal(
       decideAuthorizationRollout(changed.input, {
         contract: changed.contract,
-        emit: (event) => events.push(event),
+        emit: (event) => {
+          events.push(event);
+        },
       }),
       'denied',
     );
@@ -67,8 +74,13 @@ test('enforced, expired, and unbaselined entrypoints deny without evidence', () 
 test('a candidate allow never broadens a denial from the current authorization path', () => {
   assert.equal(
     decideAuthorizationRollout(
-      { ...input, candidate: 'allowed', current: 'denied', denialReason: undefined },
-      { contract, emit: () => assert.fail() },
+      { ...input, candidate: 'allowed', current: 'denied' },
+      {
+        contract,
+        emit: () => {
+          assert.fail();
+        },
+      },
     ),
     'denied',
   );
@@ -88,7 +100,12 @@ test('all protected surfaces keep credential, tenancy, module, replay, and infra
       assert.equal(
         decideAuthorizationRollout(
           { ...input, denialReason, surface },
-          { contract, emit: () => assert.fail() },
+          {
+            contract,
+            emit: () => {
+              assert.fail();
+            },
+          },
         ),
         'denied',
       );

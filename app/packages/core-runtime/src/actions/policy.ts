@@ -35,9 +35,9 @@ export type ActionPolicyEvaluator<Payload> = (
 ) => Effect.Effect<void, PolicyDenied>;
 
 interface ActionPolicyBase<Payload> {
-  readonly [policyReference]: true;
   readonly evaluate: ActionPolicyEvaluator<Payload>;
   readonly policyKey: string;
+  readonly [policyReference]: true;
 }
 
 export interface GlobalActionPolicy<Payload> extends ActionPolicyBase<Payload> {
@@ -91,9 +91,9 @@ export const defineGlobalPolicy = <Payload>(
 ): GlobalActionPolicy<Payload> => {
   requireStableIdentifier(input.policyKey, 'Policy key');
   return registerPolicy({
-    [policyReference]: true as const,
     evaluate: input.evaluate,
     policyKey: input.policyKey,
+    [policyReference]: true as const,
     scope: 'global' as const,
   });
 };
@@ -104,10 +104,10 @@ export const defineMicroverticalPolicy = <Payload, const Owner extends string>(
   requireStableIdentifier(input.policyKey, 'Policy key');
   requireStableIdentifier(input.owningModuleKey, 'Policy owning module key');
   return registerPolicy({
-    [policyReference]: true as const,
     evaluate: input.evaluate,
     owningModuleKey: input.owningModuleKey,
     policyKey: input.policyKey,
+    [policyReference]: true as const,
     scope: 'microvertical' as const,
   });
 };

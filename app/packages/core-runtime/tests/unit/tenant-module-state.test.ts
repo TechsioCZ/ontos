@@ -81,10 +81,11 @@ const catalog = (
   });
 };
 
-test('uses one canonical tenant module state schema', async () => {
+void test('uses one canonical tenant module state schema', async () => {
   const decodedStates = await Promise.all(
-    TENANT_MODULE_STATES.map((state) =>
-      Effect.runPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
+    TENANT_MODULE_STATES.map(
+      async (state) =>
+        await Effect.runPromise(Schema.decodeUnknownEffect(TenantModuleStateSchema)(state)),
     ),
   );
   assert.deepEqual(decodedStates, TENANT_MODULE_STATES);
@@ -95,7 +96,7 @@ test('uses one canonical tenant module state schema', async () => {
   assert.equal(failure._tag, 'SchemaError');
 });
 
-test('maps only trusted supported authentication methods to history sources', async () => {
+void test('maps only trusted supported authentication methods to history sources', async () => {
   assert.equal(await Effect.runPromise(resolveTenantModuleStateChangeSource('session')), 'user');
   assert.equal(
     await Effect.runPromise(resolveTenantModuleStateChangeSource('support_impersonation')),
@@ -110,7 +111,7 @@ test('maps only trusted supported authentication methods to history sources', as
   assert.equal(unsupported.code, 'tenant_module_state_change_source_unsupported');
 });
 
-test('rejects a no-op transition without changing first-state semantics', async () => {
+void test('rejects a no-op transition without changing first-state semantics', async () => {
   await Effect.runPromise(rejectUnchangedTenantModuleState(null, 'active'));
   await Effect.runPromise(rejectUnchangedTenantModuleState('inactive', 'active'));
 
@@ -121,7 +122,7 @@ test('rejects a no-op transition without changing first-state semantics', async 
   assert.equal(unchanged.code, 'tenant_module_state_unchanged');
 });
 
-test('keeps Core module-state errors stable and sanitized', () => {
+void test('keeps Core module-state errors stable and sanitized', () => {
   const errors = [
     new TenantModuleStateConcurrentChangeError({
       code: 'tenant_module_state_changed_concurrently',
@@ -167,7 +168,7 @@ test('keeps Core module-state errors stable and sanitized', () => {
   }
 });
 
-test('validates only installed membership and the target module supported states', async () => {
+void test('validates only installed membership and the target module supported states', async () => {
   const other = contract('documents.center', ['inactive', 'active']);
   const target = contract('property.registry', ['inactive', 'active', 'read_only']);
   const installed = catalog(other, target);
@@ -188,7 +189,7 @@ test('validates only installed membership and the target module supported states
   );
 });
 
-test('declares the generated Core Action contract and bounded business payload', async () => {
+void test('declares the generated Core Action contract and bounded business payload', async () => {
   const { descriptor } = changeTenantModuleStateAction;
   assert.equal(descriptor.actionKey, 'core.modules.change-tenant-module-state');
   assert.equal(descriptor.owningModuleKey, 'core.modules');

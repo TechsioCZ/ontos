@@ -18,21 +18,21 @@ const customerBusinessFields = [
 const collectFiles = async (directory: URL): Promise<URL[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = await Promise.all(
-    entries.map((entry) => {
+    entries.map(async (entry) => {
       const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), directory);
-      return entry.isDirectory() ? collectFiles(url) : Promise.resolve([url]);
+      return entry.isDirectory() ? await collectFiles(url) : await Promise.resolve([url]);
     }),
   );
   return files.flat().toSorted((left, right) => left.pathname.localeCompare(right.pathname));
 };
 
-const sourceFiles = (directory: URL) =>
-  collectFiles(directory).then((files) =>
+const sourceFiles = async (directory: URL) =>
+  await collectFiles(directory).then((files) =>
     files.filter((file) => /\.(?:js|sql|ts|tsx)$/u.test(file.pathname)),
   );
 
-const readSources = (files: readonly URL[]) =>
-  Promise.all(files.map(async (file) => ({ file, source: await readFile(file, 'utf-8') })));
+const readSources = async (files: readonly URL[]) =>
+  await Promise.all(files.map(async (file) => ({ file, source: await readFile(file, 'utf-8') })));
 
 const readJson = async (file: URL) => {
   const source = await readFile(file, 'utf-8');

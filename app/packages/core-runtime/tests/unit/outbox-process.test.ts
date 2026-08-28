@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalTimers:off newPromise:off nodeBuiltinImport:off processEnv:off
-/* eslint-disable promise/avoid-new, promise/param-names -- Child-process events are bounded explicitly. */
+/* eslint-disable promise/avoid-new -- Child-process events are bounded explicitly. */
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
@@ -59,6 +59,6 @@ const assertGracefulShutdown = async (signal: 'SIGINT' | 'SIGTERM'): Promise<voi
 };
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  test(`${signal} interrupts polling and disposes the managed worker runtime`, () =>
-    assertGracefulShutdown(signal));
+  void test(`${signal} interrupts polling and disposes the managed worker runtime`, async () =>
+    await assertGracefulShutdown(signal));
 }

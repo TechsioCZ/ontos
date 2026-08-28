@@ -41,7 +41,7 @@ const access = (decision: 'allowed' | 'denied' | 'unavailable') => ({
   resources: () => Effect.succeed([]),
 });
 
-test('classifies required, optional, forbidden, denied, unavailable, and valid scope before handlers', async () => {
+void test('classifies required, optional, forbidden, denied, unavailable, and valid scope before handlers', async () => {
   const repository = { load: () => Effect.succeed(active) };
   const allowed = makeOperationalScopeResolver(repository, access('allowed'));
   const valid = await Effect.runPromise(
@@ -88,7 +88,7 @@ test('classifies required, optional, forbidden, denied, unavailable, and valid s
   assert.equal(unavailable._tag, 'OperationContextUnavailable');
 });
 
-test('rejects stale tenant, principal, revoked auth binding, and cross-tenant entity records', async () => {
+void test('rejects stale tenant, principal, revoked auth binding, and cross-tenant entity records', async () => {
   for (const record of [
     { ...active, tenantStatus: 'suspended' },
     { ...active, principalStatus: 'disabled' },
@@ -109,15 +109,14 @@ test('rejects stale tenant, principal, revoked auth binding, and cross-tenant en
   }
 });
 
-test('preserves resolver-issued system provenance across operational scope construction', async () => {
+void test('preserves resolver-issued system provenance across operational scope construction', async () => {
   const systemContext = await Effect.runPromise(
     systemPrincipalContextResolverFromRepository({
-      load: () =>
-        Promise.resolve({
-          kind: 'system',
-          principalStatus: 'active',
-          tenantStatus: 'active',
-        }),
+      load: async () => ({
+        kind: 'system',
+        principalStatus: 'active',
+        tenantStatus: 'active',
+      }),
     }).resolve({
       principalId: principal.principalId,
       registration: registerSystemWorkload({ jobKey: 'operation-scope-test' }),
@@ -156,17 +155,16 @@ test('preserves resolver-issued system provenance across operational scope const
   await assert.rejects(Effect.runPromise(decodeTrustedPrincipalContext({ ...scope })));
 });
 
-test('permits only a resolver-branded support-stop recovery through inactive historical scope', async () => {
+void test('permits only a resolver-branded support-stop recovery through inactive historical scope', async () => {
   const recoveryPrincipal = await Effect.runPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
-      load: () =>
-        Promise.resolve({
-          bindingPrincipalId: principal.principalId,
-          bindingTenantId: principal.tenantId,
-          principalKind: 'human',
-          principalTenantId: principal.tenantId,
-          tenantId: principal.tenantId,
-        }),
+      load: async () => ({
+        bindingPrincipalId: principal.principalId,
+        bindingTenantId: principal.tenantId,
+        principalKind: 'human',
+        principalTenantId: principal.tenantId,
+        tenantId: principal.tenantId,
+      }),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,

@@ -10,9 +10,9 @@ import { GatewayContextApiGroup } from '@app/shared-contracts';
 export interface SafeTenantIdentity {
   readonly displayName: string;
   readonly email: string;
+  readonly impersonating?: true;
   readonly principalId: string;
   readonly tenantId: string;
-  readonly impersonating?: true;
 }
 
 export interface SafeAuthenticatedIdentity extends SafeTenantIdentity {

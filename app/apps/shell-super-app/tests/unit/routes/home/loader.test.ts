@@ -22,8 +22,8 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableLegalEntities: availableLegalEntitiesMock,
   availableTenants: availableTenantsMock,
   currentSession: currentSessionMock,
-  runEffectRequest: <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
-    Effect.runPromise(
+  runEffectRequest: async <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
+    await Effect.runPromise(
       effect.pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv())),
     ),
   shellComposition: shellCompositionMock,
@@ -127,8 +127,9 @@ test('does not request composition for an anonymous session', async () => {
 test('uses the configured HTTPS origin for the server-side session request', async () => {
   currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
 
-  await withBetterAuthUrl('https://shell.stage.example.test', () =>
-    loader({ request: new Request('http://shell.stage.example.test/en') }),
+  await withBetterAuthUrl(
+    'https://shell.stage.example.test',
+    async () => await loader({ request: new Request('http://shell.stage.example.test/en') }),
   );
 
   expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(
@@ -139,8 +140,9 @@ test('uses the configured HTTPS origin for the server-side session request', asy
 test('keeps the configured local HTTP origin for the server-side session request', async () => {
   currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
 
-  await withBetterAuthUrl('http://localhost:3020', () =>
-    loader({ request: new Request('http://localhost:3020/en') }),
+  await withBetterAuthUrl(
+    'http://localhost:3020',
+    async () => await loader({ request: new Request('http://localhost:3020/en') }),
   );
 
   expect(currentSessionMock.mock.calls.at(-1)?.[0]?.baseUrl.toString()).toBe(

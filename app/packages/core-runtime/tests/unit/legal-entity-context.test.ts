@@ -25,7 +25,7 @@ const failureTag = async (
   effect: Effect.Effect<unknown, LegalEntityContextError>,
 ): Promise<string> => (await Effect.runPromise(Effect.flip(effect)))._tag;
 
-test('lists zero, one, and many active legal entities in deterministic safe order', async () => {
+void test('lists zero, one, and many active legal entities in deterministic safe order', async () => {
   assert.deepEqual(await Effect.runPromise(classifyActiveLegalEntities([], tenantId)), []);
   assert.deepEqual(await Effect.runPromise(classifyActiveLegalEntities([activeRecord], tenantId)), [
     { legalEntityId: activeRecord.legalEntityId, legalName: 'Zeta s.r.o.' },
@@ -75,7 +75,7 @@ test('lists zero, one, and many active legal entities in deterministic safe orde
   );
 });
 
-test('validates exactly one active selection and rejects missing or inactive selections', async () => {
+void test('validates exactly one active selection and rejects missing or inactive selections', async () => {
   assert.deepEqual(
     await Effect.runPromise(
       classifySelectedLegalEntity([activeRecord], tenantId, activeRecord.legalEntityId),
@@ -100,7 +100,7 @@ test('validates exactly one active selection and rejects missing or inactive sel
   );
 });
 
-test('rejects cross-tenant, malformed, and duplicate records', async () => {
+void test('rejects cross-tenant, malformed, and duplicate records', async () => {
   assert.equal(
     await failureTag(
       classifyActiveLegalEntities(
@@ -120,9 +120,11 @@ test('rejects cross-tenant, malformed, and duplicate records', async () => {
   );
 });
 
-test('types database failures as sanitized legal-entity context unavailability', async () => {
+void test('types database failures as sanitized legal-entity context unavailability', async () => {
   const context = legalEntityContextFromRepository({
-    load: () => Promise.reject(new Error('secret database diagnostic')),
+    load: async () => {
+      throw new Error('secret database diagnostic');
+    },
   });
   const error = await Effect.runPromise(Effect.flip(context.listActiveForTenant(tenantId)));
   assert.equal(error._tag, 'LegalEntityContextUnavailableError');

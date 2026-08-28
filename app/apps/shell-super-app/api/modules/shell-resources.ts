@@ -1,5 +1,5 @@
 // @effect-diagnostics anyUnknownInErrorContext:off catchUnfailableEffect:off effectSucceedWithVoid:off schemaSyncInEffect:off unnecessaryPipeChain:off
-/* eslint-disable complexity, max-classes-per-file, no-negated-condition, promise/prefer-await-to-then, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module. */
+/* eslint-disable complexity, max-classes-per-file, no-negated-condition, unicorn/no-array-method-this-argument, unicorn/no-negated-condition -- Search/resource/media orchestration keeps its closed gate ordering visible in one module. */
 import type {
   ContextAccessService,
   InstalledModuleCatalog,
@@ -200,9 +200,10 @@ export const makeShellSearch = (
         }),
       ]);
       const stateKeys = states.map(({ moduleKey }) => moduleKey);
+      const moduleIdSet = new Set(moduleIds);
       if (
         new Set(stateKeys).size !== stateKeys.length ||
-        stateKeys.some((moduleId) => !moduleIds.includes(moduleId))
+        stateKeys.some((moduleId) => !moduleIdSet.has(moduleId))
       ) {
         return yield* unavailable();
       }

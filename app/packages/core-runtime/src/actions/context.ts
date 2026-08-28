@@ -34,11 +34,11 @@ export interface ActionCollectorMethods<DomainEvents extends DomainEventContract
     domainEvent: DomainEventReference,
     message: OutboxMessage,
   ) => Effect.Effect<void, ActionCollectorError>;
-  readonly recordDataAccess: (
-    event: DataAccessEventInput,
-  ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccess: (
+    event: DataAccessEventInput,
   ) => Effect.Effect<void, ActionCollectorError>;
 }
 

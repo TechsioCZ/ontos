@@ -1,4 +1,3 @@
-/* eslint-disable node/no-sync -- This test-only builder adapts generated disposable owner artifacts. */
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -537,9 +536,9 @@ const adaptGeneratedOwner = async (root: string, schemaName: string): Promise<vo
 };
 
 export interface GeneratedOwnerFixture {
+  readonly dispose: () => Promise<void>;
   readonly root: string;
   readonly verticalRoot: string;
-  readonly dispose: () => Promise<void>;
 }
 
 export const createGeneratedOwnerFixture = async (
@@ -617,7 +616,7 @@ export const createGeneratedOwnerFixture = async (
     await adaptGeneratedOwner(root, schemaName);
     await linkRuntimeDependencies(root);
     return {
-      dispose: () => rm(root, { force: true, recursive: true }),
+      dispose: async () => await rm(root, { force: true, recursive: true }),
       root,
       verticalRoot: path.join(root, 'verticals', GENERATED_OWNER.slug),
     };

@@ -163,7 +163,7 @@ test('emits complete semantic values for every field change without submitting',
 });
 
 test('normalizes all values and preserves leading-zero IČO on keyboard submit', async () => {
-  const onSubmit = rstest.fn(() => Promise.resolve());
+  const onSubmit = rstest.fn(async () => {});
   const user = userEvent.setup();
   render(
     <ControlledForm
@@ -270,7 +270,7 @@ test('suppresses duplicate submits while one semantic intent is unsettled and th
   const pending = new Promise<void>((resolve) => {
     settle = resolve;
   });
-  const onSubmit = rstest.fn(() => pending);
+  const onSubmit = rstest.fn(async () => await pending);
   const user = userEvent.setup();
   render(<ControlledForm {...formProps({ onSubmit })} />);
 

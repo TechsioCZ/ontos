@@ -1,4 +1,3 @@
-/* eslint-disable promise/prefer-await-to-then -- The owner-local Drizzle transaction must atomically clean and insert. */
 import {
   DatabaseConfig,
   GatewayAssertionRedemptionService,
@@ -12,7 +11,7 @@ import type {
 } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { lt } from 'drizzle-orm';
-import { Clock, DateTime, Effect, Layer } from 'effect';
+import { Clock, DateTime, Effect, Layer, Schema } from 'effect';
 import { ContactsDatabase, ContactsDatabaseLive } from '../db/client.ts';
 import { gatewayAssertionRedemptions } from '../db/schema.ts';
 import type { ContactsDatabaseExecutor } from '../db/types.ts';
@@ -36,7 +35,7 @@ export const makeGatewayAssertionRedemption = (
       const expiresAt = DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000));
       yield* Effect.tryPromise({
         catch: (error) =>
-          error instanceof GatewayAssertionReplayError ? error : unavailableError(),
+          Schema.is(GatewayAssertionReplayError)(error) ? error : unavailableError(),
         try: () =>
           executor.transaction((transaction) =>
             transaction

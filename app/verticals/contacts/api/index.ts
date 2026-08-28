@@ -252,9 +252,9 @@ const verifyPrincipal = (authorization: string | undefined) =>
   );
 
 const runContactsAction = <
-  PayloadSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
-  DomainErrorSchema extends Schema.ConstraintDecoder<ContactsActionError, never>,
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<ContactsActionError>,
   DomainEvents extends DomainEventContractMap,
   Owner extends string,
   Services,
@@ -387,8 +387,7 @@ export const makeContactsApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,
   aresSubjectService: Layer.Layer<AresSubjectService> = aresSubjectServiceLive,
-): EffectBffDefinition<typeof contactsApi, EffectRuntimeLayer> &
-  EffectBffRuntime<typeof contactsApi, EffectRuntimeLayer> => {
+): EffectBffDefinition<typeof contactsApi> & EffectBffRuntime<typeof contactsApi> => {
   const apiHandlersLive = Layer.mergeAll(
     foundationLive,
     customerMutationsLive.pipe(Layer.provide(actionRuntime)),

@@ -1,5 +1,4 @@
 // @effect-diagnostics asyncFunction:off
-/* eslint-disable require-await, unicorn/no-useless-undefined -- The minimal fake executor mirrors Drizzle's Promise surface. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect } from 'effect';
@@ -27,16 +26,15 @@ const transactionService = (
   verify,
 });
 
-test('installs and verifies transaction-local scope and exposes no transaction controls', async () => {
+void test('installs and verifies transaction-local scope and exposes no transaction controls', async () => {
   let calls = 0;
   const transaction = transactionService(
-    () => {
+    async () => {
       calls += 1;
-      return Promise.resolve();
     },
-    () => {
+    async () => {
       calls += 1;
-      return Promise.resolve({ legal_entity_id: 'entity', tenant_id: 'tenant' });
+      return { legal_entity_id: 'entity', tenant_id: 'tenant' };
     },
   );
   const capability = await Effect.runPromise(
@@ -56,10 +54,10 @@ test('installs and verifies transaction-local scope and exposes no transaction c
   assert.equal('transaction' in capability, false);
 });
 
-test('fails closed when transaction settings do not match', async () => {
+void test('fails closed when transaction settings do not match', async () => {
   const transaction = transactionService(
-    () => Promise.resolve(),
-    () => Promise.resolve({ legal_entity_id: '', tenant_id: 'foreign' }),
+    async () => {},
+    async () => ({ legal_entity_id: '', tenant_id: 'foreign' }),
   );
   const error = await Effect.runPromise(
     Effect.flip(
@@ -75,7 +73,7 @@ test('fails closed when transaction settings do not match', async () => {
   assert.equal(error._tag, 'OperationContextUnavailable');
 });
 
-test('creates complete CRUD RLS policies with update using and with-check predicates', () => {
+void test('creates complete CRUD RLS policies with update using and with-check predicates', () => {
   const fixture = enableGovernedRls(
     pgTable('fixture', {
       legalEntityId: uuid('legal_entity_id').notNull(),

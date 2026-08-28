@@ -1,3 +1,4 @@
+/* eslint-disable promise/prefer-await-to-then -- React effects keep remote loading promise-based without async functions. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -31,22 +32,23 @@ const ResolvedTarget = ({
       return;
     }
     let current = true;
-    const load = async () => {
-      try {
-        const { default: Component } = await runEffectRequest(
-          resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
-            Effect.tryPromise(() => client.load()),
-          ),
-        );
-        if (current) {
-          setRemote({ Component, state: 'ready' });
-        }
-      } catch {
-        if (current) {
-          setRemote({ state: 'unavailable' });
-        }
-      }
-    };
+    const load = () =>
+      runEffectRequest(
+        resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
+          Effect.tryPromise(() => client.load()),
+        ),
+      ).then(
+        ({ default: Component }) => {
+          if (current) {
+            setRemote({ Component, state: 'ready' });
+          }
+        },
+        () => {
+          if (current) {
+            setRemote({ state: 'unavailable' });
+          }
+        },
+      );
     void load();
     return () => {
       current = false;

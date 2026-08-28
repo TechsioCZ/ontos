@@ -180,6 +180,7 @@ const contextAccess = (
     return Effect.succeed(moduleIds.map((key) => ({ decision: decisions[key] ?? 'denied', key })));
   },
   resources: () => Effect.succeed([]),
+  tenants: () => Effect.succeed([]),
 });
 
 const context = { legalEntityId, principalId, tenantId } as const;

@@ -30,7 +30,7 @@ const input = {
   transport: { correlationId: 'correlation-policy' },
 } as const;
 
-test('defines immutable global and owner-local Policy references', () => {
+void test('defines immutable global and owner-local Policy references', () => {
   const globalPolicy = defineGlobalPolicy<typeof input.payload>({
     evaluate: () => Effect.void,
     policyKey: 'global.tenant-active.v1',
@@ -63,7 +63,7 @@ test('defines immutable global and owner-local Policy references', () => {
   assert.equal(isActionPolicy({ ...globalPolicy }), false);
 });
 
-test('evaluates typed allow and safe denial outcomes', async () => {
+void test('evaluates typed allow and safe denial outcomes', async () => {
   const observed: ActionPolicyEvaluatorInput<typeof input.payload>[] = [];
   const allowed = defineGlobalPolicy<typeof input.payload>({
     evaluate: (evaluationInput) => {
@@ -89,7 +89,7 @@ test('evaluates typed allow and safe denial outcomes', async () => {
   assert.equal(Object.isFrozen(denial), true);
 });
 
-test('rejects empty stable identifiers and denial messages', () => {
+void test('rejects empty stable identifiers and denial messages', () => {
   assert.throws(
     () => defineGlobalPolicy({ evaluate: () => Effect.void, policyKey: '  ' }),
     TypeError,

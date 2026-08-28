@@ -7,7 +7,7 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { SubmitEvent } from 'react';
 import { runEffectRequest, signIn } from '../../../api/auth-client.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
@@ -43,7 +43,7 @@ const LoginPage = () => {
   const [validation, setValidation] = useState<LoginValidation>(validLogin);
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     if (submitting) {

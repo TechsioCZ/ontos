@@ -209,16 +209,17 @@ test('missing, expired, and incomplete replay claims fail before redemption stor
       }),
   };
   const failures = await Promise.all(
-    assertions.map((assertion) =>
-      Effect.runPromise(
-        Effect.flip(
-          verifyActionPrincipal(`Bearer ${assertion.token}`, {
-            currentTimeSeconds: Effect.succeed(now + 1),
-            environment: assertion.environment,
-            redemption: countingRedemption,
-          }),
+    assertions.map(
+      async (assertion) =>
+        await Effect.runPromise(
+          Effect.flip(
+            verifyActionPrincipal(`Bearer ${assertion.token}`, {
+              currentTimeSeconds: Effect.succeed(now + 1),
+              environment: assertion.environment,
+              redemption: countingRedemption,
+            }),
+          ),
         ),
-      ),
     ),
   );
   assert.deepEqual(

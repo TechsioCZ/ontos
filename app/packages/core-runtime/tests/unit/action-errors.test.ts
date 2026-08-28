@@ -25,7 +25,7 @@ import {
   ModuleStateDeniedError,
 } from '../../src/modules/module-state-gate-errors.ts';
 
-test('publishes the exhaustive stable Core Action error tags', () => {
+void test('publishes the exhaustive stable Core Action error tags', () => {
   const errors = [
     new ActionPayloadValidationError({
       code: 'action_payload_invalid',

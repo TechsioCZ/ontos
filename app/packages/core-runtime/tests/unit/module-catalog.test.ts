@@ -47,7 +47,7 @@ const contract = (
   schemaVersion: '2',
 });
 
-test('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {
+void test('builds immutable deterministic dual indexes for distinct deployment and module IDs', () => {
   const catalog = buildInstalledModuleCatalog([
     {
       contract: contract('property-registry', 'property.registry'),
@@ -71,7 +71,7 @@ test('builds immutable deterministic dual indexes for distinct deployment and mo
   assert.equal(Object.isFrozen(catalog.outboxSubscriptions), true);
 });
 
-test('accepts a valid owner-local subscription whose producer is not installed', () => {
+void test('accepts a valid owner-local subscription whose producer is not installed', () => {
   const subscription = {
     consumerModuleKey: 'property.registry',
     entrypoint: {
@@ -95,7 +95,7 @@ test('accepts a valid owner-local subscription whose producer is not installed',
   assert.deepEqual(catalog.outboxSubscriptions, [subscription]);
 });
 
-test('rejects contradictory or incomplete Outbox subscription snapshots', () => {
+void test('rejects contradictory or incomplete Outbox subscription snapshots', () => {
   const invalidSubscription = {
     consumerModuleKey: 'other.module',
     entrypoint: {
@@ -177,7 +177,7 @@ test('rejects contradictory or incomplete Outbox subscription snapshots', () => 
   );
 });
 
-test('rejects deployment mismatch, duplicate deployment IDs, and duplicate module claims', () => {
+void test('rejects deployment mismatch, duplicate deployment IDs, and duplicate module claims', () => {
   assert.throws(() =>
     buildInstalledModuleCatalog([
       {
@@ -212,7 +212,7 @@ test('rejects deployment mismatch, duplicate deployment IDs, and duplicate modul
   );
 });
 
-test('rejects unsupported contract versions without weakening catalog safety', () => {
+void test('rejects unsupported contract versions without weakening catalog safety', () => {
   assert.throws(() =>
     buildInstalledModuleCatalog([
       {

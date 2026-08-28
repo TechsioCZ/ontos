@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalDate:off globalDateInEffect:off missingEffectError:off unsafeEffectTypeAssertion:off
-/* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal, node/callback-return, promise/prefer-await-to-callbacks -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
+/* eslint-disable max-classes-per-file, no-await-in-loop, no-throw-literal -- Test-local typed errors, sequential lifecycle assertions, and the controlled Drizzle transaction fake are deliberate. */
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -72,15 +72,15 @@ const QueryConfigSchema = Schema.Struct({ text: Schema.String });
 interface HarnessOptions {
   readonly commitFailureCode?: string;
   readonly createRecord?: ActionInvocationRecord;
+  readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
+  readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
-  readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
-  readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly policyFinalizationFailure?: boolean;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
-  readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
   readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+  readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
 }
 
 const makeHarness = (options: HarnessOptions = {}) => {
@@ -190,8 +190,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
 
   let installedTenantId: string = principal.tenantId;
   let installedLegalEntityId: string = principal.legalEntityId;
-  const query = <Query, Values>(queryInput: Query, values?: Values) =>
-    Promise.resolve().then(() => {
+  const query = async <Query, Values>(queryInput: Query, values?: Values) =>
+    await Promise.resolve().then(() => {
       const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
       if (text.includes('set_config') && Array.isArray(values)) {
         const [tenantId, legalEntityId] = values;
@@ -236,7 +236,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     });
   const pool = new Pool();
   Object.defineProperty(pool, 'connect', {
-    value: () => Promise.resolve({ query, release: () => {} }),
+    value: async () => ({ query, release: () => {} }),
   });
   Object.defineProperty(pool, 'query', { value: query });
   const database = {
@@ -451,14 +451,13 @@ test('executes the complete stage order with transaction ownership and success e
 test('uses a resolver-branded recovery only for the exact support-stop Action and still checks permission', async () => {
   const recoveryPrincipal = await Effect.runPromise(
     supportRecoveryPrincipalContextResolverFromRepository({
-      load: () =>
-        Promise.resolve({
-          bindingPrincipalId: principal.principalId,
-          bindingTenantId: principal.tenantId,
-          principalKind: 'human',
-          principalTenantId: principal.tenantId,
-          tenantId: principal.tenantId,
-        }),
+      load: async () => ({
+        bindingPrincipalId: principal.principalId,
+        bindingTenantId: principal.tenantId,
+        principalKind: 'human',
+        principalTenantId: principal.tenantId,
+        tenantId: principal.tenantId,
+      }),
     }).resolveStoppedImpersonation({
       originalAuthBindingId: principal.authBindingId,
       originalPrincipalId: principal.principalId,
@@ -467,8 +466,8 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
     }),
   );
   const harness = makeHarness({
-    contextAccessDecision: 'denied',
     permissionDecision: 'allowed',
+    tenantPermissionDecision: 'denied',
   });
 
   const result = await Effect.runPromise(
@@ -1610,9 +1609,9 @@ test('handles committed, conflict, definite rollback, and indeterminate commit b
 
   const acknowledgementFailureCodes = ['ETIMEDOUT', 'ECONNABORTED', 'ENETRESET', '08007'];
   const acknowledgementErrors = await Promise.all(
-    acknowledgementFailureCodes.map((code) => {
+    acknowledgementFailureCodes.map(async (code) => {
       const harness = makeHarness({ commitFailureCode: code });
-      return Effect.runPromise(
+      return await Effect.runPromise(
         Effect.flip(
           harness.runtime.runAction({
             payload: { amount: 1 },
