@@ -32,17 +32,22 @@ These are non-negotiable:
    affected delivery unit. Application rollback must not depend on reversing a schema migration.
 8. **One failed gate stops promotion.** Preserve the artifact and evidence, reproduce in the parity
    environment, fix the failure class, and rerun the release sequence from its first gate.
+9. **Continuous product delivery is not customer version pinning.** OntOS controls promotion of
+   immutable artifacts. Customer Configuration selects permitted modules/implementations and
+   activation state, never a separate whole-product release line.
 
 ## Delivery-unit contract
 
 A new MicroVertical is not deployable until its delivery contract accounts for all of these fields:
 
-- topology `appId` and dotted business `moduleId`, kept distinct;
+- topology `appId`, dotted Module Contract Identity `moduleId`, and explicit `implementationId`,
+  kept distinct;
 - package name and workspace-relative owner path;
 - provider service/setup identity and environment service-ID key;
 - build and runtime Node/pnpm versions;
 - declared `PORT`, service-specific port variable, and readiness route;
 - immutable artifact build/materialization command;
+- immutable build revision/digest, public-contract hash/version, and migration-set identity;
 - owned PostgreSQL schema, Drizzle journal, migration, grant, and verifier commands;
 - compatible SpiceDB schema requirements;
 - public URL and module-manifest URL;
@@ -193,6 +198,18 @@ the expanded PostgreSQL and SpiceDB models.
   module state or disable unrelated modules.
 - Server-governed schemas stay server-local and use the Core Effect runtime. Do not reuse a client
   package's runtime schema object inside the governed server registration.
+- A Customer Configuration resolves exactly one permitted healthy `implementationId` for each
+  selected `moduleId`; reject missing, ambiguous, invisible, or contract-incompatible alternatives.
+- Compatibility versions and immutable build revisions are rollout evidence, not customer-selectable
+  product releases.
+
+### Commerce applications
+
+Follow [Commerce Application Boundaries](./COMMERCE_APPLICATIONS.md). Storefront Applications and
+their local BFF/proxies deploy independently from OntOS. Promotion must verify each tenant-bound
+Storefront Client, the separate Portal Account realm, native Commerce Storefront API contracts, and
+any declared Medusa compatibility subset. Commerce Operations deploys as a purpose-built staff
+consumer of public module contracts, not as Shell/Core business behavior.
 
 ### Module Federation and CSS
 
@@ -217,7 +234,8 @@ Use this sequence for a new or changed MicroVertical:
    make endpoint provisioning idempotent by checking its final state.
 7. **Deploy Shell:** deploy only after every referenced provider is healthy.
 8. **Smoke:** execute the authenticated distributed smoke suite.
-9. **Canary:** activate tenant module state for one approved tenant/cohort.
+9. **Canary:** activate the selected module implementation and affected Storefront Clients for one
+   approved tenant/cohort.
 10. **Observe:** hold expansion until the canary window and required signals are healthy.
 11. **Expand:** activate additional tenants gradually.
 12. **Close:** record deployed digests, smoke evidence, and the new last-known-good set.
@@ -239,6 +257,10 @@ Provider readiness alone is insufficient. The post-deploy release gate exercises
 - localized MicroVertical rendering with shared i18n context;
 - gateway assertion issuance and one authorized BFF read;
 - logout redirect and cookie clearing;
+- isolation of staff and Commerce Portal BetterAuth cookies/sessions;
+- one Storefront Client plus anonymous, B2C, and B2B customer-context checks when Commerce is affected;
+- implementation-selection and contract/build-skew rejection;
+- native Commerce Storefront API and declared Medusa compatibility-route checks when present;
 - basic responsive layout/CSS geometry;
 - absence of unexpected browser errors and HTTP 5xx responses.
 

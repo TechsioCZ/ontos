@@ -17,6 +17,7 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 - **Outbox Workers:** Consume cross-MicroVertical facts only through published schema contracts and the Core-owned delivery runtime. Follow [Outbox Worker Architecture](./docs/architecture/OUTBOX_WORKERS.md).
 - **Module Entrypoints:** Every Action, page, API, public component, search provider, report, and Worker must use an approved generated structured descriptor and Shell/Core gateway so tenant module state is checked before private code loads or runs. Follow [Module Entrypoints and Tenant State](./docs/architecture/MODULE_ENTRYPOINTS.md). If a category lacks an approved generator or gateway adapter, stop and extend/approve Codesmith before creating its business artifact.
 - **Module manifests:** Keep deployment `appId` and business `moduleId` distinct, discover modules only through the deployment allowlist and serialized contract, and keep runtime registrations owner-local. Follow [OntOS Module Manifests](./docs/architecture/MODULE_MANIFESTS.md).
+- **Commerce applications:** Keep Storefront Applications externally deployed, the Commerce Storefront API thin, Portal Account BetterAuth separate from staff Auth, Commerce Operations outside Shell/Core, and customer implementation alternatives explicit in the catalog. Follow [Commerce Application Boundaries](./docs/architecture/COMMERCE_APPLICATIONS.md).
 
 ### Task-Specific Rules
 

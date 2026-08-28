@@ -34,11 +34,11 @@ Example: `organization.registry`.
 
 ## Application Composition
 
-An Application Composition is a named, reusable, versioned, dependency-closed directed acyclic graph of OntOS Foundational and Business Modules serving a coherent business purpose. It defines required modules, permitted optional modules, and dependency rules. Core validates and gates the graph generically. Commerce is one Application Composition shared by Akros, N1, and later commerce customers.
+An Application Composition is a named, reusable, continuously delivered, dependency-closed directed acyclic graph of OntOS Foundational and Business Modules serving a coherent business purpose. It defines required modules, permitted optional modules and implementations, and dependency rules. Core validates and gates the graph generically. Commerce is one Application Composition shared by Akros, N1, and later commerce customers; customers do not pin whole-product versions.
 
 ## Customer Configuration
 
-A Customer Configuration is a declarative customer-specific configuration of an Application Composition. It may select permitted optional modules and define policies, settings, branding, locales, Connectors, and integration participation. It must not fork Core, alter shared module contracts, or create customer-specific module implementations. Akros and N1 are Customer Configurations of Commerce.
+A Customer Configuration is a declarative customer-specific configuration of an Application Composition. It may select permitted optional modules and explicit Module Implementation Identities and define business policies, settings, locales, Storefront Clients, Connectors, and Integration Routes. It must not fork Core, alter a shared contract in place, or hide customer code behind an existing implementation identity. Akros and N1 are Customer Configurations of Commerce.
 
 ## Environment
 
@@ -46,11 +46,43 @@ An Environment is a topology-neutral lifecycle context for a Customer Configurat
 
 ## Deployment Topology
 
-Deployment Topology is the physical mapping of Customer Configurations, Environments, Tenants, modules, data stores, workers, and Channel Applications onto infrastructure. It owns isolation, multi-tenancy, placement, and regional/residency choices without changing the logical composition.
+Deployment Topology is the physical mapping of Customer Configurations, Environments, Tenants, modules, data stores, workers, and channel adapters onto infrastructure. It owns isolation, multi-tenancy, placement, and regional/residency choices without changing the logical composition. Commerce Storefront Applications remain outside the standard OntOS Shell deployment.
 
 ## Channel Application
 
-A Channel Application is a customer- or partner-facing application that composes public Business Module contracts, such as a commerce Storefront. It may share the OntOS monorepo and deploy separately, but owns presentation and journeys rather than canonical business facts.
+A Channel Application is a customer- or partner-facing application that composes public Business Module contracts for one channel. A Commerce Storefront Application is an independently deployed Channel Application outside the standard OntOS Shell deployment; it owns presentation and journeys rather than canonical business facts.
+
+## Commerce Storefront API
+
+The Commerce Storefront API is the thin OntOS channel edge that authenticates Storefront Client and customer/guest context, authorizes, translates contracts, aggregates bounded reads, and invokes public Commerce Actions. It owns no canonical facts or durable workflows.
+
+## Storefront Client
+
+A Storefront Client is one tenant-bound service Principal and rotatable credential for one Storefront Application. It identifies the calling application, not the browsing customer.
+
+## Commerce Operations
+
+Commerce Operations is the purpose-built staff application for permissioned order, approval, fulfillment, claim, reconciliation, recovery, and Assisted Support workflows over public module contracts. It uses the staff authentication boundary but is not Shell/Core or a canonical fact owner.
+
+## Commerce Portal Account
+
+A Commerce Portal Account is a Commerce-owned account in a separate BetterAuth realm for retail and B2B registration/authentication. It links to tenant-scoped Principals and Party/Counterparty references but is neither a Shell staff account nor the shared Party identity.
+
+## Module Contract Identity
+
+A Module Contract Identity names stable public capability semantics. Different public semantics require a different identity.
+
+## Module Implementation Identity
+
+A Module Implementation Identity names one explicit catalogued executable implementation of a Module Contract Identity, such as `standard` or `akros`. Customer Configuration may select a permitted implementation; invisible same-identity forks are forbidden.
+
+## Build Revision
+
+A Build Revision is the immutable source/artifact identity used for compatibility evidence, audit, canary, and rollback. It is not a customer-selectable OntOS product version.
+
+## Integration Route
+
+An Integration Route is the configured exchange path for one External Business System and fact family: One-time Migration, Symmy Route, or Direct Provider Route. It does not confer System-of-Record authority.
 
 ## System Module
 
@@ -162,7 +194,7 @@ A Management Assignment is a temporal relation stating which Party or External O
 
 ## BetterAuth
 
-BetterAuth is the proposed authentication/session layer. It owns login/session mechanics and maps authenticated users into OntOS principals. It should not be treated as the complete fine-grained authorization system.
+BetterAuth is the authentication/session framework used by separate OntOS account realms. Shell owns the staff realm; Commerce owns the Portal Account realm. Each realm maps authenticated subjects into tenant-scoped Principals but neither replaces fine-grained authorization or Party identity.
 
 ## SpiceDB
 
