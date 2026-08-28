@@ -2,6 +2,9 @@
 
 Date: 2026-06-10
 
+> [!IMPORTANT]
+> **Historical record:** Decisions 16 and 17 were superseded by [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [ADR-0014](./adr/0014-authenticated-principal-session.md). One BetterAuth user may now access multiple Tenants through distinct tenant-scoped Principals, while each session activates exactly one Tenant. Do not use the one-user/one-Tenant or no-selector statements below as current architecture.
+
 This document summarizes the `/grill-with-docs` decisions made before continuing the PoC/MVP work from Day 3 onward in `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md`. The goal is to remove ambiguity before implementing the database, identity, authorization, policy, action runtime, and persistence proof in `mvp/`.
 
 ## Scope Confirmed

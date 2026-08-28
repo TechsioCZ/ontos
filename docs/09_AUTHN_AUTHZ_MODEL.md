@@ -6,7 +6,13 @@ OntOS should separate authentication, principal modeling, relationship authoriza
 
 BetterAuth is the proposed authentication/session/API key layer. Its responsibility is login, sessions, authentication methods, API key lifecycle and verification, and developer experience around user authentication. OntOS should not make BetterAuth the only source of business authorization semantics.
 
-An authenticated BetterAuth user, API key, or organization-owned key is resolved through a Core principal auth binding to an OntOS principal. The OntOS principal is the identity used in audit, authorization, and action execution.
+An authenticated BetterAuth user is resolved through a Core principal auth binding to a tenant-scoped OntOS principal. One BetterAuth user may have active bindings to distinct human principals in multiple tenants, while an API key resolves through exactly one binding to one principal and tenant. The OntOS principal is the identity used in audit, authorization, and action execution.
+
+## Authenticated Principal Session
+
+An Authenticated Principal Session activates exactly one tenant for the current BetterAuth session. The selected tenant is session context, not authorization: Core must revalidate the exact active principal auth binding, principal, and tenant whenever trusted context is resolved. An invalid or stale non-null selection fails closed and must never silently fall back to another tenant.
+
+A new or legacy session with no selected tenant uses the oldest eligible binding, breaking ties by tenant ID. Switching tenant changes only that session and clears its active legal entity so legal-entity context must be selected again inside the new tenant. Separate concurrent sessions may activate different tenants.
 
 ## Principal model
 
@@ -16,7 +22,7 @@ Agent principals do not imply autonomous agent product features in V0. They simp
 
 ## Principal auth bindings
 
-`CORE_PRINCIPAL_AUTH_BINDINGS` maps an authenticated external subject to an OntOS principal. It is not a credential table. BetterAuth owns user records, sessions, API keys, API key verification, expiration, rate limits, and admin-created impersonation sessions. Core only stores the non-secret binding required to answer: "which OntOS principal is acting now?"
+`CORE_PRINCIPAL_AUTH_BINDINGS` maps an authenticated external subject to a tenant-scoped OntOS principal. It is not a credential table. BetterAuth owns user records, sessions, API keys, API key verification, expiration, rate limits, and admin-created impersonation sessions. Core only stores the non-secret bindings required to answer: "which OntOS principal is acting in the Tenant active for this session?"
 
 The table should contain stable identity bindings, not runtime credentials. A BetterAuth session, session token, raw API key, or one-off support impersonation session should not be stored here.
 
