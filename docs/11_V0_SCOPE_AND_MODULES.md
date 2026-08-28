@@ -14,6 +14,10 @@ These capabilities are not optional platform indulgence. They are required to sa
 
 This Foundational Module models shared organizational business structure over managed legal entities: legal-entity groups, holding/portfolio/acquisition-batch views, and group membership. In V0 it is a group/view model, not a corporate ownership/control ledger.
 
+### `party.registry`
+
+This Foundational Module owns tenant-scoped Party identities and shared Counterparties used by ERP and Commerce: sparse or Unresolved person/organization identity, official identifiers, Contact Points, Party Relationships, Counterparty Roles, matching, correction, and merge. Other modules reference Party and Counterparty ResourceRefs and own only their contextual profiles, workflows, external correlations, and permissions; detailed CRM workflows and cross-tenant analytics are later scope.
+
 ### `property.registry`
 
 Current working assumption: this is the first customer-domain business module to validate after the foundation skeleton. It likely covers legal-entity property structures: properties or property complexes, buildings, units/spaces, ownership/management relationships, unit/space state, basic technical metadata, equipment/labels, and links to documents/service tickets/reporting. It appears to be the dependency root for long-term rental, short-term rental, facility, billing, documents, search, and reporting.
