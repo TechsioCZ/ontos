@@ -19,19 +19,6 @@ import type {
 } from '../../../shared/api.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 
-const withOptionalProperty = <
-  Base extends object,
-  Key extends PropertyKey,
-  Value,
-  Trailing extends object,
->(
-  base: Base,
-  condition: boolean,
-  key: Key,
-  value: Value,
-  trailing: Trailing,
-) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
-
 interface HomeLoaderArguments {
   readonly request: Request;
 }
@@ -132,24 +119,23 @@ export const loadHomePageModel = (request: Request): Promise<HomePageModel> =>
                 ),
               ),
             }).pipe(
-              Effect.map(({ legalEntities: choices, navigation: items, tenants }): HomePageModel =>
-                tenants.state === 'stale'
-                  ? anonymousModel
-                  : withOptionalProperty(
-                      {
-                        contextState: session.state,
-                        identity: session.identity,
-                        legalEntities: choices,
-                        navigation: items,
-                      },
-                      session.state === 'authenticated',
-                      'selectedLegalEntityId',
-                      session.identity.legalEntityId,
-                      {
-                        state: 'authenticated',
-                        tenants,
-                      },
-                    ),
+              Effect.map(
+                ({ legalEntities: choices, navigation: items, tenants }): HomePageModel => {
+                  if (tenants.state === 'stale') {
+                    return anonymousModel;
+                  }
+                  const model = {
+                    contextState: session.state,
+                    identity: session.identity,
+                    legalEntities: choices,
+                    navigation: items,
+                    state: 'authenticated' as const,
+                    tenants,
+                  };
+                  return session.state === 'authenticated'
+                    ? { ...model, selectedLegalEntityId: session.identity.legalEntityId }
+                    : model;
+                },
               ),
             );
           }),

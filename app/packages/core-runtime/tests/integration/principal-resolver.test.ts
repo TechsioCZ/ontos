@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-// @effect-diagnostics asyncFunction:off processEnv:off
+// @effect-diagnostics asyncFunction:off globalDate:off processEnv:off
 import test from 'node:test';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -20,33 +20,34 @@ const principalOne = '20000000-0000-4000-8000-000000000001';
 const principalTwo = '20000000-0000-4000-8000-000000000002';
 const subject = 'better-auth-integration-subject';
 
-test('lists and selects multiple tenant-scoped principals and fails closed after access changes', async () => {
+void test('lists and selects multiple tenant-scoped principals and fails closed after access changes', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
   const database = drizzle({ client: pool, schema: coreDatabaseSchema });
   const resolver = makePrincipalResolver({ executor: database });
 
-  const cleanup = () =>
-    database.transaction((transaction) =>
-      transaction
-        .delete(principalAuthBindings)
-        .where(eq(principalAuthBindings.providerSubjectId, subject))
-        .then(() =>
-          transaction
-            .delete(principals)
-            .where(
-              and(eq(principals.principalId, principalOne), eq(principals.tenantId, tenantOne)),
-            ),
-        )
-        .then(() =>
-          transaction
-            .delete(principals)
-            .where(
-              and(eq(principals.principalId, principalTwo), eq(principals.tenantId, tenantTwo)),
-            ),
-        )
-        .then(() => transaction.delete(tenants).where(eq(tenants.tenantId, tenantOne)))
-        .then(() => transaction.delete(tenants).where(eq(tenants.tenantId, tenantTwo))),
+  const cleanup = async () =>
+    await database.transaction(
+      async (transaction) =>
+        await transaction
+          .delete(principalAuthBindings)
+          .where(eq(principalAuthBindings.providerSubjectId, subject))
+          .then(() =>
+            transaction
+              .delete(principals)
+              .where(
+                and(eq(principals.principalId, principalOne), eq(principals.tenantId, tenantOne)),
+              ),
+          )
+          .then(() =>
+            transaction
+              .delete(principals)
+              .where(
+                and(eq(principals.principalId, principalTwo), eq(principals.tenantId, tenantTwo)),
+              ),
+          )
+          .then(() => transaction.delete(tenants).where(eq(tenants.tenantId, tenantOne)))
+          .then(() => transaction.delete(tenants).where(eq(tenants.tenantId, tenantTwo))),
     );
 
   try {

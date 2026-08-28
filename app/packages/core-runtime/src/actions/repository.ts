@@ -474,8 +474,8 @@ export const makeActionRepository = (): ActionRepositoryService => {
         cause instanceof PermissionDenialRollbackSignal
           ? cause.error
           : transactionFailure('Unable to persist Action permission denial evidence', cause),
-      try: () =>
-        executor.transaction(async (transaction) => {
+      try: async () =>
+        await executor.transaction(async (transaction) => {
           const rows = await transaction
             .select(invocationSelection)
             .from(actionInvocations)
@@ -549,8 +549,8 @@ export const makeActionRepository = (): ActionRepositoryService => {
     Effect.tryPromise({
       catch: (cause) =>
         persistenceFailure('Unable to persist the rejected Action invocation', cause),
-      try: () =>
-        executor.transaction(async (transaction) => {
+      try: async () =>
+        await executor.transaction(async (transaction) => {
           const rows = await transaction
             .select(invocationSelection)
             .from(actionInvocations)
@@ -572,7 +572,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
             {
               actionKey: input.actionKey,
             },
-            !(input.policy.owningModuleKey === undefined),
+            input.policy.owningModuleKey !== undefined,
             'owningModuleKey',
             input.policy.owningModuleKey,
             {
@@ -655,7 +655,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
                 {
                   actionKey: input.actionKey,
                 },
-                !(policy.owningModuleKey === undefined),
+                policy.owningModuleKey !== undefined,
                 'owningModuleKey',
                 policy.owningModuleKey,
                 {

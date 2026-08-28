@@ -27,6 +27,7 @@ import {
   runEffectRequest,
 } from '../../../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../../../error-classification.ts';
 import { CustomerForm } from '../../../../../../features/customers/customer-form.tsx';
 import type {
   CustomerFormFieldErrors,
@@ -85,7 +86,7 @@ const classifyHttpClientFailure = (error: {
 };
 
 export const classifyCustomerDetailError = (
-  error: CustomerDetailClientError,
+  error: ErrorClassificationInput<CustomerDetailClientError>,
 ): CustomerDetailErrorState => {
   if (error._tag === 'HttpClientError') {
     return { reason: classifyHttpClientFailure(error), state: 'unavailable' };
@@ -130,7 +131,7 @@ export const isRetryableCustomerDetailError = (error: CustomerDetailClientError)
 };
 
 export const classifyEditCustomerError = (
-  error: EditCustomerClientError,
+  error: ErrorClassificationInput<EditCustomerClientError>,
 ): EditCustomerErrorState => {
   if (error._tag === 'HttpClientError') {
     const reason = classifyHttpClientFailure(error);
@@ -466,6 +467,7 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
   });
   const destination = customerListHref(language);
   const onBackClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    const canGoBack: boolean = router.history.canGoBack();
     if (
       event.defaultPrevented ||
       event.button !== 0 ||
@@ -473,7 +475,7 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
       event.ctrlKey ||
       event.shiftKey ||
       event.altKey ||
-      router.history.canGoBack() !== true
+      !canGoBack
     ) {
       return;
     }
@@ -498,7 +500,6 @@ export const CustomerEditFeature = ({ routeParams, target }: CustomerEditPagePro
     logicalAttemptRef.current = { idempotencyKey, payload: values, uncertain: false };
     setFeedback(null);
 
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning form callbacks stay non-async under strict Effect diagnostics.
     return editMutation.mutateAsync({ customerId, idempotencyKey, payload: values }).then(
       (customer) => {
         logicalAttemptRef.current = null;

@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Schema } from 'effect';
@@ -89,7 +90,7 @@ const emptyManifestInput = () => ({
   },
 });
 
-test('defines a valid empty manifest, preserves literals, and freezes its public shape', () => {
+void test('defines a valid empty manifest, preserves literals, and freezes its public shape', () => {
   const manifest = defineOntosModuleManifest(emptyManifestInput());
   const literal: 'property.registry' = manifest.module.id;
 
@@ -105,7 +106,7 @@ test('defines a valid empty manifest, preserves literals, and freezes its public
   );
 });
 
-test('accepts populated typed surfaces and keeps executable values out of safe descriptors', () => {
+void test('accepts populated typed surfaces and keeps executable values out of safe descriptors', async () => {
   const action = createAction();
   const apiValue = HttpApi.make('PropertyApi').add(
     HttpApiGroup.make('property').add(HttpApiEndpoint.get('listUnits', '/units')),
@@ -165,8 +166,8 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
   const registration = defineVerticalRuntimeRegistration({
     actions: [action],
     entrypoints: {
-      api: { resource: () => apiValue },
-      components: { dashboard: () => componentValue },
+      api: { resource: async () => apiValue },
+      components: { dashboard: async () => componentValue },
       pages: {},
       reports: {},
       search: {},
@@ -177,12 +178,12 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
   const descriptors = extractVerticalRuntimeSafeDescriptors(registration);
 
   assert.equal(manifest.publicSurface.actions[0], action);
-  assert.equal(manifest.publicSurface.api['PropertyClient'], apiValue);
-  assert.equal(manifest.publicSurface.components['PropertyUnitCard'], componentValue);
+  assert.equal(manifest.publicSurface.api.PropertyClient, apiValue);
+  assert.equal(manifest.publicSurface.components.PropertyUnitCard, componentValue);
   assert.deepEqual(Object.keys(registration), ['moduleId']);
   assert.equal(getVerticalRuntimeActions(registration)[0], action);
   assert.equal(
-    getVerticalRuntimeEntrypoints(registration).components['dashboard']?.(),
+    await getVerticalRuntimeEntrypoints(registration).components['dashboard']?.(),
     componentValue,
   );
   assert.deepEqual(descriptors, {
@@ -215,7 +216,7 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
   assert.equal(JSON.stringify(descriptors).includes('dashboard'), false);
 });
 
-test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
+void test('rejects invalid identities, private fields, duplicates, cross-owner values, and undeclared references', () => {
   assert.throws(() =>
     defineOntosModuleManifest({
       ...emptyManifestInput(),
@@ -307,7 +308,7 @@ test('rejects invalid identities, private fields, duplicates, cross-owner values
   );
 });
 
-test('deployment contract decoding is exact and versioned', () => {
+void test('deployment contract decoding is exact and versioned', () => {
   const contract = {
     deployment: { appId: 'property-registry', buildMarker: 'build-1' },
     manifest: {

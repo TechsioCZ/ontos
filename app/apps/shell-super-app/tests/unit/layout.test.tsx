@@ -139,9 +139,9 @@ test('renders the default Home dashboard contract and preserves page children', 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       title={homeOverviewTitle}
     >
@@ -179,10 +179,10 @@ test('supports an alternate title and current MicroVertical without changing chi
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       title={testingWorkspaceTitle}
     >
@@ -202,10 +202,10 @@ test('supports module pages without a shell heading and keeps reduced horizontal
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       currentModuleId="testing.one"
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
     >
       <section>Module content</section>
@@ -222,9 +222,9 @@ test('keeps Home as the only navigation link when no active modules are supplied
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={[]}
       identity={identity}
       logoutPending={false}
+      navigation={[]}
       onLogout={noopLogout}
       title={homeTitle}
     >
@@ -243,9 +243,9 @@ test('renders the account Menu last and dispatches only the logout command by ke
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={onLogout}
       title={homeTitle}
     >
@@ -257,7 +257,9 @@ test('renders the account Menu last and dispatches only the logout command by ke
   const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
   expect(header?.lastElementChild?.contains(trigger)).toBe(true);
   const accountMenu = header?.lastElementChild;
-  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset.position : undefined).toBe('end');
+  expect(accountMenu instanceof HTMLElement ? accountMenu.dataset['position'] : undefined).toBe(
+    'end',
+  );
 
   trigger.focus();
   await user.keyboard('{Enter}');
@@ -277,9 +279,9 @@ test('retains the account trigger and disables the sole command while logout is 
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending
+      navigation={navigation}
       onLogout={onLogout}
       title={homeTitle}
     >
@@ -301,9 +303,9 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       onTenantChange={onTenantChange}
       title={homeTitle}
@@ -316,7 +318,7 @@ test('renders complete ordered tenant items and dispatches keyboard selection on
   await user.click(trigger);
   const options = await screen.findAllByRole('option');
   expect(options.map((option) => option.textContent)).toEqual(['Alpha tenant', 'Zeta tenant']);
-  expect(options.map((option) => option.dataset.value)).toEqual(['tenant-1', 'tenant-2']);
+  expect(options.map((option) => option.dataset['value'])).toEqual(['tenant-1', 'tenant-2']);
   expect(options.every((option) => option.querySelector('span') !== null)).toBe(true);
   await user.keyboard('{ArrowDown}{Enter}');
   expect(onTenantChange).toHaveBeenCalledWith('tenant-2');
@@ -334,9 +336,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   const { rerender } = render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantChoices={tenantProps.tenantChoices.slice(0, 1)}
       title={homeTitle}
@@ -351,9 +353,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantChoices={[]}
       title={homeTitle}
@@ -368,9 +370,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantState="unavailable"
       title={homeTitle}
@@ -386,9 +388,9 @@ test('disables unavailable, one-choice, and pending tenant states with associate
   rerender(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantSwitchPending
       title={homeTitle}
@@ -406,9 +408,9 @@ test('associates failed tenant feedback and keeps multiple choices operable', ()
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      navigation={navigation}
       identity={identity}
       logoutPending={false}
+      navigation={navigation}
       onLogout={noopLogout}
       tenantSwitchFailed
       title={homeTitle}

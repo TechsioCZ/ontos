@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
-/* eslint-disable max-classes-per-file, no-shadow, promise/prefer-await-to-then -- Shell orchestration and Effect recovery remain one typed boundary. */
+/* eslint-disable max-classes-per-file, promise/prefer-await-to-then -- Shell orchestration and Effect recovery remain one typed boundary. */
 import type {
   ActionCoreError,
   ActionRuntimeService,
@@ -198,7 +198,7 @@ export const makeIdentityLifecycleService = (
               lifecycleOperationId: input.idempotencyKey,
               tenantId: input.principal.tenantId,
             },
-            !(input.name === undefined),
+            input.name !== undefined,
             'name',
             input.name,
             {},
@@ -213,7 +213,7 @@ export const makeIdentityLifecycleService = (
               idempotencyKey: input.idempotencyKey,
               issued,
             },
-            !(input.managedPrincipalId === undefined),
+            input.managedPrincipalId !== undefined,
             'managedPrincipalId',
             input.managedPrincipalId,
             {
@@ -251,7 +251,7 @@ export const makeIdentityLifecycleService = (
                       expectedStatus: input.expectedStatus,
                       newStatus: input.newStatus,
                     },
-                    !(input.reason === undefined),
+                    input.reason !== undefined,
                     'reason',
                     input.reason,
                     {},
@@ -268,7 +268,7 @@ export const makeIdentityLifecycleService = (
                       newStatus: input.newStatus,
                       principalId: input.managedPrincipalId,
                     },
-                    !(input.reason === undefined),
+                    input.reason !== undefined,
                     'reason',
                     input.reason,
                     {},
@@ -353,7 +353,7 @@ export const makeIdentityLifecycleService = (
                 expectedStatus: 'active' as const,
                 idempotencyKey: `${input.idempotencyKey}:old`,
               },
-              !(input.oldManagedPrincipalId === undefined),
+              input.oldManagedPrincipalId !== undefined,
               'managedPrincipalId',
               input.oldManagedPrincipalId,
               {
@@ -386,7 +386,7 @@ export const makeIdentityLifecycleService = (
                                   expectedStatus: 'active' as const,
                                   idempotencyKey: `${input.idempotencyKey}:replacement-rollback`,
                                 },
-                                !(input.managedPrincipalId === undefined),
+                                input.managedPrincipalId !== undefined,
                                 'managedPrincipalId',
                                 input.managedPrincipalId,
                                 {

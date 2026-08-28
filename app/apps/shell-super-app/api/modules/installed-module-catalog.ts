@@ -148,15 +148,16 @@ export const makeInstalledModuleCatalogLoader = (
   let loading: Promise<InstalledModuleCatalog> | undefined;
   return Effect.tryPromise({
     catch: (error) => (error instanceof InstalledModuleCatalogUnavailableError ? error : invalid()),
-    try: () => {
+    try: async () => {
       if (cached !== undefined) {
-        return Promise.resolve(cached);
+        return cached;
       }
       loading ??= (async () => {
         try {
           const contracts = await Promise.all(
-            allowlist.entries.map(({ appId, contractUrl }) =>
-              fetchContract(appId, contractUrl, fetchContractDocument, options),
+            allowlist.entries.map(
+              async ({ appId, contractUrl }) =>
+                await fetchContract(appId, contractUrl, fetchContractDocument, options),
             ),
           );
           const catalog = buildInstalledModuleCatalog(contracts);
@@ -166,7 +167,7 @@ export const makeInstalledModuleCatalogLoader = (
           loading = undefined;
         }
       })();
-      return loading;
+      return await loading;
     },
   });
 };

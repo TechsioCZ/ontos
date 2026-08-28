@@ -26,6 +26,7 @@ import {
   unarchiveCustomer,
 } from '../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../error-classification.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 
 export const CUSTOMER_LIST_PAGE_SIZE = 25;
@@ -79,13 +80,12 @@ export const buildCustomerListHref = (
     parameters.set('offset', String(offset));
   }
   const search = parameters.toString();
-  return `/${language}/contacts/customers${search.length === 0 ? '' : `?${search}`}`;
+  const searchSuffix = search.length === 0 ? '' : `?${search}`;
+  return `/${language}/contacts/customers${searchSuffix}`;
 };
 
 type CustomerListClientError = Effect.Error<ReturnType<typeof getCustomerList>>;
-type CustomerLifecycleClientError =
-  | Effect.Error<ReturnType<typeof archiveCustomer>>
-  | Effect.Error<ReturnType<typeof unarchiveCustomer>>;
+type CustomerLifecycleClientError = Effect.Error<ReturnType<typeof archiveCustomer>>;
 type CustomerListUnavailableReason = 'backend' | 'decode' | 'internal' | 'transport';
 type CustomerListErrorState =
   | { readonly state: 'authentication_expired' }
@@ -93,7 +93,7 @@ type CustomerListErrorState =
   | { readonly reason: CustomerListUnavailableReason; readonly state: 'unavailable' };
 
 export const classifyCustomerListError = (
-  error: CustomerListClientError,
+  error: ErrorClassificationInput<CustomerListClientError>,
 ): CustomerListErrorState => {
   if (error._tag === 'HttpClientError') {
     if (error.reason._tag === 'TransportError') {
@@ -145,7 +145,7 @@ type CustomerLifecycleErrorState =
   | { readonly state: 'unexpected' };
 
 export const classifyCustomerLifecycleError = (
-  error: CustomerLifecycleClientError,
+  error: ErrorClassificationInput<CustomerLifecycleClientError>,
 ): CustomerLifecycleErrorState => {
   if (error._tag === 'HttpClientError' || error._tag === 'SchemaError') {
     return { state: 'unavailable', uncertain: true };
@@ -220,6 +220,9 @@ interface CustomersListCopy {
   readonly archiving: string;
   readonly authenticationExpired: string;
   readonly create: string;
+  readonly createdAtColumn: string;
+  readonly decode: string;
+  readonly edit: string;
   readonly empty: string;
   readonly filterActive: string;
   readonly filterAll: string;
@@ -227,9 +230,7 @@ interface CustomersListCopy {
   readonly filterLabel: string;
   readonly filterPlaceholder: string;
   readonly forbidden: string;
-  readonly edit: string;
   readonly internal: string;
-  readonly loading: string;
   readonly lifecycleAuthenticationExpired: string;
   readonly lifecycleConflict: string;
   readonly lifecycleForbidden: string;
@@ -237,6 +238,7 @@ interface CustomersListCopy {
   readonly lifecycleNotFound: string;
   readonly lifecycleUnavailable: string;
   readonly lifecycleUnexpected: string;
+  readonly loading: string;
   readonly nameColumn: string;
   readonly next: string;
   readonly paginationLabel: string;
@@ -250,9 +252,7 @@ interface CustomersListCopy {
   readonly transport: string;
   readonly unarchive: string;
   readonly unarchiving: string;
-  readonly decode: string;
   readonly unavailable: string;
-  readonly createdAtColumn: string;
   readonly updatedAtColumn: string;
 }
 
@@ -260,12 +260,12 @@ interface CustomersListViewProps {
   readonly copy: CustomersListCopy;
   readonly currentSearch: string;
   readonly language: string;
-  readonly offset: number;
   readonly lifecycleError: null | string;
-  readonly onToggleLifecycle: (customerId: string, lifecycle: 'active' | 'archived') => void;
-  readonly pendingCustomerId: null | string;
+  readonly offset: number;
   readonly onRetry: () => Promise<void>;
   readonly onStatusChange: (status: CustomerArchiveFilter) => void;
+  readonly onToggleLifecycle: (customerId: string, lifecycle: 'active' | 'archived') => void;
+  readonly pendingCustomerId: null | string;
   readonly retrying: boolean;
   readonly status: CustomerArchiveFilter;
   readonly view: CustomersListViewState;
@@ -401,10 +401,10 @@ export const CustomersListView = ({
   language,
   lifecycleError,
   offset,
-  onToggleLifecycle,
-  pendingCustomerId,
   onRetry,
   onStatusChange,
+  onToggleLifecycle,
+  pendingCustomerId,
   retrying,
   status,
   view,
@@ -783,18 +783,19 @@ const CustomersListFeature = () => {
       language={language}
       lifecycleError={lifecycleError}
       offset={urlState.offset}
-      onToggleLifecycle={toggleLifecycle}
-      pendingCustomerId={
-        lifecycleMutation.isPending ? (lifecycleMutation.variables?.customerId ?? null) : null
+      onRetry={() =>
+        // oxlint-disable-next-line promise/prefer-await-to-then, no-void -- The view contract observes completion, not the query result.
+        refetch().then((result) => void result)
       }
-      onRetry={async () => {
-        await refetch();
-      }}
       onStatusChange={(status) => {
         void navigate({
           to: buildCustomerListHref(language, search, status, 0),
         });
       }}
+      onToggleLifecycle={toggleLifecycle}
+      pendingCustomerId={
+        lifecycleMutation.isPending ? (lifecycleMutation.variables?.customerId ?? null) : null
+      }
       retrying={query.isFetching && !query.isPending}
       status={urlState.status}
       view={view}

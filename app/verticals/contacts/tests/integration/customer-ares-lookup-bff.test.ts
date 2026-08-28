@@ -1,4 +1,4 @@
-/* eslint-disable no-promise-executor-return, promise/avoid-new, promise/prefer-await-to-callbacks, require-await -- Node HTTP and fake transaction callbacks are adapted at the test boundary. */
+/* eslint-disable no-promise-executor-return, promise/avoid-new, promise/prefer-await-to-callbacks -- Node HTTP and fake transaction callbacks are adapted at the test boundary. */
 // @effect-diagnostics asyncFunction:off anyUnknownInErrorContext:off globalDate:off newPromise:off nodeBuiltinImport:off processEnv:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -6,10 +6,14 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { ActionResultValidationError, ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import type { ActionRuntimeService } from '@app/core-runtime';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect, Layer } from '@modern-js/plugin-bff/effect-edge';
 import { Schema } from 'effect';
+import { isObject } from 'effect/Predicate';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
+import { coreDatabaseSchema } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
 import { makeContactsApiRuntime } from '../../api/index.ts';
 import { createCustomer, lookupCustomerAres } from '../../src/api/contacts-client.ts';
 import {
@@ -75,11 +79,11 @@ const startServer = async (
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const address = server.address();
-  assert.ok(address instanceof Object);
+  assert.ok(isObject(address));
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
+    close: async () =>
+      await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error === undefined) {
             resolve();
@@ -98,8 +102,8 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const publicJwk = await exportJWK(publicKey);
   const now = Math.floor(Date.now() / 1000);
-  const issueAssertion = () =>
-    new SignJWT({ principal, ver: 1 })
+  const issueAssertion = async () =>
+    await new SignJWT({ principal, ver: 1 })
       .setProtectedHeader({ alg: 'EdDSA', kid: 'ares-bff', typ: 'JWT' })
       .setIssuer(issuer)
       .setAudience('contacts')
@@ -144,16 +148,24 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
     select: () => {},
     update: () => {},
   };
+  const executor = drizzle.mock({ schema: coreDatabaseSchema });
   const database = {
-    executor: {
-      insert: transaction.insert,
-      transaction: <Result>(callback: (value: typeof transaction) => Promise<Result>) =>
-        callback(transaction),
-    },
+    executor: new Proxy(executor, {
+      get: (target, property, receiver) => {
+        if (property === 'insert') {
+          return transaction.insert;
+        }
+        if (property === 'transaction') {
+          return async <Result>(callback: (value: typeof transaction) => Promise<Result>) =>
+            await callback(transaction);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    }),
   };
   const readRuntime = makeReadRuntime(
     database,
-    { check: () => Effect.void, prepareSnapshot: () => Effect.succeed({}) },
+    openModuleEntrypointGateway,
     {
       resolve: ({ correlationId }: { readonly correlationId: string }) =>
         Effect.succeed({ ...principal, correlationId }),
@@ -268,7 +280,7 @@ test('runs ARES lookup through the generated client, real BFF, and governed Read
         },
       },
     ]);
-    const createPayload = parseJsonObject(actionCalls[0]?.['payload']);
+    const createPayload = parseJsonObject(actionCalls[0]?.payload);
     assert.equal(Object.hasOwn(createPayload, 'address'), false);
     assert.equal(Object.hasOwn(createPayload, 'ares'), false);
     assert.equal(Object.hasOwn(createPayload, 'source'), false);

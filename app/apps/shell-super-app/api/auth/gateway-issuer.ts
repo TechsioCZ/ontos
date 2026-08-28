@@ -50,7 +50,7 @@ export const gatewayIssuerLiveDependencies: GatewayIssuerDependencies = {
         reason: 'The generated MicroVertical audience topology is unavailable',
         stage: 'audience',
       }),
-    try: () => import('../verticals/installed-verticals.ts'),
+    try: async () => await import('../verticals/installed-verticals.ts'),
   }).pipe(Effect.flatMap((module) => module.installedVerticalIds)),
   loadConfig: loadGatewayIssuerConfig(),
 };
@@ -95,7 +95,7 @@ export const issueGatewayContextAssertion = <Principal>(
       catch: () => unavailable('signing'),
       try: async () => {
         const key = await importJWK(configuration.privateJwk, 'EdDSA');
-        return new SignJWT({
+        return await new SignJWT({
           principal,
           ver: GATEWAY_ASSERTION_VERSION,
         })

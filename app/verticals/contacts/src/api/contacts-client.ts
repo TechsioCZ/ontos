@@ -32,12 +32,10 @@ type ContactsApiGroups =
   typeof contactsApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 
 export type ContactsClient = HttpApiClient.Client<
-  Extract<ContactsApiGroups, HttpApiGroup.Constraint>,
-  never,
-  never
+  Extract<ContactsApiGroups, HttpApiGroup.Constraint>
 >;
 export type ContactsClientError = HttpClientError.HttpClientError | Schema.SchemaError;
-export type ContactsClientEffect<Success> = Effect.Effect<Success, ContactsClientError, never>;
+export type ContactsClientEffect<Success> = Effect.Effect<Success, ContactsClientError>;
 
 export interface ContactsClientOptions {
   readonly baseUrl?: string | URL;

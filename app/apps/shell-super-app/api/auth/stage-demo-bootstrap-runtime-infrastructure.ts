@@ -1,4 +1,3 @@
-/* eslint-disable promise/prefer-await-to-callbacks -- Better Auth exposes a Promise-based server API. */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
@@ -7,7 +6,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { admin } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import { Pool } from 'pg';
 import { account, authDatabaseSchema, user } from './db/schema.ts';
 import {
@@ -99,7 +98,7 @@ const reconcileAuthUser = (
 ) =>
   Effect.tryPromise({
     catch: (cause) =>
-      cause instanceof StageDemoBootstrapError
+      Schema.is(StageDemoBootstrapError)(cause)
         ? cause
         : new StageDemoBootstrapError({
             code: 'stage_demo_persistence_failed',

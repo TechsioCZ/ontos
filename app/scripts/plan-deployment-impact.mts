@@ -418,9 +418,10 @@ const isMigrationChange = (changedPath: string): boolean =>
   /(?:^|\/)(?:drizzle(?:-auth)?\/|drizzle(?:\.auth)?\.config\.ts$|schema\.ts$|prepare-[^/]+-migration\.mts$|verify-(?:auth-)?db-schema\.mts$)/u.test(
     changedPath,
   ) ||
-  /^(?:scripts\/run-zerops-migrator\.mjs|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|bootstrap-spicedb-database\.mts|docker-init-runtime-role\.sh|spicedb-database-config\.mts))$/u.test(
+  /^(?:scripts\/run-zerops-migrator\.mjs|scripts\/verify-application-db-schema\.mts|scripts\/postgres\/(?:bootstrap-runtime-role\.mts|bootstrap-spicedb-database\.mts|docker-init-runtime-role\.sh))$/u.test(
     changedPath,
-  );
+  ) ||
+  changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts';
 
 const isPublicContractChange = (ownerPath: string, changedPath: string): boolean => {
   const relativePath = changedPath.slice(ownerPath.length + 1);
@@ -436,8 +437,8 @@ const isPublicContractChange = (ownerPath: string, changedPath: string): boolean
 const isSpiceDbChange = (changedPath: string): boolean =>
   changedPath.startsWith('packages/core-runtime/spicedb/') ||
   changedPath.startsWith('packages/core-runtime/src/permissions/') ||
+  changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'scripts/postgres/bootstrap-spicedb-database.mts' ||
-  changedPath === 'scripts/postgres/spicedb-database-config.mts' ||
   changedPath === 'scripts/run-zerops-spicedb.sh';
 
 const isAuthorizationRolloutChange = (changedPath: string): boolean =>

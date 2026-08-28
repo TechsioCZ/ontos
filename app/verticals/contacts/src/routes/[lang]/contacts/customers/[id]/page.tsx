@@ -37,6 +37,7 @@ import {
   unarchiveContact,
 } from '../../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../../error-classification.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 
 type CustomerDetailPageRouteParams = Readonly<Partial<Record<'id', string>>>;
@@ -47,9 +48,7 @@ interface CustomerDetailPageProps {
 
 type CustomerDetailClientError = Effect.Error<ReturnType<typeof getCustomerDetail>>;
 type ContactListClientError = Effect.Error<ReturnType<typeof getContactList>>;
-type ContactLifecycleClientError =
-  | Effect.Error<ReturnType<typeof archiveContact>>
-  | Effect.Error<ReturnType<typeof unarchiveContact>>;
+type ContactLifecycleClientError = Effect.Error<ReturnType<typeof archiveContact>>;
 type ContactListUnavailableReason = 'backend' | 'decode' | 'internal' | 'transport';
 export type ContactArchiveFilter = 'active' | 'archived' | 'all';
 type ContactListErrorState =
@@ -149,18 +148,17 @@ interface ContactListCopy {
   readonly authenticationExpired: string;
   readonly create: string;
   readonly decode: string;
+  readonly edit: string;
   readonly emailColumn: string;
   readonly empty: string;
-  readonly edit: string;
-  readonly forbidden: string;
   readonly filterActive: string;
   readonly filterAll: string;
   readonly filterArchived: string;
   readonly filterLabel: string;
   readonly filterPlaceholder: string;
+  readonly forbidden: string;
   readonly heading: string;
   readonly internal: string;
-  readonly loading: string;
   readonly lifecycleAuthenticationExpired: string;
   readonly lifecycleConflict: string;
   readonly lifecycleForbidden: string;
@@ -168,6 +166,7 @@ interface ContactListCopy {
   readonly lifecycleNotFound: string;
   readonly lifecycleUnavailable: string;
   readonly lifecycleUnexpected: string;
+  readonly loading: string;
   readonly nameColumn: string;
   readonly next: string;
   readonly paginationLabel: string;
@@ -251,7 +250,8 @@ export const buildCustomerContactListHref = (
   }
   const search = parameters.toString();
   const pathname = `/${language}/contacts/customers/${encodeURIComponent(customerId)}`;
-  return `${pathname}${search.length === 0 ? '' : `?${search}`}`;
+  const searchSuffix = search.length === 0 ? '' : `?${search}`;
+  return `${pathname}${searchSuffix}`;
 };
 
 export const contactListQueryKey = (
@@ -267,7 +267,9 @@ export const contactListQueryKey = (
     { filter: status, limit: CONTACT_LIST_PAGE_SIZE, offset },
   ] as const;
 
-export const classifyContactListError = (error: ContactListClientError): ContactListErrorState => {
+export const classifyContactListError = (
+  error: ErrorClassificationInput<ContactListClientError>,
+): ContactListErrorState => {
   if (error._tag === 'HttpClientError') {
     if (error.reason._tag === 'TransportError') {
       return { reason: 'transport', state: 'unavailable' };
@@ -312,7 +314,7 @@ export const classifyContactListError = (error: ContactListClientError): Contact
 };
 
 export const classifyContactLifecycleError = (
-  error: ContactLifecycleClientError,
+  error: ErrorClassificationInput<ContactLifecycleClientError>,
 ): ContactLifecycleErrorState => {
   if (error._tag === 'HttpClientError' || error._tag === 'SchemaError') {
     return { state: 'unavailable', uncertain: true };
@@ -355,7 +357,7 @@ export const classifyContactLifecycleError = (
 };
 
 export const classifyCustomerDetailError = (
-  error: CustomerDetailClientError,
+  error: ErrorClassificationInput<CustomerDetailClientError>,
 ): CustomerDetailErrorState => {
   if (error._tag === 'HttpClientError') {
     if (error.reason._tag === 'TransportError') {

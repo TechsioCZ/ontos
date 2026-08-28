@@ -1,4 +1,3 @@
-/* eslint-disable complexity -- Closed evidence validation keeps every fail-closed bound visible. */
 import { Effect, Predicate, Schema } from 'effect';
 import type { OperationalScope } from '../operations/context.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';

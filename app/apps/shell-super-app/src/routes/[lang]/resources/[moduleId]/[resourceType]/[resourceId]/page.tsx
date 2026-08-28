@@ -17,17 +17,15 @@ const ResourcePage = () => {
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined,
   );
-  const handleMediaAttachment = async () => {
+  const handleMediaAttachment = (): Promise<void> => {
     if (model.state !== 'ready') {
-      return;
+      return Promise.resolve();
     }
     setMediaState('pending');
-    try {
-      await runEffectRequest(attachResourceMedia(model.resource.ref));
-      setMediaState('success');
-    } catch {
-      setMediaState('failed');
-    }
+    return runEffectRequest(attachResourceMedia(model.resource.ref)).then(
+      () => setMediaState('success'),
+      () => setMediaState('failed'),
+    );
   };
   if (model.shell.state !== 'authenticated') {
     return (
@@ -49,7 +47,7 @@ const ResourcePage = () => {
       </StatusText>
     ) : (
       <div className="shell:grid shell:w-full shell:max-w-5xl shell:gap-8">
-        <section className="shell:grid shell:gap-4" aria-labelledby="resource-title">
+        <section aria-labelledby="resource-title" className="shell:grid shell:gap-4">
           <h2 className="shell:text-title-lg" id="resource-title">
             {model.resource.detail.title}
           </h2>
@@ -62,7 +60,7 @@ const ResourcePage = () => {
             ))}
           </dl>
         </section>
-        <section className="shell:grid shell:gap-3" aria-labelledby="resource-media">
+        <section aria-labelledby="resource-media" className="shell:grid shell:gap-3">
           <h2 className="shell:text-title-md" id="resource-media">
             {t('shell.resource.media.title')}
           </h2>
@@ -92,7 +90,7 @@ const ResourcePage = () => {
             </StatusText>
           ) : null}
         </section>
-        <section className="shell:grid shell:gap-3" aria-labelledby="resource-timeline">
+        <section aria-labelledby="resource-timeline" className="shell:grid shell:gap-3">
           <h2 className="shell:text-title-md" id="resource-timeline">
             {t('shell.resource.timeline.title')}
           </h2>

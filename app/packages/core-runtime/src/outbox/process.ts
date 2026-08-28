@@ -1,4 +1,5 @@
 /* eslint-disable promise/prefer-await-to-then -- Promises are used only at the Node process edge. */
+// @effect-diagnostics asyncFunction:off
 import { Effect, Layer, ManagedRuntime, Random } from 'effect';
 import { DatabaseConfigLive } from '../db/config.ts';
 import { CoreDatabaseLive } from '../db/client.ts';
@@ -25,11 +26,7 @@ export interface StartOutboxWorkerProcessInput<
   Registration extends AnyOutboxWorkerRegistration,
   LayerError,
 > extends RunOutboxWorkerProcessInput<Registration> {
-  readonly layer: Layer.Layer<
-    OutboxRuntime | OutboxWorkerRequirements<Registration>,
-    LayerError,
-    never
-  >;
+  readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
 }
 
 const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
@@ -100,5 +97,5 @@ export const startOutboxWorkerProcess = <
         process.exitCode = 1;
       },
     )
-    .finally(() => runtime.dispose());
+    .finally(async () => await runtime.dispose());
 };

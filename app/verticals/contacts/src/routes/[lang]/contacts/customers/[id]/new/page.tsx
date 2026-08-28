@@ -12,6 +12,7 @@ import {
   runEffectRequest,
 } from '../../../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../../../error-classification.ts';
 import { CustomerAresLoader } from '../../../../../../features/customers/customer-ares-loader.tsx';
 import type { CustomerAresLoaderStatus } from '../../../../../../features/customers/customer-ares-loader.tsx';
 import { CustomerForm } from '../../../../../../features/customers/customer-form.tsx';
@@ -69,7 +70,7 @@ const classifyHttpClientFailure = (error: {
 };
 
 export const classifyCreateCustomerError = (
-  error: CreateCustomerClientError,
+  error: ErrorClassificationInput<CreateCustomerClientError>,
 ): CreateCustomerErrorState => {
   if (error._tag === 'HttpClientError') {
     const reason = classifyHttpClientFailure(error);
@@ -115,7 +116,7 @@ export const classifyCreateCustomerError = (
 };
 
 export const classifyCustomerAresLookupError = (
-  error: CustomerAresLookupClientError,
+  error: ErrorClassificationInput<CustomerAresLookupClientError>,
 ): CustomerAresLookupErrorState => {
   if (error._tag === 'HttpClientError') {
     const reason = classifyHttpClientFailure(error);
@@ -187,13 +188,6 @@ interface CustomerCreateCopy {
     readonly save: string;
     readonly saving: string;
   };
-  readonly mutation: {
-    readonly authenticationExpired: string;
-    readonly conflict: string;
-    readonly forbidden: string;
-    readonly generic: string;
-    readonly success: string;
-  };
   readonly lookup: {
     readonly authenticationExpired: string;
     readonly decode: string;
@@ -210,6 +204,13 @@ interface CustomerCreateCopy {
     readonly success: string;
     readonly transport: string;
     readonly unavailable: string;
+  };
+  readonly mutation: {
+    readonly authenticationExpired: string;
+    readonly conflict: string;
+    readonly forbidden: string;
+    readonly generic: string;
+    readonly success: string;
   };
   readonly states: {
     readonly decode: string;
@@ -463,7 +464,6 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
   const lookup = (ico: string): Promise<void> => {
     setLookupFeedback(null);
 
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning presentation callbacks stay non-async under strict Effect diagnostics.
     return lookupMutation.mutateAsync({ ico }).then(
       (result) => {
         setFormValues((current) => ({
@@ -504,7 +504,6 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
     logicalAttemptRef.current = { idempotencyKey, payload: values, uncertain: false };
     setFeedback(null);
 
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning form callbacks stay non-async under strict Effect diagnostics.
     return createMutation.mutateAsync({ idempotencyKey, payload: values }).then(
       () => {
         logicalAttemptRef.current = null;

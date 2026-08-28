@@ -9,6 +9,7 @@ import { useMemo, useRef, useState } from 'react';
 import { ContactsUuidSchema } from '../../../../../../../../shared/apis/customer-detail.ts';
 import { createContact, runEffectRequest } from '../../../../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../../../../error-classification.ts';
 import { ContactForm } from '../../../../../../../features/contacts/contact-form.tsx';
 import type {
   ContactFormCopy,
@@ -98,7 +99,7 @@ const unavailableReason = (error: {
 };
 
 export const classifyCreateContactError = (
-  error: CreateContactClientError,
+  error: ErrorClassificationInput<CreateContactClientError>,
 ): CreateContactErrorState => {
   if (error._tag === 'HttpClientError') {
     const reason = unavailableReason(error);
@@ -299,7 +300,6 @@ export const ContactCreateFeature = ({ routeParams, target }: ContactCreatePageP
     logicalAttemptRef.current = { idempotencyKey, intent, uncertain: false };
     setFeedback(null);
 
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning form callbacks stay non-async under strict Effect diagnostics.
     return createMutation.mutateAsync({ customerId, idempotencyKey, values }).then(
       () => {
         logicalAttemptRef.current = null;

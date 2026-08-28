@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { STAGE_CONTEXTS } from '../../src/install/stage-context-bootstrap.ts';
 
-test('defines the exact Techsio and Siampark stage contexts', () => {
+void test('defines the exact Techsio and Siampark stage contexts', () => {
   assert.deepEqual(STAGE_CONTEXTS, {
     siampark: {
       authBindingId: '73000000-0000-4000-8000-000000000002',

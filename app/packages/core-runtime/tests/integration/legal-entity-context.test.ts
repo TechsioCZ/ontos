@@ -17,7 +17,7 @@ const activeTwo = '21000000-0000-4000-8000-000000000002';
 const suspended = '21000000-0000-4000-8000-000000000003';
 const foreign = '21000000-0000-4000-8000-000000000004';
 
-test('lists and validates only active legal entities inside the exact tenant', async () => {
+void test('lists and validates only active legal entities inside the exact tenant', async () => {
   const configuration = await Effect.runPromise(loadDatabaseConfig());
   const pool = new Pool({ connectionString: configuration.connectionString });
   const database = drizzle({ client: pool, schema: coreDatabaseSchema });

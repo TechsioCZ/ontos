@@ -32,8 +32,8 @@ const SearchPage = () => {
       </StatusText>
     ) : (
       <section
-        className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
         aria-labelledby="search-results-title"
+        className="shell:grid shell:w-full shell:max-w-5xl shell:gap-6"
       >
         <h2 className="shell:text-title-lg" id="search-results-title">
           {t('shell.search.title')}

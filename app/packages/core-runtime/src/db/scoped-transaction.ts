@@ -11,9 +11,9 @@ const scopedTransaction: unique symbol = Symbol('@app/core-runtime/db/scoped-tra
 
 /** Private owner-factory capability. It is never supplied to an Action or read handler. */
 export interface ScopedTransactionExecutor {
-  readonly [scopedTransaction]: true;
   readonly delete: CoreTransaction['delete'];
   readonly insert: CoreTransaction['insert'];
+  readonly [scopedTransaction]: true;
   readonly select: CoreTransaction['select'];
   readonly update: CoreTransaction['update'];
 }
@@ -74,9 +74,9 @@ export const installOperationalScopeFromTransactionService = (
         throw new Error('Transaction-local operation scope verification failed');
       }
       return Object.freeze({
-        [scopedTransaction]: true as const,
         delete: transaction.delete.bind(transaction),
         insert: transaction.insert.bind(transaction),
+        [scopedTransaction]: true as const,
         select: transaction.select.bind(transaction),
         update: transaction.update.bind(transaction),
       });

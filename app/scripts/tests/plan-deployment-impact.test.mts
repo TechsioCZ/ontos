@@ -180,18 +180,20 @@ for (const changedPath of [
   });
 }
 
-test('includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap changes', async () => {
-  await withFixture((root) => {
-    const plan = planDeploymentImpact({
-      changedPaths: ['scripts/postgres/bootstrap-spicedb-database.mts'],
-      rootDirectory: root,
+for (const changedPath of [
+  'scripts/postgres/bootstrap-spicedb-database.mts',
+  'packages/core-runtime/src/install/spicedb-database-config.ts',
+]) {
+  test(`includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap change ${changedPath}`, async () => {
+    await withFixture((root) => {
+      const plan = planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+      assert.deepEqual(
+        plan.phases.map((phase) => phase.id),
+        ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+      );
     });
-    assert.deepEqual(
-      plan.phases.map((phase) => phase.id),
-      ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
-    );
   });
-});
+}
 
 test('expands shared-package changes to every consumer in dependency order', async () => {
   await withFixture((root) => {

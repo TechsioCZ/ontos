@@ -3,6 +3,7 @@ import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { bffPlugin } from '@modern-js/plugin-bff';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
@@ -25,6 +26,11 @@ const withOptionalProperty = <
   value: Value,
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
+
+type RspackConfigHandler = Extract<
+  NonNullable<NonNullable<AppToolsUserConfig['tools']>['rspack']>,
+  (...arguments_: never[]) => void
+>;
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
@@ -63,10 +69,10 @@ const cloudflareRuntimeExternal = (
 };
 /* oxlint-enable promise/prefer-await-to-callbacks */
 
-const zephyrRspackPlugin = () => ({
+const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
-  setup(api: { modifyRspackConfig: (handler: ReturnType<typeof withZephyrRspack>) => void }) {
+  setup(api) {
     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
@@ -141,6 +147,13 @@ const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
 const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
 const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
 const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`;
+const shellDevServerHeaders: NonNullable<
+  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
+> = {
+  'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, X-Requested-With',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
+};
 
 if (
   cloudflareDeployEnabled &&
@@ -170,7 +183,7 @@ export default defineConfig(
           runtimeFramework: 'effect',
         },
         builderPlugins: [pluginTailwindcss()],
-      },
+      } satisfies AppToolsUserConfig,
       cloudflareDeployEnabled,
       'deploy',
       {
@@ -225,12 +238,15 @@ export default defineConfig(
           ],
           ssr: true,
         },
-      },
+      } satisfies NonNullable<AppToolsUserConfig['deploy']>,
       {
         dev: {
           // Keep shell dev assets origin-relative so the shell works through
           // tunnels and local previews without rewriting its own chunks.
           assetPrefix: '/',
+          server: {
+            headers: shellDevServerHeaders,
+          },
         },
         html: {
           outputStructure: 'flat',
@@ -324,15 +340,7 @@ export default defineConfig(
               .uniqueName('shellSuperApp')
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
-          devServer: {
-            headers: {
-              'Access-Control-Allow-Headers':
-                'Accept, Authorization, Content-Type, X-Requested-With',
-              'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-              'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
-            },
-          },
-          rspack: (config, { environment, rspack }) => {
+          rspack: ((config, { environment, rspack }) => {
             if (!cloudflareDeployEnabled) {
               return;
             }
@@ -390,10 +398,10 @@ export default defineConfig(
                 ),
               );
             }
-          },
+          }) satisfies RspackConfigHandler,
         },
-      },
-    ),
+      } satisfies AppToolsUserConfig,
+    ) satisfies AppToolsUserConfig,
     {
       appId,
       deliveryUnit: {

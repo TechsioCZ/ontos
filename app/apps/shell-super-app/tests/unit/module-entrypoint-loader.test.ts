@@ -1,8 +1,9 @@
 import { expect, test } from '@rstest/core';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
+  TrustedPrincipalContextSchema,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import type {
@@ -48,31 +49,46 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
         )
       : Effect.void;
   };
+  const prepareSnapshot: ModuleEntrypointGatewayService['prepareSnapshot'] = (
+    context,
+    entrypoints,
+  ) => {
+    options.onPrepare?.(entrypoints);
+    if (options.unavailable === true || context.tenantId.length === 0) {
+      return Effect.fail(
+        new ModuleStateCheckUnavailableError({
+          code: 'module_state_check_unavailable',
+          reason: 'Module state could not be checked safely',
+        }),
+      );
+    }
+    const snapshot: ModuleStateSnapshot = Object.freeze({
+      entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
+      moduleKeys: Object.freeze(
+        [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted(),
+      ),
+      tenantId: context.tenantId,
+    });
+    return Effect.succeed(snapshot);
+  };
   const gateway: ModuleEntrypointGatewayService = {
     check,
-    prepareSnapshot: (context, entrypoints) => {
-      options.onPrepare?.(entrypoints);
-      if (options.unavailable === true || context.tenantId.length === 0) {
-        return Effect.fail(
-          new ModuleStateCheckUnavailableError({
-            code: 'module_state_check_unavailable',
-            reason: 'Module state could not be checked safely',
-          }),
-        );
-      }
-      const snapshot: ModuleStateSnapshot = Object.freeze({
-        entrypointKeys: Object.freeze(entrypoints.map(({ entrypointKey }) => entrypointKey)),
-        moduleKeys: Object.freeze(
-          [...new Set(entrypoints.map(({ moduleKey }) => moduleKey))].toSorted(),
+    prepareSnapshot,
+    prepareSnapshotInput: (context, entrypoints) =>
+      Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(context).pipe(
+        Effect.mapError(
+          () =>
+            new ModuleStateCheckUnavailableError({
+              code: 'module_state_check_unavailable',
+              reason: 'Module state could not be checked safely',
+            }),
         ),
-        tenantId: context.tenantId,
-      });
-      return Effect.succeed(snapshot);
-    },
+        Effect.flatMap((trusted) => prepareSnapshot(trusted, entrypoints)),
+      ),
     run: (input) =>
       check(input.snapshot, input.entrypoint).pipe(
         Effect.andThen(input.authorize),
-        Effect.andThen(Effect.suspend(input.load)),
+        Effect.andThen(input.load),
       ),
   };
   return gateway;
@@ -109,11 +125,10 @@ test('prepares one complete trusted composition and invokes allowed lazy loaders
       [page, component].map((entrypoint) => ({
         authorize: Effect.void,
         entrypoint,
-        load: () =>
-          Effect.sync(() => {
-            loads += 1;
-            return `loaded-${loads}`;
-          }),
+        load: Effect.sync(() => {
+          loads += 1;
+          return `loaded-${loads}`;
+        }),
       })),
     ),
   );
@@ -137,11 +152,10 @@ test('checks the complete composition before authorizing or invoking any loader'
             authorizations += 1;
           }),
           entrypoint,
-          load: () =>
-            Effect.sync(() => {
-              loads += 1;
-              return loads;
-            }),
+          load: Effect.sync(() => {
+            loads += 1;
+            return loads;
+          }),
         })),
       ),
     ),
@@ -174,7 +188,7 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
   const gateFailure = await Effect.runPromise(
     Effect.flip(
       loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
-        { authorize: Effect.void, entrypoint: page, load: () => Effect.succeed('unreachable') },
+        { authorize: Effect.void, entrypoint: page, load: Effect.succeed('unreachable') },
       ]),
     ),
   );
@@ -186,7 +200,7 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
         {
           authorize: Effect.void,
           entrypoint: page,
-          load: () => Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
+          load: Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
         },
       ]),
     ),

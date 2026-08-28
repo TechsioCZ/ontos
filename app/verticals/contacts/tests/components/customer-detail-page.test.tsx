@@ -51,7 +51,7 @@ const {
     getContactListMock: rstest.fn(),
     getCustomerDetailMock: rstest.fn(),
     localeState: state,
-    navigateMock: rstest.fn(() => Promise.resolve()),
+    navigateMock: rstest.fn(async () => {}),
     routeParamsState: paramsState,
     runEffectRequestMock: rstest.fn(),
     searchState: { current: '' },
@@ -344,8 +344,8 @@ beforeEach(() => {
   archiveContactMock.mockReturnValue(Effect.succeed({ ...contacts[0], archivedAt: 'now' }));
   getContactListMock.mockReturnValue(Effect.succeed({ items: contacts, nextOffset: null }));
   getCustomerDetailMock.mockReturnValue(Effect.succeed(activeCustomer));
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
   unarchiveContactMock.mockReturnValue(Effect.succeed({ ...archivedContact, archivedAt: null }));
 });

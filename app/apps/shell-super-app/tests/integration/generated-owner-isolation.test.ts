@@ -1,4 +1,4 @@
-/* eslint-disable complexity, max-lines, no-await-in-loop, node/no-process-env, promise/prefer-await-to-callbacks, typescript/no-explicit-any, typescript/no-non-null-assertion, unicorn/consistent-function-scoping, unicorn/no-await-expression-member, unicorn/no-useless-undefined -- One intentionally monolithic live fixture proves the complete generated-owner trust and isolation path. */
+/* eslint-disable no-await-in-loop, promise/prefer-await-to-callbacks, typescript/no-explicit-any, typescript/no-non-null-assertion, unicorn/consistent-function-scoping, unicorn/no-await-expression-member, unicorn/no-useless-undefined -- One intentionally monolithic live fixture proves the complete generated-owner trust and isolation path. */
 // @effect-diagnostics asyncFunction:off nodeBuiltinImport:off processEnv:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -124,20 +124,14 @@ const OwnerSearchSchema = Schema.Array(
   Schema.Struct({ ref: ResourceRefSchema, title: Schema.String }),
 );
 
-type GeneratedOwnerAction = ReturnType<typeof getVerticalRuntimeActions>[number];
-
 interface GeneratedOwnerModules {
-  readonly action: GeneratedOwnerAction;
+  // Generated source is imported from a temporary path, so TypeScript cannot retain the private
+  // Action-registration symbols across the dynamic module boundary. Runtime checks below prove it.
+  readonly action: any;
   readonly counts: { action: number; detail: number; list: number; search: number };
   readonly detail: OwnerHttpHandler;
   readonly list: OwnerHttpHandler;
   readonly search: OwnerHttpHandler;
-  readonly wiring: {
-    readonly action: boolean;
-    readonly detailClient: boolean;
-    readonly listClient: boolean;
-    readonly searchClient: boolean;
-  };
   readonly verifyOperationPrincipal: (
     authorization: string | undefined,
     options: {
@@ -145,6 +139,12 @@ interface GeneratedOwnerModules {
       readonly redemption: GatewayAssertionRedemption;
     },
   ) => Effect.Effect<TrustedPrincipalContext, unknown>;
+  readonly wiring: {
+    readonly action: boolean;
+    readonly detailClient: boolean;
+    readonly listClient: boolean;
+    readonly searchClient: boolean;
+  };
 }
 
 const relationship = (
@@ -174,17 +174,13 @@ const makeOwnerHandler = (
   const loggedRuntime: ReadRuntimeService = {
     runRead: (input) => runtime.runRead(input).pipe(Effect.provide(loggerLayer)),
   };
-  const bff = defineEffectBff({
-    api,
-    layer: HttpApiBuilder.layer(api).pipe(
-      Layer.provide(group),
-      Layer.provide(
-        Layer.succeed(GatewayAssertionRedemptionService, testGatewayAssertionRedemption),
-      ),
-      Layer.provide(Layer.succeed(ReadRuntime, loggedRuntime)),
-      Layer.provide(loggerLayer),
-    ),
-  });
+  const ownerLayer: any = HttpApiBuilder.layer(api).pipe(
+    Layer.provide(group),
+    Layer.provide(Layer.succeed(GatewayAssertionRedemptionService, testGatewayAssertionRedemption)),
+    Layer.provide(Layer.succeed(ReadRuntime, loggedRuntime)),
+    Layer.provide(loggerLayer),
+  );
+  const bff = defineEffectBff({ api, layer: ownerLayer });
   const handler: OwnerHttpHandler = bff.createHandler();
   return handler;
 };
@@ -194,8 +190,8 @@ const loadGeneratedOwner = async (
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
 ): Promise<GeneratedOwnerModules> => {
-  const load = (relativePath: string) =>
-    import(pathToFileURL(`${verticalRoot}/${relativePath}`).href);
+  const load = async (relativePath: string) =>
+    await import(pathToFileURL(`${verticalRoot}/${relativePath}`).href);
   const [
     detailApi,
     detailServer,
@@ -217,7 +213,7 @@ const loadGeneratedOwner = async (
     load('src/isolation/instrumentation.ts'),
     load('vertical.registration.ts'),
   ]);
-  const registration = registrationOwner['isolationOwnerRegistration'];
+  const registration = registrationOwner.isolationOwnerRegistration;
   const actions = getVerticalRuntimeActions(registration);
   const entrypoints = getVerticalRuntimeEntrypoints(registration);
   const [detailClient, listClient, searchClient] = await Promise.all([
@@ -233,43 +229,58 @@ const loadGeneratedOwner = async (
   }
   return {
     action: generatedAction,
-    counts: state['generatedOwnerHandlerCounts'],
+    counts: state.generatedOwnerHandlerCounts,
     detail: makeOwnerHandler(
-      detailApi['ResourceDetailApi'],
-      detailServer['resourceDetailReadApiLive'],
+      detailApi.ResourceDetailApi,
+      detailServer.resourceDetailReadApiLive,
       runtime,
       loggerLayer,
     ),
     list: makeOwnerHandler(
-      listApi['ResourceListApi'],
-      listServer['resourceListReadApiLive'],
+      listApi.ResourceListApi,
+      listServer.resourceListReadApiLive,
       runtime,
       loggerLayer,
     ),
     search: makeOwnerHandler(
-      searchApi['RecordsSearchApi'],
-      searchServer['recordsReadApiLive'],
+      searchApi.RecordsSearchApi,
+      searchServer.recordsReadApiLive,
       runtime,
       loggerLayer,
     ),
-    verifyOperationPrincipal: verifier['verifyOperationPrincipal'],
+    verifyOperationPrincipal: verifier.verifyOperationPrincipal,
     wiring: {
       action: true,
-      detailClient: Predicate.isFunction(detailClient?.['executeResourceDetailWithAuthorization']),
-      listClient: Predicate.isFunction(listClient?.['executeResourceListWithAuthorization']),
-      searchClient: Predicate.isFunction(searchClient?.['loadRecordsClientWithAuthorization']),
+      detailClient:
+        detailClient !== undefined &&
+        Predicate.isFunction(
+          Object.getOwnPropertyDescriptor(detailClient, 'executeResourceDetailWithAuthorization')
+            ?.value,
+        ),
+      listClient:
+        listClient !== undefined &&
+        Predicate.isFunction(
+          Object.getOwnPropertyDescriptor(listClient, 'executeResourceListWithAuthorization')
+            ?.value,
+        ),
+      searchClient:
+        searchClient !== undefined &&
+        Predicate.isFunction(
+          Object.getOwnPropertyDescriptor(searchClient, 'loadRecordsClientWithAuthorization')
+            ?.value,
+        ),
     },
   };
 };
 
-const requestOwner = <Payload>(
+const requestOwner = async <Payload>(
   handler: OwnerHttpHandler,
   path: string,
   payload: Payload,
   authorization: string,
   correlationId: string,
 ): Promise<Response> =>
-  handler.handler(
+  await handler.handler(
     new Request(`https://isolation-owner.example.test${path}`, {
       body: JSON.stringify(payload),
       headers: {
@@ -281,10 +292,10 @@ const requestOwner = <Payload>(
     }),
   );
 
-const decodeResponse = async <Value, Encoded>(
+const decodeResponse = async <ResponseSchema extends Schema.ConstraintDecoder<unknown>>(
   response: Response,
-  schema: Schema.Schema<Value, Encoded>,
-): Promise<Value> => Schema.decodeUnknownSync(schema)(await response.json());
+  schema: ResponseSchema,
+): Promise<ResponseSchema['Type']> => Schema.decodeUnknownSync(schema)(await response.json());
 
 const createOwnerSchema = async (admin: Pool, schemaName: string): Promise<void> => {
   const tenantPredicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
@@ -337,8 +348,8 @@ type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 
 const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
   const transactionOverride = {
-    transaction: (callback, configuration) =>
-      database.executor.transaction((transaction) => {
+    transaction: async (callback, configuration) =>
+      await database.executor.transaction(async (transaction) => {
         const insert: typeof transaction.insert = (table) => {
           if (Object.is(table, dataAccessEvents)) {
             throw new Error('Injected evidence persistence failure');
@@ -348,7 +359,7 @@ const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseSer
         const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
           insert,
         });
-        return callback(faultingTransaction);
+        return await callback(faultingTransaction);
       }, configuration),
   } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
   const executor: CoreDatabaseService['executor'] = Object.assign(
@@ -484,8 +495,8 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   process.env['ONTOS_GATEWAY_ISSUER'] = verifierEnvironment.ONTOS_GATEWAY_ISSUER;
   process.env['ONTOS_GATEWAY_PUBLIC_JWKS'] = verifierEnvironment.ONTOS_GATEWAY_PUBLIC_JWKS;
   let assertionCount = 0;
-  const issueAuthorization = (principal: TrustedPrincipalContext) =>
-    Effect.runPromise(
+  const issueAuthorization = async (principal: TrustedPrincipalContext) =>
+    await Effect.runPromise(
       issueGatewayContextAssertion(
         { audience: GENERATED_OWNER.appId, principal },
         {
@@ -514,8 +525,8 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
   });
   const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
   const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
-  const issueProviderAuthorization = (context: TrustedPrincipalContext) =>
-    issueAuthorization(
+  const issueProviderAuthorization = async (context: TrustedPrincipalContext) =>
+    await issueAuthorization(
       withOptionalProperty(
         withOptionalProperty(
           withOptionalProperty(
@@ -525,22 +536,22 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
                 principalId: context.principalId,
                 tenantId: context.tenantId,
               },
-              !(context.authBindingId === undefined),
+              context.authBindingId !== undefined,
               'authBindingId',
               context.authBindingId,
               {},
             ),
-            !(context.authContextRef === undefined),
+            context.authContextRef !== undefined,
             'authContextRef',
             context.authContextRef,
             {},
           ),
-          !(context.impersonatedByPrincipalId === undefined),
+          context.impersonatedByPrincipalId !== undefined,
           'impersonatedByPrincipalId',
           context.impersonatedByPrincipalId,
           {},
         ),
-        !(context.legalEntityId === undefined),
+        context.legalEntityId !== undefined,
         'legalEntityId',
         context.legalEntityId,
         {},
@@ -681,7 +692,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               if (!response.ok) {
                 throw new Error('Owner detail request failed');
               }
-              return decodeResponse(response, OwnerDetailSchema);
+              return await decodeResponse(response, OwnerDetailSchema);
             },
           }),
         timeline: ({ authorization, correlationId, ref }: any) =>
@@ -698,7 +709,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               if (!response.ok) {
                 throw new Error('Owner list request failed');
               }
-              return decodeResponse(response, OwnerTimelineSchema);
+              return await decodeResponse(response, OwnerTimelineSchema);
             },
           }),
       },
@@ -717,7 +728,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
               if (!response.ok) {
                 throw new Error('Owner search request failed');
               }
-              return decodeResponse(response, OwnerSearchSchema);
+              return await decodeResponse(response, OwnerSearchSchema);
             },
           }),
       },
@@ -779,7 +790,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         issueAssertion: ({ context }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
-            try: () => issueProviderAuthorization(context),
+            try: async () => await issueProviderAuthorization(context),
           }),
         moduleStates,
       },
@@ -803,7 +814,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
         issueAssertion: ({ context }) =>
           Effect.tryPromise({
             catch: () => new ShellProviderUnavailableError(),
-            try: () => issueProviderAuthorization(context),
+            try: async () => await issueProviderAuthorization(context),
           }),
       },
       (transaction) => makeTenantModuleStateService({ executor: transaction }),
@@ -955,6 +966,8 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
             key: `${moduleId}:${resourceType}:${resourceId}`,
           })),
         ),
+      tenants: ({ tenantIds }) =>
+        Effect.succeed(tenantIds.map((key) => ({ decision: 'unavailable' as const, key }))),
     };
     const unavailableResolver: OperationalScopeResolverService = makeOperationalScopeResolver(
       makeOperationalScopeRepository(runtimeDatabase),
@@ -1037,7 +1050,8 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
           redemption: testGatewayAssertionRedemption,
         }),
       );
-      return Effect.runPromise(
+      return await Effect.runPromise(
+        // @ts-expect-error -- Dynamic generated Actions erase private handler-requirement symbols.
         actionRuntime
           .runAction({
             payload,
@@ -1197,7 +1211,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     } else {
       process.env['ONTOS_GATEWAY_PUBLIC_JWKS'] = previousJwks;
     }
-    await Promise.allSettled(handlers.map((handler) => handler.dispose()));
+    await Promise.allSettled(handlers.map(async (handler) => await handler.dispose()));
     for (const [resourceType, resourceId] of touchedObjects.toReversed()) {
       await spiceAdmin.promises
         .deleteRelationships(

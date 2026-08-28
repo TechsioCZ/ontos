@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { appTools, defineConfig, presetUltramodern } from '@modern-js/app-tools';
+import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { bffPlugin } from '@modern-js/plugin-bff';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
@@ -74,10 +75,10 @@ const developmentModuleContractPath = fileURLToPath(
   new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url),
 );
 
-const zephyrRspackPlugin = () => ({
+const zephyrRspackPlugin = (): CliPlugin<AppTools> => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
-  setup(api: { modifyRspackConfig: (handler: ReturnType<typeof withZephyrRspack>) => void }) {
+  setup(api) {
     // Zephyr uploads federated build artifacts to Zephyr Cloud (the fast
     // rollback path). Uploading REQUIRES a Zephyr Cloud account and, in CI, a
     // deploy-scoped ZE_CI_TOKEN; without it Zephyr fatally fails to load its
@@ -156,8 +157,16 @@ if (
   );
 }
 
-const whenEnabled = <const Configuration>(enabled: boolean, configuration: Configuration) =>
+const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
   enabled ? configuration : undefined;
+
+const contactsDevServerHeaders: NonNullable<
+  NonNullable<NonNullable<AppToolsUserConfig['dev']>['server']>['headers']
+> = {
+  'Access-Control-Allow-Headers': contactsCorsAllowedHeaders.join(', '),
+  'Access-Control-Allow-Methods': contactsCorsAllowedMethods.join(', '),
+  'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
+};
 
 const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
   deploy: {
@@ -213,7 +222,7 @@ const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
       ssr: true,
     },
   },
-});
+} satisfies Pick<AppToolsUserConfig, 'deploy'>);
 
 export default defineConfig(
   presetUltramodern(
@@ -236,6 +245,9 @@ export default defineConfig(
         // Remote dev manifests must publish an absolute publicPath so host
         // shells load remoteEntry.js and exposed chunks from this dev server.
         assetPrefix,
+        server: {
+          headers: contactsDevServerHeaders,
+        },
         setupMiddlewares: [
           ({ unshift }) => {
             unshift((request, response, next) => {
@@ -345,13 +357,6 @@ export default defineConfig(
             .uniqueName('verticalContacts')
             .chunkLoadingGlobal('__ULTRAMODERN_VERTICAL_CONTACTS_LOADED_CHUNKS__');
         },
-        devServer: {
-          headers: {
-            'Access-Control-Allow-Headers': contactsCorsAllowedHeaders.join(', '),
-            'Access-Control-Allow-Methods': contactsCorsAllowedMethods.join(', '),
-            'Access-Control-Allow-Origin': moduleFederationDevServerOrigin,
-          },
-        },
         rspack: (config, { environment, rspack }) => {
           if (!cloudflareDeployEnabled) {
             return;
@@ -404,7 +409,7 @@ export default defineConfig(
           }
         },
       },
-    },
+    } satisfies AppToolsUserConfig,
     {
       appId,
       deliveryUnit: {

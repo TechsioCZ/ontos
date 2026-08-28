@@ -18,10 +18,10 @@ const resolverFor = (record: {
   readonly tenantStatus: 'active' | 'suspended';
 }) =>
   systemPrincipalContextResolverFromRepository({
-    load: () => Promise.resolve(record),
+    load: async () => record,
   });
 
-test('constructs one immutable trusted system context from a branded registration', async () => {
+void test('constructs one immutable trusted system context from a branded registration', async () => {
   const registration = registerSystemWorkload({ jobKey: 'inventory-reconcile' });
   const context = await Effect.runPromise(
     resolverFor({ kind: 'system', principalStatus: 'active', tenantStatus: 'active' }).resolve({
@@ -45,7 +45,7 @@ test('constructs one immutable trusted system context from a branded registratio
   await assert.rejects(Effect.runPromise(decodeTrustedPrincipalContext({ ...context })));
 });
 
-test('rejects forged registrations, unsafe refs, wrong kinds, and inactive state', async () => {
+void test('rejects forged registrations, unsafe refs, wrong kinds, and inactive state', async () => {
   const registration = registerSystemWorkload({ jobKey: 'inventory-reconcile' });
   const forged = { ...registration };
   const invalid = await Effect.runPromise(
@@ -85,7 +85,7 @@ test('rejects forged registrations, unsafe refs, wrong kinds, and inactive state
   assert.throws(() => registerSystemWorkload({ jobKey: 'unsafe:key' }), TypeError);
 });
 
-test('permits service principals only when the trusted registration opts in', async () => {
+void test('permits service principals only when the trusted registration opts in', async () => {
   const denied = await Effect.runPromise(
     Effect.flip(
       resolverFor({ kind: 'service', principalStatus: 'active', tenantStatus: 'active' }).resolve({
@@ -109,7 +109,7 @@ test('permits service principals only when the trusted registration opts in', as
   assert.equal(allowed.authMethod, 'system');
 });
 
-test('enforces mode-specific trusted context cross-field invariants', () => {
+void test('enforces mode-specific trusted context cross-field invariants', () => {
   const binding = '30000000-0000-4000-8000-000000000001';
   const original = '40000000-0000-4000-8000-000000000001';
   const valid = [

@@ -3,7 +3,10 @@ import { expect, test } from '@rstest/core';
 import { Schema } from 'effect';
 
 const workspaceRoot = new URL('../../../../', import.meta.url);
-const readJson = <Value, Encoded>(relativePath: string, schema: Schema.Schema<Value, Encoded>) =>
+const readJson = <JsonSchema extends Schema.ConstraintDecoder<unknown>>(
+  relativePath: string,
+  schema: JsonSchema,
+): JsonSchema['Type'] =>
   Schema.decodeUnknownSync(schema)(
     JSON.parse(fs.readFileSync(new URL(relativePath, workspaceRoot), 'utf-8')),
   );

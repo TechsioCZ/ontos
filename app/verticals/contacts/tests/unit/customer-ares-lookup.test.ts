@@ -46,7 +46,7 @@ const scope = Object.freeze({
   tenantId: '00000000-0000-4000-8000-000000000001',
 });
 
-test('retains the exact generated governed read identity and access policy', () => {
+void test('retains the exact generated governed read identity and access policy', () => {
   assert.deepEqual(customerAresLookupRead.descriptor, {
     accessKind: 'detail',
     entrypoint: {
@@ -72,7 +72,7 @@ test('retains the exact generated governed read identity and access policy', () 
   });
 });
 
-test('decodes only exact eight-digit input and flat Customer-compatible output', () => {
+void test('decodes only exact eight-digit input and flat Customer-compatible output', () => {
   assert.deepEqual(Schema.decodeUnknownSync(CustomerAresLookupRequestSchema)({ ico: '01234567' }), {
     ico: '01234567',
   });
@@ -106,7 +106,7 @@ interface CustomerAresProblemFixture {
   type: string;
 }
 
-test('declares only the required status-matched Problem Details union', () => {
+void test('declares only the required status-matched Problem Details union', () => {
   const fixtures = [
     [CustomerAresLookupInvalidProblemSchema, 'CustomerAresLookupInvalidProblem', 400],
     [CustomerAresLookupAuthenticationProblemSchema, 'CustomerAresLookupAuthenticationProblem', 401],
@@ -131,7 +131,7 @@ test('declares only the required status-matched Problem Details union', () => {
   }
 });
 
-test('maps the private ARES failure union without leaking provider diagnostics', async () => {
+void test('maps the private ARES failure union without leaking provider diagnostics', async () => {
   const handler = getReadHandler(customerAresLookupRead);
   const failures = [
     [
@@ -210,7 +210,7 @@ test('maps the private ARES failure union without leaking provider diagnostics',
   );
 });
 
-test('passes trusted correlation to ARES and returns one flat evidence result', async () => {
+void test('passes trusted correlation to ARES and returns one flat evidence result', async () => {
   const calls: unknown[] = [];
   const result = await Effect.runPromise(
     getReadHandler(customerAresLookupRead)(
@@ -235,7 +235,7 @@ test('passes trusted correlation to ARES and returns one flat evidence result', 
   assert.deepEqual(result, { evidence: { resultCount: 1 }, result: subject });
 });
 
-test('publishes the generated API and private client registration without an ARES Action', async () => {
+void test('publishes the generated API and private client registration without an ARES Action', async () => {
   const manifest = await readFile(new URL('../../vertical.manifest.ts', import.meta.url), 'utf-8');
   const registration = await readFile(
     new URL('../../vertical.registration.ts', import.meta.url),

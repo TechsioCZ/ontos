@@ -31,7 +31,7 @@ const { createContactMock, localeState, navigateMock, runEffectRequestMock } = r
     return {
       createContactMock: rstest.fn(),
       localeState: state,
-      navigateMock: rstest.fn(() => Promise.resolve()),
+      navigateMock: rstest.fn(async () => {}),
       runEffectRequestMock: rstest.fn(),
     };
   },
@@ -111,7 +111,7 @@ const renderFeature = (
 };
 
 const fillForm = async (
-  values: Readonly<{ name: string; email: string; phone: string }> = contact,
+  values: Readonly<{ email: string; name: string; phone: string }> = contact,
 ) => {
   const user = userEvent.setup();
   await user.type(screen.getByRole('textbox', { name: /^Contact name/u }), values.name);
@@ -124,8 +124,8 @@ beforeEach(() => {
   localeState.current = 'en';
   navigateMock.mockResolvedValue();
   createContactMock.mockReturnValue(Effect.succeed(contact));
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
 });
 

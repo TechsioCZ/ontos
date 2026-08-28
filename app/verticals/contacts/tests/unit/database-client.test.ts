@@ -10,9 +10,8 @@ test('finalizes the Contacts pool when its Effect scope closes', async () => {
   await Effect.runPromise(
     Effect.scoped(
       acquirePoolResource(() => ({
-        end: () => {
+        end: async () => {
           finalized = true;
-          return Promise.resolve();
         },
       })),
     ),

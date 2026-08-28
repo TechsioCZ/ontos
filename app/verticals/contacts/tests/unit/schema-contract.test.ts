@@ -23,6 +23,8 @@ import type {
 const dialect = new PgDialect();
 const customerConfig = getTableConfig(customers);
 const contactConfig = getTableConfig(contacts);
+type SchemaExport = (typeof schemaExports)[keyof typeof schemaExports];
+const isPgTable = (value: SchemaExport): value is Extract<SchemaExport, PgTable> => isTable(value);
 
 type Equal<Left, Right> =
   (<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
@@ -70,22 +72,25 @@ type _NewCustomerArchive = Expect<Equal<NewCustomerRecord['archivedAt'], Date | 
 type _NewCustomerIco = Expect<Equal<NewCustomerRecord['ico'], string | null | undefined>>;
 type _NewContactArchive = Expect<Equal<NewContactRecord['archivedAt'], Date | null | undefined>>;
 
-const findColumn = (config: typeof customerConfig | typeof contactConfig, name: string) => {
+const findColumn = (config: typeof customerConfig, name: string) => {
   const column = config.columns.find((candidate) => candidate.name === name);
   assert.ok(column, `Expected ${config.name}.${name}`);
   return column;
 };
 
-const indexColumnNames = (config: typeof customerConfig | typeof contactConfig, name: string) => {
+const indexColumnNames = (config: typeof customerConfig, name: string) => {
   const tableIndex = config.indexes.find((candidate) => candidate.config.name === name);
   assert.ok(tableIndex, `Expected index ${name}`);
   return tableIndex.config.columns.map((column) => ('name' in column ? column.name : false));
 };
 
 test('owns Customer, Contact, and gateway assertion redemption tables in the Contacts schema', () => {
-  const exportedTables = Object.values(schemaExports).filter((value): value is PgTable =>
-    isTable(value),
-  );
+  const exportedTables: PgTable[] = [];
+  for (const value of Object.values(schemaExports)) {
+    if (isPgTable(value)) {
+      exportedTables.push(value);
+    }
+  }
   const qualifiedNames = exportedTables
     .map((table) => {
       const config = getTableConfig(table);
@@ -281,7 +286,7 @@ test('keeps immutable CRM provenance and the data-preserving Contacts rename mig
   const migrationFiles = directoryEntries.filter((name) => name.endsWith('.sql')).toSorted();
   assert.equal(migrationFiles.length, 4);
   const migrations = await Promise.all(
-    migrationFiles.map((name) => readFile(new URL(name, migrationDirectory), 'utf-8')),
+    migrationFiles.map(async (name) => await readFile(new URL(name, migrationDirectory), 'utf-8')),
   );
   const migration = migrations.join('\n');
 
@@ -297,7 +302,9 @@ test('keeps immutable CRM provenance and the data-preserving Contacts rename mig
   );
 
   const [, customerBusinessFieldsMigration, identityMigration] = migrations;
-  assert.ok(customerBusinessFieldsMigration);
+  if (customerBusinessFieldsMigration === undefined) {
+    throw new Error('Expected the Contacts customer business-fields migration');
+  }
   assert.match(migrations[3] ?? '', /UNIQUE\("issuer","audience","jti"\)/u);
   assert.doesNotMatch(customerBusinessFieldsMigration, /CREATE (?:SCHEMA|TABLE)/u);
   assert.doesNotMatch(customerBusinessFieldsMigration, /"crm"\."contacts"/u);
@@ -314,7 +321,9 @@ test('keeps immutable CRM provenance and the data-preserving Contacts rename mig
     customerBusinessFieldsMigration,
     /CREATE UNIQUE INDEX "crm_customers_tenant_ico_uk"[\s\S]*\("tenant_id","ico"\)/u,
   );
-  assert.ok(identityMigration);
+  if (identityMigration === undefined) {
+    throw new Error('Expected the CRM-to-Contacts identity migration');
+  }
   assert.match(identityMigration, /ALTER SCHEMA crm RENAME TO contacts/u);
   assert.doesNotMatch(identityMigration, /CREATE (?:SCHEMA|TABLE)|INSERT INTO|CREATE TABLE/u);
 });

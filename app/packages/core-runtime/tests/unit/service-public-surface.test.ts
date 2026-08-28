@@ -27,6 +27,6 @@ const preservePublicServiceContract = <Service extends PublicServiceContract>(
   service: Service,
 ): Service => service;
 
-test('exports the anti-slop-compliant Core service contracts', () => {
+void test('exports the anti-slop-compliant Core service contracts', () => {
   assert.equal(preservePublicServiceContract.length, 1);
 });

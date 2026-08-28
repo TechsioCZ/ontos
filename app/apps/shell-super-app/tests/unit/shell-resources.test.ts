@@ -1,4 +1,3 @@
-/* eslint-disable typescript/no-non-null-assertion -- The synthetic catalog fixture always installs its single declared contract. */
 import { expect, test } from '@rstest/core';
 import { buildInstalledModuleCatalog } from '@app/core-runtime';
 import type {
@@ -178,6 +177,7 @@ const access = (
         key: `${owner}:${type}:${resourceId}`,
       })),
     ),
+  tenants: () => Effect.succeed([]),
 });
 
 const dependencies = (
@@ -243,7 +243,10 @@ test('search filters resource denials and reports partial provider failure', asy
   expect(result).toEqual({ partial: false, results: [] });
 
   const installed = catalog();
-  const contract = installed.contracts[0]!;
+  const [contract] = installed.contracts;
+  if (contract === undefined) {
+    throw new TypeError('The search fixture must install its module contract');
+  }
   const backupSearchKey = 'property.registry.backup-unit-search';
   const catalogWithBackupSearch = buildInstalledModuleCatalog([
     {

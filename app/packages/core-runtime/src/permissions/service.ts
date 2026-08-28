@@ -1,4 +1,4 @@
-/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Effect's typed callback combinators are not Promise callback chains. */
+// @effect-diagnostics asyncFunction:off
 import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer, Predicate } from 'effect';
 import type { Scope } from 'effect';
@@ -128,7 +128,7 @@ const runCheck = (
 ): Effect.Effect<'has' | 'none', ActionPermissionCheckError> =>
   Effect.tryPromise({
     catch: () => checkFailure(),
-    try: () => client.checkPermission(request),
+    try: async () => await client.checkPermission(request),
   }).pipe(Effect.flatMap(classifyPermissionship));
 
 export interface ActionPermissionRolloutOptions {

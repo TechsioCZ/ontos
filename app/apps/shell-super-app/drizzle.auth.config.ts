@@ -17,7 +17,7 @@ if (
   throw dotenvResult.error;
 }
 
-const databaseUrl = process.env['DATABASE_ADMIN_URL']?.trim();
+const databaseUrl = process.env.DATABASE_ADMIN_URL?.trim();
 
 if (databaseUrl === undefined || databaseUrl.length === 0) {
   throw new Error(`DATABASE_ADMIN_URL is required in ${APP_ENV_PATH} or the process environment`);

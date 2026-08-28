@@ -40,7 +40,7 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
     (payload) => Effect.sync(() => assert.equal(Predicate.isString(payload.messageKey), true)),
   );
 
-test('defines an exact immutable registration while keeping the handler opaque', async () => {
+void test('defines an exact immutable registration while keeping the handler opaque', async () => {
   const worker = makeWorker();
 
   assert.deepEqual(worker.descriptor, {
@@ -90,7 +90,7 @@ test('defines an exact immutable registration while keeping the handler opaque',
   );
 });
 
-test('preserves schema inference for a typed handler payload', () => {
+void test('preserves schema inference for a typed handler payload', () => {
   defineOutboxWorker(
     {
       consumerModuleKey: 'consumer',
@@ -120,7 +120,7 @@ test('preserves schema inference for a typed handler payload', () => {
   );
 });
 
-test('rejects invalid identities, retry policies, and lease policies', () => {
+void test('rejects invalid identities, retry policies, and lease policies', () => {
   const valid = makeWorker().descriptor;
   const invalidDescriptors = [
     { ...valid, workerKey: 'producer.foreign-worker' },
@@ -152,7 +152,7 @@ test('rejects invalid identities, retry policies, and lease policies', () => {
   }
 });
 
-test('rejects duplicate worker keys and calculates bounded exponential backoff', () => {
+void test('rejects duplicate worker keys and calculates bounded exponential backoff', () => {
   const worker = makeWorker();
   assert.throws(
     () => validateOutboxWorkerRegistrations([worker, worker]),
@@ -165,7 +165,7 @@ test('rejects duplicate worker keys and calculates bounded exponential backoff',
   assert.equal(retryBackoffMs(worker.descriptor.retryPolicy, 10), 10_000);
 });
 
-test('validates and freezes the schema-free installed subscription catalog', () => {
+void test('validates and freezes the schema-free installed subscription catalog', () => {
   const worker = makeWorker();
   const subscription = {
     consumerModuleKey: worker.descriptor.consumerModuleKey,

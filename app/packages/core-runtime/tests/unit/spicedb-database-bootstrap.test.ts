@@ -1,7 +1,8 @@
+// @effect-diagnostics asyncFunction:off nodeBuiltinImport:off
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { parseSpiceDbDatabaseBootstrapConfig } from '../../../../scripts/postgres/spicedb-database-config.mts';
+import { parseSpiceDbDatabaseBootstrapConfig } from '../../src/install/spicedb-database-config.ts';
 import { toModuleAccessObjectId } from '../../src/permissions/context-access.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 
@@ -77,12 +78,11 @@ test('grants fresh development module access only to Contacts', async () => {
   const tenantId = '50000000-0000-4000-8000-000000000001';
   const legalEntityId = '55000000-0000-4000-8000-000000000001';
   const contactsObjectId = toModuleAccessObjectId(tenantId, legalEntityId, 'contacts.core');
-  const legacyObjectId = toModuleAccessObjectId(tenantId, legalEntityId, `${'c'}${'r'}${'m'}.core`);
-  assert.ok(contactsObjectId);
-  assert.ok(legacyObjectId);
-  assert.match(
-    development,
-    new RegExp(`module_access:${contactsObjectId}#accessor@principal:60000000`, 'u'),
+  assert.ok(contactsObjectId !== undefined && contactsObjectId.length > 0);
+  assert.deepEqual(
+    development.match(
+      /^ {2}module_access:\S+#accessor@principal:60000000-0000-4000-8000-000000000001$/gmu,
+    ),
+    [`  module_access:${contactsObjectId}#accessor@principal:60000000-0000-4000-8000-000000000001`],
   );
-  assert.doesNotMatch(development, new RegExp(`module_access:${legacyObjectId}`, 'u'));
 });

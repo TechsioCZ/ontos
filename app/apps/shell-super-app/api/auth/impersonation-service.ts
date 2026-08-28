@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
-/* eslint-disable max-classes-per-file, promise/prefer-await-to-callbacks, promise/prefer-await-to-then, unicorn/no-array-method-this-argument -- Support impersonation orchestration and typed Effect failures share one Auth service boundary. */
+/* eslint-disable max-classes-per-file, unicorn/no-array-method-this-argument -- Support impersonation orchestration and typed Effect failures share one Auth service boundary. */
 import type {
   ActionRuntimeService,
   PrincipalResolverService,
@@ -319,8 +319,8 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
   const checkpoint = (input: {
     readonly correlationId: string;
     readonly idempotencyKey: string;
-    readonly principal: TrustedPrincipalContext;
     readonly payload: unknown;
+    readonly principal: TrustedPrincipalContext;
   }) =>
     dependencies.actionRuntime
       .runAction({
@@ -333,14 +333,14 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
   const loadRecoveries = (originalSessionId: string) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: () => store.loadRecoveries(originalSessionId),
+      try: async () => await store.loadRecoveries(originalSessionId),
     });
   const loadExpiredImpersonationRecovery = (requestHeaders: Headers) =>
     Effect.gen(function* loadExpiredSupportImpersonation() {
       const sessionToken = yield* Effect.tryPromise({
         catch: unavailable,
-        try: () =>
-          decodeSignedCookie(
+        try: async () =>
+          await decodeSignedCookie(
             requestHeaders,
             authCookieName(dependencies.configuration, 'session_token'),
             dependencies.configuration.secret,
@@ -351,7 +351,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
       }
       return yield* Effect.tryPromise({
         catch: unavailable,
-        try: () => store.loadExpiredRecovery(sessionToken),
+        try: async () => await store.loadExpiredRecovery(sessionToken),
       });
     });
   const recoverOriginalSession = (requestHeaders: Headers) =>
@@ -363,8 +363,12 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
       }
       const signedValue = yield* Effect.tryPromise({
         catch: unavailable,
-        try: () =>
-          decodeSignedCookie(requestHeaders, adminCookieName, dependencies.configuration.secret),
+        try: async () =>
+          await decodeSignedCookie(
+            requestHeaders,
+            adminCookieName,
+            dependencies.configuration.secret,
+          ),
       });
       const [originalSessionToken, dontRememberFlag] = signedValue?.split(':') ?? [];
       if (originalSessionToken === undefined || originalSessionToken.length === 0) {
@@ -372,7 +376,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
       }
       const original = yield* Effect.tryPromise({
         catch: unavailable,
-        try: () => store.loadOriginalSession(originalSessionToken),
+        try: async () => await store.loadOriginalSession(originalSessionToken),
       });
       const nowEpochMillis = yield* Clock.currentTimeMillis;
       if (original === undefined) {
@@ -387,7 +391,8 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
       }
       const sessionCookie = yield* Effect.tryPromise({
         catch: unavailable,
-        try: () => encodeSignedCookie(originalSessionToken, dependencies.configuration.secret),
+        try: async () =>
+          await encodeSignedCookie(originalSessionToken, dependencies.configuration.secret),
       });
       const maxAge = Math.max(
         0,
@@ -407,7 +412,8 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
           : `${authCookieName(dependencies.configuration, 'dont_remember')}=${yield* Effect.tryPromise(
               {
                 catch: unavailable,
-                try: () => encodeSignedCookie('true', dependencies.configuration.secret),
+                try: async () =>
+                  await encodeSignedCookie('true', dependencies.configuration.secret),
               },
             )}; ${cookieAttributes(dependencies.configuration)}`;
       return {
@@ -432,7 +438,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
   const terminateImpersonationSession = (impersonationSessionId: string) =>
     Effect.tryPromise({
       catch: unavailable,
-      try: () => store.deleteSession(impersonationSessionId),
+      try: async () => await store.deleteSession(impersonationSessionId),
     });
   const completeRecovery = (input: {
     readonly correlationId: string;
@@ -498,7 +504,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
       const cleanupExit = yield* Effect.exit(
         Effect.tryPromise({
           catch: unavailable,
-          try: () => store.deleteRecovery(input.recovery.impersonationSessionId),
+          try: async () => await store.deleteRecovery(input.recovery.impersonationSessionId),
         }),
       );
       return {
@@ -559,8 +565,8 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
         });
         const created = yield* Effect.tryPromise({
           catch: mapProviderError,
-          try: () =>
-            auth.api.impersonateUser({
+          try: async () =>
+            await auth.api.impersonateUser({
               body: { userId: targetUserId },
               headers: input.requestHeaders,
               returnHeaders: true,
@@ -568,8 +574,8 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
         });
         yield* Effect.tryPromise({
           catch: unavailable,
-          try: () =>
-            store.updateImpersonationSession(created.response.session.id, {
+          try: async () =>
+            await store.updateImpersonationSession(created.response.session.id, {
               actionId: input.idempotencyKey,
               originalAuthBindingId,
               originalPrincipalId: shell.principal.principalId,
@@ -582,7 +588,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
           Effect.catch((error) =>
             Effect.tryPromise({
               catch: () => error,
-              try: () => store.deleteSession(created.response.session.id),
+              try: async () => await store.deleteSession(created.response.session.id),
             }).pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
@@ -598,7 +604,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
         } satisfies SupportRecoveryRecord;
         yield* Effect.tryPromise({
           catch: unavailable,
-          try: () => store.insertRecovery(recovery),
+          try: async () => await store.insertRecovery(recovery),
         }).pipe(
           Effect.catch((error) =>
             terminateImpersonationSession(created.response.session.id).pipe(
@@ -626,7 +632,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
                 terminateImpersonationSession(created.response.session.id),
                 Effect.tryPromise({
                   catch: () => null,
-                  try: () => store.deleteRecovery(created.response.session.id),
+                  try: async () => await store.deleteRecovery(created.response.session.id),
                 }),
               ],
               { discard: true },
@@ -647,7 +653,8 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
       Effect.gen(function* stopImpersonation() {
         const current = yield* Effect.tryPromise({
           catch: unavailable,
-          try: () => auth.api.getSession({ headers: input.requestHeaders, returnHeaders: true }),
+          try: async () =>
+            await auth.api.getSession({ headers: input.requestHeaders, returnHeaders: true }),
         });
         if (current.response === null) {
           const expiredRecovery = yield* loadExpiredImpersonationRecovery(input.requestHeaders);
@@ -655,7 +662,7 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
           if (expiredRecovery !== undefined) {
             yield* Effect.tryPromise({
               catch: unavailable,
-              try: () => store.insertRecovery(expiredRecovery),
+              try: async () => await store.insertRecovery(expiredRecovery),
             });
             yield* terminateImpersonationSession(expiredRecovery.impersonationSessionId);
             const restoredMatches =
@@ -752,13 +759,16 @@ export const makeSupportImpersonationService = (dependencies: SupportImpersonati
         };
         yield* Effect.tryPromise({
           catch: unavailable,
-          try: () => store.insertRecovery(recovery),
+          try: async () => await store.insertRecovery(recovery),
         });
         const stoppedExit = yield* Effect.exit(
           Effect.tryPromise({
             catch: mapProviderError,
-            try: () =>
-              auth.api.stopImpersonating({ headers: input.requestHeaders, returnHeaders: true }),
+            try: async () =>
+              await auth.api.stopImpersonating({
+                headers: input.requestHeaders,
+                returnHeaders: true,
+              }),
           }),
         );
         if (stoppedExit._tag === 'Failure') {

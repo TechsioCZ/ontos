@@ -27,12 +27,12 @@ export interface InstalledDeploymentContractInput {
 export interface InstalledModuleCatalog {
   readonly contracts: readonly OntosModuleDeploymentContract[];
   readonly deploymentAppIds: readonly OntosDeploymentAppId[];
-  readonly moduleIds: readonly OntosModuleId[];
-  readonly outboxSubscriptions: readonly OntosOutboxSubscriptionContract[];
   readonly getByDeploymentAppId: (
     appId: OntosDeploymentAppId,
   ) => OntosModuleDeploymentContract | undefined;
   readonly getByModuleId: (moduleId: OntosModuleId) => OntosModuleDeploymentContract | undefined;
+  readonly moduleIds: readonly OntosModuleId[];
+  readonly outboxSubscriptions: readonly OntosOutboxSubscriptionContract[];
 }
 
 export interface InstalledModuleCatalogServiceContract {

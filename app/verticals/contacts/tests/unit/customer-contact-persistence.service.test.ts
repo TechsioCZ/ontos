@@ -21,7 +21,7 @@ const transactionReturning = (row: CustomerRecord): CustomerTransaction => ({
   select: () => ({
     from: () => ({
       where: () => ({
-        limit: () => Promise.resolve([row]),
+        limit: async () => [row],
       }),
     }),
   }),
@@ -47,20 +47,19 @@ const completeBusinessFields = {
 const rejectingTransaction = (constraint: string): CustomerCreateTransaction => ({
   insert: () => ({
     values: () => ({
-      returning: () =>
-        Promise.reject(
-          new Error('Drizzle query failed', {
-            cause: Object.assign(new Error('duplicate key'), {
-              code: '23505',
-              constraint,
-            }),
+      returning: async () => {
+        throw new Error('Drizzle query failed', {
+          cause: Object.assign(new Error('duplicate key'), {
+            code: '23505',
+            constraint,
           }),
-        ),
+        });
+      },
     }),
   }),
 });
 
-test('maps complete persisted Customer business fields to flat date-only DTO values', async () => {
+void test('maps complete persisted Customer business fields to flat date-only DTO values', async () => {
   const result = await Effect.runPromise(
     findCustomerRecord(
       transactionReturning({
@@ -89,15 +88,14 @@ test('maps complete persisted Customer business fields to flat date-only DTO val
   });
 });
 
-test('persists every Customer business field on create and edit', async () => {
+void test('persists every Customer business field on create and edit', async () => {
   let inserted: CustomerCreateValues | undefined;
   const createTransaction: CustomerCreateTransaction = {
     insert: () => ({
       values: (value) => {
         inserted = value;
         return {
-          returning: () =>
-            Promise.resolve([{ ...baseRow, ...completeBusinessFields, name: 'Created' }]),
+          returning: async () => [{ ...baseRow, ...completeBusinessFields, name: 'Created' }],
         };
       },
     }),
@@ -132,19 +130,18 @@ test('persists every Customer business field on create and edit', async () => {
         updated = value;
         return {
           where: () => ({
-            returning: () =>
-              Promise.resolve([
-                {
-                  ...baseRow,
-                  dic: null,
-                  dissolvedOn: null,
-                  establishedOn: null,
-                  ico: null,
-                  legalFormCode: null,
-                  name: 'Cleared',
-                  updatedAt: value.updatedAt,
-                },
-              ]),
+            returning: async () => [
+              {
+                ...baseRow,
+                dic: null,
+                dissolvedOn: null,
+                establishedOn: null,
+                ico: null,
+                legalFormCode: null,
+                name: 'Cleared',
+                updatedAt: value.updatedAt,
+              },
+            ],
           }),
         };
       },
@@ -183,7 +180,7 @@ test('persists every Customer business field on create and edit', async () => {
   assert.equal(edited._tag === 'found' ? edited.value.ico : undefined, null);
 });
 
-test('maps only the named tenant/IČO uniqueness constraint to the typed conflict', async () => {
+void test('maps only the named tenant/IČO uniqueness constraint to the typed conflict', async () => {
   const payload = { ...completeBusinessFields, name: 'Duplicate' };
   const conflict = await Effect.runPromise(
     Effect.flip(
@@ -210,7 +207,7 @@ test('maps only the named tenant/IČO uniqueness constraint to the typed conflic
   assert.equal(unrelated._tag, 'ContactsPersistenceUnavailable');
 });
 
-test('maps legacy Customer rows to explicit null business fields', async () => {
+void test('maps legacy Customer rows to explicit null business fields', async () => {
   const result = await Effect.runPromise(
     findCustomerRecord(
       transactionReturning({

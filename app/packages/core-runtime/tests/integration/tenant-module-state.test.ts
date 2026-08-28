@@ -132,13 +132,13 @@ const withDatabase = <Value, Error>(
     }),
   );
 
-const databasePromise = <Value>(
+const databasePromise = async <Value>(
   operation: (database: DatabaseService) => PromiseLike<Value>,
 ): Promise<Value> =>
-  Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
+  await Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
-const cleanup = () =>
-  databasePromise(async (database) => {
+const cleanup = async () =>
+  await databasePromise(async (database) => {
     await database.executor
       .delete(dataAccessEvents)
       .where(inArray(dataAccessEvents.tenantId, tenantIds));
@@ -366,7 +366,9 @@ test('atomically creates and transitions state with truthful Action history and 
     assert.equal(current?.lastChangeId, history.at(-1)?.moduleStateChangeId);
     assert.ok(history.every((row) => row.changedByPrincipalId === principalOne));
     assert.ok(history.every((row) => row.actionInvocationId !== null));
-    assert.ok(history.every((row) => row.reason?.startsWith('Integration transition to ')));
+    assert.ok(
+      history.every((row) => row.reason?.startsWith('Integration transition to ') === true),
+    );
 
     for (const row of history) {
       const [invocation] = await database.executor
@@ -540,8 +542,8 @@ test('idempotent replay and same-state rejection create no duplicate history or 
 
 const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService => {
   const transactionOverride = {
-    transaction: (callback, configuration) =>
-      database.executor.transaction((transaction) => {
+    transaction: async (callback, configuration) =>
+      await database.executor.transaction(async (transaction) => {
         const insert: typeof transaction.insert = (table) => {
           if (Object.is(table, tenantModuleStates)) {
             throw new Error('Injected current-state persistence failure');
@@ -551,7 +553,7 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
         const faultingTransaction: typeof transaction = Object.assign(Object.create(transaction), {
           insert,
         });
-        return callback(faultingTransaction);
+        return await callback(faultingTransaction);
       }, configuration),
   } satisfies Pick<DatabaseService['executor'], 'transaction'>;
   const executor: DatabaseService['executor'] = Object.assign(
@@ -622,19 +624,20 @@ test('serializes concurrent transitions into one truthful history chain', async 
         ['active', 'concurrent-active'],
         ['suspended', 'concurrent-suspended'],
       ] as const
-    ).map(([state, key]) =>
-      Effect.runPromise(
-        withDatabase((database) => {
-          const runtime = makeActionRuntime(
-            database,
-            makeActionRepository(),
-            allowedPermission,
-            testOperationalScopeResolver,
-            openActionRuntimeOptions,
-          );
-          return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
-        }),
-      ),
+    ).map(
+      async ([state, key]) =>
+        await Effect.runPromise(
+          withDatabase((database) => {
+            const runtime = makeActionRuntime(
+              database,
+              makeActionRepository(),
+              allowedPermission,
+              testOperationalScopeResolver,
+              openActionRuntimeOptions,
+            );
+            return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
+          }),
+        ),
     ),
   );
   assert.ok(exits.every(Exit.isSuccess));

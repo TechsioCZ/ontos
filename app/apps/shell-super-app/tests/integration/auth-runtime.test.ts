@@ -68,6 +68,8 @@ const legalEntitySelectionOptions = {
     modules: ({ moduleIds }: { readonly moduleIds: readonly string[] }) =>
       Effect.succeed(moduleIds.map((key) => ({ decision: 'allowed' as const, key }))),
     resources: () => Effect.succeed([]),
+    tenants: ({ tenantIds }: { readonly tenantIds: readonly string[] }) =>
+      Effect.succeed(tenantIds.map((key) => ({ decision: 'allowed' as const, key }))),
   },
   legalEntityContext: {
     listActiveForTenant: () =>
@@ -87,8 +89,8 @@ const installedCatalog = (moduleIds: readonly string[]): InstalledModuleCatalog 
   Object.freeze({
     contracts: Object.freeze([]),
     deploymentAppIds: Object.freeze([]),
-    getByDeploymentAppId: () => {},
-    getByModuleId: () => {},
+    getByDeploymentAppId: () => undefined,
+    getByModuleId: () => undefined,
     moduleIds: Object.freeze([...moduleIds]),
     outboxSubscriptions: Object.freeze([]),
   });
@@ -380,7 +382,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       });
     const current = await Effect.runPromise(authentication.currentSession(authenticatedHeaders));
     assert.equal(current.identity?.tenantId, tenantId);
-    assert.ok(current.identity);
+    assert.notEqual(current.identity, undefined);
 
     const pageRuntime = makeShellAuthenticationApiRuntime(
       authenticationLayer,
@@ -429,12 +431,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
               principalId: authenticatedContext.identity.principalId,
               tenantId: authenticatedContext.identity.tenantId,
             },
-            principal: {
-              authBindingId: authenticatedContext.principal.authBindingId,
-              authMethod: authenticatedContext.principal.authMethod,
-              principalId: authenticatedContext.principal.principalId,
-              tenantId: authenticatedContext.principal.tenantId,
-            },
+            principal: authenticatedContext.principal,
             setCookieHeaders: [],
             state: 'selection_required' as const,
           }),
@@ -793,7 +790,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       issuer: 'https://shell.example.test',
     });
     const verifiedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      verifiedAssertion.payload.principal,
+      verifiedAssertion.payload['principal'],
     );
     assert.equal(verifiedPrincipal.authBindingId, fixtureAuthBindingId);
     assert.match(verifiedPrincipal.authContextRef ?? '', /^better-auth-session:/u);
@@ -832,24 +829,26 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     const generatedVerifier = await import(pathToFileURL(generatedVerifierPath).href);
     const { verifyActionPrincipal } = generatedVerifier;
     assert.ok(Predicate.isFunction(verifyActionPrincipal));
-    const generatedPrincipal = await Effect.runPromise(
-      verifyActionPrincipal(`Bearer ${assertion.token}`, {
-        currentTimeSeconds: Effect.succeed(1_700_000_001),
-        environment: {
-          ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
-          ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
-            keys: [
-              {
-                ...publicJwk,
-                alg: 'EdDSA',
-                kid: 'integration-current',
-                use: 'sig',
-              },
-            ],
-          }),
-        },
-        redemption: { consume: () => Effect.void },
-      }),
+    const generatedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
+      await Effect.runPromise(
+        verifyActionPrincipal(`Bearer ${assertion.token}`, {
+          currentTimeSeconds: Effect.succeed(1_700_000_001),
+          environment: {
+            ONTOS_GATEWAY_ISSUER: 'https://shell.example.test',
+            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({
+              keys: [
+                {
+                  ...publicJwk,
+                  alg: 'EdDSA',
+                  kid: 'integration-current',
+                  use: 'sig',
+                },
+              ],
+            }),
+          },
+          redemption: { consume: () => Effect.void },
+        }),
+      ),
     );
     assert.equal(generatedPrincipal.authBindingId, fixtureAuthBindingId);
     assert.match(generatedPrincipal.authContextRef ?? '', /^better-auth-session:/u);
@@ -955,7 +954,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
     assert.equal(expiredModulesResponse.status, 401);
     assert.doesNotMatch(await expiredModulesResponse.text(), /30000000|40000000/u);
   } finally {
-    await Promise.all(handlers.map(({ dispose }) => dispose()));
+    await Promise.all(handlers.map(async ({ dispose }) => await dispose()));
     await rm(generatedFixtureRoot, { force: true, recursive: true });
     await cleanup();
     await Promise.all([authPool.end(), corePool.end()]);
@@ -1193,7 +1192,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       ],
     });
     assert.doesNotMatch(
-      JSON.stringify(await authentication.availableTenants(authenticatedHeaders)),
+      JSON.stringify(authentication.availableTenants(authenticatedHeaders)),
       /principalId|sessionId|token|bindingId|password/u,
     );
 
@@ -1405,7 +1404,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       issuer: 'https://shell.example.test',
     });
     const verifiedPrincipal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)(
-      verified.payload.principal,
+      verified.payload['principal'],
     );
     assert.equal(verifiedPrincipal.authBindingId, secondAuthBindingId);
     assert.match(verifiedPrincipal.authContextRef ?? '', /^better-auth-session:/u);
@@ -1540,7 +1539,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     );
     assert.equal(sessionWithRemovedBinding._tag, 'OntosIdentityForbiddenError');
   } finally {
-    await Promise.all(handlers.map(({ dispose }) => dispose()));
+    await Promise.all(handlers.map(async ({ dispose }) => await dispose()));
     await cleanup();
     await Promise.all([adminPool.end(), authPool.end(), corePool.end()]);
   }

@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off globalConsole:off processEnv:off
 import { pathToFileURL } from 'node:url';
 import { config as loadDotenv } from 'dotenv';
 import { Client } from 'pg';
@@ -53,7 +54,7 @@ export const prepareContactsMigration = async (client: Client): Promise<Contacts
 
 const main = async (): Promise<void> => {
   const connectionString = process.env['DATABASE_ADMIN_URL']?.trim();
-  if (!connectionString) {
+  if (connectionString === undefined || connectionString.length === 0) {
     throw new Error('DATABASE_ADMIN_URL is required');
   }
   const client = new Client({ connectionString });
@@ -66,6 +67,6 @@ const main = async (): Promise<void> => {
   }
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }

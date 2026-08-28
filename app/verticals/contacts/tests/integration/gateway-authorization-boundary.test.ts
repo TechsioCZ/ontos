@@ -1,16 +1,15 @@
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off globalDate:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import type { GatewayAssertionRedemption, TrustedPrincipalContext } from '@app/core-runtime';
 import { GatewayAssertionReplayError, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { GATEWAY_ASSERTION_TTL_SECONDS, GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Effect } from 'effect';
-import { exportJWK, generateKeyPair } from 'jose';
+import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { Pool } from 'pg';
-import { issueGatewayContextAssertion } from '../../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
-import type { GatewayIssuerDependencies } from '../../../../apps/shell-super-app/api/auth/gateway-issuer.ts';
 import { verifyActionPrincipal } from '../../api/auth/action-principal.ts';
 import { makeGatewayAssertionRedemption } from '../../src/auth/gateway-assertion-redemption-runtime.ts';
 import { contactsDatabaseSchema, gatewayAssertionRedemptions } from '../../src/db/schema.ts';
@@ -34,7 +33,6 @@ const principal = (credential: 'api_key' | 'session'): TrustedPrincipalContext =
 
 const makeBoundary = async () => {
   const { privateKey, publicKey } = await generateKeyPair('Ed25519', { extractable: true });
-  const privateJwk = await exportJWK(privateKey);
   const publicJwk = await exportJWK(publicKey);
   const environment = {
     ONTOS_GATEWAY_ISSUER: issuer,
@@ -42,23 +40,6 @@ const makeBoundary = async () => {
       keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'authorization-matrix', use: 'sig' }],
     }),
   };
-  const dependencies = (issuedAt: number, audience = 'contacts'): GatewayIssuerDependencies => ({
-    currentTimeSeconds: Effect.succeed(issuedAt),
-    generateJti: Effect.sync(randomUUID),
-    loadAudiences: Effect.succeed(new Set([audience])),
-    loadConfig: Effect.succeed({
-      issuer,
-      privateJwk: {
-        alg: 'EdDSA',
-        crv: 'Ed25519',
-        d: privateJwk.d ?? '',
-        kid: 'authorization-matrix',
-        kty: 'OKP',
-        use: 'sig',
-        x: privateJwk.x ?? '',
-      },
-    }),
-  });
   const consumed = new Set<string>();
   let writes = 0;
   const redemption: GatewayAssertionRedemption = {
@@ -72,23 +53,35 @@ const makeBoundary = async () => {
           });
     },
   };
-  const issue = (
+  const issue = async (
     credential: 'api_key' | 'session',
     options: { readonly audience?: string; readonly issuedAt?: number } = {},
-  ) =>
-    Effect.runPromise(
-      issueGatewayContextAssertion(
-        { audience: options.audience ?? 'contacts', principal: principal(credential) },
-        dependencies(options.issuedAt ?? now, options.audience),
-      ),
-    );
+  ) => {
+    const audience = options.audience ?? 'contacts';
+    const issuedAt = options.issuedAt ?? now;
+    const expiresAt = issuedAt + GATEWAY_ASSERTION_TTL_SECONDS;
+    const assertionPrincipal = principal(credential);
+    const token = await new SignJWT({
+      principal: assertionPrincipal,
+      ver: GATEWAY_ASSERTION_VERSION,
+    })
+      .setProtectedHeader({ alg: 'EdDSA', kid: 'authorization-matrix', typ: 'JWT' })
+      .setIssuer(issuer)
+      .setAudience(audience)
+      .setSubject(assertionPrincipal.principalId)
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(expiresAt)
+      .setJti(randomUUID())
+      .sign(privateKey);
+    return { expiresAt, token };
+  };
   const verifyEffect = (token: string) =>
     verifyActionPrincipal(`Bearer ${token}`, {
       currentTimeSeconds: Effect.succeed(now + 1),
       environment,
       redemption,
     });
-  const verify = (token: string) => Effect.runPromise(verifyEffect(token));
+  const verify = async (token: string) => await Effect.runPromise(verifyEffect(token));
   return { issue, verify, verifyEffect, writes: () => writes };
 };
 

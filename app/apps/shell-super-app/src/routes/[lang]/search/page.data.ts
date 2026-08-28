@@ -23,43 +23,44 @@ export type SearchPageModel =
       readonly state: 'ready';
     };
 
-export const loader = async ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
+export const loader = ({ request }: SearchLoaderArguments): Promise<SearchPageModel> => {
   const url = new URL(request.url);
   const query = url.searchParams.get('q')?.trim() ?? '';
-  const shell = await loadHomePageModel(request);
-  if (shell.state !== 'authenticated') {
-    return {
-      query,
-      shell,
-      state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-    };
-  }
-  if (shell.contextState !== 'authenticated') {
-    return { query, shell, state: 'selection_required' };
-  }
-  if (query.length === 0) {
-    return {
-      query,
-      response: { partial: false, results: [] },
-      shell,
-      state: 'ready',
-    };
-  }
-  return runEffectRequest(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) => searchResources({ query }, options)),
-      Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
-      Effect.catch((error) =>
-        Effect.succeed<SearchPageModel>({
-          query,
-          shell,
-          state:
-            error._tag === 'ShellSelectionRequiredProblem' ||
-            error._tag === 'ShellAuthenticationRequiredProblem'
-              ? 'selection_required'
-              : 'unavailable',
-        }),
+  return loadHomePageModel(request).then((shell) => {
+    if (shell.state !== 'authenticated') {
+      return {
+        query,
+        shell,
+        state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+      };
+    }
+    if (shell.contextState !== 'authenticated') {
+      return { query, shell, state: 'selection_required' };
+    }
+    if (query.length === 0) {
+      return {
+        query,
+        response: { partial: false, results: [] },
+        shell,
+        state: 'ready',
+      };
+    }
+    return runEffectRequest(
+      shellAuthenticationClientOptionsFromRequest(request).pipe(
+        Effect.flatMap((options) => searchResources({ query }, options)),
+        Effect.map((response): SearchPageModel => ({ query, response, shell, state: 'ready' })),
+        Effect.catch((error) =>
+          Effect.succeed<SearchPageModel>({
+            query,
+            shell,
+            state:
+              error._tag === 'ShellSelectionRequiredProblem' ||
+              error._tag === 'ShellAuthenticationRequiredProblem'
+                ? 'selection_required'
+                : 'unavailable',
+          }),
+        ),
       ),
-    ),
-  );
+    );
+  });
 };

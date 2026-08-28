@@ -66,7 +66,7 @@ const capturedLoggerLayer = (entries: string[]) =>
     }),
   ]);
 
-test('maps the exact flat Customer fields and constructs a credential-free JSON GET', async () => {
+void test('maps the exact flat Customer fields and constructs a credential-free JSON GET', async () => {
   const requests: {
     readonly request: HttpClientRequest.HttpClientRequest;
     readonly url: URL;
@@ -109,7 +109,7 @@ test('maps the exact flat Customer fields and constructs a credential-free JSON 
   assert.equal(requests[0]?.request.headers['cookie'], undefined);
 });
 
-test('maps omitted and null optional ARES values to explicit null Customer fields', async () => {
+void test('maps omitted and null optional ARES values to explicit null Customer fields', async () => {
   const cases = [
     { ico: '11111111', obchodniJmeno: 'Omitted fields' },
     {
@@ -136,7 +136,7 @@ test('maps omitted and null optional ARES values to explicit null Customer field
   }
 });
 
-test('rejects partial, overlong, and non-digit IČOs before any network request', async () => {
+void test('rejects partial, overlong, and non-digit IČOs before any network request', async () => {
   let requests = 0;
   const client = clientFrom((request) => {
     requests += 1;
@@ -152,7 +152,7 @@ test('rejects partial, overlong, and non-digit IČOs before any network request'
   assert.equal(requests, 0);
 });
 
-test('classifies terminal upstream statuses without retrying them', async () => {
+void test('classifies terminal upstream statuses without retrying them', async () => {
   const cases = [
     [400, 'AresSubjectInvalidIco'],
     [401, 'AresSubjectDenied'],
@@ -179,7 +179,7 @@ test('classifies terminal upstream statuses without retrying them', async () => 
   }
 });
 
-test('retries throttling and upstream failures with bounded exponential backoff', async () => {
+void test('retries throttling and upstream failures with bounded exponential backoff', async () => {
   let throttledAttempts = 0;
   const throttledClient = clientFrom((request) => {
     throttledAttempts += 1;
@@ -220,7 +220,7 @@ test('retries throttling and upstream failures with bounded exponential backoff'
   assert.equal(unavailableAttempts, 3);
 });
 
-test('retries transport failures, logs internal causes, and returns sanitized diagnostics', async () => {
+void test('retries transport failures, logs internal causes, and returns sanitized diagnostics', async () => {
   const logs: string[] = [];
   let attempts = 0;
   const client = clientFrom((request) => {
@@ -254,7 +254,7 @@ test('retries transport failures, logs internal causes, and returns sanitized di
   assert.doesNotMatch(diagnostic, /corr\\nprivate/u);
 });
 
-test('times out each attempt, aborts it, and stops after the bounded retry count', async () => {
+void test('times out each attempt, aborts it, and stops after the bounded retry count', async () => {
   const signals: AbortSignal[] = [];
   const client = clientFrom((_request, _url, signal) => {
     signals.push(signal);
@@ -276,7 +276,7 @@ test('times out each attempt, aborts it, and stops after the bounded retry count
   );
 });
 
-test('does not retry malformed JSON, invalid schemas, or mismatched response IČOs', async () => {
+void test('does not retry malformed JSON, invalid schemas, or mismatched response IČOs', async () => {
   const cases: readonly ((
     request: HttpClientRequest.HttpClientRequest,
   ) => HttpClientResponse.HttpClientResponse)[] = [
@@ -302,7 +302,7 @@ test('does not retry malformed JSON, invalid schemas, or mismatched response IČ
   }
 });
 
-test('coalesces concurrent lookups and caches only successful results for five minutes', async () => {
+void test('coalesces concurrent lookups and caches only successful results for five minutes', async () => {
   let requests = 0;
   const client = clientFrom((request) => {
     requests += 1;
@@ -343,7 +343,7 @@ test('coalesces concurrent lookups and caches only successful results for five m
   assert.deepEqual(result.expired, result.cached);
 });
 
-test('limits distinct upstream lookups to four concurrent requests', async () => {
+void test('limits distinct upstream lookups to four concurrent requests', async () => {
   let active = 0;
   let maximumActive = 0;
   let requests = 0;
@@ -390,7 +390,7 @@ test('limits distinct upstream lookups to four concurrent requests', async () =>
   assert.equal(active, 0);
 });
 
-test('cancellation aborts the active request and does not poison the next lookup', async () => {
+void test('cancellation aborts the active request and does not poison the next lookup', async () => {
   let requests = 0;
   let firstSignal: AbortSignal | undefined;
   const client = clientFrom((request, _url, signal) => {

@@ -38,7 +38,7 @@ const {
     executeCustomerAresLookupMock: rstest.fn(),
     legacyExecuteCustomerAresLookupMock: rstest.fn(),
     localeState: state,
-    navigateMock: rstest.fn(() => Promise.resolve()),
+    navigateMock: rstest.fn(async () => {}),
     runEffectRequestMock: rstest.fn(),
   };
 });
@@ -137,8 +137,8 @@ beforeEach(() => {
   createCustomerMock.mockReturnValue(Effect.succeed(createdCustomer));
   executeCustomerAresLookupMock.mockReturnValue(Effect.succeed(aresCustomer));
   legacyExecuteCustomerAresLookupMock.mockReturnValue(Effect.succeed(aresCustomer));
-  runEffectRequestMock.mockImplementation((effect: Effect.Effect<unknown, unknown>) =>
-    Effect.runPromise(effect),
+  runEffectRequestMock.mockImplementation(
+    async (effect: Effect.Effect<unknown, unknown>) => await Effect.runPromise(effect),
   );
 });
 

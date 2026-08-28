@@ -122,8 +122,8 @@ test('builds production discovery from deployment URL configuration, never the d
     topology: productionTopology,
   });
 
-  expect(configured['environment']).toBe('production');
-  expect(configured['overlay']).toEqual({
+  expect(configured.environment).toBe('production');
+  expect(configured.overlay).toEqual({
     environment: 'production',
     ontosModuleManifests: {
       'property-registry': 'https://property.example.test/.well-known/ontos-module-manifest.json',

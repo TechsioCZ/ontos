@@ -1,4 +1,3 @@
-/* eslint-disable sort-keys -- Typed columns follow the authoritative physical schema order. */
 import { enableGovernedRls, tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import {

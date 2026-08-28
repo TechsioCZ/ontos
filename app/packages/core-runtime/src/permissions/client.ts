@@ -1,3 +1,4 @@
+// @effect-diagnostics asyncFunction:off
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { Effect } from 'effect';
 import type { Scope } from 'effect';
@@ -52,8 +53,8 @@ export const createSpiceDbPermissionClient = (
     { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
   );
   return {
-    checkBulkPermissions: (request) => client.promises.checkBulkPermissions(request),
-    checkPermission: (request) => client.promises.checkPermission(request),
+    checkBulkPermissions: async (request) => await client.promises.checkBulkPermissions(request),
+    checkPermission: async (request) => await client.promises.checkPermission(request),
     close: () => client.close(),
   };
 };

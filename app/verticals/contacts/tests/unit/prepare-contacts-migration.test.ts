@@ -1,6 +1,7 @@
+// @effect-diagnostics asyncFunction:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { Client } from 'pg';
+import { Client } from 'pg';
 import {
   classifyContactsJournalState,
   prepareContactsMigration,
@@ -17,20 +18,19 @@ const journalClient = (
   renameFailure?: Error,
 ): JournalClientFixture => {
   const queries: string[] = [];
-  // SAFETY: prepareContactsMigration uses only Client.query; this stub implements every query
-  // result and failure shape exercised by the journal handoff transaction.
-  const client = {
-    query: (query: string) => {
+  const client = new Client();
+  Object.defineProperty(client, 'query', {
+    value: async (query: string) => {
       queries.push(query);
       if (query.startsWith('select')) {
-        return Promise.resolve({ rows: [{ contacts, legacy }] });
+        return { rows: [{ contacts, legacy }] };
       }
       if (query.startsWith('alter table') && renameFailure !== undefined) {
-        return Promise.reject(renameFailure);
+        throw renameFailure;
       }
-      return Promise.resolve({ rows: [] });
+      return { rows: [] };
     },
-  } as Client;
+  });
   return { client, queries };
 };
 

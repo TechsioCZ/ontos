@@ -3,12 +3,12 @@ import { defineRuntimeConfig } from '@modern-js/runtime';
 import { createInstance } from 'i18next';
 import csResource from '../locales/cs/contacts.json';
 import enResource from '../locales/en/contacts.json';
+import { isString } from 'effect/Predicate';
 import { ultramodernRouteNamespace } from './routes/ultramodern-route-metadata';
 
 type LocaleResource = string | { readonly [key: string]: LocaleResource };
 
-const isLocaleText = (resource: LocaleResource): resource is string =>
-  resource === String(resource);
+const isLocaleText = (resource: LocaleResource): resource is string => isString(resource);
 
 const flattenLocaleResource = (resource: LocaleResource, prefix = ''): Record<string, string> => {
   if (isLocaleText(resource)) {

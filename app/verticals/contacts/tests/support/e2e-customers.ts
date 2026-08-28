@@ -72,7 +72,7 @@ export const createContactsE2eCustomersFixture = ({
 
   return {
     cleanup,
-    close: () => pool.end(),
+    close: async () => await pool.end(),
     seed: async (tenantId: string) => {
       await pool.query(
         `insert into contacts.customers

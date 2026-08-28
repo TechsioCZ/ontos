@@ -28,10 +28,10 @@ export type GatewayAssertionRedemptionError =
 export interface GatewayAssertionRedemption {
   readonly consume: (
     input: GatewayAssertionRedemptionInput,
-  ) => Effect.Effect<void, GatewayAssertionRedemptionError, never>;
+  ) => Effect.Effect<void, GatewayAssertionRedemptionError>;
 }
 
 export class GatewayAssertionRedemptionService extends Context.Service<
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemption
->()('@app/core-runtime/auth/GatewayAssertionRedemptionService') {}
+>()('@app/core-runtime/auth/gateway-assertion-redemption/GatewayAssertionRedemptionService') {}

@@ -1,5 +1,4 @@
 import { Predicate } from 'effect';
-/* eslint-disable complexity -- Definition-time validation keeps the closed read contract and private implementation alignment visible together. */
 import type { Effect, Schema } from 'effect';
 import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
@@ -61,8 +60,8 @@ const isOwnerCompatiblePolicy = (policy: ActionPolicy<unknown, string>, owner: s
   policy.scope === 'global' || policy.owningModuleKey === owner;
 
 export interface ReadDescriptor<
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
 > {
   readonly accessKind: ReadAccessKind;
@@ -91,8 +90,8 @@ export type ReadServiceFactory<Services, Requirements = never> = (
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
 export type ReadHandler<
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Services,
   Error,
   Requirements = never,
@@ -123,14 +122,17 @@ export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidation
 };
 
 export interface ReadRegistration<
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,
   Requirements = never,
 > {
-  readonly [registrationMarker]: true;
+  readonly _error?: Error;
+  readonly _requirements?: Requirements;
+  readonly _services?: Services;
+  readonly descriptor: Readonly<ReadDescriptor<InputSchema, ResultSchema, Owner>>;
   readonly [registrationFactory]: ReadServiceFactory<Services, Requirements>;
   readonly [registrationHandler]: ReadHandler<
     InputSchema,
@@ -139,6 +141,7 @@ export interface ReadRegistration<
     Error,
     Requirements
   >;
+  readonly [registrationMarker]: true;
   readonly [registrationPermissionTargetResolver]: ReadPermissionTargetResolver<
     InputSchema['Type']
   >;
@@ -146,15 +149,11 @@ export interface ReadRegistration<
   readonly [registrationResultPermissionTargetResolver]?: ReadResultPermissionTargetResolver<
     ResultSchema['Type']
   >;
-  readonly descriptor: Readonly<ReadDescriptor<InputSchema, ResultSchema, Owner>>;
-  readonly _error?: Error;
-  readonly _requirements?: Requirements;
-  readonly _services?: Services;
 }
 
 export const defineRead = <
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   const Owner extends string,
   Services,
   Error,
@@ -196,11 +195,6 @@ export const defineRead = <
     throw new TypeError('Read policies must be an explicit array of Policy references');
   }
   const registration = {
-    [registrationFactory]: serviceFactory,
-    [registrationHandler]: handler,
-    [registrationMarker]: true as const,
-    [registrationPermissionTargetResolver]: permissionTargetResolver,
-    [registrationPolicies]: Object.freeze([...executablePolicies]),
     descriptor: Object.freeze({
       ...descriptor,
       entrypoint: descriptor.entrypoint,
@@ -209,6 +203,11 @@ export const defineRead = <
         descriptor.policies.map((reference) => Object.freeze({ ...reference })),
       ),
     }),
+    [registrationFactory]: serviceFactory,
+    [registrationHandler]: handler,
+    [registrationMarker]: true as const,
+    [registrationPermissionTargetResolver]: permissionTargetResolver,
+    [registrationPolicies]: Object.freeze([...executablePolicies]),
   };
   if (resultPermissionTargetResolver === undefined) {
     return Object.freeze(registration);
@@ -220,8 +219,8 @@ export const defineRead = <
 };
 
 export const getReadPolicyImplementations = <
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,
@@ -231,8 +230,8 @@ export const getReadPolicyImplementations = <
 ): readonly ActionPolicy<InputSchema['Type'], Owner>[] => registration[registrationPolicies];
 
 export const getReadResultPermissionTargetResolver = <
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,
@@ -243,8 +242,8 @@ export const getReadResultPermissionTargetResolver = <
   registration[registrationResultPermissionTargetResolver];
 
 export const getReadPermissionTargetResolver = <
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,
@@ -255,8 +254,8 @@ export const getReadPermissionTargetResolver = <
   registration[registrationPermissionTargetResolver];
 
 export const getReadHandler = <
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,
@@ -267,8 +266,8 @@ export const getReadHandler = <
   registration[registrationHandler];
 
 export const getReadServiceFactory = <
-  InputSchema extends Schema.ConstraintDecoder<unknown, never>,
-  ResultSchema extends Schema.ConstraintDecoder<unknown, never>,
+  InputSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
   Owner extends string,
   Services,
   Error,

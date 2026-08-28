@@ -139,17 +139,17 @@ export interface ActionCollector<DomainEvents extends DomainEventContractMap> {
     domainEvent: Reference,
     message: Message,
   ) => Effect.Effect<void, ActionCollectorError>;
-  readonly recordDataAccess: (
-    event: DataAccessEventInput,
-  ) => Effect.Effect<void, ActionCollectorError>;
-  readonly recordDataAccessInput: <Input>(
-    event: Input,
-  ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidence: (
     evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly recordAuditEvidenceInput: <Input>(
     evidence: Input,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccess: (
+    event: DataAccessEventInput,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccessInput: <Input>(
+    event: Input,
   ) => Effect.Effect<void, ActionCollectorError>;
   readonly snapshot: () => ActionEvidenceSnapshot;
 }
@@ -158,7 +158,7 @@ export const createActionCollector = <DomainEvents extends DomainEventContractMa
   domainEventContracts: DomainEvents,
   owningModuleKey: string,
   accessEvidencePolicy: ActionAccessEvidencePolicy,
-  auditEvidenceSchema?: Schema.ConstraintDecoder<unknown, never>,
+  auditEvidenceSchema?: Schema.ConstraintDecoder<unknown>,
 ): ActionCollector<DomainEvents> => {
   const dataAccessEvents: DataAccessEvent[] = [];
   let auditEvidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>> = {};

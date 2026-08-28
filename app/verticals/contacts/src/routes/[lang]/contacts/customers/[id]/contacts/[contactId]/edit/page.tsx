@@ -26,6 +26,7 @@ import {
   runEffectRequest,
 } from '../../../../../../../../api/contacts-client.ts';
 import type { Effect } from '../../../../../../../../api/contacts-client.ts';
+import type { ErrorClassificationInput } from '../../../../../../../../error-classification.ts';
 import { ContactForm } from '../../../../../../../../features/contacts/contact-form.tsx';
 import type {
   ContactFormCopy,
@@ -148,7 +149,7 @@ const classifyHttpClientFailure = (error: {
 };
 
 export const classifyContactEditDetailError = (
-  error: ContactDetailClientError,
+  error: ErrorClassificationInput<ContactDetailClientError>,
 ): ContactEditDetailErrorState => {
   if (error._tag === 'HttpClientError') {
     return { reason: classifyHttpClientFailure(error), state: 'unavailable' };
@@ -192,7 +193,9 @@ export const isRetryableContactEditDetailError = (error: ContactDetailClientErro
   return state.state === 'unavailable' && state.reason !== 'internal';
 };
 
-export const classifyEditContactError = (error: EditContactClientError): EditContactErrorState => {
+export const classifyEditContactError = (
+  error: ErrorClassificationInput<EditContactClientError>,
+): EditContactErrorState => {
   if (error._tag === 'HttpClientError') {
     const reason = classifyHttpClientFailure(error);
     return reason === 'internal'
@@ -444,6 +447,7 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
 
   const destination = contactDetailHref(language, decodedRoute.customerId, decodedRoute.contactId);
   const onBackClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    const canGoBack: boolean = router.history.canGoBack();
     if (
       event.defaultPrevented ||
       event.button !== 0 ||
@@ -451,7 +455,7 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
       event.ctrlKey ||
       event.shiftKey ||
       event.altKey ||
-      router.history.canGoBack() !== true
+      !canGoBack
     ) {
       return;
     }
@@ -475,7 +479,6 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
     logicalAttemptRef.current = { idempotencyKey, intent, uncertain: false };
     setFeedback(null);
 
-    // oxlint-disable-next-line promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- Promise-returning form callbacks stay non-async under strict Effect diagnostics.
     return editMutation
       .mutateAsync({ contactId: decodedRoute.contactId, idempotencyKey, values })
       .then(

@@ -61,34 +61,35 @@ const supportRecoveryPrincipal: SupportRecoveryPrincipalContextResolverService =
 
 const provider = (impersonated: boolean): SupportAuthProvider => ({
   api: {
-    getSession: () =>
-      Promise.resolve({
-        headers: new Headers(),
-        response: {
-          session: impersonated
-            ? {
-                activeTenantId: tenantId,
-                id: impersonationSessionId,
-                impersonatedBy: 'original-provider-user',
-                impersonationActionId: 'impersonation-action',
-                impersonationOriginalAuthBindingId: originalAuthBindingId,
-                impersonationOriginalPrincipalId: originalPrincipalId,
-                impersonationOriginalSessionId: restoredSessionId,
-                impersonationReason: 'Investigate support request',
-                impersonationTargetPrincipalId: targetPrincipalId,
-              }
-            : { activeTenantId: tenantId, id: restoredSessionId },
-          user: { id: 'original-provider-user' },
-        },
-      }),
-    impersonateUser: () => Promise.reject(new Error('not used')),
-    stopImpersonating: () => {
+    getSession: async () => ({
+      headers: new Headers(),
+      response: {
+        session: impersonated
+          ? {
+              activeTenantId: tenantId,
+              id: impersonationSessionId,
+              impersonatedBy: 'original-provider-user',
+              impersonationActionId: 'impersonation-action',
+              impersonationOriginalAuthBindingId: originalAuthBindingId,
+              impersonationOriginalPrincipalId: originalPrincipalId,
+              impersonationOriginalSessionId: restoredSessionId,
+              impersonationReason: 'Investigate support request',
+              impersonationTargetPrincipalId: targetPrincipalId,
+            }
+          : { activeTenantId: tenantId, id: restoredSessionId },
+        user: { id: 'original-provider-user' },
+      },
+    }),
+    impersonateUser: async () => {
+      throw new Error('not used');
+    },
+    stopImpersonating: async () => {
       const headers = new Headers();
       headers.append('set-cookie', 'session=restored; Path=/; HttpOnly');
-      return Promise.resolve({
+      return {
         headers,
         response: { session: { id: restoredSessionId } },
-      });
+      };
     },
   },
 });
@@ -119,6 +120,12 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
       authentication: makeAuthenticationServiceDouble({
         resolveTenantContext: () =>
           Effect.succeed({
+            identity: {
+              displayName: 'Original administrator',
+              email: 'original@example.test',
+              principalId: originalPrincipalId,
+              tenantId,
+            },
             principal: {
               authBindingId: originalAuthBindingId,
               authContextRef: `better-auth-session:${restoredSessionId}`,
@@ -126,14 +133,15 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
               principalId: originalPrincipalId,
               tenantId,
             },
+            setCookieHeaders: [],
             state: 'authenticated',
           }),
       }),
       configuration,
       provider: makeSupportAuthProviderDouble({
-        impersonateUser: () => {
+        impersonateUser: async () => {
           providerCalls += 1;
-          return Promise.reject(new Error('must not create a session'));
+          throw new Error('must not create a session');
         },
       }),
       resolver: makePrincipalResolverDouble({
@@ -175,6 +183,12 @@ test('removes the provider session and recovery when started evidence cannot com
     authentication: makeAuthenticationServiceDouble({
       resolveTenantContext: () =>
         Effect.succeed({
+          identity: {
+            displayName: 'Original administrator',
+            email: 'original@example.test',
+            principalId: originalPrincipalId,
+            tenantId,
+          },
           principal: {
             authBindingId: originalAuthBindingId,
             authContextRef: `better-auth-session:${restoredSessionId}`,
@@ -182,31 +196,29 @@ test('removes the provider session and recovery when started evidence cannot com
             principalId: originalPrincipalId,
             tenantId,
           },
+          setCookieHeaders: [],
           state: 'authenticated',
         }),
     }),
     configuration,
     provider: makeSupportAuthProviderDouble({
-      impersonateUser: () =>
-        Promise.resolve({
-          headers: new Headers(),
-          response: { session: { id: impersonationSessionId } },
-        }),
+      impersonateUser: async () => ({
+        headers: new Headers(),
+        response: { session: { id: impersonationSessionId } },
+      }),
     }),
     resolver: makePrincipalResolverDouble({
       resolveBetterAuthUserForPrincipal: () => Effect.succeed('target-provider-user'),
     }),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         deletedTables.push('deleted');
-        return Promise.resolve();
       },
-      deleteSession: () => {
+      deleteSession: async () => {
         deletedTables.push('deleted');
-        return Promise.resolve();
       },
-      insertRecovery: () => Promise.resolve(),
-      updateImpersonationSession: () => Promise.resolve(),
+      insertRecovery: async () => {},
+      updateImpersonationSession: async () => {},
     }),
     supportRecoveryPrincipal,
   });
@@ -247,10 +259,9 @@ test('persists stop recovery before provider restoration and returns restored co
       },
     }),
     store: makeSupportImpersonationStoreDouble({
-      deleteSession: () => Promise.resolve(),
-      insertRecovery: (value) => {
+      deleteSession: async () => {},
+      insertRecovery: async (value) => {
         recovery = value;
-        return Promise.resolve();
       },
     }),
     supportRecoveryPrincipal,
@@ -302,15 +313,13 @@ test('terminates the target session before retrying stopped evidence from the re
     provider: provider(false),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         recoveryDeleted = true;
-        return Promise.resolve();
       },
-      deleteSession: () => {
+      deleteSession: async () => {
         targetSessionActive = false;
-        return Promise.resolve();
       },
-      loadRecoveries: () => Promise.resolve([recovery]),
+      loadRecoveries: async () => [recovery],
     }),
     supportRecoveryPrincipal,
   });
@@ -373,15 +382,13 @@ test('completes every pending checkpoint correlated to the restored session', as
     provider: provider(false),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         deleteCount += 1;
-        return Promise.resolve();
       },
-      deleteSession: () => {
+      deleteSession: async () => {
         deleteCount += 1;
-        return Promise.resolve();
       },
-      loadRecoveries: () => Promise.resolve(recoveries),
+      loadRecoveries: async () => recoveries,
     }),
     supportRecoveryPrincipal,
   });
@@ -417,33 +424,29 @@ test('persists and completes stopped evidence on the first stop after impersonat
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
-      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+      getSession: async () => ({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         deleteCalls += 1;
-        return Promise.resolve();
       },
-      deleteSession: () => {
+      deleteSession: async () => {
         deleteCalls += 1;
-        return Promise.resolve();
       },
-      insertRecovery: (value) => {
+      insertRecovery: async (value) => {
         persistedRecovery = value;
-        return Promise.resolve();
       },
-      loadExpiredRecovery: () =>
-        Promise.resolve({
-          actionId: 'expired-impersonation-action',
-          impersonationSessionId,
-          originalAuthBindingId,
-          originalPrincipalId,
-          originalSessionId: restoredSessionId,
-          reason: 'Investigate support request',
-          targetPrincipalId,
-          tenantId,
-        }),
+      loadExpiredRecovery: async () => ({
+        actionId: 'expired-impersonation-action',
+        impersonationSessionId,
+        originalAuthBindingId,
+        originalPrincipalId,
+        originalSessionId: restoredSessionId,
+        reason: 'Investigate support request',
+        targetPrincipalId,
+        tenantId,
+      }),
     }),
     supportRecoveryPrincipal,
   });
@@ -506,21 +509,19 @@ test('restores the original session and stopped checkpoint after the provider re
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
-      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+      getSession: async () => ({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         deleted = true;
-        return Promise.resolve();
       },
-      deleteSession: () => Promise.resolve(),
-      loadOriginalSession: () =>
-        Promise.resolve({
-          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
-          id: restoredSessionId,
-        }),
-      loadRecoveries: () => Promise.resolve([recovery]),
+      deleteSession: async () => {},
+      loadOriginalSession: async () => ({
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+        id: restoredSessionId,
+      }),
+      loadRecoveries: async () => [recovery],
     }),
     supportRecoveryPrincipal,
   });
@@ -580,21 +581,19 @@ test('completes stopped recovery when a lost response leaves only an expired ori
     authentication: makeAuthenticationServiceDouble(),
     configuration,
     provider: makeSupportAuthProviderDouble({
-      getSession: () => Promise.resolve({ headers: new Headers(), response: null }),
+      getSession: async () => ({ headers: new Headers(), response: null }),
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         deleted = true;
-        return Promise.resolve();
       },
-      deleteSession: () => Promise.resolve(),
-      loadOriginalSession: () =>
-        Promise.resolve({
-          expiresAt: new Date('2000-01-01T00:00:00.000Z'),
-          id: restoredSessionId,
-        }),
-      loadRecoveries: () => Promise.resolve([recovery]),
+      deleteSession: async () => {},
+      loadOriginalSession: async () => ({
+        expiresAt: new Date('2000-01-01T00:00:00.000Z'),
+        id: restoredSessionId,
+      }),
+      loadRecoveries: async () => [recovery],
     }),
     supportRecoveryPrincipal,
   });
@@ -627,22 +626,21 @@ test('clears a mismatched restored session and completes recovery from the recor
     configuration,
     provider: makeSupportAuthProviderDouble({
       ...provider(true).api,
-      stopImpersonating: () => {
+      stopImpersonating: async () => {
         const headers = new Headers();
         headers.append('set-cookie', 'better-auth.session_token=unexpected; Path=/; HttpOnly');
-        return Promise.resolve({
+        return {
           headers,
           response: { session: { id: 'unexpected-restored-session' } },
-        });
+        };
       },
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteRecovery: () => {
+      deleteRecovery: async () => {
         deleted = true;
-        return Promise.resolve();
       },
-      insertRecovery: () => Promise.resolve(),
+      insertRecovery: async () => {},
     }),
     supportRecoveryPrincipal,
   });
@@ -674,15 +672,16 @@ test('deletes the impersonation session and clears cookies when original restora
     configuration,
     provider: makeSupportAuthProviderDouble({
       ...provider(true).api,
-      stopImpersonating: () => Promise.reject(new Error('admin session expired')),
+      stopImpersonating: async () => {
+        throw new Error('admin session expired');
+      },
     }),
     resolver: makePrincipalResolverDouble(),
     store: makeSupportImpersonationStoreDouble({
-      deleteSession: () => {
+      deleteSession: async () => {
         deleteCalls += 1;
-        return Promise.resolve();
       },
-      insertRecovery: () => Promise.resolve(),
+      insertRecovery: async () => {},
     }),
     supportRecoveryPrincipal,
   });

@@ -89,7 +89,7 @@ test('emits field changes without submitting and preserves the compound phone co
 });
 
 test('trims all values and submits one semantic intent from the keyboard', async () => {
-  const onSubmit = rstest.fn(() => Promise.resolve());
+  const onSubmit = rstest.fn(async () => {});
   const user = userEvent.setup();
   render(
     <ContactForm
@@ -177,7 +177,7 @@ test('suppresses duplicate submits until the presentation callback settles, then
   const pending = new Promise<void>((resolve) => {
     settle = resolve;
   });
-  const onSubmit = rstest.fn(() => pending);
+  const onSubmit = rstest.fn(async () => await pending);
   const user = userEvent.setup();
   render(<ContactForm {...formProps({ onSubmit })} />);
 

@@ -6,28 +6,23 @@ const contractPath = '/.well-known/ontos-module-manifest.json';
 type EnvironmentReader = (name: string) => string | undefined;
 type JsonValue = Schema.Schema.Type<typeof Schema.Json>;
 type JsonObject = Readonly<Record<string, JsonValue>>;
+type JsonObjectCandidate = JsonValue | undefined;
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
 export interface ModuleDeploymentAllowlistBuildInput {
   readonly cloudflareDeployEnabled: boolean;
-  readonly developmentOverlay: JsonValue;
+  readonly developmentOverlay: unknown;
   readonly readEnvironment: EnvironmentReader;
+  readonly topology: unknown;
+}
+
+export interface ModuleDeploymentAllowlistBuildOutput {
+  readonly environment: string;
+  readonly overlay: JsonValue;
   readonly topology: JsonValue;
 }
 
-export type ModuleDeploymentAllowlistBuildOutput =
-  | {
-      readonly environment: 'development';
-      readonly overlay: JsonValue;
-      readonly topology: JsonValue;
-    }
-  | {
-      readonly environment: string;
-      readonly ontosModuleManifests: Readonly<Record<string, string>>;
-      readonly topology: JsonValue;
-    };
-
-const object = (value: JsonValue, label: string): JsonObject => {
+const object = (value: JsonObjectCandidate, label: string): JsonObject => {
   if (!Predicate.isObjectKeyword(value) || value === null || Array.isArray(value)) {
     throw new TypeError(`${label} must be an object`);
   }
@@ -49,20 +44,22 @@ export const createModuleDeploymentAllowlistBuildInput = ({
   readEnvironment,
   topology,
 }: ModuleDeploymentAllowlistBuildInput): ModuleDeploymentAllowlistBuildOutput => {
+  const parsedDevelopmentOverlay = Schema.decodeUnknownSync(Schema.Json)(developmentOverlay);
+  const parsedTopology = Schema.decodeUnknownSync(Schema.Json)(topology);
   const configuredEnvironment = readEnvironment('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')?.trim();
   let environment = cloudflareDeployEnabled ? 'production' : 'development';
   if (configuredEnvironment !== undefined && configuredEnvironment.length > 0) {
     environment = configuredEnvironment;
   }
   if (environment === 'development') {
-    const overlay = object(developmentOverlay, 'development overlay');
+    const overlay = object(parsedDevelopmentOverlay, 'development overlay');
     if (overlay['environment'] !== 'development') {
       throw new TypeError('development overlay environment is invalid');
     }
-    return Object.freeze({ environment, overlay, topology });
+    return Object.freeze({ environment: 'development', overlay, topology: parsedTopology });
   }
 
-  const topologyObject = object(topology, 'reference topology');
+  const topologyObject = object(parsedTopology, 'reference topology');
   const { verticals } = topologyObject;
   if (!Array.isArray(verticals)) {
     throw new TypeError('reference topology verticals must be an array');
@@ -92,11 +89,15 @@ export const createModuleDeploymentAllowlistBuildInput = ({
       return [appId, new URL(contractPath, origin).href] as const;
     }),
   );
-  const development = object(developmentOverlay, 'development overlay');
+  const development = object(parsedDevelopmentOverlay, 'development overlay');
+  const { schemaVersion } = development;
+  if (schemaVersion === undefined) {
+    throw new TypeError('development overlay schema version is missing');
+  }
   const overlay = Object.freeze({
     environment,
     ontosModuleManifests: Object.freeze(ontosModuleManifests),
-    schemaVersion: development['schemaVersion'],
+    schemaVersion,
   });
-  return Object.freeze({ environment, overlay, topology });
+  return Object.freeze({ environment, overlay, topology: parsedTopology });
 };

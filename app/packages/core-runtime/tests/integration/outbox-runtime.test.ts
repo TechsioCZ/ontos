@@ -1,4 +1,4 @@
-/* eslint-disable max-lines-per-function, no-await-in-loop -- Live lifecycle scenarios are intentionally sequential and transaction-observable. */
+/* eslint-disable no-await-in-loop -- Live lifecycle scenarios are intentionally sequential and transaction-observable. */
 // @effect-diagnostics asyncFunction:off globalDate:off
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -59,15 +59,15 @@ const makeWorker = (
 
 const subscriptionOf = (registration: AnyOutboxWorkerRegistration) => registration.descriptor;
 
-const withDatabase = <Value>(
+const withDatabase = async <Value>(
   operation: (database: CoreDatabaseExecutor) => Promise<Value>,
 ): Promise<Value> =>
-  Effect.runPromise(
+  await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* databaseScope() {
         const configuration = yield* loadDatabaseConfig();
         const database = yield* makeCoreDatabase(configuration);
-        return yield* Effect.promise(() => operation(database.executor));
+        return yield* Effect.promise(async () => await operation(database.executor));
       }),
     ),
   );
@@ -149,7 +149,7 @@ const cleanupTenant = async (database: CoreDatabaseExecutor, tenantId: string): 
   await database.delete(tenants).where(eq(tenants.tenantId, tenantId));
 };
 
-test('matches zero, one, or multiple exact workers once without historical backfill', async () => {
+void test('matches zero, one, or multiple exact workers once without historical backfill', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -201,7 +201,7 @@ test('matches zero, one, or multiple exact workers once without historical backf
   });
 });
 
-test('matches the complete subscription catalog before owner-local processes claim work', async () => {
+void test('matches the complete subscription catalog before owner-local processes claim work', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -238,7 +238,7 @@ test('matches the complete subscription catalog before owner-local processes cla
   });
 });
 
-test('gates claims on every non-active consumer state and permits one concurrent live claim', async () => {
+void test('gates claims on every non-active consumer state and permits one concurrent live claim', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -306,7 +306,7 @@ test('gates claims on every non-active consumer state and permits one concurrent
   });
 });
 
-test('reclaims only expired leases, abandons the old attempt, and rejects stale finalization', async () => {
+void test('reclaims only expired leases, abandons the old attempt, and rejects stale finalization', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -350,7 +350,7 @@ test('reclaims only expired leases, abandons the old attempt, and rejects stale 
   });
 });
 
-test('finishes an abandoned final attempt before dead-lettering its expired delivery', async () => {
+void test('finishes an abandoned final attempt before dead-lettering its expired delivery', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -388,7 +388,7 @@ test('finishes an abandoned final attempt before dead-lettering its expired deli
   });
 });
 
-test('finalizes success atomically and advances only through contiguous done deliveries', async () => {
+void test('finalizes success atomically and advances only through contiguous done deliveries', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -445,7 +445,7 @@ test('finalizes success atomically and advances only through contiguous done del
   });
 });
 
-test('schedules bounded retry, dead-letters exhaustion, stores safe errors, and never checkpoints failure', async () => {
+void test('schedules bounded retry, dead-letters exhaustion, stores safe errors, and never checkpoints failure', async () => {
   await withDatabase(async (database) => {
     const tenantId = await insertTenant(database);
     try {
@@ -507,7 +507,7 @@ test('schedules bounded retry, dead-letters exhaustion, stores safe errors, and 
   });
 });
 
-test('keeps test descriptor arrays compatible with the erased startup registry surface', () => {
+void test('keeps test descriptor arrays compatible with the erased startup registry surface', () => {
   const registry: readonly AnyOutboxWorkerRegistration[] = [makeWorker('consumer.registry-proof')];
   assert.equal(registry[0]?.descriptor.workerKey, 'consumer.registry-proof');
 });

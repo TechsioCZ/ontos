@@ -12,7 +12,7 @@ const principal = {
   tenantId: '00000000-0000-4000-8000-000000000001',
 } as const;
 
-test('computes deterministic hashes independent of object key ordering', () => {
+void test('computes deterministic hashes independent of object key ordering', () => {
   const left = computeActionRequestHash({
     actionKey: 'shell.test.hash',
     normalizedPayload: {
@@ -54,7 +54,7 @@ test('computes deterministic hashes independent of object key ordering', () => {
   );
 });
 
-test('rejects cyclic values instead of producing an unstable request hash', () => {
+void test('rejects cyclic values instead of producing an unstable request hash', () => {
   const cyclic: unknown[] = [];
   cyclic.push(cyclic);
 
@@ -70,7 +70,7 @@ test('rejects cyclic values instead of producing an unstable request hash', () =
   );
 });
 
-test('canonical hashing distinguishes literal objects from internal value types', () => {
+void test('canonical hashing distinguishes literal objects from internal value types', () => {
   assert.notEqual(computeCanonicalValueHash(), computeCanonicalValueHash({ $undefined: true }));
   assert.notEqual(
     computeCanonicalValueHash(Number.NaN),
@@ -79,7 +79,7 @@ test('canonical hashing distinguishes literal objects from internal value types'
   assert.notEqual(computeCanonicalValueHash(-0), computeCanonicalValueHash(0));
 });
 
-test('publishes only the narrow server Action surface', () => {
+void test('publishes only the narrow server Action surface', () => {
   assert.equal('ActionRuntime' in publicSurface, true);
   assert.equal('defineAction' in publicSurface, true);
   assert.equal('defineGlobalPolicy' in publicSurface, true);

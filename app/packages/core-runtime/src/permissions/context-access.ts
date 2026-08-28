@@ -1,4 +1,4 @@
-/* eslint-disable promise/prefer-await-to-callbacks -- Effect owns typed Promise adaptation. */
+// @effect-diagnostics asyncFunction:off
 import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
@@ -27,11 +27,6 @@ export interface ResourceAccessTarget {
 }
 
 export interface ContextAccessService {
-  readonly tenants: (input: {
-    readonly permission: 'access' | 'impersonate' | 'manage_identity';
-    readonly principalId: string;
-    readonly tenantIds: readonly string[];
-  }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly legalEntities: (input: {
     readonly legalEntityIds: readonly string[];
     readonly principalId: string;
@@ -44,11 +39,16 @@ export interface ContextAccessService {
     readonly tenantId: string;
   }) => Effect.Effect<readonly ContextAccessResult[]>;
   readonly resources: (input: {
-    readonly permission?: 'read' | 'write';
     readonly legalEntityId: string;
+    readonly permission?: 'read' | 'write';
     readonly principalId: string;
     readonly resources: readonly ResourceAccessTarget[];
     readonly tenantId: string;
+  }) => Effect.Effect<readonly ContextAccessResult[]>;
+  readonly tenants: (input: {
+    readonly permission: 'access' | 'impersonate' | 'manage_identity';
+    readonly principalId: string;
+    readonly tenantIds: readonly string[];
   }) => Effect.Effect<readonly ContextAccessResult[]>;
 }
 
@@ -161,8 +161,8 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
     const requests = items.map((item) => makeRequestItem(item, principalId));
     return Effect.tryPromise({
       catch: () => null,
-      try: () =>
-        client.checkBulkPermissions(
+      try: async () =>
+        await client.checkBulkPermissions(
           v1.CheckBulkPermissionsRequest.create({
             consistency: fullyConsistent,
             items: requests,
