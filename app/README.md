@@ -61,9 +61,9 @@ pnpm module-entrypoints:check
 `scaffold:microvertical-page` keeps the lower-kebab `--page` value as the stable component,
 entrypoint, locale, and Module Federation identity. Its optional `--url` is a complete
 root-relative canonical-path override. Without it, Codesmith uses
-`/<microvertical>/<page>`: `--vertical crm --page customers` produces canonical
-`/crm/customers`, which the localized Shell router exposes as `/cs/crm/customers` and
-`/en/crm/customers`. Do not include a locale in `--url`; the router owns that prefix. The generated
+`/<microvertical>/<page>`: `--vertical projects --page customers` produces canonical
+`/projects/customers`, which the localized Shell router exposes as `/cs/projects/customers` and
+`/en/projects/customers`. Do not include a locale in `--url`; the router owns that prefix. The generated
 private, non-indexable starter contains only a localized title, and the authenticated Shell/Core
 gateway must resolve its exact page entrypoint before the private remote loads.
 
@@ -73,7 +73,7 @@ TanStack filesystem directories such as `[parameter]`, while the manifest and ro
 the canonical `:parameter` spelling:
 
 ```bash
-mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit
+mise exec -- pnpm scaffold:microvertical-page -- --vertical projects --page customer-edit --url /projects/customers/:id/edit
 ```
 
 Dynamic page templates are exact, private page contributions, but are omitted from ordinary module
@@ -123,8 +123,8 @@ pnpm build
 Local PostgreSQL uses the Compose-created `ontos_admin` identity for migrations and the
 non-superuser `ontos_runtime` identity for application pools. Fresh volumes provision the runtime
 login automatically, and `pnpm db:migrate` refreshes its schema/table/sequence grants after the
-Core, Auth, and CRM migration owners finish. CRM owns its `crm` schema and independent
-`drizzle.__drizzle_migrations_crm` history, preserving the rule that every MicroVertical owns a
+Core, Auth, and Projects migration owners finish. Projects owns its `projects` schema and independent
+`drizzle.__drizzle_migrations_projects` history, preserving the rule that every MicroVertical owns a
 separate schema and migration history. For an existing persistent volume, set both database URLs and run
 `mise exec -- pnpm db:bootstrap-runtime-role` before migrations.
 

@@ -112,14 +112,14 @@ mise exec -- pnpm scaffold:report -- --vertical property-registry --report unit-
 The page name is a stable lower-kebab identity, while `--url` is an optional complete
 root-relative canonical-path override. When `--url` is omitted, Codesmith derives
 `/<microvertical>/<page>` from the validated MicroVertical slug. For example,
-`--vertical crm --page customers` produces canonical `/crm/customers`; the locale-aware Shell
-router exposes it as `/cs/crm/customers` or `/en/crm/customers`. Never include a locale prefix in
+`--vertical projects --page customers` produces canonical `/projects/customers`; the locale-aware Shell
+router exposes it as `/cs/projects/customers` or `/en/projects/customers`. Never include a locale prefix in
 `--url`. A generated page is private and non-indexable, contains only its localized title, and is
 loaded only after the authenticated Shell/Core gateway resolves that exact governed page
 entrypoint. Private metadata alone is not an authentication mechanism.
 
 An explicit page URL may mix lowercase kebab-case static segments with unique named parameter
-segments such as `/crm/customers/:id/edit`. A parameter name starts with a lowercase letter and
+segments such as `/projects/customers/:id/edit`. A parameter name starts with a lowercase letter and
 continues with letters or digits. Optional, repeated, wildcard, catch-all, encoded, query, fragment,
 origin, empty, dot, trailing-slash, and locale-prefixed forms are invalid. The serialized `routePath`
 retains the canonical `:id` spelling as bounded plain data; Codesmith maps it deterministically to

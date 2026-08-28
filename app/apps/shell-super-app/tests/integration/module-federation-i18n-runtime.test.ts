@@ -5,13 +5,13 @@ import test from 'node:test';
 import * as Schema from 'effect/Schema';
 
 const shellConfigUrl = new URL('../../module-federation.config.ts', import.meta.url);
-const crmConfigUrl = new URL(
-  '../../../../verticals/crm/module-federation.config.ts',
+const projectsConfigUrl = new URL(
+  '../../../../verticals/projects/module-federation.config.ts',
   import.meta.url,
 );
 const applicationPackageJsonUrls = new Set([
   new URL('../../package.json', import.meta.url).href,
-  new URL('../../../../verticals/crm/package.json', import.meta.url).href,
+  new URL('../../../../verticals/projects/package.json', import.meta.url).href,
 ]);
 
 registerHooks({
@@ -29,10 +29,10 @@ registerHooks({
   },
 });
 
-test('Shell and CRM share the i18n runtime that owns the federated provider context', async () => {
-  const [{ default: shellConfig }, { default: crmConfig }] = await Promise.all([
+test('Shell and Projects share the i18n runtime that owns the federated provider context', async () => {
+  const [{ default: shellConfig }, { default: projectsConfig }] = await Promise.all([
     import(shellConfigUrl.href),
-    import(crmConfigUrl.href),
+    import(projectsConfigUrl.href),
   ]);
   const require = createRequire(shellConfigUrl);
   const { version: i18nVersion } = Schema.decodeUnknownSync(
@@ -47,5 +47,8 @@ test('Shell and CRM share the i18n runtime that owns the federated provider cont
   };
 
   assert.deepEqual(shellConfig.shared?.['@modern-js/plugin-i18n/runtime'], expectedSharedRuntime);
-  assert.deepEqual(crmConfig.shared?.['@modern-js/plugin-i18n/runtime'], expectedSharedRuntime);
+  assert.deepEqual(
+    projectsConfig.shared?.['@modern-js/plugin-i18n/runtime'],
+    expectedSharedRuntime,
+  );
 });

@@ -7,7 +7,7 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
-    "verticalRefs": ["crm"],
+    "verticalRefs": ["projects"],
     "authentication": {
       "kind": "shell-core-capability",
       "owners": ["shell-super-app", "core-runtime"],
@@ -31,8 +31,8 @@
       "name": "shellSuperApp",
       "remotes": [
         {
-          "id": "crm",
-          "name": "verticalCrm",
+          "id": "projects",
+          "name": "verticalProjects",
           "manifestUrl": "http://localhost:4101/mf-manifest.json"
         }
       ],
@@ -152,62 +152,62 @@
   },
   "verticals": [
     {
-      "id": "crm",
+      "id": "projects",
       "kind": "vertical",
-      "domain": "crm",
-      "package": "@app/crm",
-      "path": "verticals/crm",
+      "domain": "projects",
+      "package": "@app/projects",
+      "path": "verticals/projects",
       "moduleFederation": {
         "role": "remote",
-        "name": "verticalCrm",
+        "name": "verticalProjects",
         "manifestUrl": "http://localhost:4101/mf-manifest.json",
-        "exposes": ["./PageCrm"],
+        "exposes": ["./PageProjects"],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
       "backendFederation": {
         "role": "microvertical-server",
-        "name": "verticalCrmBackend",
+        "name": "verticalProjectsBackend",
         "runtimeFramework": "effect",
         "strictEffectApproach": true,
         "deliveryUnit": {
           "schemaVersion": 1,
           "kind": "microvertical-delivery-unit",
-          "unitId": "app/crm",
-          "packageName": "@app/crm",
+          "unitId": "app/projects",
+          "packageName": "@app/projects",
           "version": "0.1.0",
           "buildMarker": "b08ddded31ae2315",
           "sourceRevision": "workspace"
         },
         "exposes": {
           "./effect-api": {
-            "contract": "verticals/crm/shared/api.ts",
-            "runtime": "verticals/crm/api/index.ts",
-            "client": "verticals/crm/src/api/crm-client.ts",
-            "openapi": "/crm-api/openapi.json",
-            "readiness": "/crm-api/crm/readiness"
+            "contract": "verticals/projects/shared/api.ts",
+            "runtime": "verticals/projects/api/index.ts",
+            "client": "verticals/projects/src/api/projects-client.ts",
+            "openapi": "/projects-api/openapi.json",
+            "readiness": "/projects-api/projects/readiness"
           }
         },
         "versionBoundary": {
           "invariant": "web-and-api-same-build",
           "identityRoot": "deliveryUnit",
-          "packageName": "@app/crm",
+          "packageName": "@app/projects",
           "ui": {
-            "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
+            "manifestEnv": "VERTICAL_PROJECTS_MF_MANIFEST",
             "manifestUrl": "http://localhost:4101/mf-manifest.json",
-            "buildMarker": "verticals/crm/src/routes/ultramodern-route-metadata.ts"
+            "buildMarker": "verticals/projects/src/routes/ultramodern-route-metadata.ts"
           },
           "api": {
-            "readiness": "/crm-api/crm/readiness",
-            "buildMarker": "verticals/crm/shared/ultramodern-build.ts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM"
+            "readiness": "/projects-api/projects/readiness",
+            "buildMarker": "verticals/projects/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS"
           }
         },
         "executionSurfaces": {
           "cloudflare": {
             "kind": "cloudflare-worker-snapshot",
-            "workerName": "app-crm",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+            "workerName": "app-projects",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS",
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -219,38 +219,38 @@
             "zephyr": {
               "runtime": "ssr-worker",
               "integration": "managed-cloudflare",
-              "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
-              "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
-              "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+              "snapshotIdEnv": "ZEPHYR_PROJECTS_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_PROJECTS_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_PROJECTS_APPLICATION_UID"
             },
             "workerDispatch": {
               "preferred": "service-binding",
-              "serviceBinding": "VERTICAL_CRM_WORKER",
-              "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
-              "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
-              "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+              "serviceBinding": "VERTICAL_PROJECTS_WORKER",
+              "serviceBindingEnv": "VERTICAL_PROJECTS_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_PROJECTS_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_PROJECTS_WORKER_NAME",
               "requestInterface": "fetch"
             }
           },
           "node": {
             "kind": "node-mf-runtime",
             "adapterVersion": "backend-mf-effect-v1",
-            "remoteName": "verticalCrmBackend",
-            "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+            "remoteName": "verticalProjectsBackend",
+            "manifestEnv": "VERTICAL_PROJECTS_BACKEND_MF_MANIFEST",
             "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
             "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
             "runtimePackage": "@modern-js/plugin-bff/effect",
             "expected": {
-              "unitId": "app/crm",
+              "unitId": "app/projects",
               "buildMarker": "b08ddded31ae2315"
             }
           }
         },
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
-          "packageName": "@app/crm",
+          "packageName": "@app/projects",
           "effectVersion": "4.0.0-beta.107",
           "moduleFederationVersion": "2.8.0"
         },
@@ -269,8 +269,8 @@
       "deliveryUnit": {
         "schemaVersion": 1,
         "kind": "microvertical-delivery-unit",
-        "unitId": "app/crm",
-        "packageName": "@app/crm",
+        "unitId": "app/projects",
+        "packageName": "@app/projects",
         "version": "0.1.0",
         "buildMarker": "b08ddded31ae2315",
         "sourceRevision": "workspace"
@@ -278,23 +278,23 @@
       "api": {
         "runtime": "effect",
         "bff": {
-          "prefix": "/crm-api",
+          "prefix": "/projects-api",
           "openapi": "/openapi.json",
           "strictEffectApproach": true
         },
         "contract": {
           "export": "./api",
-          "path": "verticals/crm/shared/api.ts"
+          "path": "verticals/projects/shared/api.ts"
         },
         "client": {
           "export": "./api/client",
-          "path": "verticals/crm/src/api/crm-client.ts"
+          "path": "verticals/projects/src/api/projects-client.ts"
         },
-        "serverEntry": "verticals/crm/api/index.ts",
-        "basePath": "/crm-api/crm",
-        "consumedBy": ["shell-super-app", "crm"],
+        "serverEntry": "verticals/projects/api/index.ts",
+        "basePath": "/projects-api/projects",
+        "consumedBy": ["shell-super-app", "projects"],
         "readiness": {
-          "endpoint": "/crm/readiness",
+          "endpoint": "/projects/readiness",
           "marker": {
             "ui": "ultramodernUiMarker",
             "api": "ultramodernApiMarker",
@@ -316,40 +316,40 @@
         },
         "domainOperations": {
           "workspaceFeed": {
-            "client": "listCrm",
+            "client": "listProjects",
             "method": "GET",
-            "path": "/crm",
+            "path": "/projects",
             "resource": "workspace-items",
-            "owner": "crm"
+            "owner": "projects"
           },
           "workspaceDetail": {
-            "client": "getCrm",
+            "client": "getProjects",
             "method": "GET",
-            "path": "/crm/:id",
+            "path": "/projects/:id",
             "resource": "workspace-item",
-            "owner": "crm"
+            "owner": "projects"
           },
           "workspaceCreate": {
-            "client": "createCrm",
+            "client": "createProjects",
             "method": "POST",
-            "path": "/crm",
-            "resource": "crm",
-            "owner": "crm"
+            "path": "/projects",
+            "resource": "projects",
+            "owner": "projects"
           }
         }
       },
       "cloudflare": {
         "target": "cloudflare",
-        "workerName": "app-crm",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+        "workerName": "app-projects",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS",
         "compatibilityDate": "2026-06-02",
         "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
           "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/crm.json",
-          "apiReadiness": "/crm-api/crm/readiness"
+          "locale": "/locales/en/projects.json",
+          "apiReadiness": "/projects-api/projects/readiness"
         },
         "security": {
           "enabled": true,
@@ -427,8 +427,8 @@
         },
         "jsonSmokeChecks": [
           {
-            "id": "crm-readiness-smoke",
-            "route": "/crm-api/crm/readiness",
+            "id": "projects-readiness-smoke",
+            "route": "/projects-api/projects/readiness",
             "expect": {
               "status": "ready",
               "checks.api": "ready",
@@ -442,11 +442,11 @@
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/crm.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm",
+        "runbookRef": "runbooks/verticals/projects.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#projects",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#crm"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#projects"]
         }
       }
     }

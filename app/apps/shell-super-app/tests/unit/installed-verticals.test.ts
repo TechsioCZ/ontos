@@ -17,7 +17,7 @@ test('derives installed vertical IDs from the injected topology without hardcode
   );
   const expectedInstalledIds = await Effect.runPromise(deriveInstalledVerticalIds(topology));
 
-  expect([...expectedInstalledIds]).toEqual(['crm']);
+  expect([...expectedInstalledIds]).toEqual(['projects']);
   expect([...(await Effect.runPromise(installedVerticalIds))]).toEqual([...expectedInstalledIds]);
   const valid = await Effect.runPromise(
     deriveInstalledVerticalIds({
@@ -49,4 +49,23 @@ test('rejects malformed, non-vertical, invalid, and duplicate installed entries'
     inputs.map((input) => Effect.runPromise(Effect.flip(deriveInstalledVerticalIds(input)))),
   );
   expect(errors.every((error) => error._tag === 'InstalledVerticalTopologyError')).toBe(true);
+});
+
+test('emits only Projects routes, clients, package IDs, and environment names after cutover', () => {
+  const activeCutoverSurface = [
+    '../../../../.modernjs/ultramodern.json',
+    '../../../../topology/reference-topology.json',
+    '../../package.json',
+    '../../src/api/vertical-clients.ts',
+    '../../src/modern-tanstack/index/router.gen.ts',
+    '../../src/routes/ultramodern-route-metadata.ts',
+  ]
+    .map((relativePath) => fs.readFileSync(new URL(relativePath, import.meta.url), 'utf-8'))
+    .join('\n');
+
+  expect(activeCutoverSurface).toContain('/projects');
+  expect(activeCutoverSurface).toContain('projects.core');
+  for (const retiredIdentity of ['/crm', '@app/crm', 'crm.core', 'verticalCrm', 'VERTICAL_CRM']) {
+    expect(activeCutoverSurface).not.toContain(retiredIdentity);
+  }
 });

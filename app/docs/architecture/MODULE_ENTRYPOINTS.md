@@ -104,7 +104,7 @@ rechecks installation/reference, selected context, lifecycle, and permission bef
 lazy registry is consulted. Only a `resolved` outcome may execute a remote thunk.
 
 Generated exact page routes may use safe canonical named-parameter templates such as
-`/crm/customers/:id/edit`; their owner and Shell filesystem routes use `[id]`. Dynamic templates are
+`/projects/customers/:id/edit`; their owner and Shell filesystem routes use `[id]`. Dynamic templates are
 not normal navigation items. The generated connector selects only its declared parameter names and
 bounds each string value before calling the generic page loader. The generic loader keeps that plain
 record separate from the resolved target and never adds it to the module contract, target-resolution
