@@ -2,6 +2,8 @@
 
 Date: 2026-06-08
 
+> **Historical decision-session notice (superseded 2026-08-28):** These MVP decisions predate [ADR-0016](adr/0016-independently-deployable-microverticals.md). In particular, Shell/Core no longer imports another deployment's private runtime registration; it discovers safe allowlisted serialized contracts and invokes owner-local executable behavior through governed entrypoints.
+
 This document summarizes the `/grill-with-docs` decisions made before implementing Day 1 and Day 2 from `16_JUNE_2026_V0_PREP_AND_V1_DELIVERY_HANDOFF.md`. The goal was to remove ambiguity before creating the fresh `mvp/` UltraModern.js project.
 
 ## Scope Confirmed

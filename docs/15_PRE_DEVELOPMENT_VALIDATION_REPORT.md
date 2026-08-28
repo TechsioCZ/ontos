@@ -4,6 +4,8 @@ Date: 2026-06-04
 Repository: `/Users/satan/work/ontos`
 Branch: `main`
 
+> **Historical validation notice (superseded 2026-08-28):** This report records the architecture review as it stood on 2026-06-04. Its modular-monolith, jointly deployed runtime, central executable-registration, and Core-managed migration/handler recommendations are not current architecture. [ADR-0016](adr/0016-independently-deployable-microverticals.md) and `app/docs/architecture/` govern the independently deployable, owner-local MicroVertical contract. Retain the findings below as provenance only.
+
 ## Post-Validation Terminology Update
 
 After this report was written, the planning language was clarified:

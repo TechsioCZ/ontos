@@ -2,7 +2,7 @@
 
 This pack is a working architecture dossier for OntOS. Its documents are collected in [`docs/`](docs/). It is intentionally written as input for a technical architecture grilling session and for a coding agent. It consolidates the current business context, delivery constraints, architectural decisions, MicroVertical semantics, C4 views, ADRs, glossary, V0 preparation scope, V1 delivery scope, roadmap, and open questions.
 
-The most important correction in this version is the MicroVertical model. An UltraModern.js MicroVertical is not a frontend module plus a separate BFF/backend service. It is a unified vertical slice inside one jointly deployable UltraModern.js application. OntOS uses that implementation concept for ERP business modules, then adds an OntOS-specific Effect Schema-defined Module Manifest for public module contracts: activation, dependencies, public APIs, public components, public resource types, public events, search, and reports. The OntOS Core sits alongside the MicroVerticals as system infrastructure: BetterAuth binding, authorization adapter, tenant-level module state, action invocation recording, audit, events, outbox, media assets/links, search, ResourceRef conventions, and projection interfaces.
+The most important correction in this version is the MicroVertical model. An UltraModern.js MicroVertical is a unified full-stack slice behind a strict independently deployable seam. Each OntOS Foundational or Business Module owns its executable implementation and data lifecycle inside one MicroVertical delivery unit. Co-location is a Deployment Topology choice, never permission to import private registrations, share repositories or business transactions, or bypass published typed clients, Outbox contracts, and Shell/Core gateways. The replacement decision is recorded in [`ADR-0016`](docs/adr/0016-independently-deployable-microverticals.md).
 
 ## Techsio UI Kit agent plugin
 
@@ -67,6 +67,6 @@ codex plugin remove techsio-ui-kit-ai@ontos
 
 ## Core thesis
 
-OntOS V0 is the preparation and foundation phase: Core implementation, architecture, ADRs, docs, PoC, contracts, and delivery controls. OntOS V1 is the mandatory end-of-2026 ERP delivery implemented as a TypeScript modular monolith built on UltraModern.js MicroVerticals.
+OntOS V0 is the preparation and foundation phase: Core implementation, architecture, ADRs, docs, PoC, contracts, and delivery controls. OntOS V1 is the mandatory end-of-2026 ERP delivery composed from independently deployable TypeScript MicroVerticals. An Environment may co-locate delivery units, but placement never changes their contracts or ownership.
 
 The architecture optimizes for a small team, heavy coding-agent usage, fast prototyping, V1 production delivery by the end of 2026, and future extensibility without premature distributed-systems complexity.

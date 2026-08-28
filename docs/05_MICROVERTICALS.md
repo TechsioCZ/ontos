@@ -1,6 +1,6 @@
 # MicroVerticals and OntOS modules
 
-This document distinguishes the UltraModern.js MicroVertical implementation concept from the OntOS module contract. It supersedes any wording that implied a MicroVertical is only a frontend module or that the architecture is naturally split into web and BFF containers.
+This document distinguishes the UltraModern.js MicroVertical implementation concept from the OntOS module contract. It follows [ADR-0016](adr/0016-independently-deployable-microverticals.md) and supersedes wording that implied a frontend-only module, a mandatory web/BFF split, or one jointly deployed modular monolith.
 
 ## Definition
 
@@ -78,17 +78,23 @@ The manifest should include public module identity, activation, dependencies, Ac
 
 It should not include private implementation details such as database tables, migrations, command handler paths, outbox handler paths, route trees, navigation wiring, fixtures, tests, relation catalogs, or private read models. Those can be validated by internal tooling, but they are not public module contract.
 
-In V0 this can start lightweight. The important part is that the concept exists from the beginning and that new modules cannot grow as unregistered folders of ad hoc code.
+The current app implements this contract through generated owner-authored manifests, deterministic serialized deployment contracts, a topology allowlist, and an atomically validated Installed Module Catalog. New modules cannot grow as unregistered folders of ad hoc code.
 
-The first draft Effect Schema-defined manifest shape is described in `14_ONTOS_MODULE_MANIFEST.md`. That document should be treated as the contract design surface for grilling and PoC validation, not as a finalized schema.
+The product-level contract is summarized in `14_ONTOS_MODULE_MANIFEST.md`; current executable details live under `app/docs/architecture/`.
 
 ## Dependency rules
 
-OntOS Business Modules may depend on Core and on explicit public contracts of other business modules. They may import public manifest values, Action descriptors, public API clients, public component values, and public resource/event/search/report descriptors. They should not import another module's runtime registration, internal tables, command handlers, private routes, UI internals, migrations, fixtures, tests, or private utilities. Cross-module writes should go through Actions or explicit Core-mediated mechanisms. Cross-module reads should use declared read models, ResourceRefs, or public query surfaces.
+OntOS modules may depend on Core and on explicit published contracts of other modules. They consume generated typed clients, schema-only Outbox contracts, and Shell/Core-governed public component or entrypoint descriptors. They must not import another deployment's manifest source, runtime registration, internal tables, handlers, private routes, UI internals, migrations, fixtures, tests, or utilities. Cross-module writes go through published Actions or durable messages; cross-module reads use declared APIs/read models and ResourceRefs. No interaction creates a shared business transaction.
 
 This matters because the long-term product depends on being able to add, replace, suspend, or generate modules while keeping the explicit Application Composition DAG distinct from hidden implementation coupling.
 
 Public component reuse across modules still goes through the Shell/Core component gateway. A module may depend on another module's public component contract, but it must not directly call Module Federation or hard-code remote specifier strings. Shell/Core should represent module component loads as structured entrypoints, not ad hoc import paths.
+
+## Implemented safeguards and remaining proof
+
+The current app enforces the seam with Codesmith-generated contracts and private registrations, deterministic serialized deployment contracts, topology allowlisting, an all-or-nothing Installed Module Catalog, static private-import and database-boundary checks, structured entrypoint gateways, module-state enforcement, audience-scoped Shell assertions, contract-derived Effect clients, owner-local schemas/migrations, and module-owned Outbox workers.
+
+These are implemented mechanisms, not complete production evidence. Production acceptance must still prove equivalent local and network behavior; independent compatible build, migration, rollout, rollback, and recovery; timeout, partition, crash, and backpressure handling; typed degradation limited to affected dependency closures; unrelated-module continuity; version-skew rejection; health/readiness and observability; and backup/restore and incident procedures. Foundational Module catalog support and complete versioned Application Composition closure enforcement remain implementation work.
 
 ## MicroVertical Forge
 
