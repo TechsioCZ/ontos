@@ -104,13 +104,9 @@ _Avoid_: User, employee, contact
 The Core-owned mapping from a stable externally authenticated subject to an OntOS Principal. BetterAuth owns users, sessions, API keys, key verification, and impersonation sessions; Core only stores the non-secret binding needed to resolve the effective Principal for actions, audit, and SpiceDB subjects. System jobs use system/service Principals without pretending to be external auth bindings.
 _Avoid_: Credential store, API key table, session table, runtime credential reference, user profile
 
-**Tenant-Selected BetterAuth Session**:
-One BetterAuth user may have active bindings to multiple tenant-scoped Principals. Exactly one active Tenant is selected on the session and revalidated against an active binding, Principal, and Tenant on every trusted-context resolution; the selection itself grants no authority.
-_Avoid_: Unscoped global Principal, client-trusted tenant selector, selected tenant as permission
-
 **Authenticated Principal Session**:
-The OntOS-level login state where a BetterAuth session exists and resolves through an active Principal Auth Binding to an active Principal in an active Tenant. A BetterAuth session without an active Principal Auth Binding, active Principal, or active Tenant is only an authentication artifact, not a logged-in OntOS user.
-_Avoid_: BetterAuth session alone, unbound login, raw authenticated user
+An authenticated working context that activates exactly one tenant-scoped Principal and its Tenant. The same authenticated person may have Principal identities in other Tenants, but choosing the active context grants no authority.
+_Avoid_: Tenant-Selected BetterAuth Session, unscoped global Principal, selected Tenant as permission
 
 **Evidence Artifact**:
 A durable file, export, generated document, import source, signed document, or compliance bundle retained as proof for audit, compliance, or later investigation. An Evidence Artifact is the content being retained, not the index entry that makes it discoverable. Its stable content identity is the hash of the exact stored bytes, not the display filename or surrounding metadata.
