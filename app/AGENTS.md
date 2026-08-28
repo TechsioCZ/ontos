@@ -21,6 +21,8 @@ For work inside `app/`, this file and `app/docs/` are authoritative implementati
 ### Task-Specific Rules
 
 - All implementation work: [UltraModern.js Implementation Rules](./docs/architecture/ULTRAMODERN.md)
+- Deployment, CI/CD, migrations, runtime packaging, release sequencing, rollback, or new
+  MicroVertical delivery work: [Deployment Architecture and Release Playbook](./docs/architecture/DEPLOYMENT.md)
 - User-facing frontend work: [Frontend Architecture Rules](./docs/frontend/FRONTEND.md)
 - When using Figma, follow: [Figma Rules](./docs/frontend/FIGMA.md)
 
@@ -71,3 +73,9 @@ Run every pnpm command from the `app/` directory with the repository-managed too
 ```bash
 mise exec -- pnpm <command>
 ```
+
+The only exception is a command embedded in a deployment manifest for a minimal provider image
+that intentionally does not contain mise. That command must use the exact Node and pnpm versions
+pinned by the deployment contract and must follow
+[Deployment Architecture and Release Playbook](./docs/architecture/DEPLOYMENT.md). Do not apply this
+exception to agent, developer, local CI, or ordinary GitHub Actions commands.
