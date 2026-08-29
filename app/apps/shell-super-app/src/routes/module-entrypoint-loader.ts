@@ -3,16 +3,18 @@ import type {
   ModuleEntrypointDescriptor,
   ModuleEntrypointGatewayService,
   ModuleStateGateError,
+  RunGatedModuleEntrypointInput,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
 
-export interface LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> {
-  readonly authorize: Effect.Effect<void, AuthorizationError, Requirements>;
+export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> = Omit<
+  RunGatedModuleEntrypointInput<Value, AuthorizationError, LoadError, Requirements>,
+  'entrypoint' | 'snapshot'
+> & {
   readonly entrypoint: ModuleEntrypointDescriptor<'page' | 'public_component'>;
-  readonly load: Effect.Effect<Value, LoadError, Requirements>;
-}
+};
 
-/** Shell-only composition seam. Callers pass typed descriptors and lazy Effects, never remote strings. */
+/** Shell-only composition seam. Callers pass typed descriptors and lazy thunks, never remote strings. */
 export const loadModuleEntrypointComposition = <Value, AuthorizationError, LoadError, Requirements>(
   gateway: ModuleEntrypointGatewayService,
   context: Readonly<TrustedPrincipalContext>,

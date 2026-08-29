@@ -1,3 +1,4 @@
+// @effect-diagnostics lazyEffect:off
 import { expect, test } from '@rstest/core';
 import { Effect, Schema } from 'effect';
 import {
@@ -88,7 +89,7 @@ const makeFakeGateway = (options: FakeGatewayOptions = {}): ModuleEntrypointGate
     run: (input) =>
       check(input.snapshot, input.entrypoint).pipe(
         Effect.andThen(input.authorize),
-        Effect.andThen(input.load),
+        Effect.andThen(Effect.suspend(input.load)),
       ),
   };
   return gateway;
@@ -125,10 +126,11 @@ test('prepares one complete trusted composition and invokes allowed lazy loaders
       [page, component].map((entrypoint) => ({
         authorize: Effect.void,
         entrypoint,
-        load: Effect.sync(() => {
-          loads += 1;
-          return `loaded-${loads}`;
-        }),
+        load: () =>
+          Effect.sync(() => {
+            loads += 1;
+            return `loaded-${loads}`;
+          }),
       })),
     ),
   );
@@ -152,10 +154,11 @@ test('checks the complete composition before authorizing or invoking any loader'
             authorizations += 1;
           }),
           entrypoint,
-          load: Effect.sync(() => {
-            loads += 1;
-            return loads;
-          }),
+          load: () =>
+            Effect.sync(() => {
+              loads += 1;
+              return loads;
+            }),
         })),
       ),
     ),
@@ -188,7 +191,7 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
   const gateFailure = await Effect.runPromise(
     Effect.flip(
       loadModuleEntrypointComposition(makeFakeGateway({ unavailable: true }), trustedContext, [
-        { authorize: Effect.void, entrypoint: page, load: Effect.succeed('unreachable') },
+        { authorize: Effect.void, entrypoint: page, load: () => Effect.succeed('unreachable') },
       ]),
     ),
   );
@@ -200,7 +203,7 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
         {
           authorize: Effect.void,
           entrypoint: page,
-          load: Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
+          load: () => Effect.fail<RemoteLoadUnavailable>({ _tag: 'RemoteLoadUnavailable' }),
         },
       ]),
     ),
