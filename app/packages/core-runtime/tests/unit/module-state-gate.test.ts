@@ -1,4 +1,4 @@
-// @effect-diagnostics asyncFunction:off
+// @effect-diagnostics asyncFunction:off lazyEffect:off
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Effect, Tracer, Predicate } from 'effect';
@@ -463,9 +463,10 @@ void test('gates every future entrypoint category before its fake implementation
         authorizationCalls += 1;
       }),
       entrypoint,
-      load: Effect.sync(() => {
-        loadCalls += 1;
-      }),
+      load: () =>
+        Effect.sync(() => {
+          loadCalls += 1;
+        }),
       snapshot,
     });
   await Promise.all(allowed.map(async (entrypoint) => await Effect.runPromise(run(entrypoint))));
@@ -497,6 +498,7 @@ void test('the gateway never evaluates authorization or lazy implementation on d
   });
   const snapshot = await Effect.runPromise(gateway.prepareSnapshot(trustedContext(), [descriptor]));
   let authorizationCalls = 0;
+  let loadFactoryCalls = 0;
   let loadCalls = 0;
   const failure = await Effect.runPromise(
     Effect.flip(
@@ -505,16 +507,20 @@ void test('the gateway never evaluates authorization or lazy implementation on d
           authorizationCalls += 1;
         }),
         entrypoint: descriptor,
-        load: Effect.sync(() => {
-          loadCalls += 1;
-          return 'loaded';
-        }),
+        load: () => {
+          loadFactoryCalls += 1;
+          return Effect.sync(() => {
+            loadCalls += 1;
+            return 'loaded';
+          });
+        },
         snapshot,
       }),
     ),
   );
   assert.equal(failure._tag, 'ModuleStateDeniedError');
   assert.equal(authorizationCalls, 0);
+  assert.equal(loadFactoryCalls, 0);
   assert.equal(loadCalls, 0);
 });
 

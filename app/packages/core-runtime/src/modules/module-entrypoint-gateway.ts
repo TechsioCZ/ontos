@@ -1,3 +1,4 @@
+// @effect-diagnostics lazyEffect:off
 import { Context, Effect, Layer } from 'effect';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
 import { decodeTrustedPrincipalContext } from '../auth/system-principal-context-provenance.ts';
@@ -16,7 +17,7 @@ const unavailable = () =>
 export interface RunGatedModuleEntrypointInput<Value, AuthorizationError, LoadError, Requirements> {
   readonly authorize: Effect.Effect<void, AuthorizationError, Requirements>;
   readonly entrypoint: ModuleEntrypointDescriptor;
-  readonly load: Effect.Effect<Value, LoadError, Requirements>;
+  readonly load: () => Effect.Effect<Value, LoadError, Requirements>;
   readonly snapshot: ModuleStateSnapshot;
 }
 
@@ -55,7 +56,7 @@ export const makeModuleEntrypointGateway = (
     run: (input) =>
       gate
         .check(input.snapshot, input.entrypoint)
-        .pipe(Effect.andThen(input.authorize), Effect.andThen(input.load)),
+        .pipe(Effect.andThen(input.authorize), Effect.andThen(Effect.suspend(input.load))),
   };
 };
 
