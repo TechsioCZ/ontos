@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Akros Full Module Map — Evidence-backed Delivery DAG",
+    "quality_profile": "standard",
+    "viewBox": [2860, 1580],
+    "repository": {
+      "url": "https://github.com/TSNheathen/wayrepo",
+      "revision": "bfa07e91cb4ebc22a72f8a58525c562e4fab3d23"
+    },
+    "legend": {
+      "mode": "all",
+      "entries": {
+        "database": { "label": "Accepted Commerce Business Module" },
+        "security": { "label": "Accepted Foundational Module" },
+        "backend": { "label": "Candidate Business Module boundary" },
+        "messagebus": { "label": "Candidate integration/support module" },
+        "cloud": { "label": "Runtime or delivery gate — not a module" },
+        "external": { "label": "Provider adapter — not a Business Module" }
+      }
+    },
+    "views": [
+      {
+        "id": "accepted",
+        "label": "Accepted OntOS boundaries",
+        "focus": ["party", "catalog", "assortment", "pricing", "inventory", "availability", "cart", "checkout", "payment", "order", "fulfillment", "claim", "aftercare"],
+        "note": "Twelve accepted Commerce modules plus Party Registry. Each remains an independently deployable MicroVertical."
+      },
+      {
+        "id": "parallel",
+        "label": "Parallel delivery fronts",
+        "focus": ["commerce_customer", "consent_privacy", "content", "commerce_search", "channel_publication", "promotion", "tax", "documents", "purchasing_approval", "billing_documents", "communications", "erp_routes"],
+        "note": "Candidate boundaries can progress in parallel; none is collapsed into a Customer, Discovery, Compliance, or Integration mega-module."
+      },
+      {
+        "id": "purchase",
+        "label": "Purchase and commitment",
+        "focus": ["commerce_customer", "assortment", "pricing", "promotion", "inventory", "availability", "cart", "purchasing_approval", "consent_privacy", "tax", "checkout", "payment", "payment_adapter", "commitment_gate", "order"],
+        "note": "Checkout revalidates price, tax, consent, and availability. Order requires payment admission and hard reservation."
+      },
+      {
+        "id": "aftercare",
+        "label": "Fulfillment and aftercare",
+        "focus": ["order", "payment", "fulfillment", "shipping_adapter", "documents", "billing_documents", "claim", "aftercare", "communications", "messaging_adapter"],
+        "note": "Each lifecycle keeps its own facts. Aftercare coordinates only permitted customer and operator actions."
+      },
+      {
+        "id": "external",
+        "label": "External-system seams",
+        "focus": ["payment", "payment_adapter", "fulfillment", "shipping_adapter", "communications", "messaging_adapter", "consent_privacy", "measurement_adapter", "erp_routes", "migration_gate"],
+        "note": "Adapters are replaceable seams, not business owners. Each fact family keeps explicit authority and reconciliation."
+      }
+    ]
+  },
+  "components": [
+    { "id": "party", "type": "security", "label": "Party Registry", "sublabel": "identity + Counterparty truth", "pos": [40, 110], "size": [180, 70], "sources": [{ "path": "docs/product/akros-product-domain-boundaries.md", "line": 37, "label": "Accepted Foundational owner" }] },
+    { "id": "commerce_customer", "type": "backend", "label": "Commerce Customer", "sublabel": "retail + B2B purchasing profile", "pos": [330, 110], "size": [200, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 16, "label": "B2C/B2B customer promise" }] },
+    { "id": "consent_privacy", "type": "backend", "label": "Consent + Privacy", "sublabel": "purpose evidence + DSR workflow", "pos": [650, 110], "size": [200, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 128, "label": "Privacy launch acceptance" }] },
+    { "id": "measurement_adapter", "type": "external", "label": "Measurement Adapter", "sublabel": "consent-controlled analytics", "pos": [970, 110], "size": [190, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 94, "label": "Consent-controlled measurement" }] },
+
+    { "id": "catalog", "type": "database", "label": "Catalog", "sublabel": "product identity + sellable shapes", "pos": [40, 340], "size": [180, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "content", "type": "backend", "label": "Content", "sublabel": "pages + product merchandising", "pos": [330, 270], "size": [180, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 23, "label": "Launch content scope" }] },
+    { "id": "commerce_search", "type": "backend", "label": "Commerce Search", "sublabel": "query + filter projection", "pos": [650, 270], "size": [190, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 23, "label": "Search and discovery" }] },
+    { "id": "channel_publication", "type": "backend", "label": "Channel Publication", "sublabel": "SEO + sitemap + product feeds", "pos": [970, 270], "size": [210, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 28, "label": "SEO and feed continuity" }] },
+
+    { "id": "assortment", "type": "database", "label": "Assortment", "sublabel": "channel/customer visibility", "pos": [330, 430], "size": [180, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "pricing", "type": "database", "label": "Pricing", "sublabel": "contextual price truth", "pos": [330, 580], "size": [180, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "promotion", "type": "backend", "label": "Promotion", "sublabel": "discount + voucher rules", "pos": [650, 580], "size": [180, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 35, "label": "Launch promotion rules" }] },
+    { "id": "inventory", "type": "database", "label": "Inventory", "sublabel": "stock + hard reservation", "pos": [330, 730], "size": [180, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "availability", "type": "database", "label": "Availability", "sublabel": "sellable + delivery promise", "pos": [650, 730], "size": [180, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+
+    { "id": "cart", "type": "database", "label": "Cart", "sublabel": "mutable buying intent", "pos": [970, 610], "size": [180, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "purchasing_approval", "type": "backend", "label": "Purchasing Approval", "sublabel": "B2B submit/review authority", "pos": [1240, 500], "size": [210, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 42, "label": "B2B approval journey" }] },
+    { "id": "tax", "type": "backend", "label": "Tax", "sublabel": "current result + order snapshot", "pos": [1240, 790], "size": [180, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 33, "label": "Tax revalidation and snapshot" }] },
+    { "id": "checkout", "type": "database", "label": "Checkout", "sublabel": "eligibility + final revalidation", "pos": [1530, 610], "size": [190, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "payment", "type": "database", "label": "Payment", "sublabel": "terms + authorization lifecycle", "pos": [1530, 790], "size": [190, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "payment_adapter", "type": "external", "label": "Payment Adapter", "sublabel": "selected provider implementation", "pos": [1810, 790], "size": [200, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 92, "label": "Payment provider outcomes" }] },
+    { "id": "commitment_gate", "type": "cloud", "label": "Order Commitment Gate", "sublabel": "price/tax + reservation + payment", "pos": [1810, 610], "size": [220, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 33, "label": "Commercial revalidation" }, { "path": "docs/product/akros-product-cutline.md", "line": 45, "label": "Durable order snapshot" }] },
+    { "id": "order", "type": "database", "label": "Order", "sublabel": "durable commercial commitment", "pos": [2100, 610], "size": [190, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+
+    { "id": "fulfillment", "type": "database", "label": "Fulfillment", "sublabel": "handoff + shipment lifecycle", "pos": [2100, 790], "size": [190, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "shipping_adapter", "type": "external", "label": "Shipping Adapter", "sublabel": "carrier/pickup implementation", "pos": [2380, 790], "size": [200, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 93, "label": "Shipping provider outcomes" }] },
+    { "id": "documents", "type": "backend", "label": "Documents Center", "sublabel": "classification + governed evidence", "pos": [1810, 1110], "size": [210, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 49, "label": "Customer document access" }] },
+    { "id": "billing_documents", "type": "backend", "label": "Billing Documents", "sublabel": "invoice + credit-document projection", "pos": [2100, 960], "size": [220, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 49, "label": "Invoice and credit documents" }] },
+    { "id": "claim", "type": "database", "label": "Claim", "sublabel": "order-line evidence + resolution", "pos": [2100, 1110], "size": [190, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "aftercare", "type": "database", "label": "Aftercare", "sublabel": "coordinate owned lifecycles", "pos": [2380, 990], "size": [200, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 28, "label": "Accepted Commerce domain" }] },
+    { "id": "communications", "type": "backend", "label": "Communications", "sublabel": "transactional message policy", "pos": [2640, 990], "size": [190, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 27, "label": "Transactional email" }] },
+    { "id": "messaging_adapter", "type": "external", "label": "Messaging Adapter", "sublabel": "selected delivery provider", "pos": [2640, 1140], "size": [190, 70], "sources": [{ "path": "docs/product/akros-product-cutline.md", "line": 94, "label": "Operational email outcome" }] },
+
+    { "id": "erp_routes", "type": "messagebus", "label": "ERP Integration Routes", "sublabel": "per-fact mapping + reconciliation", "pos": [1530, 1350], "size": [230, 70], "sources": [{ "path": "docs/product/commerce-application-boundaries.md", "line": 63, "label": "Named non-universal routes" }] },
+    { "id": "migration_gate", "type": "cloud", "label": "Migration + Archive Gate", "sublabel": "reconcile + cut over + retain", "pos": [2100, 1350], "size": [230, 70], "sources": [{ "path": "docs/product/akros-commerce-foundation.md", "line": 77, "label": "Migration boundary" }] }
+  ],
+  "connections": [
+    { "from": "party", "to": "commerce_customer", "variant": "security" },
+    { "from": "party", "to": "consent_privacy", "variant": "dashed", "fromSide": "top", "toSide": "top", "via": [[130, 76], [750, 76]] },
+    { "from": "consent_privacy", "to": "measurement_adapter", "variant": "security" },
+
+    { "from": "catalog", "to": "content" },
+    { "from": "catalog", "to": "assortment" },
+    { "from": "catalog", "to": "pricing" },
+    { "from": "catalog", "to": "inventory" },
+    { "from": "catalog", "to": "commerce_search", "variant": "dashed", "fromSide": "top", "toSide": "top", "via": [[130, 212], [745, 212]] },
+    { "from": "catalog", "to": "channel_publication", "variant": "dashed", "fromSide": "top", "toSide": "top", "via": [[130, 192], [1075, 192]] },
+    { "from": "content", "to": "commerce_search", "variant": "dashed" },
+    { "from": "content", "to": "channel_publication", "variant": "dashed", "fromSide": "top", "toSide": "top", "via": [[420, 242], [1075, 242]] },
+    { "from": "assortment", "to": "availability" },
+    { "from": "assortment", "to": "channel_publication", "variant": "dashed", "fromSide": "right", "toSide": "right", "via": [[1200, 465], [1200, 305]] },
+    { "from": "pricing", "to": "promotion" },
+    { "from": "pricing", "to": "channel_publication", "variant": "dashed", "fromSide": "bottom", "toSide": "right", "via": [[420, 690], [1220, 690], [1220, 305]] },
+    { "from": "inventory", "to": "availability", "variant": "emphasis" },
+
+    { "from": "commerce_customer", "to": "purchasing_approval", "variant": "dashed" },
+    { "from": "pricing", "to": "cart", "fromSide": "bottom", "toSide": "bottom", "via": [[420, 710], [1060, 710]] },
+    { "from": "promotion", "to": "cart" },
+    { "from": "assortment", "to": "cart" },
+    { "from": "availability", "to": "cart" },
+    { "from": "cart", "to": "purchasing_approval", "variant": "dashed" },
+    { "from": "cart", "to": "checkout", "variant": "emphasis" },
+    { "from": "purchasing_approval", "to": "checkout", "variant": "security" },
+    { "from": "consent_privacy", "to": "checkout", "variant": "security", "fromSide": "bottom", "toSide": "top" },
+    { "from": "tax", "to": "checkout", "variant": "security" },
+    { "from": "availability", "to": "checkout", "variant": "security" },
+    { "from": "checkout", "to": "payment", "variant": "emphasis" },
+    { "from": "payment", "to": "payment_adapter", "variant": "security" },
+    { "from": "checkout", "to": "commitment_gate", "variant": "emphasis" },
+    { "from": "payment_adapter", "to": "commitment_gate", "variant": "security", "fromSide": "top", "toSide": "bottom" },
+    { "from": "commitment_gate", "to": "order", "variant": "emphasis" },
+
+    { "from": "order", "to": "fulfillment", "variant": "emphasis" },
+    { "from": "fulfillment", "to": "shipping_adapter", "variant": "security" },
+    { "from": "order", "to": "billing_documents", "fromSide": "right", "toSide": "right", "via": [[2340, 645], [2340, 995]] },
+    { "from": "payment", "to": "billing_documents" },
+    { "from": "order", "to": "claim", "fromSide": "right", "toSide": "right", "via": [[2360, 645], [2360, 1145]] },
+    { "from": "documents", "to": "claim" },
+    { "from": "shipping_adapter", "to": "aftercare" },
+    { "from": "payment", "to": "aftercare", "fromSide": "right", "toSide": "left", "via": [[1770, 825], [1770, 1070], [2350, 1070], [2350, 1025]] },
+    { "from": "billing_documents", "to": "aftercare" },
+    { "from": "claim", "to": "aftercare", "variant": "emphasis" },
+    { "from": "aftercare", "to": "communications", "variant": "dashed" },
+    { "from": "communications", "to": "messaging_adapter", "variant": "dashed" },
+
+    { "from": "catalog", "to": "erp_routes", "variant": "dashed" },
+    { "from": "inventory", "to": "erp_routes", "variant": "dashed" },
+    { "from": "order", "to": "erp_routes", "variant": "dashed" },
+    { "from": "billing_documents", "to": "erp_routes", "variant": "dashed" },
+    { "from": "erp_routes", "to": "migration_gate", "variant": "emphasis" }
+  ]
+}

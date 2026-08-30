@@ -10,6 +10,14 @@ These diagrams explain OntOS from the outside in. Start with Level 1 for the bus
 | C4 Level 4 — Current Projects exemplar | Implementers: how does the develop-branch Projects MicroVertical connect UI, generated Effect clients, BFF endpoints, Actions/Reads, persistence, and ARES? | [Open diagram](./ontos-c4-l4-projects-code.html) | [JSON](./ontos-c4-l4-projects-code.architecture.json) |
 | C4 Deployment — Current Zerops Stage | Engineering and operations: which Zerops services exist today, who owns them, and how do migration, authorization, and persistence connect? | [Open diagram](./ontos-c4-zerops-stage-deployment.html) | [JSON](./ontos-c4-zerops-stage-deployment.architecture.json) |
 
+## Akros delivery module map
+
+The [interactive Akros full module map](./akros-full-module-map.html) is an evidence-backed delivery DAG for ideation and sequencing. It expands foundational and business capabilities into individual modules and shows the dependency paths that can proceed in parallel toward a working B2C and B2B shop. It is intentionally more detailed than the C4 views and must not be read as a committed delivery plan or as evidence that every module is already implemented.
+
+Portable exports are available as [light high-resolution PNG](./akros-full-module-map.light.high-res.png), [dark high-resolution PNG](./akros-full-module-map.dark.high-res.png), and [editable SVG](./akros-full-module-map.vector.svg). The maintainable Archify source is the matching [architecture JSON](./akros-full-module-map.architecture.json).
+
+The map is grounded in the accepted Akros product and commerce boundaries in Wayrepo at revision `bfa07e91cb4ebc22a72f8a58525c562e4fab3d23`. Its interactive source links pin the evidence to that revision. Mobile readers can zoom the diagram to 200%, pan horizontally inside the map, and continue scrolling the page vertically.
+
 ## How to read them
 
 - Solid relationships describe implemented or directly evidenced paths.
