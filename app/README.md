@@ -1,5 +1,9 @@
 # app
 
+> [!IMPORTANT]
+> Read the [development workflow](./DEVELOPMENT.md) before starting feature work. It explains how
+> to create, run, and remove isolated Locki development sandboxes.
+
 Generated UltraModern SuperApp workspace.
 
 All public writes and reads run through Core-owned governed operation lifecycles. Tenant/system

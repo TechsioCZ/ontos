@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @app/shell-super-app --filter './verticals/*' run \"/^dev(?::worker)?$/\"",
     "dev:shell": "pnpm --filter @app/shell-super-app dev",
+    "sandbox:new": "sh ./scripts/locki-feature.sh",
     "env:local:ensure": "node ./scripts/ensure-local-environment.mts",
     "db:generate": "pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/crm db:generate",
     "db:bootstrap-runtime-role": "node ./scripts/postgres/bootstrap-runtime-role.mts",
@@ -18,6 +19,7 @@
     "db:migrate": "pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/crm db:migrate && pnpm db:bootstrap-runtime-role",
     "db:test": "pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/crm db:test",
     "db:verify": "node ./scripts/verify-application-db-schema.mts",
+    "local:initialize": "node ./scripts/initialize-local-development.mts",
     "action:test:unit": "pnpm --filter @app/core-runtime action:test:unit",
     "outbox:test": "pnpm --filter @app/core-runtime outbox:test:unit && pnpm --filter @app/core-runtime outbox:test:integration",
     "build": "pnpm -r --filter \"./verticals/*\" run build && pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
@@ -65,7 +67,10 @@
     "postinstall": "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt . '!repos/**'"
   },
   "dependencies": {
+    "@authzed/authzed-node": "1.6.1",
+    "better-auth": "1.6.23",
     "dotenv": "17.4.2",
+    "drizzle-orm": "0.45.2",
     "pg": "8.22.0"
   },
   "devDependencies": {

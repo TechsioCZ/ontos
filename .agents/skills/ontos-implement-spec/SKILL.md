@@ -7,10 +7,35 @@ description: Implement one approved OntOS plan from app/specs/, including writin
 
 Follow the `Instructions` to implement the `Plan`, execute the `Application Validation Test Suite`, complete the `Review`, fix every in-scope finding, then `Report` the completed work.
 
+## Locki Sandbox (Required)
+
+> [!IMPORTANT]
+> Implement specifications only in a Locki sandbox. Never create a worktree with Git or Codex,
+> and never implement a specification in the primary checkout. Do not fall back to either approach
+> when Locki is unavailable or fails.
+
+- Read the canonical [OntOS development workflow](../../../app/DEVELOPMENT.md) before creating or
+  operating a sandbox.
+- If `LOCKI_SANDBOX_ID` is non-empty, use the current Locki sandbox and do not create another one.
+- Otherwise, run `command -v locki` before any implementation change. If it fails, stop and tell the
+  developer to install Locki with `uv tool install locki`. Do not create a worktree or change code.
+- When Locki is available but no sandbox is active, derive a lower-kebab-case feature slug from the
+  specification basename and run this from the primary `app/` directory:
+
+  ```sh
+  mise exec -- pnpm sandbox:new -- <feature-slug> --no-ai
+  ```
+
+- Continue all reads and edits from the returned Locki worktree's `app/` directory. Run project
+  commands inside that sandbox. When controlling it from the host, use
+  `locki exec --match <sandbox-id> -- sh -lc 'cd app && <command>'`.
+- If the agent cannot transfer its work to the returned Locki worktree, stop after preparation and
+  tell the developer to resume there with `locki ai --match <sandbox-id>`. Do not continue in the
+  primary checkout.
+
 ## Instructions
 
-- Work from the OntOS `app/` directory.
-- Create a new Git Worktree
+- Work from the OntOS `app/` directory inside the required Locki worktree.
 - Read the plan, think hard about the plan, and implement the plan.
 - If project context is not fresh, use `$ontos-prime` before continuing.
 - Read `../AGENTS.md`, `AGENTS.md`, and every relevant guidance file referenced by `AGENTS.md`. Do not rely on memory or a previous summary.
