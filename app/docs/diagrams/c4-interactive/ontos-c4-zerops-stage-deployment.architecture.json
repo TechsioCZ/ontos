@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OntOS — C4 Deployment: Current Zerops Stage",
+    "locale": "en",
+    "output": "ontos-c4-zerops-stage-deployment.html",
+    "quality_profile": "showcase",
+    "engineering_profile": "deployment-ownership",
+    "repository": {"url": "https://github.com/TechsioCZ/ontos", "revision": "b07ec16fe7657f947f15724191caf3f09d13dfd7"},
+    "views": [
+      {"id": "request-path", "label": "Stage request path", "focus": ["staff-browser", "shell-service", "projects-service"], "note": "The public Shell composes the independently deployed Projects UI and calls its Effect BFF."},
+      {"id": "authorization-path", "label": "Authorization path", "focus": ["shell-service", "projects-service", "spicedb-service", "managed-postgres"], "note": "Both Node services call SpiceDB; SpiceDB keeps its datastore in managed PostgreSQL."},
+      {"id": "migration-path", "label": "Migration path", "focus": ["migrator-service", "spicedb-service", "managed-postgres"], "note": "The release migrator prepares SpiceDB storage, runs Core/Auth/Projects migrations, refreshes roles, and verifies schema before readiness."}
+    ]
+  },
+  "components": [
+    {"id": "staff-browser", "type": "external", "label": "Staff Browser", "sublabel": "Stage operator", "pos": [20, 270], "size": [150, 68], "tag": "USER"},
+    {"id": "shell-service", "type": "frontend", "label": "shellsuperapp", "sublabel": "Node.js :3020", "pos": [240, 270], "size": [180, 72], "tag": "ONTOS / PUBLIC", "sources": [{"path": "app/zerops.yaml", "line": 137, "end_line": 183, "label": "Zerops setup"}]},
+    {"id": "projects-service", "type": "backend", "label": "projects", "sublabel": "Node.js :4101", "pos": [500, 270], "size": [180, 72], "tag": "PROJECTS OWNER", "sources": [{"path": "app/zerops.yaml", "line": 91, "end_line": 135, "label": "Zerops setup"}]},
+    {"id": "spicedb-service", "type": "security", "label": "spicedb", "sublabel": "v1.56.0 / gRPC :50051", "pos": [770, 80], "size": [190, 72], "tag": "AUTHORIZATION", "sources": [{"path": "app/zerops.yaml", "line": 57, "end_line": 89, "label": "Zerops setup"}]},
+    {"id": "migrator-service", "type": "backend", "label": "migrator", "sublabel": "Release gate / ready :8080", "pos": [770, 450], "size": [190, 72], "tag": "RELEASE OWNER", "sources": [{"path": "app/zerops.yaml", "line": 5, "end_line": 55, "label": "Zerops setup"}, {"path": "app/scripts/run-zerops-migrator.mjs", "line": 32, "end_line": 38, "label": "Migration sequence"}]},
+    {"id": "managed-postgres", "type": "database", "label": "Managed PostgreSQL", "sublabel": "Application + SpiceDB databases", "pos": [1050, 270], "size": [190, 72], "tag": "ZEROPS / EXTERNAL SETUP", "sources": [{"path": "app/zerops.yaml", "line": 43, "label": "db service reference"}]}
+  ],
+  "boundaries": [
+    {"kind": "region", "label": "Zerops project / Stage environment", "wraps": ["shell-service", "projects-service", "spicedb-service", "migrator-service", "managed-postgres"], "pad": 28},
+    {"kind": "security-group", "label": "Private Zerops service network", "wraps": ["projects-service", "spicedb-service", "migrator-service", "managed-postgres"], "pad": 18}
+  ],
+  "connections": [
+    {"id": "browser-opens-shell", "from": "staff-browser", "to": "shell-service", "label": "HTTPS", "variant": "emphasis"},
+    {"id": "shell-composes-projects", "from": "shell-service", "to": "projects-service", "label": "Module Federation + Effect BFF", "variant": "emphasis", "labelAt": [460, 365]},
+    {"id": "shell-checks-spicedb", "from": "shell-service", "to": "spicedb-service", "label": "gRPC authorization", "variant": "security", "fromSide": "top", "toSide": "left", "via": [[330, 190], [730, 190], [730, 116]], "labelAt": [530, 190]},
+    {"id": "projects-checks-spicedb", "from": "projects-service", "to": "spicedb-service", "label": "gRPC authorization", "variant": "security", "fromSide": "top", "toSide": "bottom", "via": [[590, 210], [865, 210]], "labelAt": [730, 210]},
+    {"id": "spicedb-uses-postgres", "from": "spicedb-service", "to": "managed-postgres", "label": "PostgreSQL datastore", "variant": "security", "fromSide": "right", "toSide": "top", "via": [[1000, 116], [1000, 210], [1145, 210]], "labelAt": [1070, 210]},
+    {"id": "migrator-prepares-spicedb", "from": "migrator-service", "to": "spicedb-service", "label": "bootstrap + verify", "variant": "security", "fromSide": "top", "toSide": "bottom", "labelAt": [955, 300]},
+    {"id": "migrator-updates-postgres", "from": "migrator-service", "to": "managed-postgres", "label": "admin SQL migrations", "variant": "emphasis", "fromSide": "right", "toSide": "bottom", "via": [[1000, 486], [1000, 390], [1145, 390]], "labelAt": [1070, 390]}
+  ],
+  "cards": [
+    {"dot": "cyan", "title": "What the manifest proves", "items": ["Stage has four declared Zerops setups: migrator, SpiceDB, Projects, and Shell Super App.", "Readiness is explicit on :8080/ready, :8443/healthz, :4101/projects-api/projects/readiness, and :3020/. Secrets live in provider service configuration."]},
+    {"dot": "emerald", "title": "Release ownership", "items": ["The migrator runs Core, BetterAuth, and Projects migrations, refreshes runtime roles, verifies the exact application schema, then exposes readiness.", "SpiceDB starts with a PostgreSQL datastore; the Stage bootstrap file is only for an empty installation."]},
+    {"dot": "amber", "title": "Explicitly not final production", "items": ["app/zerops.yaml identifies itself as Stage. The managed db setup and application runtime DATABASE_URL injection are provider configuration outside this manifest.", "Production tenancy, regions, recovery, observability, cost, and the Akros launch topology remain unresolved in Wayrepo #17."]}
+  ]
+}

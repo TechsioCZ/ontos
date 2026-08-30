@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OntOS — C4 Level 2: Accepted Target Containers",
+    "locale": "en",
+    "output": "ontos-c4-l2-containers.html",
+    "quality_profile": "showcase",
+    "repository": {"url": "https://github.com/TechsioCZ/ontos", "revision": "b07ec16fe7657f947f15724191caf3f09d13dfd7"},
+    "views": [
+      {"id": "channel-boundaries", "label": "Channel boundaries", "focus": ["external-storefront", "storefront-api", "portal-auth", "commerce-ops", "staff-auth"], "note": "External storefronts and the staff Operations app consume separate public surfaces and identity realms."},
+      {"id": "module-ownership", "label": "Module ownership", "focus": ["core", "foundational-modules", "business-modules", "postgres", "projection-stores"], "note": "Core governs execution; each MicroVertical keeps implementation, data, migrations, and workers owner-local."},
+      {"id": "integration-routes", "label": "Integration routes", "focus": ["business-modules", "external-integrations"], "note": "Each system and fact gets one explicit route: migration, Symmy, or a direct provider adapter."}
+    ]
+  },
+  "components": [
+    {"id": "external-storefront", "type": "frontend", "label": "Storefront + Local BFF", "sublabel": "Independent channel deployment", "pos": [20, 440], "size": [170, 72], "tag": "EXTERNAL", "sources": [{"path": "app/docs/architecture/COMMERCE_APPLICATIONS.md", "label": "Accepted boundary"}]},
+    {"id": "shell", "type": "frontend", "label": "Shell Super App", "sublabel": "Staff SSR, navigation, MF host", "pos": [250, 40], "size": [180, 72], "tag": "IMPLEMENTED BASIS"},
+    {"id": "commerce-ops", "type": "frontend", "label": "Commerce Operations", "sublabel": "Separate staff application", "pos": [250, 230], "size": [180, 72], "tag": "ACCEPTED TARGET"},
+    {"id": "storefront-api", "type": "backend", "label": "Commerce Storefront API", "sublabel": "Thin native channel contracts", "pos": [250, 440], "size": [180, 72], "tag": "ACCEPTED TARGET"},
+    {"id": "staff-auth", "type": "security", "label": "Staff BetterAuth Realm", "sublabel": "Staff sessions and identities", "pos": [500, 40], "size": [180, 72], "tag": "SEPARATE REALM"},
+    {"id": "core", "type": "backend", "label": "Core Runtime", "sublabel": "Governance, catalog, audit, outbox", "pos": [500, 230], "size": [180, 78], "tag": "SMALL KERNEL"},
+    {"id": "portal-auth", "type": "security", "label": "Portal BetterAuth Realm", "sublabel": "Shopper and portal identities", "pos": [500, 440], "size": [180, 72], "tag": "SEPARATE REALM"},
+    {"id": "foundational-modules", "type": "backend", "label": "Foundational MicroVerticals", "sublabel": "Party Registry + shared capabilities", "pos": [760, 60], "size": [190, 78], "tag": "OWNER-LOCAL"},
+    {"id": "business-modules", "type": "backend", "label": "Business MicroVerticals", "sublabel": "Catalog through Claim workflows", "pos": [760, 300], "size": [190, 78], "tag": "OWNER-LOCAL"},
+    {"id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "Canonical owner schemas", "pos": [1010, 300], "size": [180, 72], "tag": "CANONICAL"},
+    {"id": "spicedb", "type": "security", "label": "SpiceDB", "sublabel": "Relationship authorization", "pos": [1010, 180], "size": [180, 72], "tag": "IMPLEMENTED BASIS"},
+    {"id": "projection-stores", "type": "database", "label": "Projection + Blob Stores", "sublabel": "Neo4j, search, object storage", "pos": [1010, 440], "size": [180, 72], "tag": "REPLAYABLE TARGET"},
+    {"id": "external-integrations", "type": "external", "label": "Integration Routes", "sublabel": "Symmy or direct providers", "pos": [20, 230], "size": [190, 72], "tag": "EXTERNAL"}
+  ],
+  "boundaries": [
+    {"kind": "region", "label": "OntOS standard application runtime — accepted logical target", "wraps": ["shell", "commerce-ops", "storefront-api", "staff-auth", "core", "portal-auth", "foundational-modules", "business-modules", "postgres", "spicedb", "projection-stores"], "pad": 24}
+  ],
+  "connections": [
+    {"id": "storefront-calls-api", "from": "external-storefront", "to": "storefront-api", "label": "tenant-bound client", "variant": "dashed", "labelAt": [220, 530]},
+    {"id": "api-authenticates-portal", "from": "storefront-api", "to": "portal-auth", "label": "portal session", "variant": "security", "labelAt": [465, 526]},
+    {"id": "api-calls-business", "from": "storefront-api", "to": "business-modules", "label": "published typed clients", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[340, 550], [855, 550]], "labelAt": [600, 550]},
+    {"id": "shell-authenticates-staff", "from": "shell", "to": "staff-auth", "label": "staff session", "variant": "security"},
+    {"id": "shell-uses-core", "from": "shell", "to": "core", "label": "catalog + governed entrypoints", "fromSide": "left", "toSide": "bottom", "via": [[225, 76], [225, 350], [590, 350]], "labelAt": [400, 350]},
+    {"id": "operations-authenticates-staff", "from": "commerce-ops", "to": "staff-auth", "label": "staff session", "variant": "security", "fromSide": "top", "toSide": "bottom", "via": [[340, 160], [590, 160]], "labelAt": [465, 160]},
+    {"id": "operations-calls-core", "from": "commerce-ops", "to": "core", "label": "public module contracts", "variant": "dashed", "labelAt": [465, 322]},
+    {"id": "core-governs-foundational", "from": "core", "to": "foundational-modules", "label": "composition DAG + entrypoints", "fromSide": "right", "toSide": "left", "via": [[720, 269], [720, 160], [740, 160], [740, 99]], "labelAt": [720, 160]},
+    {"id": "core-governs-business", "from": "core", "to": "business-modules", "label": "governed API", "labelAt": [720, 285]},
+    {"id": "business-owns-data", "from": "business-modules", "to": "postgres", "label": "owner schema + migrations", "fromSide": "right", "toSide": "left", "via": [[970, 339], [970, 260], [990, 260], [990, 336]], "labelAt": [980, 260]},
+    {"id": "core-checks-spicedb", "from": "core", "to": "spicedb", "label": "permission checks", "variant": "security"},
+    {"id": "workers-project-state", "from": "business-modules", "to": "projection-stores", "label": "owner workers replay outbox", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "via": [[855, 410], [1100, 410]], "labelAt": [980, 410]},
+    {"id": "modules-route-integrations", "from": "business-modules", "to": "external-integrations", "label": "migration / Symmy / direct", "variant": "dashed", "fromSide": "left", "toSide": "right", "via": [[720, 339], [720, 380], [220, 380], [220, 266]], "labelAt": [470, 380]}
+  ],
+  "cards": [
+    {"dot": "emerald", "title": "Accepted logical target", "items": ["OntOS is one product: Core plus reusable Application Compositions; Akros and N1 are Customer Configurations, not forks.", "Every Foundational or Business Module is an independently deployable MicroVertical with explicit contract and implementation identities.", "One B2C/B2B backend serves independent storefronts; Commerce Operations and the staff/portal identity realms stay separate."]},
+    {"dot": "amber", "title": "Not a physical deployment promise", "items": ["Final service placement, tenancy, regions, recovery, and launch topology remain open in Wayrepo #17.", "The separate Zerops diagram records the currently evidenced Stage deployment."]}
+  ]
+}
