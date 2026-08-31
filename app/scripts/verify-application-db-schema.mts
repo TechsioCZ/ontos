@@ -2,11 +2,11 @@ import { Effect } from 'effect';
 import { Client } from 'pg';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 
-const EXPECTED_APPLICATION_SCHEMAS = ['auth', 'core', 'crm'] as const;
+const EXPECTED_APPLICATION_SCHEMAS = ['auth', 'core', 'projects'] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_auth',
   '__drizzle_migrations_core',
-  '__drizzle_migrations_crm',
+  '__drizzle_migrations_projects',
 ] as const;
 
 const configuration = await Effect.runPromise(loadDatabaseConnectionPair());
@@ -52,4 +52,4 @@ try {
 console.log('Verified exact application schemas and migration journals');
 await import('../packages/core-runtime/scripts/verify-db-schema.mts');
 await import('../apps/shell-super-app/scripts/verify-auth-db-schema.mts');
-await import('../verticals/crm/scripts/verify-db-schema.mts');
+await import('../verticals/projects/scripts/verify-db-schema.mts');

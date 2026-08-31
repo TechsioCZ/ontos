@@ -1,0 +1,814 @@
+<svg viewBox="0 0 2860 1580" role="img" lang="en" aria-labelledby="archify-diagram-title archify-diagram-description" data-preset="classic" data-quality-profile="standard" style="" width="2860" height="1580" xmlns="http://www.w3.org/2000/svg"><style>@font-face { font-family: 'JetBrains Mono'; font-weight: 400; src: local('JetBrains Mono'), local('JetBrainsMono-Regular'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 500; src: local('JetBrains Mono'), local('JetBrainsMono-Regular'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 600; src: local('JetBrains Mono'), local('JetBrainsMono-Regular'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 700; src: local('JetBrains Mono'), local('JetBrainsMono-Regular'); }
+svg { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', 'Noto Sans Mono CJK SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', monospace; }
+:root, [data-theme="dark"] { --bg: #020617; --grid: #1e293b; --text: #ffffff; --text-muted: #94a3b8; --text-dim: #475569; --text-faint: #7d8da1; --panel: rgba(15, 23, 42, 0.5); --panel-border: #1e293b; --lane-fill: rgba(15, 23, 42, 0.22); --lane-stroke: #334155; --arrow: #64748b; --arrow-emphasis: #34d399; --mask: #0f172a; --frontend-fill: rgba(8, 51, 68, 0.4); --frontend-stroke: #22d3ee; --backend-fill: rgba(6, 78, 59, 0.4); --backend-stroke: #34d399; --database-fill: rgba(76, 29, 149, 0.4); --database-stroke: #a78bfa; --cloud-fill: rgba(120, 53, 15, 0.3); --cloud-stroke: #fbbf24; --security-fill: rgba(136, 19, 55, 0.4); --security-stroke: #fb7185; --messagebus-fill: rgba(251, 146, 60, 0.3); --messagebus-stroke: #fb923c; --external-fill: rgba(30, 41, 59, 0.5); --external-stroke: #94a3b8; --toolbar-bg: rgba(15, 23, 42, 0.8); --toolbar-border: #334155; --toolbar-text: #e2e8f0; --toolbar-hover: rgba(15, 23, 42, 0.95); --toolbar-menu-bg: #0f172a; }
+[data-theme="light"] { --bg: #f8fafc; --grid: #e2e8f0; --text: #0f172a; --text-muted: #64748b; --text-dim: #94a3b8; --text-faint: #64748b; --panel: #ffffff; --panel-border: #e2e8f0; --lane-fill: rgba(248, 250, 252, 0.65); --lane-stroke: #cbd5e1; --arrow: #94a3b8; --arrow-emphasis: #059669; --mask: #ffffff; --frontend-fill: rgba(34, 211, 238, 0.15); --frontend-stroke: #0891b2; --backend-fill: rgba(52, 211, 153, 0.18); --backend-stroke: #059669; --database-fill: rgba(167, 139, 250, 0.2); --database-stroke: #7c3aed; --cloud-fill: rgba(251, 191, 36, 0.18); --cloud-stroke: #d97706; --security-fill: rgba(251, 113, 133, 0.15); --security-stroke: #e11d48; --messagebus-fill: rgba(251, 146, 60, 0.15); --messagebus-stroke: #ea580c; --external-fill: rgba(148, 163, 184, 0.18); --external-stroke: #64748b; --toolbar-bg: rgba(255, 255, 255, 0.92); --toolbar-border: #cbd5e1; --toolbar-text: #334155; --toolbar-hover: #ffffff; --toolbar-menu-bg: #ffffff; }
+[data-preset="signal-flow"][data-theme="dark"] { --bg: #030711; --grid: #15233a; --panel: rgba(6, 14, 28, 0.78); --panel-border: #1d3350; --lane-fill: rgba(9, 22, 40, 0.5); --lane-stroke: #2c4564; --text: #f5fbff; --text-muted: #9eb0c7; --text-dim: #52667f; --text-faint: #7890ad; --mask: #07101e; --frontend-fill: rgba(6, 182, 212, 0.14); --frontend-stroke: #67e8f9; --backend-fill: rgba(16, 185, 129, 0.14); --backend-stroke: #5eead4; --database-fill: rgba(139, 92, 246, 0.16); --database-stroke: #c4b5fd; --cloud-fill: rgba(245, 158, 11, 0.13); --cloud-stroke: #fcd34d; --security-fill: rgba(244, 63, 94, 0.13); --security-stroke: #fda4af; --messagebus-fill: rgba(249, 115, 22, 0.13); --messagebus-stroke: #fdba74; --external-fill: rgba(71, 85, 105, 0.24); --external-stroke: #a5b4c7; --arrow: #7890ad; --arrow-emphasis: #2dd4bf; --toolbar-bg: rgba(7, 16, 30, 0.86); --toolbar-border: #29415f; --toolbar-menu-bg: #07101e; }
+[data-preset="signal-flow"][data-theme="light"] { --bg: #f4f9fc; --grid: #d4e5ee; --panel: rgba(255, 255, 255, 0.82); --panel-border: #bfd5e2; --lane-fill: rgba(232, 243, 248, 0.62); --lane-stroke: #a9c5d5; --text: #102638; --text-muted: #587287; --text-dim: #8aa2b4; --text-faint: #668397; --mask: #ffffff; --frontend-fill: rgba(6, 182, 212, 0.09); --frontend-stroke: #0789a1; --backend-fill: rgba(5, 150, 105, 0.09); --backend-stroke: #087f69; --database-fill: rgba(124, 58, 237, 0.09); --database-stroke: #7254c7; --cloud-fill: rgba(217, 119, 6, 0.08); --cloud-stroke: #b9670b; --security-fill: rgba(225, 29, 72, 0.08); --security-stroke: #c53a59; --messagebus-fill: rgba(234, 88, 12, 0.08); --messagebus-stroke: #c65f27; --external-fill: rgba(100, 116, 139, 0.1); --external-stroke: #607a8c; --arrow: #7b97aa; --arrow-emphasis: #0d9488; }
+[data-preset="blueprint"][data-theme="dark"] { --bg: #06131f; --grid: #17425a; --panel: rgba(7, 27, 43, 0.9); --panel-border: #27627f; --lane-fill: rgba(10, 43, 66, 0.36); --lane-stroke: #34799a; --text: #e3f6ff; --text-muted: #91b8ca; --text-dim: #557e92; --text-faint: #739caf; --mask: #0a2031; --frontend-fill: rgba(26, 157, 193, 0.14); --frontend-stroke: #66d9ef; --backend-fill: rgba(31, 155, 124, 0.13); --backend-stroke: #69dfbd; --database-fill: rgba(120, 105, 196, 0.14); --database-stroke: #b4a8ff; --cloud-fill: rgba(197, 145, 43, 0.13); --cloud-stroke: #ffd166; --security-fill: rgba(199, 76, 104, 0.13); --security-stroke: #ff8da1; --messagebus-fill: rgba(207, 112, 49, 0.13); --messagebus-stroke: #ffad66; --external-fill: rgba(84, 119, 139, 0.18); --external-stroke: #a7cad9; --arrow: #78a3b7; --arrow-emphasis: #64dfc1; --toolbar-bg: rgba(7, 28, 45, 0.92); --toolbar-border: #34799a; --toolbar-text: #d8f3ff; --toolbar-hover: rgba(18, 58, 83, 0.95); --toolbar-menu-bg: #0a2031; }
+[data-preset="blueprint"][data-theme="light"] { --bg: #edf7fa; --grid: #b5d5e1; --panel: rgba(249, 253, 255, 0.94); --panel-border: #78aabd; --lane-fill: rgba(210, 232, 240, 0.42); --lane-stroke: #83b2c4; --text: #123344; --text-muted: #4e7486; --text-dim: #86a6b4; --text-faint: #668c9d; --mask: #f9fdff; --frontend-fill: rgba(8, 145, 178, 0.08); --frontend-stroke: #087f9c; --backend-fill: rgba(5, 128, 101, 0.08); --backend-stroke: #08755f; --database-fill: rgba(100, 75, 180, 0.08); --database-stroke: #6757a8; --cloud-fill: rgba(181, 120, 15, 0.08); --cloud-stroke: #a86609; --security-fill: rgba(190, 48, 80, 0.07); --security-stroke: #b32f50; --messagebus-fill: rgba(196, 81, 22, 0.07); --messagebus-stroke: #b65120; --external-fill: rgba(79, 112, 128, 0.08); --external-stroke: #506f7e; --arrow: #6d93a5; --arrow-emphasis: #087f69; --toolbar-bg: rgba(247, 252, 254, 0.94); --toolbar-border: #8ab5c5; --toolbar-text: #294f61; --toolbar-hover: #ffffff; --toolbar-menu-bg: #f9fdff; }
+[data-preset="editorial"][data-theme="dark"] { --bg: #181611; --grid: #39342a; --panel: rgba(35, 31, 24, 0.96); --panel-border: #625a4a; --lane-fill: rgba(52, 46, 35, 0.46); --lane-stroke: #726957; --text: #f4eddf; --text-muted: #b9ae9b; --text-dim: #776e60; --text-faint: #9d917e; --mask: #231f18; --frontend-fill: rgba(43, 133, 142, 0.16); --frontend-stroke: #7fc6c7; --backend-fill: rgba(63, 132, 92, 0.16); --backend-stroke: #8fc29e; --database-fill: rgba(117, 91, 141, 0.17); --database-stroke: #c0a4d0; --cloud-fill: rgba(170, 119, 49, 0.16); --cloud-stroke: #d8ad68; --security-fill: rgba(157, 69, 65, 0.17); --security-stroke: #df9085; --messagebus-fill: rgba(174, 79, 42, 0.16); --messagebus-stroke: #df946f; --external-fill: rgba(126, 115, 96, 0.18); --external-stroke: #b8ad99; --arrow: #948978; --arrow-emphasis: #dd6b3d; --toolbar-bg: rgba(35, 31, 24, 0.92); --toolbar-border: #625a4a; --toolbar-text: #eee5d5; --toolbar-hover: #302a20; --toolbar-menu-bg: #231f18; }
+[data-preset="editorial"][data-theme="light"] { --bg: #f2eee5; --grid: #d8d0c2; --panel: rgba(251, 248, 241, 0.97); --panel-border: #c4b9a6; --lane-fill: rgba(229, 221, 207, 0.42); --lane-stroke: #b8aa94; --text: #242018; --text-muted: #6f6658; --text-dim: #a09788; --text-faint: #817767; --mask: #fbf8f1; --frontend-fill: rgba(31, 117, 126, 0.09); --frontend-stroke: #287e84; --backend-fill: rgba(42, 119, 75, 0.09); --backend-stroke: #397b53; --database-fill: rgba(105, 75, 130, 0.09); --database-stroke: #765d86; --cloud-fill: rgba(157, 103, 31, 0.1); --cloud-stroke: #9a671f; --security-fill: rgba(153, 58, 52, 0.09); --security-stroke: #9e463f; --messagebus-fill: rgba(182, 70, 27, 0.09); --messagebus-stroke: #ad4b25; --external-fill: rgba(101, 91, 75, 0.09); --external-stroke: #746b5e; --arrow: #8a806f; --arrow-emphasis: #bb4c23; --toolbar-bg: rgba(251, 248, 241, 0.94); --toolbar-border: #c4b9a6; --toolbar-text: #40392f; --toolbar-hover: #fffdf8; --toolbar-menu-bg: #fbf8f1; }
+svg { width: 100%; min-width: min(900px, 100%); display: block; transform-origin: 0px 0px; transition: transform 0.18s; }
+@keyframes archify-lens-in { 
+  0% { opacity: 0; transform: translateY(5px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0px) scale(1); }
+}
+@keyframes archify-guide-in { 
+  0% { opacity: 0; transform: translateY(-5px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0px) scale(1); }
+}
+svg[data-chapter-handoff] [data-node-id][data-chapter-role="stay"] { opacity: 1; }
+svg[data-chapter-handoff] [data-node-id][data-chapter-role="enter"] { opacity: 0.78; }
+svg[data-chapter-handoff] [data-node-id][data-chapter-role="leave"] { opacity: 0.26; }
+@keyframes archify-chapter-anchor { 
+  0% { opacity: 0.35; stroke-dashoffset: 8; }
+  45% { opacity: 1; }
+  100% { opacity: 0.72; stroke-dashoffset: 0; }
+}
+@keyframes archify-story-caption-in { 
+  0% { opacity: 0; transform: translateY(3px); }
+  100% { opacity: 1; transform: translateY(0px); }
+}
+[data-theme="light"] #theme-icon { mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cg fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='10' cy='10' r='3.1'/%3E%3Cpath d='M10 2.2v1.4M10 16.4v1.4M2.2 10h1.4M16.4 10h1.4M4.5 4.5l1 1M14.5 14.5l1 1M15.5 4.5l-1 1M5.5 14.5l-1 1'/%3E%3C/g%3E%3C/svg%3E"); }
+[data-theme="dark"] #theme-icon { mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M15.2 12.7A6.3 6.3 0 017.3 4.8a6.3 6.3 0 107.9 7.9Z' fill='none' stroke='black' stroke-width='1.7' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.c-grid { stroke: var(--grid); fill: none; }
+.c-mask { fill: var(--mask); stroke: none; }
+.c-frontend { fill: var(--frontend-fill); stroke: var(--frontend-stroke); }
+.c-backend { fill: var(--backend-fill); stroke: var(--backend-stroke); }
+.c-database { fill: var(--database-fill); stroke: var(--database-stroke); }
+.c-cloud { fill: var(--cloud-fill); stroke: var(--cloud-stroke); }
+.c-security { fill: var(--security-fill); stroke: var(--security-stroke); }
+.c-messagebus { fill: var(--messagebus-fill); stroke: var(--messagebus-stroke); }
+.c-external { fill: var(--external-fill); stroke: var(--external-stroke); }
+.t-primary { fill: var(--text); }
+.t-muted { fill: var(--text-muted); }
+.t-dim { fill: var(--text-dim); }
+.t-frontend { fill: var(--frontend-stroke); }
+.t-backend { fill: var(--backend-stroke); }
+.t-database { fill: var(--database-stroke); }
+.t-cloud { fill: var(--cloud-stroke); }
+.t-security { fill: var(--security-stroke); }
+.t-messagebus { fill: var(--messagebus-stroke); }
+.t-external { fill: var(--external-stroke); }
+svg .semantic-sigil { fill: none; stroke: currentcolor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round; opacity: 0.76; pointer-events: none; }
+svg .semantic-sigil &gt; * { vector-effect: non-scaling-stroke; }
+svg .semantic-sigil .sigil-fill { fill: currentcolor; stroke: none; }
+svg .s-frontend { color: var(--frontend-stroke); }
+svg .s-backend { color: var(--backend-stroke); }
+svg .s-database { color: var(--database-stroke); }
+svg .s-cloud { color: var(--cloud-stroke); }
+svg .s-security { color: var(--security-stroke); }
+svg .s-messagebus { color: var(--messagebus-stroke); }
+svg .s-external { color: var(--external-stroke); }
+svg .brand-mark { pointer-events: none; }
+svg .brand-mark-badge { fill: rgb(255, 255, 255); stroke: none; }
+svg .brand-mark-frame { fill: none; stroke: rgb(203, 213, 225); stroke-width: 0.8; vector-effect: non-scaling-stroke; }
+svg .brand-mark-fallback { fill: none; stroke: rgb(71, 85, 105); stroke-width: 1.15; stroke-linecap: round; stroke-linejoin: round; }
+svg[data-preset="blueprint"] .brand-mark-badge, svg[data-preset="blueprint"] .brand-mark-frame { rx: 1px; }
+svg [data-detail] { transition: opacity 160ms; }
+svg [data-detail-anchor] { transform-box: fill-box; transform-origin: center center; transition: transform 160ms; }
+svg[data-focus-active] [data-focus-match][data-detail], svg[data-focus-active] [data-focus-match] [data-detail], svg[data-reach-active] [data-reach-match][data-detail], svg[data-reach-active] [data-reach-match] [data-detail], svg[data-lens-active] [data-lens-match][data-detail], svg[data-lens-active] [data-lens-match] [data-detail], svg[data-legend-preview-active] [data-legend-preview-match][data-detail], svg[data-legend-preview-active] [data-legend-preview-match] [data-detail], svg[data-intent-trace-active] [data-intent-trace-match][data-detail], svg[data-intent-trace-active] [data-intent-trace-match] [data-detail], svg[data-route-active] [data-route-match][data-detail], svg[data-route-active] [data-route-match] [data-detail], svg[data-story-active] [data-story-step][data-detail], svg[data-story-active] [data-story-step] [data-detail], svg[data-relationship-preview-active] [data-relationship-preview][data-detail], svg[data-relationship-preview-active] [data-relationship-preview] [data-detail], svg [data-node-id]:hover [data-detail], svg [data-node-id]:focus-visible [data-detail] { opacity: 1; pointer-events: auto; }
+svg[data-focus-active] [data-focus-match] [data-detail-anchor], svg[data-reach-active] [data-reach-match] [data-detail-anchor], svg[data-lens-active] [data-lens-match] [data-detail-anchor], svg[data-legend-preview-active] [data-legend-preview-match] [data-detail-anchor], svg[data-intent-trace-active] [data-intent-trace-match] [data-detail-anchor], svg[data-route-active] [data-route-match] [data-detail-anchor], svg[data-story-active] [data-story-step] [data-detail-anchor], svg [data-node-id]:hover [data-detail-anchor], svg [data-node-id]:focus-visible [data-detail-anchor] { transform: none; }
+.a-default { stroke: var(--arrow); fill: none; }
+.a-emphasis { stroke: var(--arrow-emphasis); fill: none; }
+.a-security { stroke: var(--security-stroke); fill: none; stroke-dasharray: 5, 5; }
+.a-dashed { stroke: var(--database-stroke); fill: none; stroke-dasharray: 4, 4; }
+.m-default { fill: var(--arrow); }
+.m-emphasis { fill: var(--arrow-emphasis); }
+.m-security { fill: var(--security-stroke); }
+.m-dashed { fill: var(--database-stroke); }
+svg [data-node-id] { cursor: pointer; transition: opacity 0.18s, filter 0.18s; }
+svg [data-edge-from] { transition: opacity 0.18s, filter 0.18s; }
+svg [data-node-id]:hover, svg [data-node-id]:focus-visible { filter: drop-shadow(0 0 7px var(--frontend-stroke)); outline: none; }
+svg [data-node-id]:hover .source-evidence-beacon, svg [data-node-id]:focus-visible .source-evidence-beacon, svg [data-node-id][data-focus-selected] .source-evidence-beacon { opacity: 1; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--backend-stroke) 72%, transparent)); }
+svg[data-preset="signal-flow"] .source-evidence-beacon { opacity: 0.9; }
+svg[data-preset="blueprint"] .source-evidence-beacon rect { rx: 0.8px; filter: none; }
+svg [data-legend-kind][role="button"] { cursor: pointer; }
+svg [data-legend-kind]:focus { outline: none; }
+svg [data-legend-hit] { fill: transparent; stroke: transparent; stroke-width: 1.4; pointer-events: all; vector-effect: non-scaling-stroke; transition: stroke 150ms, stroke-width 150ms, filter 150ms; }
+svg [data-legend-count-badge] { pointer-events: none; }
+svg [data-legend-count-badge] rect { fill: var(--mask); stroke: var(--panel-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+svg [data-legend-count-badge] text { fill: var(--text-muted); font-size: 8px; font-weight: 700; text-anchor: middle; }
+svg [data-legend-kind][role="button"]:hover [data-legend-hit] { stroke: color-mix(in srgb, var(--database-stroke) 58%, transparent); }
+svg [data-legend-kind][role="button"]:focus-visible [data-legend-hit] { stroke: var(--frontend-stroke); stroke-width: 1.8; filter: drop-shadow(0 0 3px var(--frontend-stroke)); }
+svg [data-legend-kind][data-legend-selected] [data-legend-hit] { stroke: var(--database-stroke); stroke-width: 2.2; stroke-dasharray: 3, 2; }
+svg [data-legend-kind][data-legend-selected] [data-legend-count-badge] rect { stroke: var(--database-stroke); stroke-width: 1.8; }
+svg [data-legend-kind][data-legend-zero] { opacity: 0.44; }
+svg[data-preset="signal-flow"] [data-legend-kind][data-legend-selected] [data-legend-hit] { filter: drop-shadow(0 0 4px var(--database-stroke)); }
+svg[data-preset="blueprint"] [data-legend-hit], svg[data-preset="blueprint"] [data-legend-count-badge] rect { rx: 0; filter: none; }
+svg[data-legend-preview-active] [data-node-id], svg[data-legend-preview-active] [data-edge-from] { opacity: 0.11; }
+svg[data-legend-preview-active] [data-legend-preview-match] { opacity: 1; }
+svg[data-legend-preview-active] [data-legend-preview-peer] { opacity: 0.62; }
+svg[data-legend-preview-active] [data-legend-preview-selected] { filter: drop-shadow(0 0 8px var(--database-stroke)); }
+svg[data-lens-active] [data-node-id], svg[data-lens-active] [data-edge-from] { opacity: 0.11; }
+svg[data-lens-active] [data-lens-match] { opacity: 1; }
+svg[data-lens-active] [data-lens-peer] { opacity: 0.62; }
+svg[data-lens-active] [data-lens-selected] { filter: drop-shadow(0 0 10px var(--database-stroke)); }
+svg[data-preset="signal-flow"] .semantic-lens-flow { stroke-width: 3.7; opacity: 1; }
+svg[data-preset="signal-flow"] .semantic-lens-flow[data-direction="out"], svg[data-preset="signal-flow"] .semantic-lens-flow[data-direction="forward"] { filter: drop-shadow(0 0 6px var(--frontend-stroke)); }
+svg[data-preset="signal-flow"] .semantic-lens-flow[data-direction="in"], svg[data-preset="signal-flow"] .semantic-lens-flow[data-direction="reverse"] { filter: drop-shadow(0 0 6px var(--database-stroke)); }
+svg[data-preset="signal-flow"] .semantic-lens-flow[data-direction="within"] { filter: drop-shadow(0 0 6px var(--messagebus-stroke)); }
+svg[data-preset="blueprint"] .semantic-lens-flow { stroke-width: 2.45; stroke-linecap: square; filter: none; opacity: 0.78; }
+svg[data-focus-active] [data-node-id], svg[data-focus-active] [data-edge-from] { opacity: 0.13; }
+svg[data-focus-active] [data-focus-match] { opacity: 1; }
+svg[data-focus-active] [data-focus-selected] { filter: drop-shadow(0 0 10px var(--frontend-stroke)); }
+svg[data-reach-active] [data-node-id], svg[data-reach-active] [data-edge-from] { opacity: 0.09; }
+svg[data-reach-active] [data-reach-match] { opacity: 1; }
+svg[data-reach-active="upstream"] [data-reach-origin] { filter: drop-shadow(0 0 11px var(--database-stroke)); }
+svg[data-reach-active="downstream"] [data-reach-origin] { filter: drop-shadow(0 0 11px var(--backend-stroke)); }
+svg[data-reach-active="upstream"] [data-edge-from][data-reach-match] { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--database-stroke) 72%, transparent)); }
+svg[data-reach-active="downstream"] [data-edge-from][data-reach-match] { filter: drop-shadow(0 0 4px color-mix(in srgb, var(--backend-stroke) 72%, transparent)); }
+svg[data-preset="blueprint"][data-reach-active] [data-reach-origin], svg[data-preset="blueprint"][data-reach-active] [data-edge-from][data-reach-match] { filter: none; }
+svg[data-preset="blueprint"] .relationship-hit-target:focus-visible .relationship-focus-rail { stroke-linecap: square; filter: none; }
+svg[data-relationship-direct-active] [data-node-id], svg[data-relationship-direct-active] [data-edge-from] { opacity: 0.16; }
+svg[data-relationship-direct-active] [data-relationship-preview], svg[data-relationship-direct-active] [data-relationship-preview-node] { opacity: 1; }
+svg[data-focus-active]:not([data-relationship-pin-active]) .relationship-hit-rail, svg[data-story-active] .relationship-hit-rail, svg[data-route-picking] .relationship-hit-rail, svg[data-route-active] .relationship-hit-rail, svg[data-lens-active] .relationship-hit-rail, svg[data-chapter-preview] .relationship-hit-rail { pointer-events: none; }
+svg[data-relationship-preview-active] [data-focus-match] { opacity: 0.18; }
+svg[data-relationship-preview-active] [data-relationship-preview], svg[data-relationship-preview-active] [data-relationship-preview-node] { opacity: 1; }
+svg[data-relationship-preview-active] [data-relationship-preview] { filter: drop-shadow(0 0 5px var(--arrow-emphasis)); }
+svg[data-relationship-preview-active] [data-relationship-preview] path, svg[data-relationship-preview-active] path[data-relationship-preview], svg[data-relationship-preview-active] [data-relationship-preview] line, svg[data-relationship-preview-active] line[data-relationship-preview], svg[data-relationship-preview-active] [data-relationship-preview] polyline, svg[data-relationship-preview-active] polyline[data-relationship-preview] { stroke-width: 2.75; }
+svg[data-relationship-preview-active] [data-relationship-preview-source] { filter: drop-shadow(0 0 7px var(--frontend-stroke)); }
+svg[data-relationship-preview-active] [data-relationship-preview-target] { filter: drop-shadow(0 0 7px var(--database-stroke)); }
+svg[data-preset="signal-flow"] .relationship-flow-pulse { stroke: var(--frontend-stroke); stroke-width: 3.85; filter: drop-shadow(0 0 7px var(--frontend-stroke)); }
+svg[data-preset="blueprint"] .relationship-flow-pulse { stroke-width: 2.5; stroke-linecap: square; filter: none; }
+svg[data-preset="editorial"] .relationship-flow-pulse { stroke: var(--arrow-emphasis); stroke-width: 2.75; filter: none; }
+svg[data-preset="signal-flow"] .semantic-flow-token { filter: drop-shadow(currentcolor 0px 0px 5px); }
+svg[data-preset="blueprint"] .semantic-flow-token { filter: none; }
+svg[data-preset="editorial"] .semantic-flow-token { filter: none; }
+svg[data-intent-trace-active] [data-node-id], svg[data-intent-trace-active] [data-edge-from] { opacity: 0.2; }
+svg[data-intent-trace-active] [data-intent-trace-match] { opacity: 1; }
+svg[data-intent-trace-active] [data-intent-trace-selected] { filter: drop-shadow(0 0 10px var(--frontend-stroke)); }
+svg[data-preset="blueprint"] [data-intent-trace-selected], svg[data-preset="blueprint"] .intent-trace-flow { filter: none; stroke-linecap: square; }
+svg[data-preset="editorial"] [data-intent-trace-selected], svg[data-preset="editorial"] .intent-trace-flow { filter: none; }
+svg[data-route-picking="target"] [data-node-id] { opacity: 0.24; }
+svg[data-route-picking="target"] [data-route-candidate], svg[data-route-picking="target"] [data-route-start] { opacity: 1; }
+svg[data-route-picking] [data-node-id] { cursor: crosshair; }
+svg[data-route-picking] [data-route-start] { filter: drop-shadow(0 0 10px var(--frontend-stroke)); }
+svg[data-route-active] [data-node-id], svg[data-route-active] [data-edge-from] { opacity: 0.11; }
+svg[data-route-active] [data-route-match] { opacity: 1; }
+svg[data-route-active] [data-route-start] { filter: drop-shadow(0 0 11px var(--frontend-stroke)); }
+svg[data-route-active] [data-route-end] { filter: drop-shadow(0 0 11px var(--security-stroke)); }
+svg[data-route-active] [data-route-step]:not([data-route-start]):not([data-route-end]) { filter: drop-shadow(0 0 7px var(--backend-stroke)); }
+svg[data-route-journey] [data-route-match][data-route-journey-state="past"] { opacity: 0.62; }
+svg[data-route-journey] [data-route-match][data-route-journey-state="future"] { opacity: 0.34; }
+svg[data-route-journey] [data-route-match][data-route-journey-state="current"] { opacity: 1; }
+svg[data-route-journey] [data-node-id][data-route-journey-current] { filter: drop-shadow(0 0 10px var(--backend-stroke)); }
+svg[data-route-journey] [data-edge-from][data-route-journey-current] { opacity: 1; filter: drop-shadow(0 0 6px var(--backend-stroke)); }
+svg[data-preset="blueprint"] [data-route-start], svg[data-preset="blueprint"] [data-route-end], svg[data-preset="blueprint"] [data-route-step], svg[data-preset="blueprint"] .route-probe-flow { filter: none; stroke-linecap: square; }
+svg[data-preset="blueprint"] .route-journey-flow { filter: none; stroke-linecap: square; }
+svg[data-preset="editorial"] [data-route-start], svg[data-preset="editorial"] [data-route-end], svg[data-preset="editorial"] [data-route-step], svg[data-preset="editorial"] .route-probe-flow, svg[data-preset="editorial"] .route-journey-flow { filter: none; }
+svg[data-preset="editorial"] .c-grid { stroke-dasharray: 1, 4; opacity: 0.48; }
+svg[data-preset="editorial"] .c-region { fill: color-mix(in srgb, var(--cloud-fill) 48%, transparent); stroke-dasharray: 9, 4; }
+svg[data-preset="editorial"] [data-node-id]:hover, svg[data-preset="editorial"] [data-node-id]:focus-visible, svg[data-preset="editorial"][data-focus-active] [data-focus-selected] { filter: drop-shadow(0 2px 2px color-mix(in srgb, var(--text) 18%, transparent)); }
+svg[data-preset="blueprint"] .c-grid { stroke-dasharray: 1, 3; opacity: 0.78; }
+svg[data-preset="blueprint"] .c-region { fill: color-mix(in srgb, var(--cloud-fill) 58%, transparent); stroke-dasharray: 12, 4, 2, 4; }
+svg[data-preset="blueprint"] .c-security-group, svg[data-preset="blueprint"] .c-lane { stroke-dasharray: 7, 3; }
+svg[data-preset="blueprint"] [data-node-id]:hover, svg[data-preset="blueprint"] [data-node-id]:focus-visible { filter: drop-shadow(0 0 3px var(--frontend-stroke)); }
+svg[data-preset="blueprint"][data-focus-active] [data-focus-selected] { filter: drop-shadow(0 0 3px var(--frontend-stroke)); }
+svg[data-preset="blueprint"][data-focus-active][data-reach-active] [data-focus-selected][data-reach-origin] { filter: none; }
+svg[data-preset="blueprint"][data-relationship-preview-active] [data-relationship-preview], svg[data-preset="blueprint"][data-relationship-preview-active] [data-relationship-preview-source], svg[data-preset="blueprint"][data-relationship-preview-active] [data-relationship-preview-target] { filter: drop-shadow(0 0 3px var(--frontend-stroke)); }
+svg[data-story-beat] [data-story-step] { opacity: 0.22; filter: saturate(0.42); transition: opacity 180ms, filter 180ms; }
+svg[data-story-beat] [data-story-step][data-story-beat-state="past"] { opacity: 0.72; filter: saturate(0.82); }
+svg[data-story-beat] [data-story-step][data-story-beat-state="next"] { opacity: 0.5; filter: saturate(0.66); }
+svg[data-story-beat] [data-story-step][data-story-beat-state="active"] { opacity: 1; filter: drop-shadow(0 0 7px var(--frontend-stroke)); animation: 360ms cubic-bezier(0.22, 1, 0.36, 1) 0s 1 normal both running archify-story-beat-node; }
+svg[data-story-beat] [data-edge-from][data-story-beat-step] { opacity: 0.16; transition: opacity 160ms; }
+svg[data-story-beat] [data-edge-from][data-story-beat-step][data-story-beat-state="past"] { opacity: 0.58; }
+svg[data-story-beat] [data-edge-from][data-story-beat-step][data-story-beat-state="next"] { opacity: 0.34; }
+svg[data-story-beat] [data-edge-from][data-story-beat-step][data-story-beat-state="active"] { opacity: 1; }
+svg[data-story-beat] .story-trail-flow { opacity: 0; transition: opacity 160ms; }
+svg[data-story-beat] .story-trail-flow[data-story-beat-state="past"] { opacity: 0.34; }
+svg[data-story-beat] .story-trail-flow[data-story-beat-state="next"] { opacity: 0.2; }
+svg[data-story-beat] .story-trail-flow[data-story-beat-state="active"] { opacity: 0.92; }
+svg[data-story-beat] .story-trail-flow[data-story-pulse="true"] { stroke-dasharray: 2, 13; stroke-dashoffset: 30; opacity: 0.92; animation: 0.78s linear 0s 1 normal both running archify-story-flow; }
+svg[data-preset="blueprint"] .story-trail-flow { stroke-linecap: square; filter: none; opacity: 0.5; }
+svg[data-preset="blueprint"][data-story-beat] [data-story-step][data-story-beat-state="active"] { filter: none; animation: auto ease 0s 1 normal none running none; }
+svg[data-preset="editorial"] .story-trail-flow { filter: none; }
+svg[data-preset="editorial"][data-story-beat] [data-story-step][data-story-beat-state="active"] { filter: drop-shadow(0 2px 2px color-mix(in srgb, var(--text) 16%, transparent)); }
+svg[data-chapter-preview] [data-node-id], svg[data-chapter-preview] [data-edge-from] { opacity: 0.1 !important; filter: none !important; transition: none !important; }
+svg[data-chapter-preview] .story-trail-overlay { opacity: 0.08 !important; }
+svg[data-chapter-preview] [data-node-id][data-chapter-preview-role="stay"] { opacity: 0.76 !important; filter: saturate(0.7) !important; }
+svg[data-chapter-preview] [data-node-id][data-chapter-preview-role="enter"] { opacity: 1 !important; filter: saturate(1.2) !important; }
+svg[data-chapter-preview] [data-node-id][data-chapter-preview-role="leave"] { opacity: 0.28 !important; filter: grayscale(0.72) !important; }
+svg[data-preset="blueprint"][data-chapter-preview] [data-node-id] { filter: none !important; }
+.c-security-group { fill: transparent; stroke: var(--security-stroke); stroke-dasharray: 4, 4; }
+.c-region { fill: rgba(251, 191, 36, 0.05); stroke: var(--cloud-stroke); stroke-dasharray: 8, 4; }
+.c-lane { fill: var(--lane-fill); stroke: var(--lane-stroke); stroke-dasharray: 6, 6; }
+svg[data-preset="signal-flow"][data-animation="trace"] [data-animate="edge"] { stroke-linecap: round; filter: drop-shadow(0 0 3px var(--arrow-emphasis)); animation-duration: 1.75s; }
+svg[data-preset="signal-flow"][data-animation="trace"] [data-animate="node"] { animation-duration: 3.1s; }
+svg[data-preset="blueprint"][data-animation="trace"] [data-animate="edge"] { stroke-linecap: square; filter: none; animation-duration: 2.15s; }
+svg[data-preset="blueprint"][data-animation="trace"] [data-animate="node"] { animation-name: archify-blueprint-node-pulse; animation-duration: 3.8s; }
+svg[data-preset="editorial"][data-animation="trace"] [data-animate="edge"] { filter: none; animation-duration: 2.2s; }
+svg[data-preset="editorial"][data-animation="trace"] [data-animate="node"] { animation-name: archify-editorial-node-pulse; animation-duration: 3.5s; }
+@keyframes archify-edge-flow { 
+  0% { stroke-dasharray: 10, 8; stroke-dashoffset: 54; opacity: 0.42; }
+  88% { stroke-dasharray: 10, 8; stroke-dashoffset: 0; opacity: 1; }
+  99.9% { stroke-dasharray: 10, 8; stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 1; }
+}
+@keyframes archify-node-pulse { 
+  0%, 72%, 100% { filter: none; stroke-width: 1.5; }
+  18%, 36% { filter: drop-shadow(0 0 8px var(--arrow-emphasis)); stroke-width: 2.4; }
+}
+@keyframes archify-blueprint-node-pulse { 
+  0%, 72%, 100% { opacity: 1; filter: none; }
+  18%, 36% { opacity: 0.72; filter: drop-shadow(0 0 2px var(--frontend-stroke)); }
+}
+@keyframes archify-editorial-node-pulse { 
+  0%, 72%, 100% { opacity: 1; filter: none; }
+  18%, 36% { opacity: 0.78; filter: drop-shadow(0 2px 2px color-mix(in srgb, var(--text) 18%, transparent)); }
+}
+@keyframes archify-signal-scan { 
+  0%, 18% { opacity: 1; transform: translateX(-70%); }
+  70% { opacity: 1; transform: translateX(70%); }
+  100% { opacity: 0; transform: translateX(70%); }
+}
+@keyframes archify-radar-live { 
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--backend-stroke) 52%, transparent); }
+  55%, 100% { box-shadow: transparent 0px 0px 0px 0.32rem; }
+}
+@keyframes archify-guided-progress { 
+  0% { transform: scaleX(var(--guided-progress-start, 0)); }
+  100% { transform: scaleX(1); }
+}
+@keyframes archify-story-flow { 
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes archify-intent-trace-flow { 
+  0% { opacity: 0.28; stroke-dashoffset: 0; }
+  12%, 78% { opacity: 0.94; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-route-probe-flow { 
+  0% { stroke-dashoffset: 0; opacity: 0.96; }
+  78% { stroke-dashoffset: -1; opacity: 0.96; }
+  100% { stroke-dasharray: none; stroke-dashoffset: 0; opacity: 0.58; }
+}
+@keyframes archify-route-journey-flow { 
+  0% { opacity: 0.16; stroke-dashoffset: 0; }
+  14%, 76% { opacity: 1; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-semantic-lens-flow { 
+  0% { opacity: 0.2; stroke-dashoffset: 0; }
+  12%, 78% { opacity: 0.9; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-relationship-pulse { 
+  0% { opacity: 0.18; stroke-dashoffset: 0; }
+  10%, 76% { opacity: 0.98; }
+  100% { opacity: 0; stroke-dashoffset: -1; }
+}
+@keyframes archify-relationship-token-life { 
+  0%, 7% { opacity: 0; }
+  13%, 82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes archify-story-beat-node { 
+  0% { opacity: 0.48; filter: saturate(0.6); }
+  58% { opacity: 1; filter: drop-shadow(0 0 10px var(--frontend-stroke)); }
+  100% { opacity: 1; filter: drop-shadow(0 0 7px var(--frontend-stroke)); }
+}
+@keyframes archify-share-cue-enter { 
+  0% { opacity: 0; transform: translate(-50%, -0.45rem); }
+  100% { opacity: 1; transform: translate(-50%, 0px); }
+}
+@keyframes archify-share-cue-pulse { 
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.48; transform: scale(0.78); }
+}
+:root, svg { --bg: #020617; --grid: #1e293b; --text: #ffffff; --text-muted: #94a3b8; --text-dim: #475569; --text-faint: #7d8da1; --panel: rgba(15, 23, 42, 0.5); --panel-border: #1e293b; --lane-fill: rgba(15, 23, 42, 0.22); --lane-stroke: #334155; --arrow: #64748b; --arrow-emphasis: #34d399; --mask: #0f172a; --frontend-fill: rgba(8, 51, 68, 0.4); --frontend-stroke: #22d3ee; --backend-fill: rgba(6, 78, 59, 0.4); --backend-stroke: #34d399; --database-fill: rgba(76, 29, 149, 0.4); --database-stroke: #a78bfa; --cloud-fill: rgba(120, 53, 15, 0.3); --cloud-stroke: #fbbf24; --security-fill: rgba(136, 19, 55, 0.4); --security-stroke: #fb7185; --messagebus-fill: rgba(251, 146, 60, 0.3); --messagebus-stroke: #fb923c; --external-fill: rgba(30, 41, 59, 0.5); --external-stroke: #94a3b8; --toolbar-bg: rgba(15, 23, 42, 0.8); --toolbar-border: #334155; --toolbar-text: #e2e8f0; --toolbar-hover: rgba(15, 23, 42, 0.95); --toolbar-menu-bg: #0f172a; }
+@media (prefers-color-scheme: light) { :root, svg { --bg: #f8fafc; --grid: #e2e8f0; --text: #0f172a; --text-muted: #64748b; --text-dim: #94a3b8; --text-faint: #64748b; --panel: #ffffff; --panel-border: #e2e8f0; --lane-fill: rgba(248, 250, 252, 0.65); --lane-stroke: #cbd5e1; --arrow: #94a3b8; --arrow-emphasis: #059669; --mask: #ffffff; --frontend-fill: rgba(34, 211, 238, 0.15); --frontend-stroke: #0891b2; --backend-fill: rgba(52, 211, 153, 0.18); --backend-stroke: #059669; --database-fill: rgba(167, 139, 250, 0.2); --database-stroke: #7c3aed; --cloud-fill: rgba(251, 191, 36, 0.18); --cloud-stroke: #d97706; --security-fill: rgba(251, 113, 133, 0.15); --security-stroke: #e11d48; --messagebus-fill: rgba(251, 146, 60, 0.15); --messagebus-stroke: #ea580c; --external-fill: rgba(148, 163, 184, 0.18); --external-stroke: #64748b; --toolbar-bg: rgba(255, 255, 255, 0.92); --toolbar-border: #cbd5e1; --toolbar-text: #334155; --toolbar-hover: #ffffff; --toolbar-menu-bg: #ffffff; } }
+svg[data-theme="light"] { --bg: #f8fafc; --grid: #e2e8f0; --text: #0f172a; --text-muted: #64748b; --text-dim: #94a3b8; --text-faint: #64748b; --panel: #ffffff; --panel-border: #e2e8f0; --lane-fill: rgba(248, 250, 252, 0.65); --lane-stroke: #cbd5e1; --arrow: #94a3b8; --arrow-emphasis: #059669; --mask: #ffffff; --frontend-fill: rgba(34, 211, 238, 0.15); --frontend-stroke: #0891b2; --backend-fill: rgba(52, 211, 153, 0.18); --backend-stroke: #059669; --database-fill: rgba(167, 139, 250, 0.2); --database-stroke: #7c3aed; --cloud-fill: rgba(251, 191, 36, 0.18); --cloud-stroke: #d97706; --security-fill: rgba(251, 113, 133, 0.15); --security-stroke: #e11d48; --messagebus-fill: rgba(251, 146, 60, 0.15); --messagebus-stroke: #ea580c; --external-fill: rgba(148, 163, 184, 0.18); --external-stroke: #64748b; --toolbar-bg: rgba(255, 255, 255, 0.92); --toolbar-border: #cbd5e1; --toolbar-text: #334155; --toolbar-hover: #ffffff; --toolbar-menu-bg: #ffffff; }
+svg[data-theme="dark"] { --bg: #020617; --grid: #1e293b; --text: #ffffff; --text-muted: #94a3b8; --text-dim: #475569; --text-faint: #7d8da1; --panel: rgba(15, 23, 42, 0.5); --panel-border: #1e293b; --lane-fill: rgba(15, 23, 42, 0.22); --lane-stroke: #334155; --arrow: #64748b; --arrow-emphasis: #34d399; --mask: #0f172a; --frontend-fill: rgba(8, 51, 68, 0.4); --frontend-stroke: #22d3ee; --backend-fill: rgba(6, 78, 59, 0.4); --backend-stroke: #34d399; --database-fill: rgba(76, 29, 149, 0.4); --database-stroke: #a78bfa; --cloud-fill: rgba(120, 53, 15, 0.3); --cloud-stroke: #fbbf24; --security-fill: rgba(136, 19, 55, 0.4); --security-stroke: #fb7185; --messagebus-fill: rgba(251, 146, 60, 0.3); --messagebus-stroke: #fb923c; --external-fill: rgba(30, 41, 59, 0.5); --external-stroke: #94a3b8; --toolbar-bg: rgba(15, 23, 42, 0.8); --toolbar-border: #334155; --toolbar-text: #e2e8f0; --toolbar-hover: rgba(15, 23, 42, 0.95); --toolbar-menu-bg: #0f172a; }
+rect.c-bg-rect { fill: var(--bg); }
+</style><rect width="100%" height="100%" class="c-bg-rect"/>
+        <title id="archify-diagram-title">Akros Full Module Map — Evidence-backed Delivery DAG</title>
+        <desc id="archify-diagram-description">An architecture diagram generated by Archify.</desc>
+        <!-- Definitions -->
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-default"/>
+          </marker>
+          <marker id="arrowhead-emphasis" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-emphasis"/>
+          </marker>
+          <marker id="arrowhead-security" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-security"/>
+          </marker>
+          <marker id="arrowhead-dashed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" class="m-dashed"/>
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" class="c-grid" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)"/>
+
+        <!-- Boundaries (behind everything) -->
+
+
+        <!-- Connection paths (before components for correct z-order) -->
+        <path data-edge-from="party" data-edge-to="commerce_customer" data-edge-key="0" data-composition-points="220,145;330,145" d="M 220 145 L 330 145" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="party" data-edge-to="consent_privacy" data-edge-key="1" data-composition-points="130,110;130,76;750,76;750,110" d="M 130 110 L 130 84 Q 130 76 138 76 L 742 76 Q 750 76 750 84 L 750 110" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="consent_privacy" data-edge-to="measurement_adapter" data-edge-key="2" data-composition-points="850,145;970,145" d="M 850 145 L 970 145" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="catalog" data-edge-to="content" data-edge-key="3" data-composition-points="220,356;275,356;275,305;330,305" d="M 220 356 L 267 356 Q 275 356 275 348 L 275 313 Q 275 305 283 305 L 330 305" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="catalog" data-edge-to="assortment" data-edge-key="4" data-composition-points="220,365.5;275,365.5;275,465;330,465" d="M 220 365.5 L 267 365.5 Q 275 365.5 275 373.5 L 275 457 Q 275 465 283 465 L 330 465" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="catalog" data-edge-to="pricing" data-edge-key="5" data-composition-points="220,375;275,375;275,615;330,615" d="M 220 375 L 267 375 Q 275 375 275 383 L 275 607 Q 275 615 283 615 L 330 615" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="catalog" data-edge-to="inventory" data-edge-key="6" data-composition-points="220,384.5;275,384.5;275,765;330,765" d="M 220 384.5 L 267 384.5 Q 275 384.5 275 392.5 L 275 757 Q 275 765 283 765 L 330 765" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="catalog" data-edge-to="commerce_search" data-edge-key="7" data-composition-points="130,340;130,212;745,212;745,270" d="M 130 340 L 130 220 Q 130 212 138 212 L 737 212 Q 745 212 745 220 L 745 270" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="catalog" data-edge-to="channel_publication" data-edge-key="8" data-composition-points="130,340;130,192;1075,192;1075,270" d="M 130 340 L 130 200 Q 130 192 138 192 L 1067 192 Q 1075 192 1075 200 L 1075 270" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="content" data-edge-to="commerce_search" data-edge-key="9" data-composition-points="510,305;650,305" d="M 510 305 L 650 305" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="content" data-edge-to="channel_publication" data-edge-key="10" data-composition-points="420,270;420,242;1075,242;1075,270" d="M 420 270 L 420 250 Q 420 242 428 242 L 1067 242 Q 1075 242 1075 250 L 1075 270" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="assortment" data-edge-to="availability" data-edge-key="11" data-composition-points="510,472;580,472;580,758;650,758" d="M 510 472 L 572 472 Q 580 472 580 480 L 580 750 Q 580 758 588 758 L 650 758" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="assortment" data-edge-to="channel_publication" data-edge-key="12" data-composition-points="510,465;1200,465;1200,305;1180,305" d="M 510 465 L 1192 465 Q 1200 465 1200 457 L 1200 313 Q 1200 305 1192 305 L 1180 305" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="pricing" data-edge-to="promotion" data-edge-key="13" data-composition-points="510,615;650,615" d="M 510 615 L 650 615" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="pricing" data-edge-to="channel_publication" data-edge-key="14" data-composition-points="420,650;420,690;1220,690;1220,305;1180,305" d="M 420 650 L 420 682 Q 420 690 428 690 L 1212 690 Q 1220 690 1220 682 L 1220 313 Q 1220 305 1212 305 L 1180 305" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="inventory" data-edge-to="availability" data-edge-key="15" data-composition-points="510,758;534,758;534,788;626,788;626,772;650,772" d="M 510 758 L 526 758 Q 534 758 534 766 L 534 780 Q 534 788 542 788 L 618 788 Q 626 788 626 780 L 626 780 Q 626 772 634 772 L 650 772" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="commerce_customer" data-edge-to="purchasing_approval" data-edge-key="16" data-composition-points="530,145;554,145;554,528;1240,528" d="M 530 145 L 546 145 Q 554 145 554 153 L 554 520 Q 554 528 562 528 L 1240 528" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="pricing" data-edge-to="cart" data-edge-key="17" data-composition-points="420,650;420,710;1060,710;1060,680" d="M 420 650 L 420 702 Q 420 710 428 710 L 1052 710 Q 1060 710 1060 702 L 1060 680" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="promotion" data-edge-to="cart" data-edge-key="18" data-composition-points="830,615;900,615;900,645;970,645" d="M 830 615 L 892 615 Q 900 615 900 623 L 900 637 Q 900 645 908 645 L 970 645" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="assortment" data-edge-to="cart" data-edge-key="19" data-composition-points="510,458;946,458;946,631;970,631" d="M 510 458 L 938 458 Q 946 458 946 466 L 946 623 Q 946 631 954 631 L 970 631" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="availability" data-edge-to="cart" data-edge-key="20" data-composition-points="830,758;900,758;900,659;970,659" d="M 830 758 L 892 758 Q 900 758 900 750 L 900 667 Q 900 659 908 659 L 970 659" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="cart" data-edge-to="purchasing_approval" data-edge-key="21" data-composition-points="1150,638;1195,638;1195,542;1240,542" d="M 1150 638 L 1187 638 Q 1195 638 1195 630 L 1195 550 Q 1195 542 1203 542 L 1240 542" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="cart" data-edge-to="checkout" data-edge-key="22" data-composition-points="1150,652;1174,652;1174,668;1506,668;1506,638.6666666666666;1530,638.6666666666666" d="M 1150 652 L 1166 652 Q 1174 652 1174 660 L 1174 660 Q 1174 668 1182 668 L 1498 668 Q 1506 668 1506 660 L 1506 646.6666666666666 Q 1506 638.6666666666666 1514 638.6666666666666 L 1530 638.6666666666666" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="purchasing_approval" data-edge-to="checkout" data-edge-key="23" data-composition-points="1450,535;1490,535;1490,626;1530,626" d="M 1450 535 L 1482 535 Q 1490 535 1490 543 L 1490 618 Q 1490 626 1498 626 L 1530 626" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="consent_privacy" data-edge-to="checkout" data-edge-key="24" data-composition-points="750,180;750,204;1625,204;1625,610" d="M 750 180 L 750 196 Q 750 204 758 204 L 1617 204 Q 1625 204 1625 212 L 1625 610" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="tax" data-edge-to="checkout" data-edge-key="25" data-composition-points="1420,825;1475,825;1475,664;1530,664" d="M 1420 825 L 1467 825 Q 1475 825 1475 817 L 1475 672 Q 1475 664 1483 664 L 1530 664" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="availability" data-edge-to="checkout" data-edge-key="26" data-composition-points="830,772;1180,772;1180,651.3333333333334;1530,651.3333333333334" d="M 830 772 L 1172 772 Q 1180 772 1180 764 L 1180 659.3333333333334 Q 1180 651.3333333333334 1188 651.3333333333334 L 1530 651.3333333333334" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="checkout" data-edge-to="payment" data-edge-key="27" data-composition-points="1625,680;1625,790" d="M 1625 680 L 1625 790" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="payment" data-edge-to="payment_adapter" data-edge-key="28" data-composition-points="1720,818;1810,818" d="M 1720 818 L 1810 818" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="checkout" data-edge-to="commitment_gate" data-edge-key="29" data-composition-points="1720,645;1810,645" d="M 1720 645 L 1810 645" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="payment_adapter" data-edge-to="commitment_gate" data-edge-key="30" data-composition-points="1910,790;1910,766;1936,766;1936,704;1920,704;1920,680" d="M 1910 790 L 1910 774 Q 1910 766 1918 766 L 1928 766 Q 1936 766 1936 758 L 1936 712 Q 1936 704 1928 704 L 1928 704 Q 1920 704 1920 696 L 1920 680" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="commitment_gate" data-edge-to="order" data-edge-key="31" data-composition-points="2030,638;2100,638" d="M 2030 638 L 2100 638" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="order" data-edge-to="fulfillment" data-edge-key="32" data-composition-points="2195,680;2195,790" d="M 2195 680 L 2195 790" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="fulfillment" data-edge-to="shipping_adapter" data-edge-key="33" data-composition-points="2290,825;2380,825" d="M 2290 825 L 2380 825" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
+        <path data-edge-from="order" data-edge-to="billing_documents" data-edge-key="34" data-composition-points="2290,645;2340,645;2340,995;2320,995" d="M 2290 645 L 2332 645 Q 2340 645 2340 653 L 2340 987 Q 2340 995 2332 995 L 2320 995" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="payment" data-edge-to="billing_documents" data-edge-key="35" data-composition-points="1720,832;1744,832;1744,988;2100,988" d="M 1720 832 L 1736 832 Q 1744 832 1744 840 L 1744 980 Q 1744 988 1752 988 L 2100 988" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="order" data-edge-to="claim" data-edge-key="36" data-composition-points="2290,645;2360,645;2360,1145;2290,1145" d="M 2290 645 L 2352 645 Q 2360 645 2360 653 L 2360 1137 Q 2360 1145 2352 1145 L 2290 1145" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="documents" data-edge-to="claim" data-edge-key="37" data-composition-points="2020,1145;2100,1145" d="M 2020 1145 L 2100 1145" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="shipping_adapter" data-edge-to="aftercare" data-edge-key="38" data-composition-points="2480,860;2480,990" d="M 2480 860 L 2480 990" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="payment" data-edge-to="aftercare" data-edge-key="39" data-composition-points="1720,825;1770,825;1770,1070;2350,1070;2350,1025;2380,1025" d="M 1720 825 L 1762 825 Q 1770 825 1770 833 L 1770 1062 Q 1770 1070 1778 1070 L 2342 1070 Q 2350 1070 2350 1062 L 2350 1033 Q 2350 1025 2358 1025 L 2380 1025" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="billing_documents" data-edge-to="aftercare" data-edge-key="40" data-composition-points="2320,995;2350,995;2350,1018;2380,1018" d="M 2320 995 L 2342 995 Q 2350 995 2350 1003 L 2350 1010 Q 2350 1018 2358 1018 L 2380 1018" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="claim" data-edge-to="aftercare" data-edge-key="41" data-composition-points="2290,1145;2335,1145;2335,1032;2380,1032" d="M 2290 1145 L 2327 1145 Q 2335 1145 2335 1137 L 2335 1040 Q 2335 1032 2343 1032 L 2380 1032" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <path data-edge-from="aftercare" data-edge-to="communications" data-edge-key="42" data-composition-points="2580,1025;2640,1025" d="M 2580 1025 L 2640 1025" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="communications" data-edge-to="messaging_adapter" data-edge-key="43" data-composition-points="2735,1060;2735,1140" d="M 2735 1060 L 2735 1140" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="catalog" data-edge-to="erp_routes" data-edge-key="44" data-composition-points="220,394;875,394;875,1378;1530,1378" d="M 220 394 L 867 394 Q 875 394 875 402 L 875 1370 Q 875 1378 883 1378 L 1530 1378" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="inventory" data-edge-to="erp_routes" data-edge-key="45" data-composition-points="510,772;534,772;534,1392;1530,1392" d="M 510 772 L 526 772 Q 534 772 534 780 L 534 1384 Q 534 1392 542 1392 L 1530 1392" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="order" data-edge-to="erp_routes" data-edge-key="46" data-composition-points="2100,652;2076,652;2076,1371;1760,1371" d="M 2100 652 L 2084 652 Q 2076 652 2076 660 L 2076 1363 Q 2076 1371 2068 1371 L 1760 1371" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="billing_documents" data-edge-to="erp_routes" data-edge-key="47" data-composition-points="2100,1002;1784,1002;1784,1385;1760,1385" d="M 2100 1002 L 1792 1002 Q 1784 1002 1784 1010 L 1784 1377 Q 1784 1385 1776 1385 L 1760 1385" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="erp_routes" data-edge-to="migration_gate" data-edge-key="48" data-composition-points="1760,1399;2100,1399" d="M 1760 1399 L 2100 1399" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+
+        <!-- Components -->
+        <g id="node-party" data-node-id="party" data-node-label="Party Registry" tabindex="0" role="button" aria-label="Focus Party Registry, identity + Counterparty truth, Architecture component" aria-pressed="false" data-node-kind="security" data-node-sublabel="identity + Counterparty truth" data-node-context="Architecture component">
+          <title>Party Registry · identity + Counterparty truth · Architecture component</title>
+          <rect x="40" y="110" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="40" y="110" width="180" height="70" rx="6" class="c-security" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(46 116) scale(0.6875)">
+            <path d="M8 2.2 13 4v3.5c0 3.1-1.8 5.4-5 6.5-3.2-1.1-5-3.4-5-6.5V4Z"/>
+            <path d="m5.8 8 1.5 1.5 3-3"/>
+          </g>
+          <text data-node-label="" x="130" y="143" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Party Registry</text>
+        <text x="130" y="159" class="t-muted" font-size="9" text-anchor="middle">identity + Counterparty truth</text>
+        </g>
+
+        <g id="node-commerce_customer" data-node-id="commerce_customer" data-node-label="Commerce Customer" tabindex="0" role="button" aria-label="Focus Commerce Customer, retail + B2B purchasing profile, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="retail + B2B purchasing profile" data-node-context="Architecture component">
+          <title>Commerce Customer · retail + B2B purchasing profile · Architecture component</title>
+          <rect x="330" y="110" width="200" height="70" rx="6" class="c-mask"/>
+          <rect x="330" y="110" width="200" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(336 116) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="430" y="143" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Commerce Customer</text>
+        <text x="430" y="159" class="t-muted" font-size="9" text-anchor="middle">retail + B2B purchasing profile</text>
+        </g>
+
+        <g id="node-consent_privacy" data-node-id="consent_privacy" data-node-label="Consent + Privacy" tabindex="0" role="button" aria-label="Focus Consent + Privacy, purpose evidence + DSR workflow, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="purpose evidence + DSR workflow" data-node-context="Architecture component">
+          <title>Consent + Privacy · purpose evidence + DSR workflow · Architecture component</title>
+          <rect x="650" y="110" width="200" height="70" rx="6" class="c-mask"/>
+          <rect x="650" y="110" width="200" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(656 116) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="750" y="143" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Consent + Privacy</text>
+        <text x="750" y="159" class="t-muted" font-size="9" text-anchor="middle">purpose evidence + DSR workflow</text>
+        </g>
+
+        <g id="node-measurement_adapter" data-node-id="measurement_adapter" data-node-label="Measurement Adapter" tabindex="0" role="button" aria-label="Focus Measurement Adapter, consent-controlled analytics, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="consent-controlled analytics" data-node-context="Architecture component">
+          <title>Measurement Adapter · consent-controlled analytics · Architecture component</title>
+          <rect x="970" y="110" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="970" y="110" width="190" height="70" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(976 116) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" x="1065" y="143" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Measurement Adapter</text>
+        <text x="1065" y="159" class="t-muted" font-size="9" text-anchor="middle">consent-controlled analytics</text>
+        </g>
+
+        <g id="node-catalog" data-node-id="catalog" data-node-label="Catalog" tabindex="0" role="button" aria-label="Focus Catalog, product identity + sellable shapes, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="product identity + sellable shapes" data-node-context="Architecture component">
+          <title>Catalog · product identity + sellable shapes · Architecture component</title>
+          <rect x="40" y="340" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="40" y="340" width="180" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(46 346) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="130" y="373" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Catalog</text>
+        <text x="130" y="389" class="t-muted" font-size="8.4" text-anchor="middle">product identity + sellable shapes</text>
+        </g>
+
+        <g id="node-content" data-node-id="content" data-node-label="Content" tabindex="0" role="button" aria-label="Focus Content, pages + product merchandising, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="pages + product merchandising" data-node-context="Architecture component">
+          <title>Content · pages + product merchandising · Architecture component</title>
+          <rect x="330" y="270" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="330" y="270" width="180" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(336 276) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="420" y="303" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Content</text>
+        <text x="420" y="319" class="t-muted" font-size="9" text-anchor="middle">pages + product merchandising</text>
+        </g>
+
+        <g id="node-commerce_search" data-node-id="commerce_search" data-node-label="Commerce Search" tabindex="0" role="button" aria-label="Focus Commerce Search, query + filter projection, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="query + filter projection" data-node-context="Architecture component">
+          <title>Commerce Search · query + filter projection · Architecture component</title>
+          <rect x="650" y="270" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="650" y="270" width="190" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(656 276) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="745" y="303" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Commerce Search</text>
+        <text x="745" y="319" class="t-muted" font-size="9" text-anchor="middle">query + filter projection</text>
+        </g>
+
+        <g id="node-channel_publication" data-node-id="channel_publication" data-node-label="Channel Publication" tabindex="0" role="button" aria-label="Focus Channel Publication, SEO + sitemap + product feeds, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="SEO + sitemap + product feeds" data-node-context="Architecture component">
+          <title>Channel Publication · SEO + sitemap + product feeds · Architecture component</title>
+          <rect x="970" y="270" width="210" height="70" rx="6" class="c-mask"/>
+          <rect x="970" y="270" width="210" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(976 276) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="1075" y="303" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Channel Publication</text>
+        <text x="1075" y="319" class="t-muted" font-size="9" text-anchor="middle">SEO + sitemap + product feeds</text>
+        </g>
+
+        <g id="node-assortment" data-node-id="assortment" data-node-label="Assortment" tabindex="0" role="button" aria-label="Focus Assortment, channel/customer visibility, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="channel/customer visibility" data-node-context="Architecture component">
+          <title>Assortment · channel/customer visibility · Architecture component</title>
+          <rect x="330" y="430" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="330" y="430" width="180" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(336 436) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="420" y="463" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Assortment</text>
+        <text x="420" y="479" class="t-muted" font-size="9" text-anchor="middle">channel/customer visibility</text>
+        </g>
+
+        <g id="node-pricing" data-node-id="pricing" data-node-label="Pricing" tabindex="0" role="button" aria-label="Focus Pricing, contextual price truth, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="contextual price truth" data-node-context="Architecture component">
+          <title>Pricing · contextual price truth · Architecture component</title>
+          <rect x="330" y="580" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="330" y="580" width="180" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(336 586) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="420" y="613" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Pricing</text>
+        <text x="420" y="629" class="t-muted" font-size="9" text-anchor="middle">contextual price truth</text>
+        </g>
+
+        <g id="node-promotion" data-node-id="promotion" data-node-label="Promotion" tabindex="0" role="button" aria-label="Focus Promotion, discount + voucher rules, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="discount + voucher rules" data-node-context="Architecture component">
+          <title>Promotion · discount + voucher rules · Architecture component</title>
+          <rect x="650" y="580" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="650" y="580" width="180" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(656 586) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="740" y="613" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Promotion</text>
+        <text x="740" y="629" class="t-muted" font-size="9" text-anchor="middle">discount + voucher rules</text>
+        </g>
+
+        <g id="node-inventory" data-node-id="inventory" data-node-label="Inventory" tabindex="0" role="button" aria-label="Focus Inventory, stock + hard reservation, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="stock + hard reservation" data-node-context="Architecture component">
+          <title>Inventory · stock + hard reservation · Architecture component</title>
+          <rect x="330" y="730" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="330" y="730" width="180" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(336 736) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="420" y="763" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Inventory</text>
+        <text x="420" y="779" class="t-muted" font-size="9" text-anchor="middle">stock + hard reservation</text>
+        </g>
+
+        <g id="node-availability" data-node-id="availability" data-node-label="Availability" tabindex="0" role="button" aria-label="Focus Availability, sellable + delivery promise, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="sellable + delivery promise" data-node-context="Architecture component">
+          <title>Availability · sellable + delivery promise · Architecture component</title>
+          <rect x="650" y="730" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="650" y="730" width="180" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(656 736) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="740" y="763" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Availability</text>
+        <text x="740" y="779" class="t-muted" font-size="9" text-anchor="middle">sellable + delivery promise</text>
+        </g>
+
+        <g id="node-cart" data-node-id="cart" data-node-label="Cart" tabindex="0" role="button" aria-label="Focus Cart, mutable buying intent, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="mutable buying intent" data-node-context="Architecture component">
+          <title>Cart · mutable buying intent · Architecture component</title>
+          <rect x="970" y="610" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="970" y="610" width="180" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(976 616) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="1060" y="643" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Cart</text>
+        <text x="1060" y="659" class="t-muted" font-size="9" text-anchor="middle">mutable buying intent</text>
+        </g>
+
+        <g id="node-purchasing_approval" data-node-id="purchasing_approval" data-node-label="Purchasing Approval" tabindex="0" role="button" aria-label="Focus Purchasing Approval, B2B submit/review authority, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="B2B submit/review authority" data-node-context="Architecture component">
+          <title>Purchasing Approval · B2B submit/review authority · Architecture component</title>
+          <rect x="1240" y="500" width="210" height="70" rx="6" class="c-mask"/>
+          <rect x="1240" y="500" width="210" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1246 506) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="1345" y="533" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Purchasing Approval</text>
+        <text x="1345" y="549" class="t-muted" font-size="9" text-anchor="middle">B2B submit/review authority</text>
+        </g>
+
+        <g id="node-tax" data-node-id="tax" data-node-label="Tax" tabindex="0" role="button" aria-label="Focus Tax, current result + order snapshot, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="current result + order snapshot" data-node-context="Architecture component">
+          <title>Tax · current result + order snapshot · Architecture component</title>
+          <rect x="1240" y="790" width="180" height="70" rx="6" class="c-mask"/>
+          <rect x="1240" y="790" width="180" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1246 796) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="1330" y="823" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Tax</text>
+        <text x="1330" y="839" class="t-muted" font-size="9" text-anchor="middle">current result + order snapshot</text>
+        </g>
+
+        <g id="node-checkout" data-node-id="checkout" data-node-label="Checkout" tabindex="0" role="button" aria-label="Focus Checkout, eligibility + final revalidation, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="eligibility + final revalidation" data-node-context="Architecture component">
+          <title>Checkout · eligibility + final revalidation · Architecture component</title>
+          <rect x="1530" y="610" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="1530" y="610" width="190" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1536 616) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="1625" y="643" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Checkout</text>
+        <text x="1625" y="659" class="t-muted" font-size="9" text-anchor="middle">eligibility + final revalidation</text>
+        </g>
+
+        <g id="node-payment" data-node-id="payment" data-node-label="Payment" tabindex="0" role="button" aria-label="Focus Payment, terms + authorization lifecycle, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="terms + authorization lifecycle" data-node-context="Architecture component">
+          <title>Payment · terms + authorization lifecycle · Architecture component</title>
+          <rect x="1530" y="790" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="1530" y="790" width="190" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(1536 796) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="1625" y="823" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Payment</text>
+        <text x="1625" y="839" class="t-muted" font-size="9" text-anchor="middle">terms + authorization lifecycle</text>
+        </g>
+
+        <g id="node-payment_adapter" data-node-id="payment_adapter" data-node-label="Payment Adapter" tabindex="0" role="button" aria-label="Focus Payment Adapter, selected provider implementation, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="selected provider implementation" data-node-context="Architecture component">
+          <title>Payment Adapter · selected provider implementation · Architecture component</title>
+          <rect x="1810" y="790" width="200" height="70" rx="6" class="c-mask"/>
+          <rect x="1810" y="790" width="200" height="70" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(1816 796) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" x="1910" y="823" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Payment Adapter</text>
+        <text x="1910" y="839" class="t-muted" font-size="9" text-anchor="middle">selected provider implementation</text>
+        </g>
+
+        <g id="node-commitment_gate" data-node-id="commitment_gate" data-node-label="Order Commitment Gate" tabindex="0" role="button" aria-label="Focus Order Commitment Gate, price/tax + reservation + payment, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="price/tax + reservation + payment" data-node-context="Architecture component">
+          <title>Order Commitment Gate · price/tax + reservation + payment · Architecture component</title>
+          <rect x="1810" y="610" width="220" height="70" rx="6" class="c-mask"/>
+          <rect x="1810" y="610" width="220" height="70" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(1816 616) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" x="1920" y="643" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Order Commitment Gate</text>
+        <text x="1920" y="659" class="t-muted" font-size="9" text-anchor="middle">price/tax + reservation + payment</text>
+        </g>
+
+        <g id="node-order" data-node-id="order" data-node-label="Order" tabindex="0" role="button" aria-label="Focus Order, durable commercial commitment, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="durable commercial commitment" data-node-context="Architecture component">
+          <title>Order · durable commercial commitment · Architecture component</title>
+          <rect x="2100" y="610" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="2100" y="610" width="190" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(2106 616) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="2195" y="643" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Order</text>
+        <text x="2195" y="659" class="t-muted" font-size="9" text-anchor="middle">durable commercial commitment</text>
+        </g>
+
+        <g id="node-fulfillment" data-node-id="fulfillment" data-node-label="Fulfillment" tabindex="0" role="button" aria-label="Focus Fulfillment, handoff + shipment lifecycle, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="handoff + shipment lifecycle" data-node-context="Architecture component">
+          <title>Fulfillment · handoff + shipment lifecycle · Architecture component</title>
+          <rect x="2100" y="790" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="2100" y="790" width="190" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(2106 796) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="2195" y="823" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Fulfillment</text>
+        <text x="2195" y="839" class="t-muted" font-size="9" text-anchor="middle">handoff + shipment lifecycle</text>
+        </g>
+
+        <g id="node-shipping_adapter" data-node-id="shipping_adapter" data-node-label="Shipping Adapter" tabindex="0" role="button" aria-label="Focus Shipping Adapter, carrier/pickup implementation, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="carrier/pickup implementation" data-node-context="Architecture component">
+          <title>Shipping Adapter · carrier/pickup implementation · Architecture component</title>
+          <rect x="2380" y="790" width="200" height="70" rx="6" class="c-mask"/>
+          <rect x="2380" y="790" width="200" height="70" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(2386 796) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" x="2480" y="823" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Shipping Adapter</text>
+        <text x="2480" y="839" class="t-muted" font-size="9" text-anchor="middle">carrier/pickup implementation</text>
+        </g>
+
+        <g id="node-documents" data-node-id="documents" data-node-label="Documents Center" tabindex="0" role="button" aria-label="Focus Documents Center, classification + governed evidence, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="classification + governed evidence" data-node-context="Architecture component">
+          <title>Documents Center · classification + governed evidence · Architecture component</title>
+          <rect x="1810" y="1110" width="210" height="70" rx="6" class="c-mask"/>
+          <rect x="1810" y="1110" width="210" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1816 1116) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="1915" y="1143" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Documents Center</text>
+        <text x="1915" y="1159" class="t-muted" font-size="9" text-anchor="middle">classification + governed evidence</text>
+        </g>
+
+        <g id="node-billing_documents" data-node-id="billing_documents" data-node-label="Billing Documents" tabindex="0" role="button" aria-label="Focus Billing Documents, invoice + credit-document projection, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="invoice + credit-document projection" data-node-context="Architecture component">
+          <title>Billing Documents · invoice + credit-document projection · Architecture component</title>
+          <rect x="2100" y="960" width="220" height="70" rx="6" class="c-mask"/>
+          <rect x="2100" y="960" width="220" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(2106 966) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="2210" y="993" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Billing Documents</text>
+        <text x="2210" y="1009" class="t-muted" font-size="9" text-anchor="middle">invoice + credit-document projection</text>
+        </g>
+
+        <g id="node-claim" data-node-id="claim" data-node-label="Claim" tabindex="0" role="button" aria-label="Focus Claim, order-line evidence + resolution, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="order-line evidence + resolution" data-node-context="Architecture component">
+          <title>Claim · order-line evidence + resolution · Architecture component</title>
+          <rect x="2100" y="1110" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="2100" y="1110" width="190" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(2106 1116) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="2195" y="1143" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Claim</text>
+        <text x="2195" y="1159" class="t-muted" font-size="9" text-anchor="middle">order-line evidence + resolution</text>
+        </g>
+
+        <g id="node-aftercare" data-node-id="aftercare" data-node-label="Aftercare" tabindex="0" role="button" aria-label="Focus Aftercare, coordinate owned lifecycles, Architecture component" aria-pressed="false" data-node-kind="database" data-node-sublabel="coordinate owned lifecycles" data-node-context="Architecture component">
+          <title>Aftercare · coordinate owned lifecycles · Architecture component</title>
+          <rect x="2380" y="990" width="200" height="70" rx="6" class="c-mask"/>
+          <rect x="2380" y="990" width="200" height="70" rx="6" class="c-database" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(2386 996) scale(0.6875)">
+            <ellipse cx="8" cy="4" rx="5" ry="2"/>
+            <path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2"/>
+          </g>
+          <text data-node-label="" x="2480" y="1023" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Aftercare</text>
+        <text x="2480" y="1039" class="t-muted" font-size="9" text-anchor="middle">coordinate owned lifecycles</text>
+        </g>
+
+        <g id="node-communications" data-node-id="communications" data-node-label="Communications" tabindex="0" role="button" aria-label="Focus Communications, transactional message policy, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="transactional message policy" data-node-context="Architecture component">
+          <title>Communications · transactional message policy · Architecture component</title>
+          <rect x="2640" y="990" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="2640" y="990" width="190" height="70" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(2646 996) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" x="2735" y="1023" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Communications</text>
+        <text x="2735" y="1039" class="t-muted" font-size="9" text-anchor="middle">transactional message policy</text>
+        </g>
+
+        <g id="node-messaging_adapter" data-node-id="messaging_adapter" data-node-label="Messaging Adapter" tabindex="0" role="button" aria-label="Focus Messaging Adapter, selected delivery provider, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="selected delivery provider" data-node-context="Architecture component">
+          <title>Messaging Adapter · selected delivery provider · Architecture component</title>
+          <rect x="2640" y="1140" width="190" height="70" rx="6" class="c-mask"/>
+          <rect x="2640" y="1140" width="190" height="70" rx="6" class="c-external" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(2646 1146) scale(0.6875)">
+            <rect x="2.5" y="5" width="8.5" height="8" rx="1.5"/>
+            <path d="M8 2.5h5.5V8M13.5 2.5 7.5 8.5"/>
+          </g>
+          <text data-node-label="" x="2735" y="1173" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Messaging Adapter</text>
+        <text x="2735" y="1189" class="t-muted" font-size="9" text-anchor="middle">selected delivery provider</text>
+        </g>
+
+        <g id="node-erp_routes" data-node-id="erp_routes" data-node-label="ERP Integration Routes" tabindex="0" role="button" aria-label="Focus ERP Integration Routes, per-fact mapping + reconciliation, Architecture component" aria-pressed="false" data-node-kind="messagebus" data-node-sublabel="per-fact mapping + reconciliation" data-node-context="Architecture component">
+          <title>ERP Integration Routes · per-fact mapping + reconciliation · Architecture component</title>
+          <rect x="1530" y="1350" width="230" height="70" rx="6" class="c-mask"/>
+          <rect x="1530" y="1350" width="230" height="70" rx="6" class="c-messagebus" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="messagebus" class="semantic-sigil s-messagebus" transform="translate(1536 1356) scale(0.6875)">
+            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            <circle cx="5" cy="4.5" r="1" class="sigil-fill"/>
+            <circle cx="10.5" cy="8" r="1" class="sigil-fill"/>
+            <circle cx="7" cy="11.5" r="1" class="sigil-fill"/>
+          </g>
+          <text data-node-label="" x="1645" y="1383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">ERP Integration Routes</text>
+        <text x="1645" y="1399" class="t-muted" font-size="9" text-anchor="middle">per-fact mapping + reconciliation</text>
+        </g>
+
+        <g id="node-migration_gate" data-node-id="migration_gate" data-node-label="Migration + Archive Gate" tabindex="0" role="button" aria-label="Focus Migration + Archive Gate, reconcile + cut over + retain, Architecture component" aria-pressed="false" data-node-kind="cloud" data-node-sublabel="reconcile + cut over + retain" data-node-context="Architecture component">
+          <title>Migration + Archive Gate · reconcile + cut over + retain · Architecture component</title>
+          <rect x="2100" y="1350" width="230" height="70" rx="6" class="c-mask"/>
+          <rect x="2100" y="1350" width="230" height="70" rx="6" class="c-cloud" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="cloud" class="semantic-sigil s-cloud" transform="translate(2106 1356) scale(0.6875)">
+            <path d="M4.3 12.5h7.3a2.4 2.4 0 0 0 .2-4.8 4 4 0 0 0-7.5-1.3A3.1 3.1 0 0 0 4.3 12.5Z"/>
+          </g>
+          <text data-node-label="" x="2215" y="1383" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Migration + Archive Gate</text>
+        <text x="2215" y="1399" class="t-muted" font-size="9" text-anchor="middle">reconcile + cut over + retain</text>
+        </g>
+
+        <!-- Connection labels -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <!-- Boundary labels (foreground masks keep routes out of titles) -->
+
+
+        <!-- Legend -->
+        <g data-legend="">
+          <text x="40" y="1544" class="t-primary" font-size="12" font-weight="650">Legend</text>
+          <g data-legend-semantic-kind="frontend" data-legend-x="40" data-legend-baseline="1564" data-legend-width="62">
+            <rect x="40" y="1555" width="16" height="10" rx="2.5" class="c-frontend" stroke-width="1"/>
+            <text x="62" y="1564" class="t-muted" font-size="10" font-weight="500">Frontend</text>
+          </g>
+          <g data-legend-semantic-kind="backend" data-legend-x="124" data-legend-baseline="1564" data-legend-width="212">
+            <rect x="124" y="1555" width="16" height="10" rx="2.5" class="c-backend" stroke-width="1"/>
+            <text x="146" y="1564" class="t-muted" font-size="10" font-weight="500">Candidate Business Module boundary</text>
+          </g>
+          <g data-legend-semantic-kind="database" data-legend-x="358" data-legend-baseline="1564" data-legend-width="207">
+            <rect x="358" y="1555" width="16" height="10" rx="2.5" class="c-database" stroke-width="1"/>
+            <text x="380" y="1564" class="t-muted" font-size="10" font-weight="500">Accepted Commerce Business Module</text>
+          </g>
+          <g data-legend-semantic-kind="cloud" data-legend-x="587" data-legend-baseline="1564" data-legend-width="237">
+            <rect x="587" y="1555" width="16" height="10" rx="2.5" class="c-cloud" stroke-width="1"/>
+            <text x="609" y="1564" class="t-muted" font-size="10" font-weight="500">Runtime or delivery gate — not a module</text>
+          </g>
+          <g data-legend-semantic-kind="security" data-legend-x="846" data-legend-baseline="1564" data-legend-width="182">
+            <rect x="846" y="1555" width="16" height="10" rx="2.5" class="c-security" stroke-width="1"/>
+            <text x="868" y="1564" class="t-muted" font-size="10" font-weight="500">Accepted Foundational Module</text>
+          </g>
+          <g data-legend-semantic-kind="messagebus" data-legend-x="1050" data-legend-baseline="1564" data-legend-width="222">
+            <rect x="1050" y="1555" width="16" height="10" rx="2.5" class="c-messagebus" stroke-width="1"/>
+            <text x="1072" y="1564" class="t-muted" font-size="10" font-weight="500">Candidate integration/support module</text>
+          </g>
+          <g data-legend-semantic-kind="external" data-legend-x="1294" data-legend-baseline="1564" data-legend-width="242">
+            <rect x="1294" y="1555" width="16" height="10" rx="2.5" class="c-external" stroke-width="1"/>
+            <text x="1316" y="1564" class="t-muted" font-size="10" font-weight="500">Provider adapter — not a Business Module</text>
+          </g>
+        </g>
+      </svg>

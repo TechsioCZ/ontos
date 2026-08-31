@@ -241,7 +241,7 @@ Options:
   --help                 Show this help without writing
 
 Example:
-  mise exec -- pnpm scaffold:external-http-adapter -- --vertical crm --provider ares --operation subject
+  mise exec -- pnpm scaffold:external-http-adapter -- --vertical projects --provider ares --operation subject
 `,
     requiredFlags: ['operation', 'provider', 'vertical'],
     toConfig: (flags) => ({
@@ -290,7 +290,7 @@ Options:
   --help                 Show this help without writing
 
 Example:
-  mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit
+  mise exec -- pnpm scaffold:microvertical-page -- --vertical projects --page customer-edit --url /projects/customers/:id/edit
 `,
     requiredFlags: ['page', 'vertical'],
     toConfig: (flags) => {

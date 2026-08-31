@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OntOS — C4 Level 3: Core Runtime Components",
+    "locale": "en",
+    "output": "ontos-c4-l3-core-runtime.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "requester", "type": "external", "label": "Shell or MicroVertical BFF", "sublabel": "Action / Read request", "pos": [20, 300], "size": [170, 72] },
+    { "id": "trusted-context", "type": "security", "label": "Trusted Context", "sublabel": "Principal, tenant, legal entity", "pos": [220, 90], "size": [180, 72] },
+    { "id": "module-gateway", "type": "backend", "label": "Composition Gateway", "sublabel": "DAG closure + tenant state", "pos": [220, 300], "size": [180, 72] },
+    { "id": "permission-policy", "type": "security", "label": "Permission + Policy", "sublabel": "SpiceDB and executable policies", "pos": [430, 90], "size": [180, 72] },
+    { "id": "operation-runtime", "type": "backend", "label": "Action / Read Runtime", "sublabel": "Validated governed lifecycle", "pos": [430, 300], "size": [180, 72], "tag": "CORE" },
+    { "id": "scoped-services", "type": "backend", "label": "Scoped Owner Services", "sublabel": "Transaction-scoped capabilities", "pos": [650, 300], "size": [180, 72] },
+    { "id": "owner-handler", "type": "backend", "label": "Owner Handler", "sublabel": "Private module behavior", "pos": [890, 300], "size": [170, 72] },
+    { "id": "owner-schema", "type": "database", "label": "Owner PostgreSQL Schema", "sublabel": "Canonical domain state", "pos": [1120, 300], "size": [180, 72] },
+    { "id": "core-records", "type": "database", "label": "Core Runtime Tables", "sublabel": "Dedup, audit, events, state", "pos": [430, 530], "size": [180, 72] },
+    { "id": "outbox", "type": "messagebus", "label": "Outbox Delivery State", "sublabel": "Messages, leases, attempts", "pos": [650, 530], "size": [180, 72] },
+    { "id": "owner-worker", "type": "backend", "label": "Owner Worker", "sublabel": "Private async handler", "pos": [890, 530], "size": [170, 72] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Core-owned runtime guarantees", "wraps": ["trusted-context", "module-gateway", "permission-policy", "operation-runtime", "scoped-services", "core-records", "outbox"], "pad": 30 },
+    { "kind": "region", "label": "MicroVertical-owned implementation", "wraps": ["owner-handler", "owner-schema", "owner-worker"], "pad": 28 }
+  ],
+  "connections": [
+    { "id": "request-enters-gateway", "from": "requester", "to": "module-gateway", "label": "structured entrypoint", "variant": "emphasis", "labelAt": [200, 386] },
+    { "id": "context-feeds-gateway", "from": "trusted-context", "to": "module-gateway", "label": "validated context", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelAt": [310, 230] },
+    { "id": "gateway-enters-runtime", "from": "module-gateway", "to": "operation-runtime", "label": "allowed snapshot", "labelAt": [415, 386] },
+    { "id": "permission-checks-runtime", "from": "permission-policy", "to": "operation-runtime", "label": "authorize + evaluate", "variant": "security", "fromSide": "bottom", "toSide": "top", "labelAt": [520, 230] },
+    { "id": "runtime-builds-services", "from": "operation-runtime", "to": "scoped-services", "label": "install operation scope", "labelAt": [630, 270] },
+    { "id": "services-call-handler", "from": "scoped-services", "to": "owner-handler", "label": "bounded capabilities", "labelAt": [860, 386] },
+    { "id": "handler-writes-owner-schema", "from": "owner-handler", "to": "owner-schema", "label": "typed owner-local persistence", "labelAt": [1090, 386] },
+    { "id": "runtime-records-evidence", "from": "operation-runtime", "to": "core-records", "label": "invocation + audit + event", "labelAt": [520, 455] },
+    { "id": "runtime-enqueues-outbox", "from": "operation-runtime", "to": "outbox", "label": "same transaction" },
+    { "id": "outbox-dispatches-worker", "from": "outbox", "to": "owner-worker", "label": "claim, retry, finalize", "labelAt": [860, 616] }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Fail-closed order", "items": ["One session selects exactly one tenant; context, binding, module state, and transitive dependency closure are revalidated before private code runs.", "Missing or incompatible dependencies degrade only affected entrypoints; permission, policy, and operation scope still fail closed."] },
+    { "dot": "cyan", "title": "Hard responsibility boundary", "items": ["Core records cross-cutting evidence, duplicate-effect prevention, and delivery state; modules own behavior, canonical facts, and domain tables.", "Core never becomes a replay cache for arbitrary business responses. The owner reconstructs a result or exposes an explicit bounded acknowledgement."] },
+    { "dot": "violet", "title": "Owner-local execution", "items": ["Handlers receive scoped owner services—not a generic database executor or another module's repository.", "Cross-module work uses published typed clients and outbox contracts; no shared repositories or cross-module transaction scope."] }
+  ]
+}

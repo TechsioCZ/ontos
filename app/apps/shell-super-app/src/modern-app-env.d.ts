@@ -2,9 +2,9 @@
 
 declare const ULTRAMODERN_SITE_URL: string;
 
-declare module 'crm/PageCrm' {
-  const PageCrm: React.FunctionComponent<{
+declare module 'projects/PageProjects' {
+  const PageProjects: React.FunctionComponent<{
     readonly target: unknown;
   }>;
-  export default PageCrm;
+  export default PageProjects;
 }

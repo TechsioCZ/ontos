@@ -33,7 +33,7 @@ await runAppScript('scripts/postgres/bootstrap-spicedb-database.mts');
 await migrate('packages/core-runtime', 'drizzle.config.ts');
 await migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
 await runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
-await migrate('verticals/crm', 'drizzle.config.ts');
+await migrate('verticals/projects', 'drizzle.config.ts');
 await runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
 await runAppScript('scripts/verify-application-db-schema.mts');
 

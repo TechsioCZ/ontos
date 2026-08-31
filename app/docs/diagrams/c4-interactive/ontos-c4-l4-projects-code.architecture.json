@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OntOS — C4 Level 4: Current Projects Exemplar",
+    "locale": "en",
+    "output": "ontos-c4-l4-projects-code.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "projects-pages", "type": "frontend", "label": "Projects UI", "sublabel": "Routes, forms, view models", "pos": [40, 290], "size": [160, 72] },
+    { "id": "projects-client", "type": "frontend", "label": "projects-client.ts", "sublabel": "Generated Effect BFF client", "pos": [240, 290], "size": [180, 72] },
+    { "id": "projects-api", "type": "backend", "label": "api/index.ts", "sublabel": "Strict Effect HTTP API", "pos": [460, 290], "size": [170, 72] },
+    { "id": "principal-verifier", "type": "security", "label": "Action Principal Verifier", "sublabel": "Audience-scoped Shell assertion", "pos": [460, 70], "size": [180, 72] },
+    { "id": "core-runtimes", "type": "backend", "label": "Core Action / Read Runtimes", "sublabel": "Governed execution", "pos": [680, 290], "size": [190, 72], "tag": "SHARED PACKAGE" },
+    { "id": "action-definitions", "type": "backend", "label": "Action Definitions", "sublabel": "Customer/contact mutations", "pos": [920, 140], "size": [180, 72] },
+    { "id": "read-definitions", "type": "backend", "label": "Read Definitions", "sublabel": "Customer and contact queries", "pos": [920, 360], "size": [180, 72] },
+    { "id": "persistence-service", "type": "backend", "label": "Customer/Contact Persistence", "sublabel": "Owner-local scoped service", "pos": [1150, 140], "size": [180, 72] },
+    { "id": "projects-schema", "type": "database", "label": "Projects PostgreSQL Schema", "sublabel": "customers + contacts", "pos": [1150, 350], "size": [180, 72] },
+    { "id": "ares-adapter", "type": "backend", "label": "AresSubjectService", "sublabel": "Decode, retry, cache, throttle", "pos": [1150, 560], "size": [180, 72] },
+    { "id": "ares-system", "type": "external", "label": "ARES API", "sublabel": "ares.gov.cz", "pos": [920, 560], "size": [180, 72] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Projects MicroVertical delivery unit", "wraps": ["projects-pages", "projects-client", "projects-api", "principal-verifier", "core-runtimes", "action-definitions", "read-definitions", "persistence-service", "projects-schema", "ares-adapter"], "pad": 20 }
+  ],
+  "connections": [
+    { "id": "pages-call-client", "from": "projects-pages", "to": "projects-client", "label": "typed Effect calls", "variant": "emphasis", "labelAt": [220, 376] },
+    { "id": "client-calls-api", "from": "projects-client", "to": "projects-api", "label": "HTTP / JSON schemas", "labelAt": [440, 376] },
+    { "id": "api-verifies-principal", "from": "projects-api", "to": "principal-verifier", "label": "verify EdDSA assertion", "variant": "security", "fromSide": "top", "toSide": "bottom", "labelAt": [550, 210] },
+    { "id": "api-runs-core", "from": "projects-api", "to": "core-runtimes", "label": "run Action or Read", "labelAt": [655, 376] },
+    { "id": "core-runs-actions", "from": "core-runtimes", "to": "action-definitions", "label": "registered mutation" },
+    { "id": "core-runs-reads", "from": "core-runtimes", "to": "read-definitions", "label": "registered query", "labelAt": [895, 460] },
+    { "id": "actions-use-persistence", "from": "action-definitions", "to": "persistence-service", "label": "scoped write service", "labelAt": [1125, 110] },
+    { "id": "reads-use-persistence", "from": "read-definitions", "to": "persistence-service", "label": "scoped read service" },
+    { "id": "persistence-uses-schema", "from": "persistence-service", "to": "projects-schema", "label": "Drizzle queries", "fromSide": "bottom", "toSide": "top", "labelAt": [1240, 260] },
+    { "id": "reads-use-ares", "from": "read-definitions", "to": "ares-adapter", "label": "customer registry lookup" },
+    { "id": "adapter-calls-ares", "from": "ares-adapter", "to": "ares-system", "label": "HTTPS + typed failures", "labelAt": [1035, 650] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "Concrete develop-branch exemplar", "items": ["Projects exposes eight generated Actions plus customer/contact reads through one strict Effect API.", "The public manifest lists descriptors; private runtime registration loads implementation only inside the Projects deployment."] },
+    { "dot": "orange", "title": "Technical invariants", "items": ["The frontend calls the Effect BFF client—not handlers, repositories, or ad hoc fetch.", "Customer/contact persistence stays owner-local; the ARES adapter has typed status errors, timeout, retry, cache, concurrency, and tracing."] },
+    { "dot": "amber", "title": "Scope warning", "items": ["This is evidence for the MicroVertical implementation pattern, not the proposed final Commerce code structure.", "The current Projects customer/contact model is non-live and may be superseded by the accepted Party Registry boundary without migration compatibility."] }
+  ]
+}

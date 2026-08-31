@@ -20,7 +20,7 @@ zerops:
         - 'app/pnpm-lock.yaml'
         - 'app/pnpm-workspace.yaml'
         - 'app/scripts'
-        - 'app/verticals/crm'
+        - 'app/verticals/projects'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -88,7 +88,7 @@ zerops:
           path: '/healthz'
       start: sh app/scripts/run-zerops-spicedb.sh
 
-  - setup: 'crm'
+  - setup: 'projects'
     build:
       base: 'alpine@3.23'
       prepareCommands:
@@ -97,19 +97,19 @@ zerops:
       buildCommands:
         - cd app && PATH="$HOME/.local/node-26.5.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
         - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/crm' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'crm' --package '@app/crm' --package-dir 'verticals/crm'
-        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/crm/topology.json'
-        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/crm/local-overlay.json'
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/projects' run build
+        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize -- --app 'projects' --package '@app/projects' --package-dir 'verticals/projects'
+        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/projects/topology.json'
+        - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/projects/local-overlay.json'
       deployFiles:
-        - 'app/.zerops/runtime/crm'
+        - 'app/.zerops/runtime/projects'
         - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
         httpGet:
           port: 4101
-          path: '/crm-api/crm/readiness'
+          path: '/projects-api/projects/readiness'
         failureTimeout: 3m
         retryPeriod: 10s
     run:
@@ -126,13 +126,13 @@ zerops:
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-        ULTRAMODERN_ZEROPS_SERVICE: crm
-        VERTICAL_CRM_PORT: '4101'
+        ULTRAMODERN_ZEROPS_SERVICE: projects
+        VERTICAL_PROJECTS_PORT: '4101'
       healthCheck:
         httpGet:
           port: 4101
-          path: '/crm-api/crm/readiness'
-      start: sh -c 'cd app/.zerops/runtime/crm && PATH="/var/www/.local/node-26.5.0/bin:$PATH" exec npm run serve'
+          path: '/projects-api/projects/readiness'
+      start: sh -c 'cd app/.zerops/runtime/projects && PATH="/var/www/.local/node-26.5.0/bin:$PATH" exec npm run serve'
 
   - setup: 'shellsuperapp'
     build:

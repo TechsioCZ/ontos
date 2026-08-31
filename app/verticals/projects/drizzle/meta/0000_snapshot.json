@@ -1,0 +1,403 @@
+{
+  "id": "1ac13968-4ba8-446e-bd71-9b557adc4acf",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "projects.contacts": {
+      "name": "contacts",
+      "schema": "projects",
+      "columns": {
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "projects_contacts_tenant_id_uk": {
+          "name": "projects_contacts_tenant_id_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "projects_contacts_tenant_customer_active_idx": {
+          "name": "projects_contacts_tenant_customer_active_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"projects\".\"contacts\".\"archived_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "projects_contacts_tenant_customer_fk": {
+          "name": "projects_contacts_tenant_customer_fk",
+          "tableFrom": "contacts",
+          "tableTo": "customers",
+          "schemaTo": "projects",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "projects_contacts_tenant_select": {
+          "name": "projects_contacts_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_contacts_tenant_insert": {
+          "name": "projects_contacts_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"projects\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_contacts_tenant_update": {
+          "name": "projects_contacts_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"projects\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_contacts_tenant_delete": {
+          "name": "projects_contacts_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "projects_contacts_name_ck": {
+          "name": "projects_contacts_name_ck",
+          "value": "\"projects\".\"contacts\".\"name\" = btrim(\"projects\".\"contacts\".\"name\") and length(\"projects\".\"contacts\".\"name\") > 0"
+        },
+        "projects_contacts_email_ck": {
+          "name": "projects_contacts_email_ck",
+          "value": "length(btrim(\"projects\".\"contacts\".\"email\")) > 0"
+        },
+        "projects_contacts_phone_ck": {
+          "name": "projects_contacts_phone_ck",
+          "value": "length(btrim(\"projects\".\"contacts\".\"phone\")) > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "projects.customers": {
+      "name": "customers",
+      "schema": "projects",
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ico": {
+          "name": "ico",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dic": {
+          "name": "dic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "legal_form_code": {
+          "name": "legal_form_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "established_on": {
+          "name": "established_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dissolved_on": {
+          "name": "dissolved_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "projects_customers_tenant_active_idx": {
+          "name": "projects_customers_tenant_active_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"projects\".\"customers\".\"archived_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "projects_customers_tenant_ico_uk": {
+          "name": "projects_customers_tenant_ico_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ico",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "projects_customers_tenant_id_uk": {
+          "name": "projects_customers_tenant_id_uk",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "customer_id"
+          ]
+        }
+      },
+      "policies": {
+        "projects_customers_tenant_select": {
+          "name": "projects_customers_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_customers_tenant_insert": {
+          "name": "projects_customers_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"projects\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_customers_tenant_update": {
+          "name": "projects_customers_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"projects\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_customers_tenant_delete": {
+          "name": "projects_customers_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "projects_customers_name_ck": {
+          "name": "projects_customers_name_ck",
+          "value": "\"projects\".\"customers\".\"name\" = btrim(\"projects\".\"customers\".\"name\") and length(\"projects\".\"customers\".\"name\") > 0"
+        },
+        "projects_customers_ico_ck": {
+          "name": "projects_customers_ico_ck",
+          "value": "\"projects\".\"customers\".\"ico\" is null or \"projects\".\"customers\".\"ico\" ~ '^[0-9]{8}$'"
+        },
+        "projects_customers_dic_ck": {
+          "name": "projects_customers_dic_ck",
+          "value": "\"projects\".\"customers\".\"dic\" is null or (\"projects\".\"customers\".\"dic\" = btrim(\"projects\".\"customers\".\"dic\") and length(\"projects\".\"customers\".\"dic\") between 1 and 20)"
+        },
+        "projects_customers_legal_form_code_ck": {
+          "name": "projects_customers_legal_form_code_ck",
+          "value": "\"projects\".\"customers\".\"legal_form_code\" is null or \"projects\".\"customers\".\"legal_form_code\" ~ '^[0-9]{3}$'"
+        },
+        "projects_customers_lifecycle_dates_ck": {
+          "name": "projects_customers_lifecycle_dates_ck",
+          "value": "\"projects\".\"customers\".\"dissolved_on\" is null or \"projects\".\"customers\".\"established_on\" is null or \"projects\".\"customers\".\"dissolved_on\" >= \"projects\".\"customers\".\"established_on\""
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "projects": "projects"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

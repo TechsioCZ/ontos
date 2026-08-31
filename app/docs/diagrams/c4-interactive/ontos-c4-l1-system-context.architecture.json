@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "OntOS — C4 Level 1: System Context",
+    "locale": "en",
+    "output": "ontos-c4-l1-system-context.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    { "id": "staff", "type": "external", "label": "Staff & Administrators", "sublabel": "Operate ERP and commerce", "pos": [40, 70], "size": [190, 68] },
+    { "id": "portal-users", "type": "external", "label": "Portal Customers", "sublabel": "B2C / B2B identities", "pos": [40, 240], "size": [190, 68] },
+    { "id": "storefronts", "type": "frontend", "label": "Storefront Applications", "sublabel": "External customer channels", "pos": [40, 410], "size": [190, 68], "tag": "EXTERNAL" },
+    { "id": "ontos", "type": "backend", "label": "OntOS", "sublabel": "Core + reusable Application Compositions", "pos": [430, 235], "size": [230, 90], "tag": "SYSTEM" },
+    { "id": "ares", "type": "external", "label": "ARES", "sublabel": "Czech business registry", "pos": [800, 50], "size": [190, 68], "tag": "IMPLEMENTED" },
+    { "id": "symmy", "type": "external", "label": "Symmy", "sublabel": "Preferred integration route", "pos": [800, 310], "size": [190, 68], "tag": "TARGET" },
+    { "id": "business-systems", "type": "external", "label": "Business Systems", "sublabel": "Accounting, banks, reservations", "pos": [1080, 50], "size": [190, 68], "tag": "TARGET" },
+    { "id": "providers", "type": "external", "label": "Commerce Providers", "sublabel": "Payment and delivery", "pos": [1080, 220], "size": [190, 68], "tag": "TARGET" },
+    { "id": "specialists", "type": "external", "label": "Specialist Systems", "sublabel": "e.g. Pulsar Solutions", "pos": [1080, 390], "size": [190, 68], "tag": "TARGET" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "OntOS system boundary", "wraps": ["ontos"], "pad": 32 }
+  ],
+  "connections": [
+    { "id": "staff-uses-ontos", "from": "staff", "to": "ontos", "label": "staff UI + governed actions", "variant": "emphasis" },
+    { "id": "portal-uses-ontos", "from": "portal-users", "to": "ontos", "label": "portal session + commerce API", "variant": "security", "labelAt": [440, 360] },
+    { "id": "storefront-calls-ontos", "from": "storefronts", "to": "ontos", "label": "local BFF + native contracts" },
+    { "id": "ontos-reads-ares", "from": "ontos", "to": "ares", "label": "typed registry lookup" },
+    { "id": "ontos-routes-via-symmy", "from": "ontos", "to": "symmy", "label": "selected integration route", "variant": "dashed", "labelAt": [850, 295] },
+    { "id": "ontos-exchanges-business-facts", "from": "ontos", "to": "business-systems", "label": "imports / exports", "variant": "dashed", "labelAt": [1115, 145] },
+    { "id": "ontos-calls-providers", "from": "ontos", "to": "providers", "label": "provider APIs", "variant": "dashed", "labelAt": [1115, 315] },
+    { "id": "ontos-integrates-specialists", "from": "ontos", "to": "specialists", "label": "module-owned adapters", "variant": "dashed", "labelAt": [1115, 485] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "In plain language", "items": ["OntOS is the business platform; independently deployed storefronts are its clients, not part of the standard Shell.", "Business modules own canonical facts while channel applications and integrations call governed contracts."] },
+    { "dot": "amber", "title": "Decision status", "items": ["The product, system boundary, commerce application boundaries, and integration-routing rules are accepted target architecture.", "ARES lookup is implemented; most commerce modules and integrations remain target capabilities. Final production placement is still open in Wayrepo #17."] }
+  ]
+}

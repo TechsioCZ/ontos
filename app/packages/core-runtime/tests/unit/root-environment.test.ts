@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url';
 const appRoot = path.resolve(import.meta.dirname, '../../../..');
 const repositoryRoot = path.dirname(appRoot);
 const expectedEnvironmentPath = path.join(appRoot, '.env');
+const exampleEnvironmentPath = path.join(appRoot, '.env.example');
 
 test('apps contain no environment files that can override the app-root .env', () => {
   const result = spawnSync(
@@ -37,7 +38,7 @@ test('workspace discovery resolves repository, app, shell, and microvertical dir
     repositoryRoot,
     appRoot,
     path.join(appRoot, 'apps/shell-super-app'),
-    path.join(appRoot, 'verticals/crm'),
+    path.join(appRoot, 'verticals/projects'),
   ]) {
     assert.equal(resolveAppWorkspaceRoot(directory), appRoot);
   }
@@ -76,4 +77,25 @@ test('all server configuration resolves the app-root .env from any invocation di
     expectedEnvironmentPath,
     expectedEnvironmentPath,
   ]);
+});
+
+test('the documented local environment preserves JSON gateway keys when sourced by a shell', () => {
+  const validationSource = `
+    JSON.parse(process.env.ONTOS_GATEWAY_PRIVATE_JWK);
+    JSON.parse(process.env.ONTOS_GATEWAY_PUBLIC_JWKS);
+  `;
+  const child = spawnSync(
+    '/bin/sh',
+    [
+      '-c',
+      'set -a; . "$1"; set +a; exec "$2" --eval "$3"',
+      'environment-check',
+      exampleEnvironmentPath,
+      process.execPath,
+      validationSource,
+    ],
+    { encoding: 'utf-8' },
+  );
+
+  assert.equal(child.status, 0, child.stderr);
 });
