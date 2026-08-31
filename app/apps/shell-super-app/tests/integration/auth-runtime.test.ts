@@ -426,6 +426,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
             },
             principal: {
               authBindingId: authenticatedContext.principal.authBindingId,
+              authContextRef: authenticatedContext.principal.authContextRef,
               authMethod: authenticatedContext.principal.authMethod,
               principalId: authenticatedContext.principal.principalId,
               tenantId: authenticatedContext.principal.tenantId,
@@ -632,11 +633,8 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
                   legalName: 'Fixture legal entity',
                 },
                 principal: {
-                  authBindingId: '45000000-0000-4000-8000-000000000001',
-                  authMethod: 'session' as const,
+                  ...authenticatedContext.principal,
                   legalEntityId: fixtureLegalEntityId,
-                  principalId: current.identity.principalId,
-                  tenantId: current.identity.tenantId,
                 },
                 setCookieHeaders: ['refreshed-session=value; Path=/; HttpOnly'],
                 state: 'authenticated' as const,
@@ -786,13 +784,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
       currentDate: new Date(1_700_000_001_000),
       issuer: 'https://shell.example.test',
     });
-    assert.deepEqual(verifiedAssertion.payload.principal, {
-      authBindingId: fixtureAuthBindingId,
-      authMethod: 'session',
-      legalEntityId: fixtureLegalEntityId,
-      principalId,
-      tenantId,
-    });
+    assert.deepEqual(verifiedAssertion.payload.principal, authenticatedContext.principal);
 
     await mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), { recursive: true });
     await symlink(
@@ -843,13 +835,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
           },
         }),
       ),
-      {
-        authBindingId: fixtureAuthBindingId,
-        authMethod: 'session',
-        legalEntityId: fixtureLegalEntityId,
-        principalId,
-        tenantId,
-      },
+      authenticatedContext.principal,
     );
 
     const invalidAudienceResponse = await issuingHandler.handler(
@@ -902,7 +888,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     await coreDatabase
       .update(principalAuthBindings)
-      .set({ status: 'revoked' })
+      .set({ revokedAt: new Date('2026-08-28T00:00:00.000Z'), status: 'revoked' })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
     const revoked = await Effect.runPromise(
       Effect.flip(authentication.currentSession(authenticatedHeaders)),
@@ -919,7 +905,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
 
     await coreDatabase
       .update(principalAuthBindings)
-      .set({ status: 'active' })
+      .set({ revokedAt: null, status: 'active' })
       .where(eq(principalAuthBindings.providerSubjectId, betterAuthUserId));
     const signOutResponse = await unavailableHandler.handler(
       new Request(`${configuration.baseUrl}/auth/sign-out`, {
@@ -1370,6 +1356,13 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       authentication.currentSession(authenticatedHeaders),
     );
     assert.equal(currentSessionAfterSwitch.identity?.principalId, secondPrincipalId);
+    const shellContextAfterSwitch = await Effect.runPromise(
+      authentication.resolveShellContext(authenticatedHeaders),
+    );
+    assert.equal(shellContextAfterSwitch.state, 'authenticated');
+    if (shellContextAfterSwitch.state !== 'authenticated') {
+      throw new Error('The switched session fixture must resolve an authenticated context');
+    }
     const idempotentSwitch = await Effect.runPromise(
       authentication.switchTenant(secondTenantId, authenticatedHeaders),
     );
@@ -1397,13 +1390,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
       currentDate: new Date(1_700_000_001_000),
       issuer: 'https://shell.example.test',
     });
-    assert.deepEqual(verified.payload.principal, {
-      authBindingId: secondAuthBindingId,
-      authMethod: 'session',
-      legalEntityId: secondLegalEntityId,
-      principalId: secondPrincipalId,
-      tenantId: secondTenantId,
-    });
+    assert.deepEqual(verified.payload.principal, shellContextAfterSwitch.principal);
 
     // A non-unavailability persistence rejection is an unexpected defect. The real Better Auth
     // adapter must roll it back, while each owning HTTP boundary logs and returns a redacted 500.
@@ -1503,7 +1490,7 @@ test('selects, lists, switches, revalidates, and upgrades a multi-tenant session
     await Effect.runPromise(authentication.switchTenant(secondTenantId, authenticatedHeaders));
     await coreDatabase
       .update(principalAuthBindings)
-      .set({ status: 'revoked' })
+      .set({ revokedAt: new Date('2026-08-28T00:00:00.000Z'), status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, secondTenantId));
     const revokedSession = await Effect.runPromise(
       Effect.flip(authentication.currentSession(authenticatedHeaders)),

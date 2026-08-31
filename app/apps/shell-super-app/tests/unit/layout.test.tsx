@@ -214,8 +214,8 @@ test('supports module pages without a shell heading and keeps reduced horizontal
 
   expect(screen.queryByRole('heading')).toBeNull();
   const content = screen.getByText('Module content').parentElement;
-  expect(content?.classList.contains('px-2')).toBe(true);
-  expect(content?.classList.contains('py-4')).toBe(true);
+  expect(content?.classList.contains('shell:px-2')).toBe(true);
+  expect(content?.classList.contains('shell:py-4')).toBe(true);
 });
 
 test('keeps Home as the only navigation link when no active modules are supplied', () => {

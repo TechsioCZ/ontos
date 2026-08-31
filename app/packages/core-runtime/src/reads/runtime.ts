@@ -745,7 +745,9 @@ const readRuntimeLayer = Layer.effect(
 export const makeReadRuntimeLive = (contextAccessLayer: Layer.Layer<ContextAccess>) =>
   readRuntimeLayer.pipe(
     Layer.provide(ModuleEntrypointGatewayLive),
-    Layer.provide(OperationalScopeResolverLive),
+    Layer.provide(
+      Layer.fresh(OperationalScopeResolverLive).pipe(Layer.provide(contextAccessLayer)),
+    ),
     Layer.provide(contextAccessLayer),
   );
 

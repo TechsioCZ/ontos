@@ -2,7 +2,7 @@
 
 ## Základní princip
 
-Adresa je standardně **value object**. Nemá vlastní identitu ani samostatný životní cyklus a patří entitě, která ji používá. Zákazník proto vlastní svou adresu v CRM, sklad svou adresu ve skladovém modulu a dokument může uchovávat historickou kopii adresy.
+Adresa je standardně **value object**. Nemá vlastní identitu ani samostatný životní cyklus a patří entitě, která ji používá. Zákazník proto vlastní svou adresu v Projects, sklad svou adresu ve skladovém modulu a dokument může uchovávat historickou kopii adresy.
 
 Společná může být implementace adresy: datový model, validace, databázové stavební prvky a UI formulář. Samotné adresní hodnoty a jejich vazby však zůstávají v jednotlivých MicroVerticalech.
 

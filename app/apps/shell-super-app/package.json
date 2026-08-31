@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@app/core-runtime": "workspace:*",
-    "@app/crm": "workspace:*",
+    "@app/projects": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
@@ -81,6 +81,6 @@
     "topology": "../../topology/reference-topology.json"
   },
   "zephyr:dependencies": {
-    "crm": "@app/crm@workspace:*"
+    "projects": "@app/projects@workspace:*"
   }
 }

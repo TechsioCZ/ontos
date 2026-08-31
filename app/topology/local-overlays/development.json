@@ -4,26 +4,26 @@
   "preset": "presetUltramodern",
   "ports": {
     "shell-super-app": 3020,
-    "crm": 4101
+    "projects": 4101
   },
   "manifests": {
-    "crm": "http://localhost:4101/mf-manifest.json"
+    "projects": "http://localhost:4101/mf-manifest.json"
   },
   "ontosModuleManifests": {
-    "crm": "http://localhost:4101/.well-known/ontos-module-manifest.json"
+    "projects": "http://localhost:4101/.well-known/ontos-module-manifest.json"
   },
   "serverExecution": {
-    "crm": {
-      "apiBaseUrl": "http://localhost:4101/crm-api",
+    "projects": {
+      "apiBaseUrl": "http://localhost:4101/projects-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/crm",
+        "unitId": "app/projects",
         "buildMarker": "b08ddded31ae2315"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-crm",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+        "workerName": "app-projects",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -35,37 +35,37 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_PROJECTS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PROJECTS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PROJECTS_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_CRM_WORKER",
-          "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+          "serviceBinding": "VERTICAL_PROJECTS_WORKER",
+          "serviceBindingEnv": "VERTICAL_PROJECTS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PROJECTS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PROJECTS_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v1",
-        "remoteName": "verticalCrmBackend",
-        "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalProjectsBackend",
+        "manifestEnv": "VERTICAL_PROJECTS_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff/effect",
         "expected": {
-          "unitId": "app/crm",
+          "unitId": "app/projects",
           "buildMarker": "b08ddded31ae2315"
         }
       }
     }
   },
   "apis": {
-    "crm": "http://localhost:4101/crm-api"
+    "projects": "http://localhost:4101/projects-api"
   }
 }

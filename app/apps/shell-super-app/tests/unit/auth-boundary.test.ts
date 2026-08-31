@@ -33,7 +33,7 @@ test('keeps authentication in the existing Shell/Core ownership boundary', () =>
 
   expect(authentication.kind).toBe('shell-core-capability');
   expect(authentication.owners).toEqual(['shell-super-app', 'core-runtime']);
-  expect(installedVerticalIds).toEqual(['crm']);
+  expect(installedVerticalIds).toEqual(['projects']);
   expect(verticalRefs).toEqual(installedVerticalIds);
   expect(moduleFederation.remotes.map(({ id }) => id)).toEqual(installedVerticalIds);
   expect(fs.existsSync(new URL('verticals/auth', workspaceRoot))).toBe(false);

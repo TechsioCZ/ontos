@@ -2,7 +2,7 @@ import { Predicate } from 'effect';
 import { expect, test } from '@playwright/test';
 import { shellGatewayContextContract } from '@app/shared-contracts';
 import type { Page } from '@playwright/test';
-import { crmApiContract } from '../../../../verticals/crm/shared/api.ts';
+import { projectsApiContract } from '../../../../verticals/projects/shared/api.ts';
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import {
   createAuthenticationFixture,
@@ -12,22 +12,22 @@ import {
   e2eTenants,
 } from './auth-fixture.ts';
 
-const customerListPath = `${crmApiContract.basePath}/customers/list`;
-const customerDetailPath = `${crmApiContract.basePath}/customers/detail`;
-const contactDetailPath = `${crmApiContract.basePath}/contacts/detail`;
-const contactCreatePath = `${crmApiContract.basePath}/contacts/create`;
-const contactEditPath = `${crmApiContract.basePath}/contacts/edit`;
+const customerListPath = `${projectsApiContract.basePath}/customers/list`;
+const customerDetailPath = `${projectsApiContract.basePath}/customers/detail`;
+const contactDetailPath = `${projectsApiContract.basePath}/contacts/detail`;
+const contactCreatePath = `${projectsApiContract.basePath}/contacts/create`;
+const contactEditPath = `${projectsApiContract.basePath}/contacts/edit`;
 const contactEditUrl = (language: 'cs' | 'en') =>
-  `/${language}/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}/edit`;
+  `/${language}/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}/edit`;
 const contactEditDetailUrl = (language: 'cs' | 'en') =>
-  `/${language}/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`;
+  `/${language}/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`;
 
-const mockCrmGateway = async (page: Page) => {
+const mockProjectsGateway = async (page: Page) => {
   const payloads: unknown[] = [];
   await page.route(`**${shellGatewayContextContract.issueGatewayContextPath}`, (route) => {
     payloads.push(route.request().postDataJSON());
     return route.fulfill({
-      body: JSON.stringify({ expiresAt: 2_000_000_000, token: 'e2e-crm-gateway-token' }),
+      body: JSON.stringify({ expiresAt: 2_000_000_000, token: 'e2e-projects-gateway-token' }),
       contentType: 'application/json',
       status: 200,
     });
@@ -191,14 +191,22 @@ test('logs a user in without any server-error response', async ({ page }, testIn
   expect(serverErrors, 'Login and the authenticated page must not return HTTP 5xx').toEqual([]);
 });
 
-test('loads localized English and Czech CRM pages only after login', async ({ page }) => {
+test('returns not found for the retired CRM UI and API routes', async ({ page, request }) => {
+  const uiResponse = await page.goto('/en/crm');
+  expect(uiResponse?.status()).toBe(404);
+
+  const apiResponse = await request.get('http://127.0.0.1:4101/crm-api/crm/readiness');
+  expect(apiResponse.status()).toBe(404);
+});
+
+test('loads localized English and Czech Projects pages only after login', async ({ page }) => {
   const pageErrors: string[] = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
-  await page.goto('/en/crm');
-  await expect(page.getByRole('heading', { name: 'CRM' })).toHaveCount(0);
-  await page.goto('/cs/crm');
-  await expect(page.getByRole('heading', { name: 'CRM' })).toHaveCount(0);
+  await page.goto('/en/projects');
+  await expect(page.getByRole('heading', { name: 'Projects' })).toHaveCount(0);
+  await page.goto('/cs/projects');
+  await expect(page.getByRole('heading', { name: 'Projects' })).toHaveCount(0);
 
   await gotoHydratedLogin(page, 'cs');
   await page
@@ -208,28 +216,28 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
   await page.getByRole('button', { name: 'Přihlásit se' }).click();
   await expect(page).toHaveURL(/\/cs\/?$/u);
 
-  const crmLink = page.locator('a[href="/cs/crm"]');
-  await expect(crmLink).toHaveAttribute('href', '/cs/crm');
-  await crmLink.click();
+  const projectsLink = page.locator('a[href="/cs/projects"]');
+  await expect(projectsLink).toHaveAttribute('href', '/cs/projects');
+  await projectsLink.click();
 
-  await expect(page).toHaveURL(/\/cs\/crm\/?$/u);
-  await expect(page.getByRole('heading', { name: 'CRM' })).toBeVisible();
+  await expect(page).toHaveURL(/\/cs\/projects\/?$/u);
+  await expect(page.getByRole('heading', { name: 'Projekty' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Modul' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Zákazníci' })).toHaveAttribute(
     'href',
-    '/cs/crm/customers',
+    '/cs/projects/customers',
   );
   await expect(page.getByText('Tato stránka je připravena k implementaci.')).toHaveCount(0);
   await expect(page.getByText('Zatím zde není žádný obsah.')).toHaveCount(0);
   await expect(page.getByRole('complementary', { name: 'Postranní panel přehledu' })).toBeVisible();
 
-  await page.goto('/en/crm');
-  await expect(page).toHaveURL(/\/en\/crm\/?$/u);
-  await expect(page.getByRole('heading', { name: 'CRM' })).toBeVisible();
+  await page.goto('/en/projects');
+  await expect(page).toHaveURL(/\/en\/projects\/?$/u);
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Module' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Customers' })).toHaveAttribute(
     'href',
-    '/en/crm/customers',
+    '/en/projects/customers',
   );
   await expect(page.getByText('This page is ready for implementation.')).toHaveCount(0);
   await expect(page.getByText('No content has been added yet.')).toHaveCount(0);
@@ -247,6 +255,22 @@ test('loads localized English and Czech CRM pages only after login', async ({ pa
       message.includes('FederatedI18nBoundary must be used within ModernI18nProvider'),
     ),
   ).toEqual([]);
+});
+
+test('issues a real gateway assertion for an authenticated Projects customer read', async ({
+  page,
+}) => {
+  await login(page);
+  const gatewayResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === shellGatewayContextContract.issueGatewayContextPath,
+  );
+
+  await page.goto('/cs/projects/customers');
+
+  const gatewayResponse = await gatewayResponsePromise;
+  expect(gatewayResponse.status(), await gatewayResponse.text()).toBe(200);
+  await expect(page.getByRole('table')).toBeVisible();
 });
 
 test('keeps authenticated Shell chrome on search and guarded direct-target routes', async ({
@@ -499,7 +523,7 @@ test('customers stay private anonymously and load real localized BFF data after 
     }
   });
 
-  await page.goto('/en/crm/customers');
+  await page.goto('/en/projects/customers');
   await expect(page.getByRole('heading', { name: 'Customers' })).toHaveCount(0);
   await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
   expect(customerRequests).toBe(0);
@@ -510,7 +534,7 @@ test('customers stay private anonymously and load real localized BFF data after 
       new URL(response.url()).pathname === customerListPath &&
       response.request().method() === 'POST',
   );
-  await page.goto('/en/crm/customers');
+  await page.goto('/en/projects/customers');
   const englishResponse = await englishResponsePromise;
   expect(englishResponse.status(), await englishResponse.text()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Customers' })).toBeVisible();
@@ -520,8 +544,11 @@ test('customers stay private anonymously and load real localized BFF data after 
   const sidebar = page.getByRole('complementary', { name: 'Dashboard sidebar' });
   const main = page.getByRole('main');
   await expect(sidebar).toHaveCount(1);
-  await expect(sidebar.getByRole('link', { name: 'Crm' })).toHaveCount(1);
-  await expect(sidebar.getByRole('link', { name: 'Crm' })).toHaveAttribute('href', '/en/crm');
+  await expect(sidebar.getByRole('link', { name: 'Projects' })).toHaveCount(1);
+  await expect(sidebar.getByRole('link', { name: 'Projects' })).toHaveAttribute(
+    'href',
+    '/en/projects',
+  );
   await expect(page.locator('header[aria-label="Dashboard header"]')).toHaveCount(1);
   const [sidebarBox, mainBox] = await Promise.all([sidebar.boundingBox(), main.boundingBox()]);
   if (sidebarBox === null || mainBox === null) {
@@ -539,7 +566,7 @@ test('customers stay private anonymously and load real localized BFF data after 
       new URL(response.url()).pathname === customerListPath &&
       response.request().method() === 'POST',
   );
-  await page.goto('/cs/crm/customers');
+  await page.goto('/cs/projects/customers');
   const czechResponse = await czechResponsePromise;
   expect(czechResponse.status(), await czechResponse.text()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Zákazníci' })).toBeVisible();
@@ -560,7 +587,7 @@ test('customers empty state keeps the table and omits the pager', async ({ page 
     }),
   );
 
-  await page.goto('/en/crm/customers');
+  await page.goto('/en/projects/customers');
   const table = page.getByRole('table', { name: 'Customers' });
   await expect(table).toBeVisible();
   await expect(table.locator('tbody tr')).toHaveCount(0);
@@ -586,7 +613,7 @@ test('customers return an empty table for a tenant without Customer rows', async
       new URL(response.url()).pathname === customerListPath &&
       response.request().method() === 'POST',
   );
-  await page.goto('/cs/crm/customers');
+  await page.goto('/cs/projects/customers');
   const response = await responsePromise;
 
   expect(response.status(), await response.text()).toBe(200);
@@ -610,7 +637,7 @@ test('customers retry a temporary BFF failure from the keyboard and restore resu
           retryable: true,
           status: 503,
           title: 'Customer list unavailable',
-          type: 'https://ontos.dev/problems/crm/customer-list-unavailable',
+          type: 'https://ontos.dev/problems/projects/customer-list-unavailable',
         }),
         contentType: 'application/problem+json',
         status: 503,
@@ -623,7 +650,7 @@ test('customers retry a temporary BFF failure from the keyboard and restore resu
     });
   });
 
-  await page.goto('/en/crm/customers');
+  await page.goto('/en/projects/customers');
   const retry = page.getByRole('button', { name: 'Try again' });
   await expect(retry).toBeVisible();
   await retry.focus();
@@ -656,7 +683,7 @@ test('customers keep filter and pagination in the URL without page overflow at 3
     });
   });
 
-  await page.goto('/en/crm/customers?view=compact');
+  await page.goto('/en/projects/customers?view=compact');
   await expect(page.getByText(longCustomer.name)).toBeVisible();
   const status = page.getByRole('combobox', { name: 'Customer status' });
   await status.focus();
@@ -668,11 +695,13 @@ test('customers keep filter and pagination in the URL without page overflow at 3
   }
   await expect(archived).toHaveAttribute('data-highlighted', '');
   await page.keyboard.press('Enter');
-  await expect(page).toHaveURL(/\/en\/crm\/customers\?view=compact&status=archived$/u);
+  await expect(page).toHaveURL(/\/en\/projects\/customers\?view=compact&status=archived$/u);
   await expect(page.getByText(longCustomer.name)).toBeVisible();
 
   await page.getByRole('link', { name: 'Next' }).click();
-  await expect(page).toHaveURL(/\/en\/crm\/customers\?view=compact&status=archived&offset=25$/u);
+  await expect(page).toHaveURL(
+    /\/en\/projects\/customers\?view=compact&status=archived&offset=25$/u,
+  );
   await expect(page.getByText(longCustomer.name)).toBeVisible();
   expect(payloads).toContainEqual({ filter: 'active', limit: 25, offset: 0 });
   expect(payloads).toContainEqual({ filter: 'archived', limit: 25, offset: 0 });
@@ -697,9 +726,9 @@ test.describe('Customer detail flows', () => {
   test('Customer detail keeps the same layout after a full-page reload', async ({ page }) => {
     await login(page);
     await page.setViewportSize({ height: 900, width: 1440 });
-    await page.goto('/en/crm/customers');
+    await page.goto('/en/projects/customers');
     await page.getByRole('link', { name: e2eCustomers.active.name }).click();
-    await expect(page).toHaveURL(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect(page).toHaveURL(`/en/projects/customers/${e2eCustomers.active.customerId}`);
 
     const heading = page.getByRole('heading', { name: e2eCustomers.active.name });
     await expect(heading).toBeVisible();
@@ -742,9 +771,9 @@ test.describe('Customer detail flows', () => {
       }
     });
 
-    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}`);
     await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
-    await page.goto(`/cs/crm/customers/${e2eCustomers.active.customerId}`);
+    await page.goto(`/cs/projects/customers/${e2eCustomers.active.customerId}`);
     await expect(page.getByText(e2eCustomers.active.name)).toHaveCount(0);
     expect(customerDetailRequests).toBe(0);
 
@@ -754,7 +783,7 @@ test.describe('Customer detail flows', () => {
         new URL(response.url()).pathname === customerDetailPath &&
         response.request().method() === 'POST',
     );
-    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}`);
     const englishResponse = await englishResponsePromise;
     expect(englishResponse.status(), await englishResponse.text()).toBe(200);
     await expect(page.getByRole('heading', { name: e2eCustomers.active.name })).toBeVisible();
@@ -762,7 +791,7 @@ test.describe('Customer detail flows', () => {
     await expect(page.getByTestId('customer-detail-results').getByText('Active')).toBeVisible();
     await expect(page.getByRole('link', { exact: true, name: 'Back' })).toHaveAttribute(
       'href',
-      '/en/crm/customers',
+      '/en/projects/customers',
     );
     await page.setViewportSize({ height: 667, width: 375 });
     const czechResponsePromise = page.waitForResponse(
@@ -770,7 +799,7 @@ test.describe('Customer detail flows', () => {
         new URL(response.url()).pathname === customerDetailPath &&
         response.request().method() === 'POST',
     );
-    await page.goto(`/cs/crm/customers/${e2eCustomers.archived.customerId}`);
+    await page.goto(`/cs/projects/customers/${e2eCustomers.archived.customerId}`);
     const czechResponse = await czechResponsePromise;
     expect(czechResponse.status(), await czechResponse.text()).toBe(200);
     await expect(page.getByRole('heading', { name: e2eCustomers.archived.name })).toBeVisible();
@@ -778,7 +807,7 @@ test.describe('Customer detail flows', () => {
     await expect(page.getByText('Archivovaný')).toBeVisible();
     await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
       'href',
-      '/cs/crm/customers',
+      '/cs/projects/customers',
     );
     expect(payloads).toContainEqual({ customerId: e2eCustomers.active.customerId });
     expect(payloads).toContainEqual({ customerId: e2eCustomers.archived.customerId });
@@ -811,14 +840,14 @@ test.describe('Customer detail flows', () => {
             detail: message,
             status,
             title: message,
-            type: `https://ontos.dev/problems/crm/customer-detail-${status}`,
+            type: `https://ontos.dev/problems/projects/customer-detail-${status}`,
           }),
           contentType: 'application/problem+json',
           status,
         }),
       );
 
-      await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+      await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}`);
       await expect(page.getByText(message)).toBeVisible({ timeout: 60_000 });
       await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
     });
@@ -841,7 +870,7 @@ test.describe('Customer detail flows', () => {
             retryable: true,
             status: 503,
             title: 'Customer unavailable',
-            type: 'https://ontos.dev/problems/crm/customer-detail-unavailable',
+            type: 'https://ontos.dev/problems/projects/customer-detail-unavailable',
           }),
           contentType: 'application/problem+json',
           status: 503,
@@ -854,7 +883,7 @@ test.describe('Customer detail flows', () => {
       });
     });
 
-    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}`);
     await expect(page.getByText('The Customer is temporarily unavailable. Try again.')).toBeVisible(
       { timeout: 60_000 },
     );
@@ -899,14 +928,14 @@ test.describe('Contact create flows', () => {
       }
     });
 
-    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}/contacts/new`);
     await expect(page.getByRole('heading', { name: 'Create Contact' })).toHaveCount(0);
-    await page.goto(`/cs/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await page.goto(`/cs/projects/customers/${e2eCustomers.active.customerId}/contacts/new`);
     await expect(page.getByRole('heading', { name: 'Vytvořit kontakt' })).toHaveCount(0);
     expect(contactRequests).toBe(0);
 
     await login(page);
-    const gatewayPayloads = await mockCrmGateway(page);
+    const gatewayPayloads = await mockProjectsGateway(page);
     await page.route(`**${contactCreatePath}`, (route) => {
       if (route.request().method() === 'OPTIONS') {
         return route.fallback();
@@ -920,7 +949,7 @@ test.describe('Contact create flows', () => {
       });
     });
 
-    await page.goto(`/cs/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await page.goto(`/cs/projects/customers/${e2eCustomers.active.customerId}/contacts/new`);
     await expect(page.getByRole('heading', { name: 'Vytvořit kontakt' })).toBeVisible();
     await expect(page.getByRole('textbox', { name: /^Jméno kontaktu/u })).toBeVisible();
     await expect(page.getByRole('textbox', { name: /^E-mail/u })).toBeVisible();
@@ -933,11 +962,11 @@ test.describe('Contact create flows', () => {
     ).toBeVisible();
 
     await page.setViewportSize({ height: 667, width: 375 });
-    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}/contacts/new`);
     await expect(page.getByRole('heading', { name: 'Create Contact' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Back to Customer' })).toHaveAttribute(
       'href',
-      `/en/crm/customers/${e2eCustomers.active.customerId}`,
+      `/en/projects/customers/${e2eCustomers.active.customerId}`,
     );
     await page.getByRole('textbox', { name: /^Contact name/u }).fill(contactResponse.name);
     await page.getByRole('textbox', { name: /^Email/u }).fill(contactResponse.email);
@@ -963,16 +992,16 @@ test.describe('Contact create flows', () => {
         phone: contactResponse.phone,
       },
     ]);
-    await expect(page).toHaveURL(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect(page).toHaveURL(`/en/projects/customers/${e2eCustomers.active.customerId}`);
     await expect.poll(() => gatewayPayloads.length).toBe(2);
-    expect(gatewayPayloads).toEqual([{ audience: 'crm' }, { audience: 'crm' }]);
+    expect(gatewayPayloads).toEqual([{ audience: 'projects' }, { audience: 'projects' }]);
   });
 
   test('Contact create preserves values and reuses its key after a mocked uncertain failure', async ({
     page,
   }) => {
     await login(page);
-    const gatewayPayloads = await mockCrmGateway(page);
+    const gatewayPayloads = await mockProjectsGateway(page);
     let attempts = 0;
     const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
     await page.route(`**${contactCreatePath}`, (route) => {
@@ -988,12 +1017,12 @@ test.describe('Contact create flows', () => {
       if (attempts === 1) {
         return route.fulfill({
           body: JSON.stringify({
-            _tag: 'CrmUnavailableProblem',
+            _tag: 'ProjectsUnavailableProblem',
             detail: 'The E2E Contact service is unavailable.',
             retryable: true,
             status: 503,
             title: 'Contact service unavailable',
-            type: 'https://ontos.dev/problems/crm-unavailable',
+            type: 'https://ontos.dev/problems/projects-unavailable',
           }),
           contentType: 'application/problem+json',
           headers: contactCorsHeaders,
@@ -1008,7 +1037,7 @@ test.describe('Contact create flows', () => {
       });
     });
 
-    await page.goto(`/en/crm/customers/${e2eCustomers.active.customerId}/contacts/new`);
+    await page.goto(`/en/projects/customers/${e2eCustomers.active.customerId}/contacts/new`);
     await page.getByRole('textbox', { name: /^Contact name/u }).fill(contactResponse.name);
     await page.getByRole('textbox', { name: /^Email/u }).fill(contactResponse.email);
     await page.getByRole('textbox', { name: /^Phone/u }).fill(contactResponse.phone);
@@ -1023,12 +1052,12 @@ test.describe('Contact create flows', () => {
     expect(headers[0]?.idempotencyKey).toBeTruthy();
     expect(headers[1]?.idempotencyKey).toBe(headers[0]?.idempotencyKey);
     expect(headers[1]?.correlationId).not.toBe(headers[0]?.correlationId);
-    await expect(page).toHaveURL(`/en/crm/customers/${e2eCustomers.active.customerId}`);
+    await expect(page).toHaveURL(`/en/projects/customers/${e2eCustomers.active.customerId}`);
     await expect.poll(() => gatewayPayloads.length).toBe(3);
     expect(gatewayPayloads).toEqual([
-      { audience: 'crm' },
-      { audience: 'crm' },
-      { audience: 'crm' },
+      { audience: 'projects' },
+      { audience: 'projects' },
+      { audience: 'projects' },
     ]);
   });
 });
@@ -1039,10 +1068,10 @@ test.describe('Contact detail flows', () => {
   test('Contact detail keeps the same layout after a full-page reload', async ({ page }) => {
     await login(page);
     await page.setViewportSize({ height: 900, width: 1440 });
-    await page.goto(`/en/crm/customers/${e2eContacts.active.customerId}`);
+    await page.goto(`/en/projects/customers/${e2eContacts.active.customerId}`);
     await page.getByRole('link', { name: e2eContacts.active.name }).click();
     await expect(page).toHaveURL(
-      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+      `/en/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
     );
 
     const heading = page.getByRole('heading', { name: e2eContacts.active.name });
@@ -1092,11 +1121,11 @@ test.describe('Contact detail flows', () => {
     });
 
     await page.goto(
-      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+      `/en/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
     );
     await expect(page.getByText(e2eContacts.active.name)).toHaveCount(0);
     await page.goto(
-      `/cs/crm/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
+      `/cs/projects/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
     );
     await expect(page.getByText(e2eContacts.archived.name)).toHaveCount(0);
     expect(contactRequests).toBe(0);
@@ -1108,7 +1137,7 @@ test.describe('Contact detail flows', () => {
         response.request().method() === 'POST',
     );
     await page.goto(
-      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+      `/en/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
     );
     const englishResponse = await englishResponsePromise;
     expect(englishResponse.status(), await englishResponse.text()).toBe(200);
@@ -1125,7 +1154,7 @@ test.describe('Contact detail flows', () => {
     );
     await expect(page.getByRole('link', { exact: true, name: 'Back' })).toHaveAttribute(
       'href',
-      `/en/crm/customers/${e2eContacts.active.customerId}`,
+      `/en/projects/customers/${e2eContacts.active.customerId}`,
     );
 
     await page.setViewportSize({ height: 667, width: 375 });
@@ -1135,7 +1164,7 @@ test.describe('Contact detail flows', () => {
         response.request().method() === 'POST',
     );
     await page.goto(
-      `/cs/crm/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
+      `/cs/projects/customers/${e2eContacts.archived.customerId}/contacts/${e2eContacts.archived.contactId}`,
     );
     const czechResponse = await czechResponsePromise;
     expect(czechResponse.status(), await czechResponse.text()).toBe(200);
@@ -1144,7 +1173,7 @@ test.describe('Contact detail flows', () => {
     await expect(page.getByText('Archivovaný')).toBeVisible();
     await expect(page.getByRole('link', { exact: true, name: 'Zpět' })).toHaveAttribute(
       'href',
-      `/cs/crm/customers/${e2eContacts.archived.customerId}`,
+      `/cs/projects/customers/${e2eContacts.archived.customerId}`,
     );
     const emailLayout = await page
       .getByRole('link', { name: 'Napsat e-mail tomuto kontaktu' })
@@ -1196,14 +1225,14 @@ test.describe('Contact detail flows', () => {
       }
     });
 
-    await page.goto('/en/crm/customers/not-a-uuid/contacts/not-a-contact');
+    await page.goto('/en/projects/customers/not-a-uuid/contacts/not-a-contact');
     await expect(
       page.getByText('This Contact could not be found for the selected Customer.'),
     ).toBeVisible({ timeout: 60_000 });
     expect(attempts).toBe(0);
 
     await page.goto(
-      `/en/crm/customers/${e2eCustomers.archived.customerId}/contacts/${e2eContacts.active.contactId}`,
+      `/en/projects/customers/${e2eCustomers.archived.customerId}/contacts/${e2eContacts.active.contactId}`,
     );
     await expect(
       page.getByText('This Contact could not be found for the selected Customer.'),
@@ -1236,7 +1265,7 @@ test.describe('Contact detail flows', () => {
             detail: message,
             status,
             title: message,
-            type: `https://ontos.dev/problems/crm/contact-detail-${status}`,
+            type: `https://ontos.dev/problems/projects/contact-detail-${status}`,
           }),
           contentType: 'application/problem+json',
           status,
@@ -1244,7 +1273,7 @@ test.describe('Contact detail flows', () => {
       );
 
       await page.goto(
-        `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+        `/en/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
       );
       await expect(page.getByText(message)).toBeVisible({ timeout: 60_000 });
       await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
@@ -1268,7 +1297,7 @@ test.describe('Contact detail flows', () => {
             retryable: true,
             status: 503,
             title: 'Contact unavailable',
-            type: 'https://ontos.dev/problems/crm/contact-detail-unavailable',
+            type: 'https://ontos.dev/problems/projects/contact-detail-unavailable',
           }),
           contentType: 'application/problem+json',
           status: 503,
@@ -1282,7 +1311,7 @@ test.describe('Contact detail flows', () => {
     });
 
     await page.goto(
-      `/en/crm/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
+      `/en/projects/customers/${e2eContacts.active.customerId}/contacts/${e2eContacts.active.contactId}`,
     );
     await expect(page.getByText('The Contact is temporarily unavailable. Try again.')).toBeVisible({
       timeout: 60_000,
@@ -1316,11 +1345,11 @@ test.describe('Contact edit flows', () => {
   test('Contact edit stays private, prefills localized forms, submits the strict request, and remains responsive', async ({
     page,
   }) => {
-    let anonymousCrmRequests = 0;
+    let anonymousProjectsRequests = 0;
     page.on('request', (request) => {
       const { pathname } = new URL(request.url());
       if (pathname === contactDetailPath || pathname === contactEditPath) {
-        anonymousCrmRequests += 1;
+        anonymousProjectsRequests += 1;
       }
     });
 
@@ -1328,10 +1357,10 @@ test.describe('Contact edit flows', () => {
     await expect(page.getByRole('heading', { name: 'Edit Contact' })).toHaveCount(0);
     await page.goto(contactEditUrl('cs'));
     await expect(page.getByRole('heading', { name: 'Upravit kontakt' })).toHaveCount(0);
-    expect(anonymousCrmRequests).toBe(0);
+    expect(anonymousProjectsRequests).toBe(0);
 
     await login(page);
-    await mockCrmGateway(page);
+    await mockProjectsGateway(page);
     const detailPayloads: unknown[] = [];
     const editPayloads: unknown[] = [];
     const editHeaders: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
@@ -1420,7 +1449,7 @@ test.describe('Contact edit flows', () => {
     page,
   }) => {
     await login(page);
-    await mockCrmGateway(page);
+    await mockProjectsGateway(page);
     let attempts = 0;
     const headers: { readonly correlationId?: string; readonly idempotencyKey?: string }[] = [];
     await page.route(`**${contactDetailPath}`, (route) =>
@@ -1444,12 +1473,12 @@ test.describe('Contact edit flows', () => {
       if (attempts === 1) {
         return route.fulfill({
           body: JSON.stringify({
-            _tag: 'CrmUnavailableProblem',
+            _tag: 'ProjectsUnavailableProblem',
             detail: 'The E2E Contact service is unavailable.',
             retryable: true,
             status: 503,
             title: 'Contact service unavailable',
-            type: 'https://ontos.dev/problems/crm-unavailable',
+            type: 'https://ontos.dev/problems/projects-unavailable',
           }),
           contentType: 'application/problem+json',
           headers: contactCorsHeaders,

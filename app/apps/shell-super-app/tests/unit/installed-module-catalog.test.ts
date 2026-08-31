@@ -105,6 +105,24 @@ test('loads two independent deployment contracts once and preserves both identit
   expect(first.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
 });
 
+test('exposes Projects as the sole cutover identity without a CRM module alias', async () => {
+  const loader = makeInstalledModuleCatalogLoader(
+    allowlist([
+      {
+        appId: 'projects',
+        contractUrl: 'https://projects.example.test/.well-known/ontos-module-manifest.json',
+      },
+    ]),
+    () => Promise.resolve(response(contract('projects', 'projects.core'))),
+  );
+  const catalog = await Effect.runPromise(loader);
+
+  expect(catalog.deploymentAppIds).toEqual(['projects']);
+  expect(catalog.moduleIds).toEqual(['projects.core']);
+  expect(catalog.getByDeploymentAppId('crm')).toBeUndefined();
+  expect(catalog.getByModuleId('crm.core')).toBeUndefined();
+});
+
 test.each([
   [
     'unavailable',

@@ -40,7 +40,7 @@ try {
   await client.query(
     `grant connect on database "${admin.pathname.slice(1).replaceAll('"', '""')}" to ontos_runtime`,
   );
-  for (const schema of ['core', 'auth', 'crm']) {
+  for (const schema of ['core', 'auth', 'projects']) {
     const schemaExists = await client.query<{ exists: boolean }>(
       'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
       [schema],

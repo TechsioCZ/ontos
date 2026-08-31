@@ -57,7 +57,7 @@ A new MicroVertical is not deployable until its delivery contract accounts for a
 - failure-log collection, smoke checks, and rollback target.
 
 Codesmith or another approved generator must update these surfaces atomically. Until the generator
-exists, do not add another copied CRM block to the workflow, `zerops.yaml`, migration runner, or
+exists, do not add another copied Projects block to the workflow, `zerops.yaml`, migration runner, or
 validator. Extend and test the generator first.
 
 Change planning must fail closed when a changed path under `apps/*`, `packages/*`, or `verticals/*`
