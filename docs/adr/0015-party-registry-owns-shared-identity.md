@@ -5,9 +5,9 @@ Status: Accepted.
 ## Context
 
 ERP and Commerce both need to refer to the same real-world people and organizations. Without one
-ownership rule, an imported organization, a manually entered CRM customer, a commerce buyer, and an
-external-system correlation can become competing identities. The word “Customer” also conflates
-product configuration, commercial relationship, retail behavior, and CRM workflow.
+ownership rule, an imported organization, a manually entered Contacts customer, a commerce buyer,
+and an external-system correlation can become competing identities. The word “Customer” also
+conflates product configuration, commercial relationship, retail behavior, and Contacts workflow.
 
 ## Decision
 
@@ -25,15 +25,15 @@ assertion semantics, merge readiness, and migration rules are defined by
 [ADR-0018](0018-party-registry-operational-boundaries.md).
 
 Other modules address Parties and Counterparties through public ResourceRefs and Party Registry
-contracts. CRM owns engagement profiles and workflows; Commerce owns retail, channel, and B2B
+contracts. Contacts owns engagement profiles and workflows; Commerce owns retail, channel, and B2B
 purchasing profiles and workflows. Neither duplicates shared Party identity. Connector Registries
 own provider-issued external-ID correlations, and Principal authorization owns permission to buy,
 approve, or administer access; a Party Relationship grants no authorization by itself.
 
 Commerce also owns its separate Portal Account lifecycle and links each account/profile to stable
 Party/Counterparty references. Registration and authentication do not move Party identity into
-BetterAuth or Commerce; lifecycle events let CRM, support/ticketing, analytics, and other authorized
-consumers project the linkage without sharing an account realm.
+BetterAuth or Commerce; lifecycle events let Contacts, support/ticketing, analytics, and other
+authorized consumers project the linkage without sharing an account realm.
 
 Party Registry publishes identity and relationship lifecycle events for consumer projections.
 Imports contribute observations and Party Candidates but cannot write a competing canonical Party.
@@ -45,8 +45,8 @@ decision and the current Commerce delivery.
 
 ## Considered options
 
-1. **Let CRM own shared identity.** Rejected because CRM is a contextual workflow module and not
-   every Party participates in CRM.
+1. **Let Contacts own shared identity.** Rejected because Contacts is a contextual workflow module
+   and not every Party participates in Contacts.
 2. **Let each module keep its own customer/person/organization copy.** Rejected because duplicate
    matching, correction, merge, and references would diverge.
 3. **Use one global cross-Tenant Party directory.** Rejected because it breaks Tenant governance and
@@ -58,28 +58,28 @@ decision and the current Commerce delivery.
 
 ## Consequences
 
-- “Customer” must be qualified as Customer Configuration, Retail Customer, Counterparty Role, CRM
-  profile, or another explicit context.
+- “Customer” must be qualified as Customer Configuration, Retail Customer, Counterparty Role,
+  Contacts profile, or another explicit context.
 - One Party may participate in several Party Relationships and Counterparty Roles without identity
   duplication.
 - LegalEntityRef and PartyRef remain distinct; contracts do not convert them implicitly.
 - Provider correlation and transport do not acquire authority over Party identity.
 - Stable ResourceRefs and Party Aliases let consumers preserve references while Party Registry
   corrects identity.
-- CRM and Commerce schemas, APIs, and workflows must reference Party/Counterparty contracts instead
-  of becoming alternative identity registries.
+- Contacts and Commerce schemas, APIs, and workflows must reference Party/Counterparty contracts
+  instead of becoming alternative identity registries.
 - Party identity Actions require explicit Tenant authority; Counterparty Actions require explicit
   Legal Entity or Counterparty authority.
 - Core Search is a projection and cannot enforce Party uniqueness or decide Party Matching.
 
 ## Migration impact
 
-OntOS is not live, so the current repository-owned `crm.customers` and subordinate-contact model may
-be replaced with breaking schema, API, fixture, and code changes. No repository-only backfill,
-compatibility layer, or dual-write period is required. Detailed CRM design remains deferred; the
-binding direction is that CRM does not own shared Party identity.
+OntOS is not live, so the current repository-owned Contacts customer and subordinate-contact
+resources may be replaced with breaking schema, API, fixture, and code changes. No repository-only
+backfill, compatibility layer, or dual-write period is required. Detailed Contacts design remains
+deferred; the binding direction is that Contacts does not own shared Party identity.
 
 A verified live External Business System or production dataset is different. It requires an explicit
 Integration Route, fact ownership, reference inventory, mapping, reconciliation, cutover, and
-rollback. A product label such as CRM, a table name, or deployed code alone does not prove that such
-a migration is needed.
+rollback. A product label such as Contacts, a table name, or deployed code alone does not prove that
+such a migration is needed.
