@@ -1,229 +1,201 @@
-# Czech ARES lookup by IČO
+# Czech ARES evidence lookup by IČO
 
-Research date: 2026-08-17
+Research verified: 2026-09-01
 
-## Recommendation
+> [!IMPORTANT]
+> This document owns the ARES provider protocol, normalized evidence, and adapter resilience. Party
+> identity, matching, correction, and canonical writes follow
+> [Party Registry](../architecture/PARTY_REGISTRY.md). ARES never writes Party state directly.
 
-Use the public ARES REST API through an OntOS server-side integration:
+## Ownership
 
-1. Trim the entered IČO and require exactly eight digits, preserving leading zeroes.
-2. Fetch the consolidated subject record with `GET /ekonomicke-subjekty/{ico}`.
-3. Map only `name`, `ico`, `dic`, `legalFormCode`, `establishedOn`, and `dissolvedOn` into the flat
-   Contacts Customer prefill contract.
-4. Cache/coalesce successful lookups, bound concurrency and retries, and map upstream errors into
-   OntOS's typed BFF error contract.
+ARES is an External Evidence Provider. It can supply observations about a Czech economic subject,
+but it is not the System of Record for an OntOS Party.
 
-Direct browser calls currently work, but a server-side adapter is the safer production boundary for centralized validation, caching, throttling, observability, and insulation from undocumented CORS/authentication changes.
+The `party.registry` MicroVertical owns:
 
-## Current OntOS Contacts implementation profile
+- Party Matching and Party Create decisions;
+- accepted `ICO` and `CZ_DIC` Official Identifier assertions;
+- accepted Party name and registered-address assertions;
+- conflict, confirmation, and Party Correction decisions;
+- the Domain Events and Outbox Messages created by those Actions.
 
-The implemented Contacts adapter deliberately uses only the consolidated subject endpoint. It does not
-request or persist an address, registration/source/update metadata, CZ-NACE codes, public-register
-activity text, or trade-licence activity data. Those fields remain research context for a future
-separately specified feature and are not part of the Customer model.
+The owner-local Direct Provider Adapter owns:
 
-The adapter accepts only an already valid eight-digit IČO; it does not guess or pad shorter input.
-The create-page control trims whitespace, preserves a leading zero, and invokes the generated
-governed Read only after exact validation. The browser never calls ARES directly.
+- ARES request and response schemas;
+- HTTP construction, timeout, retry, throttling, caching, and coalescing;
+- provider error mapping and diagnostics;
+- translation into the bounded provider-neutral evidence envelope.
 
-Each upstream attempt has a three-second timeout. Retryable throttling, timeout, transport, and
-upstream-availability failures receive at most two bounded exponential retries. Successful results
-are cached for five minutes in a 256-entry cache, concurrent requests for one IČO are coalesced, and
-global adapter concurrency is limited to four. Failures are not cached. Invalid, denied, not-found,
-and decode failures are not retried.
+Connector Registry owns a provider-issued record correlation when OntOS must retain one. ARES
+record identifiers are not Party Official Identifiers merely because they are stable at the
+provider.
 
-The private adapter distinguishes invalid input, not found, denial, throttling, timeout,
-unavailability, and decode failure. The generated public Read maps not found to `404`, unavailable
-upstream conditions to retryable `503`, malformed input to `400`, authentication to `401`, module
-denial to `403`, and caught decode/internal defects to a sanitized `500` Problem Details response.
+## Supported V1 route
 
-## What “business subject” can mean
-
-There are three different useful representations of what a subject does:
-
-- `czNace` / `czNace2008` on the consolidated record are structured economic-activity classification codes.
-- VR `cinnosti.predmetPodnikani`, `predmetCinnosti`, `doplnkovaCinnost`, and `ucel` are registered legal text from the public register.
-- RŽP `zivnosti[].predmetPodnikani` and `zivnosti[].oboryCinnosti[].oborNazev` describe trade licences and their activity fields.
-
-They are not interchangeable. For an identity/address autofill, the consolidated endpoint is enough. For a user-facing “předmět podnikání” field, collect source-specific VR and RŽP data and label its source. This distinction and the field contracts are defined in the current [official OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and [Ministry of Finance technical catalogue, version 1.30](https://www.mfcr.cz/assets/attachments/2023-08-01_ARES-Technicka-dokumentace-Katalog-verejnych-sluzeb_v07.pdf).
-
-## Required lookup: consolidated subject
+V1 performs a read-only lookup by an already normalized Czech IČO:
 
 ```http
 GET https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/{ico}
 Accept: application/json
 ```
 
-The path parameter must be an eight-digit string (`^\d{8}$`); there is no request body. The ARES
-website accepts omitted leading zeroes in its UI, but the REST contract requires all eight digits.
-The current Contacts adapter therefore rejects shorter input instead of guessing or padding it. See the
-[`GET /ekonomicke-subjekty/{ico}` OpenAPI operation](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs)
-and the [official ARES search help](https://ares.gov.cz/stranky/napoveda-ekonomicke-subjekty).
+The public provider contract is documented by the
+[official OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and
+[Swagger UI](https://ares.gov.cz/swagger-ui/).
 
-Example:
+Input rules:
 
-```http
-GET https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/48039101
-```
+1. trim surrounding whitespace at the user-input boundary;
+2. require exactly eight decimal digits;
+3. preserve leading zeroes;
+4. do not guess or pad shorter input;
+5. never accept Tenant, Principal, Legal Entity, Party, or authorization identity from the lookup
+   payload.
 
-The current response includes these useful fields:
+The browser calls a generated governed Read. Only the private server-side adapter calls ARES.
 
-```json
-{
-  "ico": "48039101",
-  "obchodniJmeno": "J.E.S., spol. s r.o.",
-  "sidlo": {
-    "textovaAdresa": "Pod špejcharem 1561, Zbraslav, 15600 Praha 5"
-  },
-  "pravniForma": "112",
-  "datumVzniku": "1992-12-04",
-  "datumZaniku": null,
-  "czNace": ["43350", "800", "431"],
-  "czNace2008": ["011", "016", "2572"],
-  "seznamRegistraci": {
-    "stavZdrojeVr": "AKTIVNI",
-    "stavZdrojeRzp": "AKTIVNI"
-  },
-  "primarniZdroj": "ros"
+## Normalized evidence envelope
+
+A successful lookup returns bounded external evidence, not a mutable Party object:
+
+```text
+AresSubjectEvidence {
+  provider = "ares"
+  queryIco
+  observedAt
+  providerRecordRef?
+  subject {
+    ico
+    businessName?
+    dic?
+    registeredAddress?
+    legalFormCode?
+    establishedOn?
+    dissolvedOn?
+  }
+  sourceStates?
 }
 ```
 
-Arrays are abbreviated in this example. Other useful fields defined by the schema include the structured parts of `sidlo`, `pravniFormaRos`, `dic`, `financniUrad`, `datumAktualizace`, `dalsiUdaje`, and `icoId`. `pravniForma`, `czNace`, and `czNace2008` are codes rather than display labels. These fields are documented in the [official OpenAPI schemas](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs); the example values were verified against the [live official endpoint](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/48039101).
+The exact Effect Schemas belong to the owning MicroVertical. They must reject unknown unbounded
+payload retention and preserve enough source metadata to explain when and from where each
+observation was obtained.
 
-## Optional registered-activity detail
-
-### Public register (VR)
-
-```http
-GET https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty-vr/{ico}
-```
-
-Read the primary record in `zaznamy[]` and its `cinnosti` object. In particular:
+Provider fields commonly used by the consolidated subject route include:
 
 ```text
-zaznamy[].primarniZaznam
-zaznamy[].stavSubjektu
-zaznamy[].cinnosti.predmetPodnikani[].hodnota
-zaznamy[].cinnosti.predmetPodnikani[].datumZapisu
-zaznamy[].cinnosti.predmetPodnikani[].datumVymazu
-zaznamy[].cinnosti.predmetCinnosti[]
-zaznamy[].cinnosti.doplnkovaCinnost[]
-zaznamy[].cinnosti.ucel[]
+ico
+obchodniJmeno
+dic
+sidlo
+pravniForma
+pravniFormaRos
+datumVzniku
+datumZaniku
+datumAktualizace
+seznamRegistraci
+primarniZdroj
+icoId
 ```
 
-The arrays include historical values; an omitted `datumVymazu` indicates that the item has not been recorded as removed. Do not flatten historical and current text without preserving the dates. The structure is defined by the `EkonomickySubjektVr`, `ZaznamVr`, `CinnostiVr`, and `ObecnyTextVr` schemas in the [official OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs).
+Their presence in the provider response does not authorize Party Registry to apply them. The Party
+contract owns the allowlist and fact-specific authority policy.
 
-### Trade Licensing Register (RŽP)
+## Read outcomes
 
-```http
-GET https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty-rzp/{ico}
-```
-
-This source is important for sole traders and for trade-licence detail. Read:
+The governed Read distinguishes at least:
 
 ```text
-zaznamy[].primarniZaznam
-zaznamy[].zivnostiStav
-zaznamy[].zivnosti[].predmetPodnikani
-zaznamy[].zivnosti[].druhZivnosti
-zaznamy[].zivnosti[].datumVzniku
-zaznamy[].zivnosti[].datumZaniku
-zaznamy[].zivnosti[].platnostDo
-zaznamy[].zivnosti[].oboryCinnosti[].oborNazev
-zaznamy[].zivnosti[].oboryCinnosti[].platnostOd
-zaznamy[].zivnosti[].oboryCinnosti[].platnostDo
+FOUND
+NOT_FOUND
+INVALID_INPUT
+AMBIGUOUS_PROVIDER_RESULT
+PROVIDER_DENIED
+PROVIDER_THROTTLED
+PROVIDER_UNAVAILABLE
+PROVIDER_TIMEOUT
+PROVIDER_RESPONSE_INVALID
 ```
 
-The structure is defined by the `EkonomickySubjektRzp`, `ZaznamRzp`, `Zivnost`, and `ZivnostOborCinnosti` schemas in the [official OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs). A source-specific call may return `404` when the IČO is not present in that register; use `seznamRegistraci.stavZdrojeVr` and `stavZdrojeRzp` from the consolidated response to avoid unnecessary calls.
+`NOT_FOUND` is a valid provider result. Timeout, denial, throttling, transport failure, response
+decode failure, and unavailable provider are failures and must never be interpreted as `NOT_FOUND`
+or `NO_MATCH`.
 
-## Resolving coded values
+The BFF maps expected failures exhaustively to the repository's typed Problem Details contract. It
+does not expose raw provider bodies, secrets, stack traces, or internal URLs.
 
-The consolidated API returns legal form and CZ-NACE as codes. ARES exposes its own code-list endpoint:
+## Adapter resilience
 
-```http
-POST https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ciselniky-nazevniky/vyhledat
-Content-Type: application/json
+The Direct Provider Adapter must:
 
-{
-  "start": 0,
-  "pocet": 1000,
-  "zdrojCiselniku": "res",
-  "kodCiselniku": "PravniForma"
-}
-```
+- use a bounded request timeout;
+- retry only explicitly retryable provider failures with bounded backoff;
+- coalesce concurrent lookups for the same normalized IČO;
+- bound global concurrency and cache size;
+- cache only successful immutable evidence envelopes for a bounded period;
+- expose observation and cache age to the caller;
+- never cache validation, denial, not-found, decode, or transport failures as successful evidence;
+- respect the current
+  [official operating conditions](https://ares.gov.cz/stranky/podminky-provozu);
+- keep authentication and CORS assumptions private to the adapter so provider changes do not alter
+  Party contracts.
 
-Use `CzNace` for CZ-NACE 2025 and `CzNace2008` for the older classification. Include `zdrojCiselniku`, because the same code-list name can exist for multiple sources. Fetch and cache code lists independently of an IČO lookup rather than requesting them on every keystroke. The endpoint and filter schema are part of the [official OpenAPI contract](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs); ARES documents the CZ-NACE 2025 transition in its [official API changelog](https://ares.gov.cz/stranky/changelog-api).
+A cache changes transport cost, not fact authority. Cached evidence remains external evidence with
+its original `observedAt` and must pass the same Party policy as a fresh response.
 
-## Authentication
+## Canonical apply boundary
 
-No API key, client registration, or user login is needed for these public lookup calls today. The Ministry says the API can be used by anyone who respects its operating conditions, and describes it as an interface for exposing public source-register data on its [official developer page](https://ares.gov.cz/stranky/vyvojar-info). Anonymous calls to the consolidated, VR, and RŽP endpoints returned `200` during this research.
-
-There is a documentation inconsistency: the published OpenAPI document is titled `ARES: REST API - veřejné`, but also declares global Basic and Bearer security schemes and lists `401` among possible responses. Since the official public service currently accepts anonymous requests, the integration should send no credentials, but keep authentication/CORS behavior isolated behind the adapter rather than assuming this undocumented detail can never change. See the [raw OpenAPI document](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and [official Swagger UI](https://ares.gov.cz/swagger-ui/).
-
-## Limits and operating terms
-
-The Ministry of Finance may restrict or block access when a user:
-
-- sends more than **500 requests per minute**;
-- repeatedly sends identical or incorrectly filled requests;
-- creates too many concurrent automated requests;
-- evades limits through multiple IP addresses;
-- probes the database automatically with random data or produces mostly invalid requests; or
-- attempts to defeat server security.
-
-These are blocking conditions, not a guaranteed quota protocol; the official API contract does not document rate-limit response headers or a structured `429` response. Debounce IČO input, call only once the normalized value is valid, cache results, limit concurrency, and apply bounded retry/backoff only to retryable failures. The authoritative wording is in the [official operating conditions](https://ares.gov.cz/stranky/podminky-provozu) and is repeated on the [developer page](https://ares.gov.cz/stranky/vyvojar-info) and [FAQ](https://ares.gov.cz/stranky/faq).
-
-ARES data is informational only, is not an official document, and is not guaranteed to be current, complete, or continuously available. The Ministry disclaims liability for damage caused by use of the data; ARES also warns that source updates can lag, potentially by up to two weeks. The UI should identify ARES as the source and avoid presenting a lookup as authoritative verification. See the [official operating conditions](https://ares.gov.cz/stranky/podminky-provozu), [description of ARES](https://ares.gov.cz/stranky/popis), and [FAQ](https://ares.gov.cz/stranky/faq).
-
-## Errors
-
-The official contract documents these statuses for the lookup operations:
-
-| Status | Meaning in ARES documentation |
-| ------ | ----------------------------- |
-| `200`  | OK                            |
-| `400`  | Input error                   |
-| `401`  | Authentication error          |
-| `403`  | Access denied                 |
-| `404`  | Resource not found            |
-| `500`  | Unexpected error              |
-
-Error responses use this JSON shape:
-
-```json
-{
-  "kod": "CHYBA_VSTUPU",
-  "popis": "...",
-  "subKod": "VSTUP_NEVALIDNI_FORMAT_ICO"
-}
-```
-
-The published error-code enum includes `OBECNA_CHYBA`, `CHYBA_VSTUPU`, `NENALEZENO`, `NENI_IMPLEMENTOVANO`, `NEPRIHLASENY_UZIVATEL`, and `NENI_OPRAVNENI`. A live invalid-format lookup returned `400` with `CHYBA_VSTUPU` / `VSTUP_NEVALIDNI_FORMAT_ICO`; a syntactically valid but nonexistent IČO returned `404` with `NENALEZENO` / `VYSTUP_SUBJEKT_NENALEZEN`. Statuses and the `Chyba` schema are documented by the [OpenAPI contract](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs) and [technical catalogue](https://www.mfcr.cz/assets/attachments/2023-08-01_ARES-Technicka-dokumentace-Katalog-verejnych-sluzeb_v07.pdf).
-
-The OntOS adapter should distinguish at least invalid IČO (`400`), no subject (`404`), upstream denial/throttling, upstream unavailability, timeout, and response-decode failure. A source-detail `404` must not erase a successful consolidated record.
-
-## Browser-direct and CORS assessment
-
-Live checks on 2026-08-17 found:
-
-- anonymous GET responses include `Access-Control-Allow-Origin: *`;
-- an OPTIONS preflight allows `GET`, `HEAD`, and `POST`;
-- the preflight allows the requested `content-type` header; and
-- preflight caching is advertised for 1,800 seconds.
-
-Therefore, credential-free browser GETs are technically possible today, and JSON POSTs can pass the current preflight. These headers were verified on the [live consolidated endpoint](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/48039101), but CORS behavior is not stated as a stability guarantee in the OpenAPI document or operating conditions. Production OntOS code should therefore call ARES server-side; a direct browser integration is reasonable only for a prototype or where loss of the feature after a CORS-policy change is acceptable.
-
-## Minimal production data flow
+The supported flow is:
 
 ```text
-IČO input
-  -> trim, require exactly 8 digits, preserve leading zeroes
-  -> generated Contacts governed Read
-  -> private server-side ARES adapter
-  -> GET consolidated subject
-  -> map only name, IČO, DIČ, legal-form code, establishment date, dissolution date
-  -> user reviews/edits ordinary Customer fields
-  -> generated CreateCustomerAction client persists the final flat Customer payload
+Party Candidate or existing Party flow
+  -> generated governed ARES lookup Read
+  -> owner-local Direct Provider Adapter
+  -> normalized AresSubjectEvidence
+  -> user or Party policy evaluates individual facts
+  -> standard Party Registry Actions apply accepted facts
+  -> Party state, audit, events, outbox, and Action success commit atomically
 ```
 
-The current public API is version **1.30** on the [official developer page](https://ares.gov.cz/stranky/vyvojar-info), while its machine-readable OpenAPI `info.version` is written as **1.3.0**. Monitor the [official API changelog](https://ares.gov.cz/stranky/changelog-api) before upgrading the integration.
+Examples:
+
+- matching IČO evidence may enter Party Matching under a versioned Match Rule;
+- a valid accepted IČO uses the standard Official Identifier Add Action;
+- a previously unknown accepted business name uses Party enrichment;
+- an accepted registered address uses the standard Contact Point Action;
+- a conflict with a current authoritative assertion produces confirmation, ambiguity, or Party
+  Correction work;
+- no provider response performs Party Merge.
+
+V1 may prefill an explicit user-confirmed Party flow. Unattended bulk apply, automatic correction,
+automatic merge, and whole-response overwrite remain excluded until their fact-specific policies and
+behavioral conflict tests exist.
+
+## Optional provider research
+
+ARES also exposes source-specific public-register and trade-licensing routes and code-list routes.
+They are not part of the V1 Party lookup contract. Add one only when a concrete owning business fact
+requires it, then preserve its source-specific meaning and history rather than flattening it into the
+consolidated subject response.
+
+Useful official references:
+
+- [ARES developer information](https://ares.gov.cz/stranky/vyvojar-info)
+- [ARES API changelog](https://ares.gov.cz/stranky/changelog-api)
+- [ARES search help](https://ares.gov.cz/stranky/napoveda-ekonomicke-subjekty)
+- [ARES operating conditions](https://ares.gov.cz/stranky/podminky-provozu)
+
+## Focused validation
+
+Before publishing the lookup:
+
+- an eight-digit IČO including a leading zero reaches the exact provider route;
+- shorter, longer, or non-digit input fails before provider I/O;
+- not-found and unavailable remain different typed outcomes;
+- concurrent identical requests are coalesced without changing the evidence result;
+- cached evidence retains its original observation time;
+- response decode failure cannot produce partial accepted facts;
+- the lookup writes no Party, Official Identifier, Contact Point, Action evidence, or Domain Event;
+- applying accepted evidence uses Party Registry Actions and never a Contacts-owned create path;
+- provider failure cannot invalidate or delete existing Party state.
