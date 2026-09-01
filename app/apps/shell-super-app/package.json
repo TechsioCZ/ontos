@@ -50,7 +50,8 @@
     "pg": "8.22.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-router": "7.18.1"
+    "react-router": "7.18.1",
+    "@app/projects": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.19.0",
@@ -81,6 +82,7 @@
     "topology": "../../topology/reference-topology.json"
   },
   "zephyr:dependencies": {
-    "contacts": "@app/contacts@workspace:*"
+    "contacts": "@app/contacts@workspace:*",
+    "projects": "@app/projects@workspace:*"
   }
 }

@@ -141,6 +141,11 @@ export interface ModuleContractScaffoldConfig {
   readonly vertical: string;
 }
 
+export interface MicroverticalScaffoldConfig {
+  readonly port: string;
+  readonly vertical: string;
+}
+
 export interface PolicyScaffoldConfig {
   readonly policy: string;
   readonly scope: 'global' | 'microvertical';
@@ -156,6 +161,12 @@ export interface Mutation {
 export interface ScaffoldPlan<Result> {
   readonly mutations: readonly Mutation[];
   readonly result: Result;
+}
+
+export interface MicroverticalScaffoldResult {
+  readonly appId: string;
+  readonly packagePath: string;
+  readonly port: number;
 }
 
 export interface ActionScaffoldResult {
@@ -794,10 +805,11 @@ const assertUniqueGeneratedVerticalAppIds = async (workspaceRoot: string): Promi
     entries
       .filter((entry) => entry.isDirectory())
       .map(async (entry) => {
-        const { value } = await readJson(
-          resolveContainedPath(verticalRoot, entry.name, 'package.json'),
-          `vertical ${entry.name} package metadata`,
-        );
+        const packagePath = resolveContainedPath(verticalRoot, entry.name, 'package.json');
+        if (!(await pathExists(packagePath))) {
+          return null;
+        }
+        const { value } = await readJson(packagePath, `vertical ${entry.name} package metadata`);
         const modernjs = asJsonObject(
           value['modernjs'],
           `vertical ${entry.name} modernjs metadata`,

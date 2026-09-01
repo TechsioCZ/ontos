@@ -4,13 +4,16 @@
   "preset": "presetUltramodern",
   "ports": {
     "shell-super-app": 3020,
-    "contacts": 4101
+    "contacts": 4101,
+    "projects": 4102
   },
   "manifests": {
-    "contacts": "http://localhost:4101/mf-manifest.json"
+    "contacts": "http://localhost:4101/mf-manifest.json",
+    "projects": "http://localhost:4102/mf-manifest.json"
   },
   "ontosModuleManifests": {
-    "contacts": "http://localhost:4101/.well-known/ontos-module-manifest.json"
+    "contacts": "http://localhost:4101/.well-known/ontos-module-manifest.json",
+    "projects": "http://localhost:4102/.well-known/ontos-module-manifest.json"
   },
   "serverExecution": {
     "contacts": {
@@ -63,9 +66,38 @@
           "buildMarker": "b08ddded31ae2315"
         }
       }
+    },
+    "projects": {
+      "apiBaseUrl": "http://localhost:4102/projects-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/projects",
+        "buildMarker": "workspace"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-projects",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS"
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalProjectsBackend",
+        "manifestEnv": "VERTICAL_PROJECTS_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4102/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4102/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff/effect",
+        "expected": {
+          "unitId": "app/projects",
+          "buildMarker": "workspace"
+        }
+      }
     }
   },
   "apis": {
-    "contacts": "http://localhost:4101/contacts-api"
+    "contacts": "http://localhost:4101/contacts-api",
+    "projects": "http://localhost:4102/projects-api"
   }
 }
