@@ -21,10 +21,11 @@ task:
 | Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                       |
 | Deployment and business module identity               | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                           |
 | Commerce surfaces                                     | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md)                                       |
+| Party identity, Counterparties, and Party evidence    | [Party Registry](docs/architecture/PARTY_REGISTRY.md)                                                               |
 | Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                 |
 | Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
 | Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
-| ARES integration                                      | [ARES reference](docs/integrations/ares.md)                                                                         |
+| ARES provider lookup                                  | [ARES provider reference](docs/integrations/ares.md); Party application follows [Party Registry](docs/architecture/PARTY_REGISTRY.md) |
 
 Read a specification only when the task or GitHub issue explicitly names it. A specification with
 `status: done`, `status: complete`, or `status: superseded` is implementation evidence, not
