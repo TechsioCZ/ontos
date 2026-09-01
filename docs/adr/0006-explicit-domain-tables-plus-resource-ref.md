@@ -1,6 +1,6 @@
 # ADR-0006: Explicit domain tables plus ResourceRef
 
-Status: Accepted for current planning
+Status: Accepted
 
 ## Context
 

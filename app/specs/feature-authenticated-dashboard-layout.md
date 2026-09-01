@@ -1,6 +1,6 @@
 ---
 type: feature
-status: blocked
+status: superseded
 created: 2026-08-06
 ---
 

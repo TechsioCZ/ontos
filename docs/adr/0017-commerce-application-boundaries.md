@@ -1,6 +1,6 @@
 # ADR-0017: Commerce application boundaries
 
-Status: Accepted on 2026-08-28.
+Status: Accepted.
 
 ## Context
 

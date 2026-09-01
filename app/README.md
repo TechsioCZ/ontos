@@ -6,11 +6,77 @@
 
 Generated UltraModern SuperApp workspace.
 
+## Coding guide
+
+Read this file before application work. Then read only the implementation document relevant to the
+task:
+
+| Concern                                               | Current authority                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| MicroVertical seams and BFF communication             | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md)                                                   |
+| State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                    |
+| Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                      |
+| PostgreSQL ownership and access                       | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
+| Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                   |
+| Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                       |
+| Deployment and business module identity               | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                           |
+| Commerce surfaces                                     | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md)                                       |
+| Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                 |
+| Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
+| Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
+| ARES integration                                      | [ARES reference](docs/integrations/ares.md)                                                                         |
+
+Read a specification only when the task or GitHub issue explicitly names it. A specification with
+`status: done`, `status: complete`, or `status: superseded` is implementation evidence, not
+current guidance: stop unless the task explicitly asks for historical provenance. Do not browse
+`specs/` for general background.
+
+### Coding rules
+
+- Use Effect for application behavior, I/O, resource management, concurrency, dependencies, BFF
+  contracts and clients, schemas, and expected failures. Keep pure synchronous transformations and
+  reusable presentation components as plain TypeScript or React when Effect adds no behavior.
+- Model expected failures as tagged Effect errors. Do not throw, reject a Promise, return an
+  untyped error object, or collapse an expected failure into a string.
+- Prefer direct values and references over stringly typed metadata.
+- Reuse an existing concept or file before adding one. Add an abstraction only for a concrete use
+  case.
+- Preserve owner-local data and executable registration. Never import another deployment's private
+  manifest, registration, table, handler, repository, route, migration, fixture, or test.
+- Create supported business artifacts through Codesmith first. Generated output is the required
+  starting point and may then be adapted. If a business artifact has no approved generator or
+  governed gateway, stop and extend or approve Codesmith before adding it.
+- Infrastructure and architecture files may be created directly when no generator applies.
+- Keep third-party HTTP adapters private to their owning MicroVertical. Define provider-specific
+  schemas, typed errors, request construction, resilience, diagnostics, and business mapping; use
+  the generated Effect `HttpClient` service as the deterministic test seam.
+
+### Mandatory generators
+
+Run generators from this directory through the repository-managed toolchain:
+
+```bash
+mise exec -- pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
+mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>
+mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --action <action>
+mise exec -- pnpm scaffold:action-service -- --vertical <vertical> --service <service>
+mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
+mise exec -- pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
+mise exec -- pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic>
+mise exec -- pnpm scaffold:policy -- --scope <global|microvertical> --policy <policy>
+mise exec -- pnpm scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>
+```
+
+Use each command's `--help` for supported flags. Additional Shell-visible generators are described
+beside the relevant architecture sections below. A MicroVertical-scoped Policy also requires
+`--vertical <vertical>`. The generator requirement applies to delegated work as well as the
+primary coding agent.
+
 All public writes and reads run through Core-owned governed operation lifecycles. Tenant/system
 entrypoint scope and required/optional/forbidden legal-entity scope are independent declarations;
 invalid or indeterminate trusted context fails closed before private code resolves. Business
 handlers receive owner-local transaction-scoped services, never a database executor. See
-`docs/architecture/DATA_ACCESS.md`.
+[Governed Data Access](docs/architecture/DATA_ACCESS.md).
 
 This workspace keeps `presetUltramodern(...)` as the single public
 UltraModern.js 3.0 SuperApp surface and starts with an explicit shell:

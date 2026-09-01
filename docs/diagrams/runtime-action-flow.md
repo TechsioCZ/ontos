@@ -2,22 +2,23 @@
 
 ```mermaid
 sequenceDiagram
-  participant UI as UI/API/Import
-  participant App as OntOS Application Runtime
-  participant Auth as Authn/Authz/Policy
-  participant Cmd as Command Handler
+  participant Caller as UI/API/Import
+  participant Core as Shell/Core gateway
+  participant Gate as Module/Authz/Policy gates
+  participant Owner as Owner-local Action runtime
   participant PG as Postgres
-  participant W as Worker Runtime
-  participant Proj as Neo4j/Search/Reports/Exports
+  participant Worker as Owner-local worker
+  participant SideEffect as Projection/integration
 
-  UI->>App: invoke registered Action
-  App->>Auth: resolve principal, context, module state, permissions, policy
-  Auth-->>App: allow/deny
-  App->>Cmd: execute command
-  Cmd->>PG: transaction: domain data + audit + domain event + outbox
-  PG-->>Cmd: commit
-  Cmd-->>App: result
-  App-->>UI: response
-  W->>PG: claim outbox messages
-  W->>Proj: update projections / exports
+  Caller->>Core: invoke declared Action
+  Core->>Gate: resolve trusted scope and gate structured entrypoint
+  Gate-->>Core: definite allow or typed rejection
+  Core->>Owner: dispatch public contract to private handler
+  Owner->>PG: one transaction: state + invocation/evidence + event + outbox
+  PG-->>Owner: commit
+  Owner-->>Core: typed result
+  Core-->>Caller: declared response
+  Worker->>PG: claim owner delivery idempotently
+  Worker->>SideEffect: apply or reconcile
+  Worker->>PG: checkpoint outcome
 ```

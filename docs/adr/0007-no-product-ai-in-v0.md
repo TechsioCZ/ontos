@@ -1,6 +1,6 @@
 # ADR-0007: No product AI in V0
 
-Status: Accepted for current planning
+Status: Accepted
 
 ## Context
 

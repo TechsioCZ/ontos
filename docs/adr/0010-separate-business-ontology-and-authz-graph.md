@@ -1,6 +1,6 @@
 # ADR-0010: Separate business ontology graph and authorization graph
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 

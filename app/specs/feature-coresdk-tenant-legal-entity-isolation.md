@@ -42,7 +42,7 @@ So that another customer's or legal entity's data cannot leak because an individ
 
 The current code proves the interactive Shell selection flow but not the platform invariant required
 by `../docs/09_AUTHN_AUTHZ_MODEL.md` and
-`../docs/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md`:
+`../docs/evidence/mvp/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md`:
 
 - `TrustedPrincipalContext.legalEntityId` is optional without an operation-level declaration saying
   whether it must or must not be present.
@@ -100,8 +100,8 @@ Use these files to implement the feature:
 
 - `../docs/09_AUTHN_AUTHZ_MODEL.md` — defines tenant as the top-level isolation boundary and tenant leakage as a critical defect.
 - `../docs/15_PRE_DEVELOPMENT_VALIDATION_REPORT.md` — requires composite same-tenant keys and foreign keys.
-- `../docs/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md` — requires CoreSDK-owned context, safe transaction-scoped services, governed reads, and evidence.
-- `../docs/23_CORESDK_OPERATION_FLOW_DESIGN.md` — defines trusted identity, OperationalContext ownership, and owner-local transaction-scoped capabilities.
+- `../docs/evidence/mvp/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md` — requires CoreSDK-owned context, safe transaction-scoped services, governed reads, and evidence.
+- `../docs/evidence/mvp/23_CORESDK_OPERATION_FLOW_DESIGN.md` — defines trusted identity, OperationalContext ownership, and owner-local transaction-scoped capabilities.
 - `AGENTS.md` — authoritative application boundaries, Effect rules, and Codesmith requirements.
 - `docs/architecture/ACTIONS.md` — current Action lifecycle and transaction/evidence ordering.
 - `docs/architecture/DATABASE.md` — schema ownership, typed Drizzle access, migration boundaries, and narrow SQL exceptions.

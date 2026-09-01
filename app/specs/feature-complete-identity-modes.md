@@ -113,14 +113,8 @@ Use these files to implement the feature:
   audience-scoped gateway assertions.
 - `docs/architecture/MODULE_ENTRYPOINTS.md` — requires structured Core entrypoints and fail-closed
   context checks before private implementation resolution.
-- `docs/architecture/ULTRAMODERN.md` — requires direct strict Effect API topology and generated
-  business artifacts.
-- `../docs/07_RUNTIME_CONSISTENCY_MODEL.md` — defines authentication and impersonation evidence
-  semantics.
-- `../docs/09_AUTHN_AUTHZ_MODEL.md` — defines Better Auth/API-key ownership, Core bindings, system
-  jobs, impersonation, and effective-actor recording.
-- `../docs/11_V0_SCOPE_AND_MODULES.md` — requires V0 Better Auth user/API-key bindings and basic
-  service/integration principals.
+- `../docs/contexts/ontos/CONTEXT.md` — defines Principal, Principal Auth Binding, Authenticated
+  Principal Session, Tenant, and evidence vocabulary.
 - `../docs/adr/0014-authenticated-principal-session.md` — requires active Better Auth subjects to
   resolve through active tenant-local Core identity.
 - `apps/shell-super-app/package.json` — owns the pinned Better Auth/API-key dependency and focused
@@ -719,9 +713,9 @@ code finding remains open.
 - `human` remains the physical V0 principal kind for internal users, external operator users, and
   guests. Their distinctions belong in authorization roles and future Party/domain relationships,
   not additional authentication modes in this feature.
-- System operations may use a `system` principal or an explicitly configured `service` principal as
-  allowed by `../docs/09_AUTHN_AUTHZ_MODEL.md`. They never create a Better Auth binding and are not
-  callable through the public gateway.
+- System operations may use a `system` principal or an explicitly configured `service` principal
+  as documented in `README.md`. They never create a Better Auth binding and are not callable
+  through the public gateway.
 - Existing Action permission behavior allows an unconfigured Action for compatibility. Every new
   sensitive identity Action must have a restriction marker and explicit executor provisioning so
   that compatibility behavior is never its production authorization posture.

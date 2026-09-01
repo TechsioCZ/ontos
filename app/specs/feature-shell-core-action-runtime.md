@@ -110,7 +110,7 @@ Use these files to implement the feature:
 - `docs/architecture/ULTRAMODERN.md` — Effect-first implementation and generator constraints.
 - `../docs/06_CORE_KERNEL.md` — Core ownership of Action invocation, audit, domain event, outbox, and principal infrastructure.
 - `../docs/07_RUNTIME_CONSISTENCY_MODEL.md` — canonical transaction, event, outbox, and projection consistency model.
-- `../docs/23_CORESDK_OPERATION_FLOW_DESIGN.md` — existing Action registration, CoreSDK handoff, trusted identity, idempotency, and transaction design.
+- `../docs/evidence/mvp/23_CORESDK_OPERATION_FLOW_DESIGN.md` — existing Action registration, CoreSDK handoff, trusted identity, idempotency, and transaction design.
 - `specs/chore-postgres-drizzle-schema-foundation.md` — completed prerequisite Core database package and schema foundation.
 - `package.json` — root database tests and final validation aggregation.
 - `pnpm-workspace.yaml` — pinned Effect cohort and dependency policy.
