@@ -23,7 +23,7 @@ It does not own:
 
 - Legal Entity scope identity or lifecycle;
 - Principal, credentials, sessions, or authorization grants;
-- CRM engagement profiles;
+- Contacts engagement profiles;
 - Commerce purchasing profiles or Portal Accounts;
 - employee, contract, order, invoice, procurement, or tax-profile lifecycle;
 - provider-issued identifiers or transport state;
@@ -42,6 +42,7 @@ party.registry/
 ├── PartyRelationship
 ├── Counterparty
 ├── CounterpartyRolePeriod
+├── PartyMatchDecision
 ├── DuplicateCandidateCase
 ├── PartyCorrection
 ├── PartyMerge
@@ -104,6 +105,7 @@ party.party_contact_points
 party.party_relationships
 party.counterparties
 party.counterparty_role_periods
+party.party_match_decisions
 party.duplicate_candidate_cases
 party.party_corrections
 party.party_merges
@@ -122,6 +124,7 @@ Required uniqueness invariants include:
 ```text
 Party identity             unique (tenant_id, party_id)
 Counterparty context       unique (tenant_id, party_id, legal_entity_id)
+Party match decision       unique (tenant_id, action_invocation_id)
 Party alias                unique (tenant_id, alias_party_id)
 Strong identifier claim    unique (tenant_id, identifier_type_key, namespace, normalized_value)
 Current preferred contact  type/purpose-specific partial uniqueness where the type allows one
@@ -158,48 +161,81 @@ Party create must be safe under concurrent requests and projection lag.
 ```text
 PartyCreate(candidate)
   normalize candidate with versioned type rules
+  reject insufficient evidence that one real-world subject exists
+
   begin canonical transaction
     lock/reuse Action idempotency anchor
     resolve every qualifying strong identifier claim
 
     if all claims resolve to one Party
       validate non-conflict with the remaining evidence
-      return existing PartyRef
+      persist MATCHED PartyMatchDecision
+      return MATCHED_EXISTING(partyRef, decisionRef)
 
     if claims resolve to several Parties or contradict authoritative evidence
       create/reuse DuplicateCandidateCase
-      reject as AMBIGUOUS
+      persist AMBIGUOUS PartyMatchDecision
+      return AMBIGUOUS(caseRef, decisionRef)
 
     acquire missing strong identifier claims
       conflict means restart resolution inside the transaction
 
     if no strong claim exists
       require explicit create-without-strong-identifier policy
-      optionally create/reuse DuplicateCandidateCase
+      if review is required
+        create/reuse DuplicateCandidateCase
+        persist AMBIGUOUS PartyMatchDecision
+        return AMBIGUOUS(caseRef, decisionRef)
 
     insert one Party
     insert accepted initial assertions
     attach acquired claims to that Party
-    emit PartyCreated
-  commit
+    persist CREATED PartyMatchDecision
+    collect PartyCreated and linked Outbox Messages
+    return CREATED(partyRef, decisionRef)
+
+  commit canonical state, decision/case state, Action evidence,
+    Domain Events, linked Outbox Messages, and invocation success atomically
 ```
 
 A preflight fuzzy search may improve user experience, but the transaction repeats every invariant
 read against the Party Registry operational store. A result from Core Search is never sufficient to
 create, match, or reject a Party.
 
-The create Action returns one of these domain outcomes:
+The create Action result is:
 
 ```text
-CREATED(partyRef)
+CREATED(partyRef, decisionRef)
 MATCHED_EXISTING(partyRef, decisionRef)
-AMBIGUOUS(caseRef)
-REJECTED_INSUFFICIENT_SUBJECT_EVIDENCE
-REJECTED_IDENTIFIER_CONFLICT(caseRef)
+AMBIGUOUS(caseRef, decisionRef)
 ```
+
+Insufficient evidence that the Candidate represents one real-world subject is a typed domain
+rejection and persists no Party Match Decision or Duplicate Candidate case. Identifier conflicts
+that require durable review produce the committed `AMBIGUOUS` result instead of returning an Action
+failure whose transaction would roll back the case.
 
 `NO_MATCH` is an internal matching result, not proof that an insert will remain safe after the
 transaction begins.
+
+### Commit, publication, and recovery
+
+`PartyMatchDecision` is the durable result reference for Party Create. It records the Action
+Invocation, Candidate fingerprint, Match Rule version, outcome, and exactly one of `partyRef` or
+`caseRef`. The decision commits in the same transaction as the resulting Party or Duplicate
+Candidate case.
+
+No search descriptor, projection update, consumer notification, or external publication occurs
+before commit. The successful Action commits its Party-owned state, Audit and Data Access evidence,
+Domain Events, linked Outbox Messages, Party Match Decision, and invocation success marker
+atomically. Outbox Workers publish projections and integration effects only after that commit.
+
+If the database acknowledgement is indeterminate, the caller uses the standard Action commit
+resolution operation with the Action Invocation identity. A `succeeded` invocation proves commit;
+the caller then performs a governed Party Match Decision Read by Action Invocation or caller
+idempotency identity to recover the same `partyRef`, `caseRef`, and outcome. It never reruns create
+because Party Search did or did not return a result. A repeated request with the same idempotency key
+and request hash must resolve to the same committed decision without executing the handler again.
 
 ## Party assertion semantics
 
@@ -391,8 +427,9 @@ DISMISSED_AS_NON_SUBJECT
 CONFIRMED_DUPLICATE_PARTIES
 ```
 
-Resolution is an Action. Repeated identical evidence reuses the prior open or resolved case unless a
-new fact, policy version, or Candidate meaning changes the decision input.
+Creating or reusing the case and its AMBIGUOUS Party Match Decision is a committed successful Action
+outcome. Resolution is a separate Action. Repeated identical evidence reuses the prior open or
+resolved case unless a new fact, policy version, or Candidate meaning changes the decision input.
 
 ## Correction
 
@@ -478,24 +515,24 @@ bulk field overwrite is excluded.
 Connector Registry owns provider-issued record correlations. It does not own ICO, CZ_DIC, Party
 identity, or the accepted Party state.
 
-## CRM replacement
+## Contacts replacement
 
-The repository's current CRM implementation is not a production System of Record. Replace it with a
-breaking change:
+The repository's current Contacts implementation is not a production System of Record. Replace it
+with a breaking change:
 
 ```text
-current CRM customer/contact identity
+current Contacts customer/contact identity
   -> Party Registry Party/Contact Point/Relationship/Counterparty Resources
-  -> CRM-owned engagement profile referencing PartyRef/CounterpartyRef
+  -> Contacts-owned engagement profile referencing PartyRef/CounterpartyRef
 ```
 
 Required implementation sequence:
 
 1. publish Party Registry Resources, Actions, Reads, and events;
-2. add CRM PartyRef/CounterpartyRef contracts;
+2. add Contacts PartyRef/CounterpartyRef contracts;
 3. move shared identity writes to Party Registry Actions;
-4. make CRM own only engagement profile/workflow facts;
-5. remove `crm.customers` and subordinate-contact identity ownership;
+4. make Contacts own only engagement profile/workflow facts;
+5. remove legacy Contacts customer and subordinate-contact identity ownership;
 6. update tests and fixtures to create Party state through public contracts.
 
 Do not build repository-only backfill, dual-write, compatibility aliases, or long-lived migration
@@ -507,7 +544,11 @@ The initial implementation is not complete until these behaviors pass:
 
 - two concurrent creates with the same qualifying ICO produce one Party;
 - projection lag cannot produce a duplicate Party;
-- a conflicting authoritative identifier creates/reuses one ambiguity case;
+- a conflicting authoritative identifier commits one ambiguity case and one Party Match Decision;
+- an insufficient-subject-evidence rejection commits neither a case nor a decision;
+- an indeterminate Party Create commit recovers the same outcome through invocation resolution and
+  Party Match Decision Read;
+- a repeated idempotent Party Create never executes the handler again and resolves the same result;
 - unverified shared email or phone never auto-matches;
 - cross-Tenant identifier equality never resolves or conflicts across Tenants;
 - a Legal Entity cannot be supplied where PartyRef is required;
@@ -519,7 +560,7 @@ The initial implementation is not complete until these behaviors pass:
 - archived Party ResourceRefs remain readable but are unavailable for new selection;
 - every Action emits only declared Domain Events and linked Outbox Messages atomically;
 - all Party tables enforce Tenant isolation with enabled and forced RLS;
-- the CRM no longer owns shared person/organization identity after the breaking replacement.
+- Contacts no longer owns shared person/organization identity after the breaking replacement.
 
 Run the smallest affected dependency cone for each implementation increment. File presence, a
 manifest declaration, or a generated marker is not evidence that these behaviors work.
