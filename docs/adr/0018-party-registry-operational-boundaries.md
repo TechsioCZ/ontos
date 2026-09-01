@@ -6,8 +6,8 @@ Status: Accepted.
 
 ADR-0015 assigns shared tenant-scoped person and organization identity to Party Registry. The
 planning tree for issue #179 adds matching, correction, merge, Counterparties, Contact Points,
-external evidence, search, and CRM replacement. Several boundaries must be explicit before those
-capabilities can be implemented without later replacing the identity model:
+external evidence, search, and Contacts replacement. Several boundaries must be explicit before
+those capabilities can be implemented without later replacing the identity model:
 
 - a managed Legal Entity is also a real organization, but it is already a trusted Core scope
   Resource;
@@ -18,8 +18,8 @@ capabilities can be implemented without later replacing the identity model:
   relationships, correction, and merge;
 - preserving an absorbed Party ID is necessary but not sufficient when consuming modules own
   colliding profiles;
-- the repository's current CRM is not a live authority, while a real External Business System may
-  require a governed migration.
+- the repository's current Contacts implementation is not a live authority, while a real External
+  Business System may require a governed migration.
 
 ## Decision
 
@@ -75,7 +75,23 @@ it:
    Identifier;
 4. returns the existing Party when the claim already resolves unambiguously;
 5. creates one Party and its accepted initial assertions only when no conflicting claim exists;
-6. records an ambiguity case instead of guessing when authoritative claims conflict.
+6. creates or reuses a Duplicate Candidate case instead of guessing when authoritative claims
+   conflict;
+7. stores one Party Match Decision linked to the Action Invocation and resulting Party or case.
+
+`CREATED`, `MATCHED_EXISTING`, and `AMBIGUOUS` are committed Action results. Ambiguity is not an
+Action failure whose rollback would erase the review case. Insufficient evidence that the Candidate
+represents one real-world subject remains a typed rejection and commits no Party Match Decision or
+case.
+
+Party state, identifier claims, Party Match Decision, Duplicate Candidate case where applicable,
+Audit and Data Access evidence, Domain Events, linked Outbox Messages, and the Action invocation
+success marker commit atomically. Nothing is published to search or consumers before that commit.
+
+If database acknowledgement is indeterminate, the caller uses the standard Action commit-resolution
+operation. A succeeded invocation proves commit, and a governed Party Match Decision Read recovers
+the same result by Action Invocation or caller idempotency identity. The caller never retries create
+because an eventually consistent search result is absent.
 
 Core Search, Neo4j, caches, and other projections are never used to enforce identity uniqueness.
 Weak-signal matching may rank candidates, but it cannot replace the transactional exact-claim
@@ -153,13 +169,13 @@ canonical Party state directly. Provider-issued identifiers are held by Connecto
 exchange runs through an explicit Integration Route using a Symmy Connector or Direct Provider
 Adapter as appropriate. Party Registry applies accepted evidence through its own Actions.
 
-The current repository CRM is replaceable implementation evidence, not a live System of Record. Its
-`crm.customers` and `crm.contacts` schema may be broken and replaced directly. No compatibility
-layer, backfill, or dual-write is required for that repository-only replacement.
+The current repository Contacts implementation is replaceable evidence, not a live System of
+Record. Its customer and contact identity resources may be broken and replaced directly. No
+compatibility layer, backfill, or dual-write is required for that repository-only replacement.
 
 Migration work is created only for a verified live External Business System or dataset. Such work
 must identify the exact fact owner, reference inventory, mapping, reconciliation, cutover, and
-rollback. The product category `CRM` or a table name is not proof of authority or active use.
+rollback. The product category `Contacts` or a table name is not proof of authority or active use.
 
 ## Initial delivery cut
 
@@ -173,7 +189,7 @@ The initial implementation includes:
 - tenant-level Party authorization and Legal-Entity-scoped Counterparty authorization;
 - Party/Counterparty search descriptors;
 - explicit correction of Party-owned assertions;
-- direct breaking replacement of the repository's current CRM identity ownership.
+- direct breaking replacement of the repository's current Contacts identity ownership.
 
 The initial implementation excludes until a concrete use case and tested contract exist:
 
@@ -182,7 +198,7 @@ The initial implementation excludes until a concrete use case and tested contrac
 - fuzzy auto-match;
 - production merge execution;
 - automatic ARES conflict application;
-- long-lived dual-write or compatibility for the repository-only CRM.
+- long-lived dual-write or compatibility for the repository-only Contacts implementation.
 
 ## Consequences
 
