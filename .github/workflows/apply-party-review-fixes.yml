@@ -1,0 +1,206 @@
+name: Apply Party identifier-claim review fixes
+
+on:
+  push:
+    branches:
+      - docs/party-registry-foundations
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  apply-review-fixes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Apply claim and case-resolution fixes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          party_path = Path('app/docs/architecture/PARTY_REGISTRY.md')
+          party = party_path.read_text()
+
+          old_create = '''    resolve every qualifying strong identifier claim
+
+              if all claims resolve to one Party
+                validate non-conflict with the remaining evidence
+                persist MATCHED PartyMatchDecision
+                return MATCHED_EXISTING(partyRef, decisionRef)
+
+              if claims resolve to several Parties or contradict authoritative evidence
+                create/reuse DuplicateCandidateCase
+                persist AMBIGUOUS PartyMatchDecision
+                return AMBIGUOUS(caseRef, decisionRef)
+
+              acquire missing strong identifier claims
+                conflict means restart resolution inside the transaction
+
+              if no strong claim exists
+          '''
+          new_create = '''    resolve every qualifying strong identifier claim
+              partition them into resolved Party claims and unclaimed claims
+
+              if resolved claims point to several Parties or contradict authoritative evidence
+                create/reuse DuplicateCandidateCase
+                persist AMBIGUOUS PartyMatchDecision
+                return AMBIGUOUS(caseRef, decisionRef)
+
+              if resolved claims point to exactly one Party
+                validate every remaining authoritative fact against that Party
+                acquire every compatible unclaimed strong claim for that Party
+                  conflict means restart claim resolution in a fresh transaction
+                insert accepted compatible assertions on that Party
+                persist MATCHED PartyMatchDecision
+                return MATCHED_EXISTING(partyRef, decisionRef)
+
+              if no strong claim exists
+          '''
+          if old_create in party:
+              party = party.replace(old_create, new_create, 1)
+          elif new_create not in party:
+              raise SystemExit('Party create block did not match expected content')
+
+          old_insert = '''    insert one Party
+              insert accepted initial assertions
+              attach acquired claims to that Party
+          '''
+          new_insert = '''    reserve every unclaimed qualifying claim for one prospective Party identity
+              conflict means restart claim resolution in a fresh transaction
+              insert one Party
+              insert accepted initial assertions
+              attach every reserved claim to that Party
+          '''
+          if old_insert in party:
+              party = party.replace(old_insert, new_insert, 1)
+          elif new_insert not in party:
+              raise SystemExit('Party insert block did not match expected content')
+
+          old_outcomes = '''Allowed resolution outcomes are:
+
+          ```text
+          MATCH_EXISTING
+          CREATE_NEW
+          NEEDS_EVIDENCE
+          DISMISSED_AS_NON_SUBJECT
+          CONFIRMED_DUPLICATE_PARTIES
+          ```
+
+          Creating or reusing the case and its AMBIGUOUS Party Match Decision is a committed successful Action
+          outcome. Resolution is a separate Action. Repeated identical evidence reuses the prior open or
+          resolved case unless a new fact, policy version, or Candidate meaning changes the decision input.
+          '''
+          new_outcomes = '''Allowed resolution outcomes are:
+
+          ```text
+          MATCH_EXISTING
+          CREATE_NEW
+          CORRECT_CLAIM_AND_MATCH
+          NEEDS_EVIDENCE
+          DISMISSED_AS_NON_SUBJECT
+          CONFIRMED_DUPLICATE_PARTIES
+          ```
+
+          `CREATE_NEW` is available only when a transactional recheck proves that every qualifying strong claim
+          is still unclaimed, or when the Candidate legitimately has no strong claim and the explicit
+          create-without-strong-identifier policy allows creation. It is forbidden while any qualifying strong
+          claim is owned by an existing Party. A reviewer cannot drop authoritative evidence merely to make
+          creation pass.
+
+          A case whose strong claims resolve to one or several existing Parties must instead match an existing
+          Party, correct/retract/reassign the wrong claim through an authorized Party Correction and then match,
+          confirm duplicate existing Parties for the separate merge flow, request evidence, or dismiss the input
+          as not representing a subject. Every resolution re-enters the atomic Party Create/Match boundary and
+          repeats claim resolution; the case decision alone never bypasses uniqueness.
+
+          Creating or reusing the case and its AMBIGUOUS Party Match Decision is a committed successful Action
+          outcome. Resolution is a separate Action. Repeated identical evidence reuses the prior open or
+          resolved case unless a new fact, policy version, or Candidate meaning changes the decision input.
+          '''
+          if old_outcomes in party:
+              party = party.replace(old_outcomes, new_outcomes, 1)
+          elif new_outcomes not in party:
+              raise SystemExit('Duplicate Candidate outcome block did not match expected content')
+
+          party_path.write_text(party)
+
+          adr_path = Path('docs/adr/0018-party-registry-operational-boundaries.md')
+          adr = adr_path.read_text()
+          old_adr = '''2. resolves exact active identity claims from the Party Registry operational store;
+          3. acquires or conflicts on the type-specific uniqueness claim for every strong Official
+             Identifier;
+          4. returns the existing Party when the claim already resolves unambiguously;
+          5. creates one Party and its accepted initial assertions only when no conflicting claim exists;
+          6. creates or reuses a Duplicate Candidate case instead of guessing when authoritative claims
+             conflict;
+          7. stores one Party Match Decision linked to the Action Invocation and resulting Party or case.
+          '''
+          new_adr = '''2. resolves exact active identity claims from the Party Registry operational store and
+             partitions them into resolved Party claims and unclaimed claims;
+          3. creates or reuses a Duplicate Candidate case when resolved claims point to several Parties or
+             authoritative evidence conflicts;
+          4. when all resolved claims point to one Party, validates every remaining authoritative fact and
+             atomically acquires every compatible unclaimed claim for that Party before returning it;
+          5. when no claim resolves, acquires or conflicts on every type-specific uniqueness claim before
+             creating one Party and its accepted initial assertions;
+          6. restarts canonical claim resolution after a concurrent claim conflict instead of trusting a stale
+             preflight result;
+          7. stores one Party Match Decision linked to the Action Invocation and resulting Party or case.
+          '''
+          if old_adr in adr:
+              adr = adr.replace(old_adr, new_adr, 1)
+          elif new_adr not in adr:
+              raise SystemExit('ADR claim block did not match expected content')
+
+          marker = '''Creating a Party without a strong identifier is an explicit policy path and may require an
+          Identity Reviewer.
+          '''
+          addition = '''Creating a Party without a strong identifier is an explicit policy path and may require an
+          Identity Reviewer. A Duplicate Candidate resolution may authorize `CREATE_NEW` only after a canonical
+          transactional recheck proves all qualifying strong claims are unclaimed. Claims already owned by an
+          existing Party must be matched, explicitly corrected/reassigned, or resolved through the duplicate
+          existing-Party flow; authoritative evidence cannot be silently discarded to create another Party.
+          '''
+          if marker in adr:
+              adr = adr.replace(marker, addition, 1)
+          elif addition not in adr:
+              raise SystemExit('ADR CREATE_NEW restriction marker did not match expected content')
+
+          adr_path.write_text(adr)
+          PY
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '26.5.0'
+
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+
+      - name: Run repository formatter
+        working-directory: app
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Commit review fixes
+        env:
+          TARGET_BRANCH: docs/party-registry-foundations
+        run: |
+          git add \
+            app/docs/architecture/PARTY_REGISTRY.md \
+            docs/adr/0018-party-registry-operational-boundaries.md
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs: close identifier-claim ambiguity gaps"
+          git push origin "HEAD:${TARGET_BRANCH}"
