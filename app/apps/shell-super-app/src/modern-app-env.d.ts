@@ -1,11 +1,10 @@
-import '@modern-js/app-tools/types';
-import type React from 'react';
+/// <reference types="@modern-js/app-tools/types" />
 
-declare global {
-  const ULTRAMODERN_SITE_URL: string;
-}
+declare const ULTRAMODERN_SITE_URL: string;
 
-declare module 'ticketing/Widget' {
-  const Component: React.ComponentType<Record<string, never>>;
-  export default Component;
+declare module 'crm/PageCrm' {
+  const PageCrm: React.FunctionComponent<{
+    readonly target: unknown;
+  }>;
+  export default PageCrm;
 }

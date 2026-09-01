@@ -1,3 +1,0 @@
-@import 'tailwindcss' prefix(accountingcore) source(none);
-@source '..';
-@import '@mvp/shared-design-tokens/tokens.css';

@@ -1,9 +1,10 @@
-import type { db } from './client.ts';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import type { coreDatabaseSchema } from './schema.ts';
 
-type CoreTransactionCallback = Parameters<typeof db.transaction>[0];
+export type CoreDatabaseExecutor = NodePgDatabase<typeof coreDatabaseSchema>;
+
+type CoreTransactionCallback = Parameters<CoreDatabaseExecutor['transaction']>[0];
 
 export type CoreTransaction = Parameters<CoreTransactionCallback>[0];
 
-export type CoreDbExecutor = typeof db | CoreTransaction;
-
-export type CoreReadonlyDbExecutor = Pick<CoreDbExecutor, 'execute' | 'select'>;
+export type CoreDbExecutor = CoreDatabaseExecutor | CoreTransaction;

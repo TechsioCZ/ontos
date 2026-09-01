@@ -1,7 +1,58 @@
 {
   "shell": {
+    "auth": {
+      "identity": {
+        "displayName": "Name",
+        "email": "Email",
+        "legalEntity": "Legal entity",
+        "principal": "Principal",
+        "tenant": "Tenant",
+        "title": "Authenticated identity"
+      },
+      "loginLink": "Login",
+      "logout": {
+        "action": "Logout",
+        "failed": "Logout failed. Try again.",
+        "pending": "Logging out…"
+      }
+    },
     "boundaries": {
       "toggle": "show team boundaries"
+    },
+    "dashboard": {
+      "account": {
+        "label": "Account menu"
+      },
+      "brand": "OntOS",
+      "header": {
+        "label": "Dashboard header"
+      },
+      "home": {
+        "title": "Home"
+      },
+      "legalEntity": {
+        "accessBlocked": "No legal entity is available for this account.",
+        "accessibleLabel": "Current legal entity",
+        "failed": "Legal-entity switching failed. Try again.",
+        "pending": "Switching legal entity…",
+        "placeholder": "Select a legal entity",
+        "selectionRequired": "Select one legal entity before using modules.",
+        "unavailable": "Legal-entity choices are temporarily unavailable. Reload the page to try again."
+      },
+      "navigation": {
+        "home": "Home",
+        "label": "Dashboard navigation"
+      },
+      "sidebar": {
+        "label": "Dashboard sidebar"
+      },
+    "tenant": {
+        "accessibleLabel": "Current tenant",
+        "failed": "Tenant switching failed. Try again.",
+        "pending": "Switching tenant…",
+      "unavailable": "Tenant choices are temporarily unavailable. Reload the page to try again."
+    },
+    "unavailable": "The authenticated Shell is temporarily unavailable. Reload the page to try again."
     },
     "hero": {
       "cardOne": "Add the first business vertical with create <domain> --vertical when the product needs one.",
@@ -19,6 +70,91 @@
       "en": "English",
       "switcher": "Language"
     },
+    "login": {
+      "back": "← Back to the home page",
+      "error": {
+        "forbidden": "This account is not permitted to access OntOS.",
+        "internal": "Login failed. Try again.",
+        "invalid": "The email address or password is invalid.",
+        "title": "Unable to log in",
+        "unavailable": "Authentication is temporarily unavailable. Try again."
+      },
+      "field": {
+        "login": "Login",
+        "password": "Password"
+      },
+      "required": {
+        "login": "Enter your login.",
+        "password": "Enter your password."
+      },
+      "pending": "Logging in…",
+      "seo": {
+        "description": "Sign in to the OntOS workspace."
+      },
+      "submit": "Login",
+      "title": "Login",
+      "toast": {
+        "description": "Fill in both required fields.",
+        "title": "Login details are incomplete"
+      }
+    },
+    "modules": {
+      "active": {
+        "item": "{{moduleKey}}: {{state}}",
+        "label": "Active MicroVerticals",
+        "unavailable": "Active MicroVerticals are temporarily unavailable. Reload the page to try again."
+      },
+      "state": {
+        "active": "Active",
+        "deprecated": "Deprecated",
+        "readOnly": "Read only"
+      },
+      "unavailable": "Module access is temporarily unavailable. Try again."
+    },
+    "moduleTarget": {
+      "forbidden": "You do not have permission to open this module.",
+      "loading": "Loading module…",
+      "not_found": "This module is not available in the current context.",
+      "selection_required": "Select a legal entity before opening a module.",
+      "seoDescription": "An authorized OntOS module workspace.",
+      "title": "Module",
+      "unavailable": "The module is temporarily unavailable. Try again."
+    },
+    "search": {
+      "empty": "No authorized results found.",
+      "label": "Search this legal entity",
+      "partial": "Some search providers are temporarily unavailable. The available results are shown.",
+      "selection_required": "Select a legal entity before searching.",
+      "seoDescription": "Search authorized resources in the selected OntOS context.",
+      "submit": "Search",
+      "title": "Search results",
+      "unavailable": "Search is temporarily unavailable. Try again."
+    },
+    "resource": {
+      "forbidden": "You do not have permission to view this resource.",
+      "media": {
+        "absent": "This resource does not support media attachments.",
+        "attach": "Attach media",
+        "available": "Media attachments are available.",
+        "failed": "Media attachment could not be started. Try again.",
+        "forbidden": "You do not have permission to attach media.",
+        "pending": "Starting media attachment…",
+        "read_only": "Media attachments are disabled while the module is read only or deprecated.",
+        "success": "Media attachment was started.",
+        "title": "Media",
+        "unavailable": "Media authorization is temporarily unavailable."
+      },
+      "not_found": "This resource was not found in the current context.",
+      "selection_required": "Select a legal entity before opening a resource.",
+      "seoDescription": "An authorized OntOS resource detail.",
+      "timeline": {
+        "empty": "No timeline events are available.",
+        "lagging": "Recent activity may still be processing.",
+        "title": "Timeline"
+      },
+      "title": "Resource",
+      "unavailable": "The resource is temporarily unavailable. Try again."
+    },
     "remoteUnavailable": "Remote vertical unavailable",
     "remotes": {},
     "routes": {
@@ -28,55 +164,5 @@
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
     "title": "UltraModern Workspace"
-  },
-  "auth": {
-    "backHome": "Back to home",
-    "emailLabel": "Email",
-    "loading": "Checking session...",
-    "loginFailedDescription": "Use the email and password for an account with access.",
-    "loginFailedTitle": "Email or password is incorrect",
-    "loginLink": "Log in",
-    "loginSubmit": "Log in",
-    "loginSubmitting": "Logging in",
-    "loginTitle": "Log in",
-    "logout": "Log out",
-    "passwordLabel": "Password"
-  },
-  "home": {
-    "eyebrow": "OntOS shell",
-    "title": "Home"
-  },
-  "mainMenu": {
-    "label": "Main menu",
-    "modules": "Modules"
-  },
-  "ticketing": {
-    "language": {
-      "cs": "Czech",
-      "en": "English",
-      "switcher": "Language"
-    },
-    "routes": {
-      "home": "Home"
-    },
-    "seo": {
-      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
-    },
-    "federatedSurface": "Federated surface owned by this vertical.",
-    "remoteUnavailable": "Remote vertical unavailable",
-    "role": "ticketing",
-    "routeSurface": "Route surface owned by this vertical.",
-    "title": "Ticketing Vertical",
-    "widgetBody": "Owns a vertical route surface.",
-    "pages": {
-      "ticketing": {
-        "body": "Ticketing Ticketing page owned by the ticketing microvertical.",
-        "eyebrow": "Ticketing",
-        "seo": {
-          "description": "Ticketing Ticketing page owned by the ticketing microvertical."
-        },
-        "title": "Ticketing Ticketing"
-      }
-    }
   }
 }

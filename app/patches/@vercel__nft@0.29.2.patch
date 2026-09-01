@@ -1,0 +1,124 @@
+diff --git a/out/analyze.js b/out/analyze.js
+index 6913ef2b4cc8bce64321fe0f74423053ce66dec2..d6264a3827df07fa5cd6aa0992e884d191ed34ac 100644
+--- a/out/analyze.js
++++ b/out/analyze.js
+@@ -234,6 +234,10 @@ async function analyze(id, code, job) {
+     const dir = path_1.default.dirname(id);
+     // if (typeof options.production === 'boolean' && staticProcess.env.NODE_ENV === UNKNOWN)
+     //  staticProcess.env.NODE_ENV = options.production ? 'production' : 'dev';
++    const isBuildHostSystemPath = (path) => /^\/(?:dev|etc|proc|run|sys)(?:\/|$)/.test(path) ||
++        /^\/var\/run(?:\/|$)/.test(path);
++    const isBuildHostWildcardRoot = (path) => isBuildHostSystemPath(path) ||
++        path_1.default.resolve(path) === path_1.default.resolve(os_1.default.homedir());
+     cwd = job.cwd;
+     const pkgBase = (0, get_package_base_1.getPackageBase)(id);
+     const emitAssetDirectory = (wildcardPath) => {
+@@ -251,6 +255,8 @@ async function analyze(id, code, job) {
+             return patternPath[index - 1] === path_1.default.posix.sep ? '**/*' : '*';
+         })
+             .replace(repeatGlobRegEx, '/**/*') || '/**/*';
++        if (isBuildHostWildcardRoot(assetDirPath))
++            return;
+         if (job.ignoreFn(path_1.default.relative(job.base, assetDirPath + wildcardPattern)))
+             return;
+         assetEmissionPromises = assetEmissionPromises.then(async () => {
+@@ -424,6 +430,8 @@ async function analyze(id, code, job) {
+         if (!wildcardPattern.endsWith('*'))
+             wildcardPattern +=
+                 '?(' + (job.ts ? '.ts|.tsx|' : '') + '.js|.json|.node)';
++        if (isBuildHostWildcardRoot(wildcardDirPath))
++            return;
+         if (job.ignoreFn(path_1.default.relative(job.base, wildcardDirPath + wildcardPattern)))
+             return;
+         assetEmissionPromises = assetEmissionPromises.then(async () => {
+diff --git a/out/node-file-trace.js b/out/node-file-trace.js
+index 2ca08aa0bbcef87d67c87ef6b462dbd1079ad76b..16d19effebdc5ae96529929abb03eab5e0a519b6 100644
+--- a/out/node-file-trace.js
++++ b/out/node-file-trace.js
+@@ -48,6 +48,19 @@ function inPath(path, parent) {
+     const pathWithSep = (0, path_1.join)(parent, path_1.sep);
+     return path.startsWith(pathWithSep) && path !== pathWithSep;
+ }
++function isBuildHostSystemPath(path) {
++    return /^\/(?:dev|etc|proc|run|sys)(?:\/|$)/.test(path) ||
++        /^\/var\/run(?:\/|$)/.test(path);
++}
++function isTransientFilesystemEntry(path) {
++    return /[\\/]pnpm[\\/]store[\\/]v\d+[\\/]projects[\\/][0-9a-f]{32}$/.test(path);
++}
++async function processInBatches(items, handler, batchSize = 16) {
++    const values = [...items];
++    for (let index = 0; index < values.length; index += batchSize) {
++        await Promise.all(values.slice(index, index + batchSize).map(handler));
++    }
++}
+ async function nodeFileTrace(files, opts = {}) {
+     const job = new Job(opts);
+     if (opts.readFile)
+@@ -297,6 +310,8 @@ class Job {
+         return undefined;
+     }
+     async emitDependency(path, parent) {
++        if (isBuildHostSystemPath(path))
++            return;
+         if (this.processed.has(path)) {
+             if (parent) {
+                 await this.emitFile(path, 'dependency', parent);
+@@ -332,8 +347,11 @@ class Job {
+         }
+         else {
+             const source = await this.readFile(path);
+-            if (source === null)
++            if (source === null) {
++                if (isTransientFilesystemEntry(path))
++                    return;
+                 throw new Error('File ' + path + ' does not exist.');
++            }
+             // analyze should not have any side-effects e.g. calling `job.emitFile`
+             // directly as this will not be included in the cachedAnalysis and won't
+             // be emit for successive runs that leverage the cache
+@@ -344,26 +362,24 @@ class Job {
+         if (isESM) {
+             this.esmFileList.add((0, path_1.relative)(this.base, path));
+         }
+-        await Promise.all([
+-            ...[...assets].map(async (asset) => {
+-                const ext = (0, path_1.extname)(asset);
+-                if (ext === '.js' ||
+-                    ext === '.mjs' ||
+-                    ext === '.node' ||
+-                    ext === '' ||
+-                    (this.ts &&
+-                        (ext === '.ts' || ext === '.tsx') &&
+-                        asset.startsWith(this.base) &&
+-                        asset
+-                            .slice(this.base.length)
+-                            .indexOf(path_1.sep + 'node_modules' + path_1.sep) === -1))
+-                    await this.emitDependency(asset, path);
+-                else
+-                    await this.emitFile(asset, 'asset', path);
+-            }),
+-            ...[...deps].map(async (dep) => this.maybeEmitDep(dep, path, !isESM)),
+-            ...[...imports].map(async (dep) => this.maybeEmitDep(dep, path, false)),
+-        ]);
++        await processInBatches(assets, async (asset) => {
++            const ext = (0, path_1.extname)(asset);
++            if (ext === '.js' ||
++                ext === '.mjs' ||
++                ext === '.node' ||
++                ext === '' ||
++                (this.ts &&
++                    (ext === '.ts' || ext === '.tsx') &&
++                    asset.startsWith(this.base) &&
++                    asset
++                        .slice(this.base.length)
++                        .indexOf(path_1.sep + 'node_modules' + path_1.sep) === -1))
++                await this.emitDependency(asset, path);
++            else
++                await this.emitFile(asset, 'asset', path);
++        });
++        await processInBatches(deps, async (dep) => this.maybeEmitDep(dep, path, !isESM));
++        await processInBatches(imports, async (dep) => this.maybeEmitDep(dep, path, false));
+     }
+ }
+ exports.Job = Job;

@@ -1,0 +1,52 @@
+import { Schema } from 'effect';
+import type { Effect } from 'effect';
+import type {
+  DataAccessEventInput,
+  DeclaredDomainEvent,
+  DomainEventContractMap,
+  DomainEventReference,
+  OutboxMessage,
+} from './events.ts';
+import type { ActionCollectorError } from './errors.ts';
+import type { OperationalScope } from '../operations/context.ts';
+
+export { TrustedPrincipalContextSchema } from './principal-context.ts';
+export type { TrustedPrincipalContext } from './principal-context.ts';
+
+const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
+
+export const ActionTransportMetadataSchema = Schema.Struct({
+  correlationId: nonEmptyString,
+  idempotencyKey: Schema.optionalKey(nonEmptyString),
+  targetModuleKey: Schema.optionalKey(nonEmptyString),
+  targetResourceId: Schema.optionalKey(nonEmptyString),
+  targetResourceType: Schema.optionalKey(nonEmptyString),
+  traceId: Schema.optionalKey(nonEmptyString),
+});
+
+export type ActionTransportMetadata = Schema.Schema.Type<typeof ActionTransportMetadataSchema>;
+
+export interface ActionCollectorMethods<DomainEvents extends DomainEventContractMap> {
+  readonly addDomainEvent: (
+    event: DeclaredDomainEvent<DomainEvents>,
+  ) => Effect.Effect<DomainEventReference, ActionCollectorError>;
+  readonly addOutboxMessage: (
+    domainEvent: DomainEventReference,
+    message: OutboxMessage,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordDataAccess: (
+    event: DataAccessEventInput,
+  ) => Effect.Effect<void, ActionCollectorError>;
+  readonly recordAuditEvidence: (
+    evidence: Readonly<Record<string, Schema.Schema.Type<typeof Schema.Json>>>,
+  ) => Effect.Effect<void, ActionCollectorError>;
+}
+
+export interface ActionHandlerContext<
+  DomainEvents extends DomainEventContractMap,
+  Services = Readonly<Record<string, never>>,
+> extends ActionCollectorMethods<DomainEvents> {
+  readonly actionInvocationId: string;
+  readonly scope: OperationalScope;
+  readonly services: Services;
+}

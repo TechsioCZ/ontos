@@ -1,16 +1,11 @@
 import { Outlet } from '@modern-js/plugin-tanstack/runtime';
-import { Toaster } from '@techsio/ui-kit/molecules/toast';
-import { AppThemeProvider, BrandThemeScript } from '@techsio/ui-kit/theme/theme-provider';
+import './ui-kit.css';
 import './index.css';
 
-export default function Layout() {
-  return (
-    <div data-app-id="shell-super-app">
-      <BrandThemeScript defaultBrand="base" />
-      <AppThemeProvider defaultBrand="base" defaultMode="system">
-        <Outlet />
-        <Toaster />
-      </AppThemeProvider>
-    </div>
-  );
-}
+const Layout = () => (
+  <div data-app-id="shell-super-app">
+    <Outlet />
+  </div>
+);
+
+export default Layout;

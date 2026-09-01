@@ -1,123 +1,24 @@
-# UltraModern Agent Contract
+# OntOS application guardrails
 
-This workspace is generated as an agent-ready UltraModern.js SuperApp shell.
-Codex should treat the files under `.codex/skills` as local project
-instructions, not optional reading.
+Before touching files under `app/`, read [the application coding guide](./README.md). It owns
+setup, generator commands, coding conventions, validation, and links to task-specific architecture.
 
-## Mandatory Codesmith Generators
+Never read an `.env` file.
 
-When creating any of the following code, always run the matching Codesmith generator
-from this workspace root. Do not create the initial files or wiring by hand; generate
-them first, then adapt the generated output if the task requires it.
+## Specifications
 
-- Action: `pnpm scaffold:action -- --vertical <vertical> --action <action>`
-- Microvertical page: `pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>`
-- Outbox message: `pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>`
-- Policy: `pnpm scaffold:policy -- --scope <global|microvertical> --policy <policy>`; add `--vertical <vertical>` when the scope is `microvertical`.
+Read only the specification explicitly named by the task or GitHub issue. Do not browse
+`app/specs/` for context. A specification with `status: done`, `status: complete`, or
+`status: superseded` is historical implementation evidence; stop unless the task explicitly
+requests provenance.
 
-Use the command's `--help` option to discover supported customization flags. The
-generator requirement applies to agents and all delegated work.
+## Stop conditions before editing
 
-## Quality Gates
+- A supported business artifact must start from its required Codesmith generator. If the category
+  has no approved generator or governed gateway, stop and get that boundary approved first.
+- A change must not import another deployment's private source, registration, data access, or
+  executable behavior. If the task appears to require that, stop and resolve the MicroVertical
+  contract instead.
 
-Generated workspaces target Node `>=26` and pnpm `11.13.0`. Keep
-`packageManager`, `.mise.toml`, generated validation, and CI aligned to that
-baseline; do not reintroduce Corepack or older pnpm aliases.
-
-- `pnpm lint` runs Oxlint with the Ultracite preset.
-- `pnpm format` runs oxfmt.
-- `pnpm typecheck` runs TS7 native-preview through effect-tsgo in project-reference build mode with parallel `--checkers` and `--builders`.
-- `pnpm i18n:boundaries` verifies workspace source boundaries through `@modern-js/code-tools`.
-- `pnpm contract:check` verifies the generated workspace contract.
-- `pnpm mf:types` verifies Module Federation type outputs after builds.
-- `pnpm check` is a local convenience aggregate for the primitive gates.
-- Generated CI runs primitive gates as separate matrix jobs instead of calling `pnpm check`.
-- Generated Codex stop hooks and subagent-stop hooks run `pnpm format && pnpm lint:fix && pnpm check`.
-- `postinstall` formats the generated tree, installs/updates pinned Codex skills, and installs `lefthook`. It never installs system packages. Clone-backed public skills are attempted by default; offline clone failures are advisory. Reference repos remain an explicit `pnpm agents:refs:install` step. Generated `lefthook.yml` runs separate format and lint-fix commands on pre-commit; pre-push runs read-only primitive gates in parallel.
-
-## Localized Routes
-
-Generated apps keep locale-prefixed entry routes under `src/routes/[lang]`,
-static language links, and canonical plus `hreflang` metadata. A new workspace
-starts shell-only; `create <domain> --vertical` adds route-owned metadata,
-localized resources, and Effect BFF surfaces for that domain. Runtime i18n is
-not enabled in the starter because the current React 19 + Module Federation
-streaming SSR stack must render predictably first. Canonical and hreflang URLs
-use `MODERN_PUBLIC_SITE_URL` only. JS/CSS/static assets use
-`MODERN_ASSET_PREFIX`, then `ULTRAMODERN_ASSET_PREFIX`, then `/`; do not use
-`MODERN_PUBLIC_SITE_URL` or stale public URL aliases as asset-prefix fallbacks.
-Without an asset prefix, builds emit origin-relative asset paths so pages work
-behind tunnels and reverse proxies.
-
-## Required Skill Baseline
-
-Use these skills when the task touches the matching subsystem:
-
-- `techsio-ui-kit-ai`: UI implementation, UI refactors, app interface work, and design-system decisions should use the Techsio UI Kit Ai skills and components.
-- `rsbuild-best-practices`: Modern.js app build configuration, Rsbuild options, assets, type checking, and build debugging.
-- `rspack-best-practices`: Rspack-level bundling, CSS, assets, profiling, and production build behavior.
-- `rspack-tracing`: Rspack build failures, slow builds, crash localization, and trace analysis.
-- `rsdoctor-analysis`: Evidence-based bundle analysis from `rsdoctor-data.json`, including duplicate packages, large chunks, and retained modules.
-- `rslib-best-practices`: Shared packages, generated libraries, declaration output, and Rslib configuration.
-- `rslib-modern-package`: Package contracts for shared libraries, exports, side effects, dependency placement, README, and release readiness.
-- `rstest-best-practices`: Rstest configuration, test writing, mocking, snapshots, coverage, and CI test behavior.
-- `mf`: Module Federation docs, Modern.js integration, DTS/type checks, shared dependency checks, runtime errors, and observability troubleshooting.
-
-Skill bodies are lockfile-pinned in `.codex/skills-lock.json` and installed
-into the repo-owned `.codex/skills` directory by default. The installer updates
-only pinned skill directories and preserves unrelated user skills already
-present under `.codex/skills`. Set `ULTRAMODERN_SKIP_CODEX_SKILLS=1` or
-`ULTRAMODERN_CODEX_SKILLS=0` to opt out during install. `pnpm skills:check` is
-advisory when local skill bodies are missing so offline CI can still run the
-normal gate.
-
-## Private Skills
-
-ScriptedAlchemy/TechsioCZ skills are private and are cloned only when the current developer is authorized for `TechsioCZ/skills`.
-
-```bash
-pnpm skills:install
-```
-
-The installer copies only the pinned private skills from `.codex/skills-lock.json`: `plan-graph`, `dag`, `subagent-graph`, `helm`, and `debugger-mode`.
-
-## Agent Reference Repositories
-
-The workspace can install read-only source references under `repos/` with the explicit `pnpm agents:refs:install` command using `git subtree add --squash`. These repositories are reference material for coding agents, not application source:
-
-- `repos/effect` from `Effect-TS/effect`.
-- `repos/ultramodern.js` from `BleedingDev/ultramodern.js`.
-
-Agents may read files under `repos/` to understand upstream patterns, APIs, and project conventions. Do not edit files under `repos/`, import from them, or make production code depend on them. `ULTRAMODERN_SKIP_AGENT_REPOS=1` disables the installer even when invoked explicitly.
-
-## Project Priorities
-
-- Keep `presetUltramodern` as the single preset.
-- Maximize TS7 latest dev usage through `@typescript/native-preview` and TS-Go. Keep classic `typescript` on latest TS6 only for compatibility peers and tooling that cannot consume native-preview yet.
-- Keep the initial workspace shell-only unless a user explicitly asks for a
-  starter vertical.
-- Use `create <domain> --vertical` as the growth path for real business
-  MicroVerticals.
-- Prefer Effect for BFF code.
-- Prefer TanStack Router for app routing.
-- Keep UI-kit or design-system code as ordinary vertical or shared package code, not a special core path.
-- Keep generated packages explicit and publishable: stable `exports`, correct declarations, small public APIs, and clear ownership metadata.
-- Do not add migration tooling or codemods unless the project owner explicitly asks for migration work.
-
-## Skill Provenance
-
-The Rstack skills, public Module Federation skill, and private TechsioCZ skill set are pinned in `.codex/skills-lock.json`. Do not update, remove, or replace them casually. If a skill needs updating, update the lock file and run the affected primitive gate plus `pnpm check`.
-
-## Agent skills
-
-### Issue tracker
-
-Issues are tracked in GitHub Issues; external pull requests are not a triage surface. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Triage uses the canonical `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix` labels. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This is a single-context repository. See `docs/agents/domain.md`.
+All other coding and command rules are owned by [the application coding guide](./README.md) and the
+task-specific document it selects.

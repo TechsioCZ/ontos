@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasCompleteGeneratedModuleApiSeam } from './generated-module-api-boundary.mts';
+import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 const workspaceRoot = process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd();
-const failures = [];
+const failures: string[] = [];
 
 const ignoredDirectories = new Set([
   '.git',
@@ -15,33 +17,27 @@ const ignoredDirectories = new Set([
   'repos',
 ]);
 
-function normalize(filePath) {
-  return filePath.split(path.sep).join('/');
-}
+const normalize = (filePath: string): string => filePath.split(path.sep).join('/');
 
-function relative(filePath) {
-  return normalize(path.relative(workspaceRoot, filePath));
-}
+const relative = (filePath: string): string => normalize(path.relative(workspaceRoot, filePath));
 
-function exists(relativePath) {
-  return fs.existsSync(path.join(workspaceRoot, relativePath));
-}
+const exists = (relativePath: string): boolean =>
+  fs.existsSync(path.join(workspaceRoot, relativePath));
 
-function readText(relativePath) {
-  return fs.readFileSync(path.join(workspaceRoot, relativePath), 'utf8');
-}
+const readText = (relativePath: string): string =>
+  fs.readFileSync(path.join(workspaceRoot, relativePath), 'utf-8');
 
-function fail(message) {
+const fail = (message: string): void => {
   failures.push(message);
-}
+};
 
-function assert(condition, message) {
+const assert = (condition: boolean, message: string): void => {
   if (!condition) {
     fail(message);
   }
-}
+};
 
-function listFiles(startDirectory) {
+const listFiles = (startDirectory: string): string[] => {
   const absoluteStart = path.join(workspaceRoot, startDirectory);
   if (!fs.existsSync(absoluteStart)) {
     return [];
@@ -68,9 +64,9 @@ function listFiles(startDirectory) {
 
   visit(absoluteStart);
   return files;
-}
+};
 
-function listDirectories(startDirectory) {
+const listDirectories = (startDirectory: string): string[] => {
   const absoluteStart = path.join(workspaceRoot, startDirectory);
   if (!fs.existsSync(absoluteStart)) {
     return [];
@@ -80,21 +76,58 @@ function listDirectories(startDirectory) {
     .readdirSync(absoluteStart, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !ignoredDirectories.has(entry.name))
     .map((entry) => path.posix.join(startDirectory, entry.name));
-}
+};
 
-function assertNoPath(relativePath, message) {
+const assertNoPath = (relativePath: string, message: string): void => {
   if (exists(relativePath)) {
     fail(message);
   }
-}
+};
 
-function assertContains(relativePath, content, pattern, message) {
+const assertContains = (
+  relativePath: string,
+  content: string,
+  pattern: RegExp,
+  message: string,
+): void => {
   assert(pattern.test(content), `${relativePath}: ${message}`);
-}
+};
 
-function assertNotContains(relativePath, content, pattern, message) {
+const assertNotContains = (
+  relativePath: string,
+  content: string,
+  pattern: RegExp,
+  message: string,
+): void => {
   assert(!pattern.test(content), `${relativePath}: ${message}`);
-}
+};
+
+const isGeneratedInfrastructureReadinessApi = (verticalPath: string, content: string): boolean => {
+  const stem = path.posix.basename(verticalPath);
+  const endpoints = [
+    ...content.matchAll(/HttpApiEndpoint\.(get|post)\(\s*'([^']+)'\s*,\s*'([^']+)'/gu),
+  ].map((match) => `${match[1]}:${match[2]}:${match[3]}`);
+  return (
+    endpoints.length === 1 &&
+    endpoints[0] === `get:readiness:/${stem}/readiness` &&
+    content.includes(`export const ${stem}ApiContract = {`) &&
+    content.includes(`readinessPath: '/${stem}-api/${stem}/readiness'`)
+  );
+};
+
+const assertPrivateOwnerImports = (file, content) => {
+  const imports = content.matchAll(
+    /(?:from\s+|import\s*\(|require\s*\()\s*['"](?<specifier>[^'"]+)['"]/gu,
+  );
+  for (const match of imports) {
+    const specifier = match.groups?.specifier;
+    if (specifier === undefined) continue;
+    const violation = privateOwnerImportViolation(workspaceRoot, file, specifier);
+    if (violation !== undefined) {
+      fail(`${file}: ${violation}. Discover other deployments as allowlisted data.`);
+    }
+  }
+};
 
 for (const forbiddenPath of [
   ...listDirectories('apps').flatMap((appPath) => [
@@ -123,6 +156,14 @@ const textFiles = generatedFiles.filter((file) =>
 
 for (const file of textFiles) {
   const content = readText(file);
+
+  assertPrivateOwnerImports(file, content);
+  assertNotContains(
+    file,
+    content,
+    /(?:from\s+|import\s*\(|require\s*\()\s*['"]@app\/[a-z0-9-]+\/(?:src|workers|worker-host)\//u,
+    'cross-MicroVertical imports must use generated API clients, Module Federation, or schema-only Outbox exports rather than private source paths.',
+  );
 
   if (/\/api\//u.test(file)) {
     assertNotContains(
@@ -183,7 +224,7 @@ if (exists('apps/shell-super-app') && verticalDirectories.length > 0) {
   assert(exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
 }
 
-function assertApiSurface(appPath) {
+const assertApiSurface = (appPath: string): void => {
   const apiEntry = `${appPath}/api/index.ts`;
   const backendEffectExpose = `${appPath}/api/effect-api.ts`;
   const sharedApi = `${appPath}/shared/api.ts`;
@@ -196,7 +237,7 @@ function assertApiSurface(appPath) {
   assert(exists(srcApiDirectory), `${srcApiDirectory} is required.`);
 
   if (exists(srcApiDirectory)) {
-    const clientFiles = listFiles(srcApiDirectory).filter((file) => /-client\.ts$/u.test(file));
+    const clientFiles = listFiles(srcApiDirectory).filter((file) => file.endsWith('-client.ts'));
     assert(clientFiles.length > 0, `${srcApiDirectory} must contain a generated API client.`);
   }
 
@@ -251,11 +292,11 @@ function assertApiSurface(appPath) {
     assertContains(
       backendEffectExpose,
       backendExpose,
-      /runtime\s*=\s*apiRuntime/u,
-      'must export the generated Effect BFF runtime.',
+      /export\s*\{\s*default\s*,\s*default\s+as\s+runtime\s*\}\s+from\s+['"]\.\/index\.ts['"]/u,
+      'must re-export the generated Effect BFF runtime as both default and runtime.',
     );
     assert(
-      !/\b(request|handler)\s*:\s*async\s*\(/u.test(backendExpose),
+      !/\b(?<member>request|handler)\s*:\s*async\s*\(/u.test(backendExpose),
       `${backendEffectExpose}: must not expose raw request handlers.`,
     );
   }
@@ -302,17 +343,29 @@ function assertApiSurface(appPath) {
 
   if (exists(packageJsonPath)) {
     const packageJson = JSON.parse(readText(packageJsonPath));
-    assert(
-      packageJson.exports?.['./api'] === './shared/api.ts',
-      `${packageJsonPath}: package must export ./api from shared/api.ts.`,
-    );
-    assert(
-      typeof packageJson.exports?.['./api/client'] === 'string' &&
-        packageJson.exports['./api/client'].startsWith('./src/api/'),
-      `${packageJsonPath}: package must export ./api/client from src/api/*.`,
-    );
+    const isPrivateVerticalInfrastructureApi =
+      appPath.startsWith('verticals/') &&
+      exists(sharedApi) &&
+      isGeneratedInfrastructureReadinessApi(appPath, readText(sharedApi));
+    if (isPrivateVerticalInfrastructureApi) {
+      assert(
+        packageJson.exports?.['./api'] === undefined &&
+          packageJson.exports?.['./api/client'] === undefined,
+        `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
+      );
+    } else {
+      assert(
+        packageJson.exports?.['./api'] === './shared/api.ts',
+        `${packageJsonPath}: package must export ./api from shared/api.ts.`,
+      );
+      assert(
+        typeof packageJson.exports?.['./api/client'] === 'string' &&
+          packageJson.exports['./api/client'].startsWith('./src/api/'),
+        `${packageJsonPath}: package must export ./api/client from src/api/*.`,
+      );
+    }
   }
-}
+};
 
 for (const appPath of listDirectories('apps')) {
   if (exists(`${appPath}/api/index.ts`) || exists(`${appPath}/shared/api.ts`)) {
@@ -322,6 +375,20 @@ for (const appPath of listDirectories('apps')) {
 
 for (const verticalPath of verticalDirectories) {
   assertApiSurface(verticalPath);
+  const sharedApi = `${verticalPath}/shared/api.ts`;
+  const sharedApiContent = exists(sharedApi) ? readText(sharedApi) : '';
+  const verticalSources = new Map(
+    listFiles(verticalPath).map((file) => [file, readText(file)] as const),
+  );
+  if (
+    /\bHttpApiEndpoint\./u.test(sharedApiContent) &&
+    !isGeneratedInfrastructureReadinessApi(verticalPath, sharedApiContent) &&
+    !hasCompleteGeneratedModuleApiSeam(verticalSources, sharedApi)
+  ) {
+    fail(
+      `${sharedApi}: module APIs require an approved Codesmith generator, structured api registration, verified trusted tenant context, and the server ModuleEntrypointGateway before an endpoint may be introduced.`,
+    );
+  }
 }
 
 if (exists('apps/shell-super-app/package.json')) {

@@ -1,81 +1,62 @@
-export {
-  runDeleteMultiSelectOptionAction,
-  runRemoveFilesMediaItemAction,
-  runReorderFilesMediaItemsAction,
-  runAddFilesMediaExternalItemAction,
-  runDeleteStatusOptionAction,
-  runRetainTextCoreReferenceLabelAction,
-  runDeleteSelectOptionAction,
-  runCreateMultiSelectOptionAndSelectAction,
-  runReorderMultiSelectOptionsAction,
-  runUpdateMultiSelectOptionAction,
-  runUpdateMultiSelectPropertyValueAction,
-  runCreateMultiSelectOptionAction,
-  runCreateMultiSelectPropertyDefinitionAction,
-  runUpdateTaskContentAction,
-  runUpdateStatusOptionAction,
-  runCreateStatusOptionAction,
-  runUpdateStatusPropertyValueAction,
-  runConfigureStatusDefaultAction,
-  runCreateStatusPropertyDefinitionAction,
-  runConfigureDateRangeTimeSupportAction,
-  runUpdateDateRangePropertyValueAction,
-  runCreateDateRangePropertyDefinitionAction,
-  runUploadFilesMediaItemsAction,
-  runConfigureIdPropertyPrefixAction,
-  runCreateIdPropertyDefinitionAction,
-  runDuplicateTaskAction,
-  runCreateFilesMediaPropertyDefinitionAction,
-  runUploadFilesMediaItemAction,
-  groupTaskDateValues,
-  runConfigurePersonPropertyCardinalityAction,
-  runCreateDatePropertyDefinitionAction,
-  runUpdateDatePropertyValueAction,
-  runConfigurePrincipalTimeZonePreferenceAction,
-  runCreateIntrinsicPropertyDefinitionAction,
-  runCreatePersonPropertyDefinitionAction,
-  runUpdatePersonPropertyValueAction,
-  runCreatePhonePropertyDefinitionAction,
-  runUpdatePhonePropertyValueAction,
-  queryTaskEmailValues,
-  queryTaskUrlValues,
-  runUpdateEmailPropertyValueAction,
-  runCreateEmailPropertyDefinitionAction,
-  runUpdateUrlPropertyValueAction,
-  runCreateUrlPropertyDefinitionAction,
-  runConfigureSelectOptionOrderAction,
-  runCreateSelectOptionAndSelectAction,
-  runUpdateSelectPropertyValueAction,
-  runUpdateSelectOptionAction,
-  runCreateSelectOptionAction,
-  runCreateSelectPropertyDefinitionAction,
-  queryTaskPropertyValues,
-  runConfigureNumberPropertyFormatAction,
-  runCreateNumberPropertyDefinitionAction,
-  runUpdateNumberPropertyValueAction,
-  runUpdateTextPropertyValueAction,
-  runCreateTextPropertyDefinitionAction,
-  runTransitionTaskRetentionAction,
-  getTaskPropertyDeletionImpact,
-  getMultiSelectOptionDeletionImpact,
-  getSelectOptionDeletionImpact,
-  runDeleteTaskPropertyDefinitionAction,
-  runDuplicateTaskPropertyDefinitionAction,
-  runConfigureTaskPropertyDefinitionAction,
-  filterTaskCheckboxValues,
-  runUpdateCheckboxPropertyValueAction,
-  runCreateCheckboxPropertyDefinitionAction,
-  runCreateTaskAction,
-  runCreateTaskCollectionAction,
-  createTicketing,
-  createTicketingClient,
-  getTicketing,
-  getTicketingReadiness,
-  getTaskPropertyWorkspace,
-  getTaskPropertyEditCapability,
-  queryIntrinsicTaskProperties,
-  listTicketing,
-  queryTaskPersonValues,
-  searchEligiblePeople,
-  type TicketingClientOptions,
-} from '@app/ticketing/api/client';
+import type { ComponentType } from 'react';
+import type { ResolvedModuleTarget } from '../../shared/api.ts';
+
+export type ApprovedVerticalPageComponent = ComponentType<{
+  readonly routeParams: Readonly<Record<string, string>>;
+  readonly target: ResolvedModuleTarget;
+}>;
+
+export interface ApprovedVerticalPageClient {
+  readonly appId: string;
+  readonly componentKey: string;
+  readonly load: () => Promise<{ readonly default: ApprovedVerticalPageComponent }>;
+}
+
+/** Codesmith-owned allowlist. Executable imports remain lazy and owner-deployment-specific. */
+export const ultramodernVerticalClients: readonly ApprovedVerticalPageClient[] = [
+  // @ontos-codegen-start shell-page-clients
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-contact-create',
+    load: () => import('crm/PageContactCreate'),
+  },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-contact-detail',
+    load: () => import('crm/PageContactDetail'),
+  },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-contact-edit',
+    load: () => import('crm/PageContactEdit'),
+  },
+  { appId: 'crm', componentKey: 'crm.core.page-crm', load: () => import('crm/PageCrm') },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-customer-create',
+    load: () => import('crm/PageCustomerCreate'),
+  },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-customer-detail',
+    load: () => import('crm/PageCustomerDetail'),
+  },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-customer-edit',
+    load: () => import('crm/PageCustomerEdit'),
+  },
+  {
+    appId: 'crm',
+    componentKey: 'crm.core.page-customers-list',
+    load: () => import('crm/PageCustomersList'),
+  },
+  // @ontos-codegen-end shell-page-clients
+];
+
+export const findApprovedVerticalPageClient = (
+  target: Pick<ResolvedModuleTarget, 'appId' | 'componentKey'>,
+): ApprovedVerticalPageClient | undefined =>
+  ultramodernVerticalClients.find(
+    (client) => client.appId === target.appId && client.componentKey === target.componentKey,
+  );

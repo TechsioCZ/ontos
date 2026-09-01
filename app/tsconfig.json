@@ -2,19 +2,19 @@
   "files": [],
   "references": [
     {
+      "path": "packages/core-runtime"
+    },
+    {
       "path": "packages/shared-contracts"
     },
     {
       "path": "packages/shared-design-tokens"
     },
     {
-      "path": "packages/outbox-worker"
-    },
-    {
       "path": "apps/shell-super-app"
     },
     {
-      "path": "verticals/ticketing"
+      "path": "verticals/crm"
     }
   ]
 }

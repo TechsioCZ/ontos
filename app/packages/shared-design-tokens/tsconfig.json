@@ -10,5 +10,7 @@
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__shared-design-tokens",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__shared-design-tokens.tsbuildinfo"
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

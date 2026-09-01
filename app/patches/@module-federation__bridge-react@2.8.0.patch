@@ -1,0 +1,185 @@
+diff --git a/dist/lazy-load-component-plugin-FKp6nQa-.js b/dist/lazy-load-component-plugin-FKp6nQa-.js
+--- a/dist/lazy-load-component-plugin-FKp6nQa-.js
++++ b/dist/lazy-load-component-plugin-FKp6nQa-.js
+@@ -236,6 +236,41 @@ function getTargetModuleInfo(id, instance) {
+     remoteEntry
+   };
+ }
++function normalizeHref(href) {
++  if (typeof document === "undefined") {
++    return href;
++  }
++  try {
++    return new URL(href, document.baseURI).href;
++  } catch {
++    return href;
++  }
++}
++function isStylesheetLink(link) {
++  return link.relList.contains("stylesheet") || link.rel.toLowerCase().split(/\s+/u).includes("stylesheet");
++}
++function hasStylesheetLinkInHead(href, ignoredLink) {
++  if (typeof document === "undefined" || !document.head) {
++    return false;
++  }
++  const normalizedHref = normalizeHref(href);
++  return Array.from(
++    document.head.querySelectorAll("link[href]")
++  ).some(
++    (link) => link !== ignoredLink && isStylesheetLink(link) && normalizeHref(link.href) === normalizedHref
++  );
++}
++function StylesheetAsset({ href }) {
++  const [shouldRender, setShouldRender] = React.useState(true);
++  const linkRef = React.useRef(null);
++  React.useEffect(() => {
++    setShouldRender(!hasStylesheetLinkInHead(href, linkRef.current));
++  }, [href]);
++  if (!shouldRender) {
++    return null;
++  }
++  return /* @__PURE__ */ React.createElement("link", { ref: linkRef, href, rel: "stylesheet", type: "text/css" });
++}
+ function collectSSRAssets(options) {
+   const {
+     id,
+@@ -254,15 +289,19 @@ function collectSSRAssets(options) {
+   }
+   const { module: targetModule, publicPath, remoteEntry } = moduleAndPublicPath;
+   if (injectLink) {
++    const stylesheetHrefs = /* @__PURE__ */ new Set();
+     [...targetModule.assets.css.sync, ...targetModule.assets.css.async].sort().forEach((file, index) => {
++      const href = `${publicPath}${file}`;
++      if (stylesheetHrefs.has(href)) {
++        return;
++      }
++      stylesheetHrefs.add(href);
+       links.push(
+         /* @__PURE__ */ React.createElement(
+-          "link",
++          StylesheetAsset,
+           {
+             key: `${file.split(".")[0]}_${index}`,
+-            href: `${publicPath}${file}`,
+-            rel: "stylesheet",
+-            type: "text/css"
++            href
+           }
+         )
+       );
+diff --git a/dist/lazy-load-component-plugin-DEu-DfZt.mjs b/dist/lazy-load-component-plugin-DEu-DfZt.mjs
+--- a/dist/lazy-load-component-plugin-DEu-DfZt.mjs
++++ b/dist/lazy-load-component-plugin-DEu-DfZt.mjs
+@@ -235,6 +235,41 @@ function getTargetModuleInfo(id, instance) {
+     remoteEntry
+   };
+ }
++function normalizeHref(href) {
++  if (typeof document === "undefined") {
++    return href;
++  }
++  try {
++    return new URL(href, document.baseURI).href;
++  } catch {
++    return href;
++  }
++}
++function isStylesheetLink(link) {
++  return link.relList.contains("stylesheet") || link.rel.toLowerCase().split(/\s+/u).includes("stylesheet");
++}
++function hasStylesheetLinkInHead(href, ignoredLink) {
++  if (typeof document === "undefined" || !document.head) {
++    return false;
++  }
++  const normalizedHref = normalizeHref(href);
++  return Array.from(
++    document.head.querySelectorAll("link[href]")
++  ).some(
++    (link) => link !== ignoredLink && isStylesheetLink(link) && normalizeHref(link.href) === normalizedHref
++  );
++}
++function StylesheetAsset({ href }) {
++  const [shouldRender, setShouldRender] = useState(true);
++  const linkRef = useRef(null);
++  useEffect(() => {
++    setShouldRender(!hasStylesheetLinkInHead(href, linkRef.current));
++  }, [href]);
++  if (!shouldRender) {
++    return null;
++  }
++  return /* @__PURE__ */ React__default.createElement("link", { ref: linkRef, href, rel: "stylesheet", type: "text/css" });
++}
+ function collectSSRAssets(options) {
+   const {
+     id,
+@@ -253,15 +288,19 @@ function collectSSRAssets(options) {
+   }
+   const { module: targetModule, publicPath, remoteEntry } = moduleAndPublicPath;
+   if (injectLink) {
++    const stylesheetHrefs = /* @__PURE__ */ new Set();
+     [...targetModule.assets.css.sync, ...targetModule.assets.css.async].sort().forEach((file, index) => {
++      const href = `${publicPath}${file}`;
++      if (stylesheetHrefs.has(href)) {
++        return;
++      }
++      stylesheetHrefs.add(href);
+       links.push(
+         /* @__PURE__ */ React__default.createElement(
+-          "link",
++          StylesheetAsset,
+           {
+             key: `${file.split(".")[0]}_${index}`,
+-            href: `${publicPath}${file}`,
+-            rel: "stylesheet",
+-            type: "text/css"
++            href
+           }
+         )
+       );
+diff --git a/dist/lazy/wrapNoSSR.d.ts b/dist/lazy/wrapNoSSR.d.ts
+--- a/dist/lazy/wrapNoSSR.d.ts
++++ b/dist/lazy/wrapNoSSR.d.ts
+@@ -6,4 +6,4 @@ export declare function wrapNoSSR<T, E extends keyof T>(createLazyComponentFn:
+     key?: React.Key | null;
+ } : {
+     key?: React.Key | null;
+-}) => import("node_modules/@types/react").JSX.Element;
++}) => import("react").JSX.Element;
+diff --git a/dist/provider/versions/v18.d.ts b/dist/provider/versions/v18.d.ts
+--- a/dist/provider/versions/v18.d.ts
++++ b/dist/provider/versions/v18.d.ts
+@@ -12,7 +12,7 @@ export interface Root {
+     unmount(): void;
+ }
+ export declare function createReact18Root(container: Element | DocumentFragment, options?: CreateRootOptions): Root;
+-export declare function hydrateReact18Root(container: Element | DocumentFragment, initialChildren: React.ReactNode, options?: CreateRootOptions): import("node_modules/@types/react-dom/client").Root;
++export declare function hydrateReact18Root(container: Element | DocumentFragment, initialChildren: React.ReactNode, options?: CreateRootOptions): import("react-dom/client").Root;
+ export declare function createBridgeComponent<T = any>(bridgeInfo: Omit<ProviderFnParams<T>, 'createRoot'>): () => {
+     render(info: import("../..").RenderParams): Promise<void>;
+     destroy(info: import("../..").DestroyParams): void;
+diff --git a/dist/remote/base-component/create.d.ts b/dist/remote/base-component/create.d.ts
+--- a/dist/remote/base-component/create.d.ts
++++ b/dist/remote/base-component/create.d.ts
+@@ -1,7 +1,7 @@
+ import { type LazyRemoteComponentInfo } from '../createHelpers';
+ export type { LazyRemoteComponentInfo };
+-declare const createLazyRemoteComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("node_modules/@types/react").LazyExoticComponent<import("node_modules/@types/react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("node_modules/@types/react").RefAttributes<HTMLDivElement>>>;
+-export declare const createRemoteAppComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("node_modules/@types/react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("node_modules/@types/react").RefAttributes<HTMLDivElement>>;
++declare const createLazyRemoteComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("react").LazyExoticComponent<import("react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("react").RefAttributes<HTMLDivElement>>>;
++export declare const createRemoteAppComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("react").RefAttributes<HTMLDivElement>>;
+ /**
+  * @deprecated createRemoteComponent is deprecated, please use createRemoteAppComponent instead!
+  */
+diff --git a/dist/remote/router-component/create.d.ts b/dist/remote/router-component/create.d.ts
+--- a/dist/remote/router-component/create.d.ts
++++ b/dist/remote/router-component/create.d.ts
+@@ -1,7 +1,7 @@
+ import { type LazyRemoteComponentInfo } from '../createHelpers';
+ export type { LazyRemoteComponentInfo };
+-declare const createLazyRemoteComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("node_modules/@types/react").LazyExoticComponent<import("node_modules/@types/react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("node_modules/@types/react").RefAttributes<HTMLDivElement>>>;
+-export declare const createRemoteAppComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("node_modules/@types/react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("node_modules/@types/react").RefAttributes<HTMLDivElement>>;
++declare const createLazyRemoteComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("react").LazyExoticComponent<import("react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("react").RefAttributes<HTMLDivElement>>>;
++export declare const createRemoteAppComponent: <T = Record<string, unknown>, E extends keyof T = keyof T>(info: LazyRemoteComponentInfo<T, E>) => import("react").ForwardRefExoticComponent<Omit<import("../..").RemoteComponentProps<Record<string, unknown>>, "ref"> & import("react").RefAttributes<HTMLDivElement>>;
+ /**
+  * @deprecated createRemoteComponent is deprecated, please use createRemoteAppComponent instead!
+  */

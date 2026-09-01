@@ -1,0 +1,132 @@
+schema: |-
+  definition principal {}
+
+  definition tenant {
+    relation member: principal
+    relation identity_admin: principal
+    relation support: principal
+    permission access = member
+    permission manage_identity = identity_admin & access
+    permission impersonate = support & access
+  }
+
+  definition legal_entity {
+    relation tenant: tenant
+    relation member: principal
+    permission access = member & tenant->access
+  }
+
+  definition module_access {
+    relation legal_entity: legal_entity
+    relation accessor: principal
+    permission access = accessor & legal_entity->access
+  }
+
+  definition resource {
+    relation module: module_access
+    relation reader: principal
+    relation writer: principal
+    permission read = reader & module->access
+    permission write = writer & module->access
+  }
+
+  definition action {
+    relation restriction: action
+    relation executor: principal
+
+    permission is_restricted = restriction
+    permission execute = executor
+  }
+
+relationships: |-
+  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#restriction@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
+  action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#restriction@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
+  action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#restriction@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
+  action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#restriction@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ
+  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#restriction@action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz
+  action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#restriction@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ
+  action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#restriction@action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz
+  action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#executor@principal:allowed-principal
+  action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#restriction@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
+  action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#executor@principal:allowed-principal
+  tenant:test-tenant#member@principal:allowed-principal
+  legal_entity:test-tenant--entity-one#tenant@tenant:test-tenant
+  legal_entity:test-tenant--entity-one#member@principal:allowed-principal
+  module_access:test-tenant--entity-one--property-registry#legal_entity@legal_entity:test-tenant--entity-one
+  module_access:test-tenant--entity-one--property-registry#accessor@principal:allowed-principal
+  resource:test-tenant--entity-one--property-registry--unit--unit-one#module@module_access:test-tenant--entity-one--property-registry
+  resource:test-tenant--entity-one--property-registry--unit--unit-one#reader@principal:allowed-principal
+  resource:test-tenant--entity-one--property-registry--unit--unit-one#writer@principal:allowed-principal
+  tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#member@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+  tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#member@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#tenant@tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76
+  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#member@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+  legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#member@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#legal_entity@legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ
+  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#accessor@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+  module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#accessor@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+  tenant:50000000-0000-4000-8000-000000000001#member@principal:60000000-0000-4000-8000-000000000001
+  tenant:50000000-0000-4000-8000-000000000001#identity_admin@principal:60000000-0000-4000-8000-000000000001
+  tenant:50000000-0000-4000-8000-000000000001#support@principal:60000000-0000-4000-8000-000000000001
+  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#tenant@tenant:50000000-0000-4000-8000-000000000001
+  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ#member@principal:60000000-0000-4000-8000-000000000001
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjcm0uY29yZSJd#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiXQ
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjcm0uY29yZSJd#accessor@principal:60000000-0000-4000-8000-000000000001
+  tenant:50000000-0000-4000-8000-000000000002#member@principal:60000000-0000-4000-8000-000000000002
+  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#tenant@tenant:50000000-0000-4000-8000-000000000002
+  legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ#member@principal:60000000-0000-4000-8000-000000000002
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjcm0uY29yZSJd#legal_entity@legal_entity:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiXQ
+  module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjcm0uY29yZSJd#accessor@principal:60000000-0000-4000-8000-000000000002
+
+assertions:
+  assertTrue:
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
+    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
+    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ
+    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz
+    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ
+    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz
+    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:allowed-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u
+    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:allowed-principal
+    - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+    - tenant:5cbb9f62-0216-4c97-b7c4-4905036c8e76#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+    - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+    - legal_entity:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiXQ#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+    - module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#access@principal:6c67676e-cc38-47fa-b258-f37c529b2586
+    - module_access:ctx_WyI1Y2JiOWY2Mi0wMjE2LTRjOTctYjdjNC00OTA1MDM2YzhlNzYiLCI5YTRlY2EyNy01MDY4LTRiNDktYTAzNC1hYzMyNjM0NmQyOGUiLCJjcm0uY29yZSJd#access@principal:4cd333a0-8471-4c25-bbf6-271d94f8a52d
+    - tenant:50000000-0000-4000-8000-000000000001#manage_identity@principal:60000000-0000-4000-8000-000000000001
+    - tenant:50000000-0000-4000-8000-000000000001#impersonate@principal:60000000-0000-4000-8000-000000000001
+    - module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDEiLCJjcm0uY29yZSJd#access@principal:60000000-0000-4000-8000-000000000001
+    - module_access:ctx_WyI1MDAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCI1NTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJjcm0uY29yZSJd#access@principal:60000000-0000-4000-8000-000000000002
+    - legal_entity:test-tenant--entity-one#access@principal:allowed-principal
+    - module_access:test-tenant--entity-one--property-registry#access@principal:allowed-principal
+    - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:allowed-principal
+    - resource:test-tenant--entity-one--property-registry--unit--unit-one#write@principal:allowed-principal
+  assertFalse:
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA
+    - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtc2VsZi1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLW1hbmFnZWQtYXBpLWtleQ#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5zZXQtbWFuYWdlZC1hcGkta2V5LWJpbmRpbmctc3RhdHVz#execute@principal:denied-principal
+    - action:ak_Y29yZS5pZGVudGl0eS5yZWNvcmQtc3VwcG9ydC1pbXBlcnNvbmF0aW9u#execute@principal:denied-principal
+    - legal_entity:test-tenant--entity-one#access@principal:denied-principal
+    - module_access:test-tenant--entity-one--property-registry#access@principal:denied-principal
+    - resource:test-tenant--entity-one--property-registry--unit--unit-one#read@principal:denied-principal
+    - resource:test-tenant--entity-one--property-registry--unit--unit-one#write@principal:denied-principal

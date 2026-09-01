@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "crm",
+    "build": "b08ddded31ae2315",
+    "buildMarker": "b08ddded31ae2315",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/crm",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/crm",
+    "version": "0.1.0"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "crm",
+      "build": "b08ddded31ae2315",
+      "buildMarker": "b08ddded31ae2315",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/crm",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "surface": "api",
+      "unitId": "app/crm",
+      "version": "0.1.0"
+    },
+    "ui": {
+      "appId": "crm",
+      "build": "b08ddded31ae2315",
+      "buildMarker": "b08ddded31ae2315",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/crm",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "surface": "ui",
+      "unitId": "app/crm",
+      "version": "0.1.0"
+    }
+  }
+}

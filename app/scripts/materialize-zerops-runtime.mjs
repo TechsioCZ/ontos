@@ -54,11 +54,7 @@ function writeJson(filePath, value) {
 function run(command, commandArgs, options = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd: options.cwd ?? workspaceRoot,
-    env: {
-      ...process.env,
-      MODERNJS_DEPLOY: 'node',
-      ULTRAMODERN_ZEPHYR: 'false',
-    },
+    env: process.env,
     stdio: 'inherit',
   });
 
@@ -68,64 +64,6 @@ function run(command, commandArgs, options = {}) {
 
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
-  }
-}
-
-const sourceSnapshotSkipSegments = new Set([
-  '.git',
-  '.output',
-  '.zerops',
-  'dist',
-  'node_modules',
-  'repos',
-]);
-
-function shouldSnapshotSourcePath(relativePath) {
-  return !relativePath.split(path.sep).some((segment) => sourceSnapshotSkipSegments.has(segment));
-}
-
-function listWorkspaceSourceFiles() {
-  const files = [];
-  const queue = [workspaceRoot];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
-      const absolute = path.join(current, entry.name);
-      const relativePath = path.relative(workspaceRoot, absolute);
-      if (!shouldSnapshotSourcePath(relativePath)) {
-        continue;
-      }
-      if (entry.isDirectory()) {
-        queue.push(absolute);
-      } else if (entry.isFile()) {
-        files.push(relativePath);
-      }
-    }
-  }
-  return files.sort();
-}
-
-function snapshotWorkspaceSourceFiles() {
-  return new Map(
-    listWorkspaceSourceFiles().map((relativePath) => [
-      relativePath,
-      fs.readFileSync(path.join(workspaceRoot, relativePath)),
-    ]),
-  );
-}
-
-function restoreWorkspaceSourceFiles(snapshot) {
-  for (const relativePath of listWorkspaceSourceFiles()) {
-    if (!snapshot.has(relativePath)) {
-      fs.rmSync(path.join(workspaceRoot, relativePath), { force: true });
-    }
-  }
-  for (const [relativePath, content] of snapshot) {
-    const absolute = path.join(workspaceRoot, relativePath);
-    fs.mkdirSync(path.dirname(absolute), { recursive: true });
-    if (!fs.existsSync(absolute) || !fs.readFileSync(absolute).equals(content)) {
-      fs.writeFileSync(absolute, content);
-    }
   }
 }
 
@@ -154,21 +92,15 @@ const runtimeDir = path.join(workspaceRoot, '.zerops/runtime', appId);
 assertInsideWorkspace('package directory', appRoot);
 assertInsideWorkspace('runtime directory', runtimeDir);
 
-const sourceSnapshot = snapshotWorkspaceSourceFiles();
-try {
-  run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', [
-    '--filter',
-    packageName,
-    'run',
-    'deploy',
-    '--skip-build',
-  ]);
-} finally {
-  restoreWorkspaceSourceFiles(sourceSnapshot);
+const appPackage = readJson(path.join(appRoot, 'package.json'));
+if (appPackage.name !== packageName) {
+  fail(`--package must match ${packageDir}/package.json name`);
 }
 
 if (!fs.existsSync(appOutputDir)) {
-  fail(`Modern.js Node deploy did not produce ${path.relative(workspaceRoot, appOutputDir)}`);
+  fail(
+    `Modern.js package build must produce ${path.relative(workspaceRoot, appOutputDir)} before runtime materialization`,
+  );
 }
 
 fs.rmSync(runtimeDir, { force: true, recursive: true });
@@ -183,6 +115,7 @@ if (!fs.existsSync(entryPath)) {
 const packageJsonPath = path.join(runtimeDir, 'package.json');
 const runtimePackage = fs.existsSync(packageJsonPath) ? readJson(packageJsonPath) : {};
 normalizeRuntimePackageDependencies(runtimePackage);
+removeIncompatiblePlatformDependencies(runtimePackage);
 
 runtimePackage.private = true;
 runtimePackage.name ??= `${appId}-zerops-runtime`;
@@ -227,6 +160,95 @@ function normalizeRuntimePackageDependencies(packageJson) {
       }
     }
   }
+}
+
+function removeIncompatiblePlatformDependencies(packageJson) {
+  for (const section of ['dependencies', 'optionalDependencies']) {
+    const dependencies = packageJson[section];
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+      continue;
+    }
+
+    for (const [dependencyName, dependencyVersion] of Object.entries(dependencies)) {
+      const dependencyPackage = readInstalledDependencyPackage(dependencyName, dependencyVersion);
+      if (!dependencyPackage || isCurrentPlatformSupported(dependencyPackage)) {
+        continue;
+      }
+
+      delete dependencies[dependencyName];
+      console.log(
+        `[ultramodern:zerops] excluded ${dependencyName}@${dependencyVersion} from ${process.platform}/${process.arch} runtime`,
+      );
+    }
+  }
+}
+
+function readInstalledDependencyPackage(dependencyName, dependencyVersion) {
+  if (typeof dependencyVersion !== 'string') {
+    return undefined;
+  }
+
+  const dependencySegments = dependencyName.split('/');
+  const directCandidates = [
+    path.join(appRoot, 'node_modules', ...dependencySegments, 'package.json'),
+    path.join(workspaceRoot, 'node_modules', ...dependencySegments, 'package.json'),
+  ];
+  for (const candidate of directCandidates) {
+    const dependencyPackage = readOptionalJson(candidate);
+    if (
+      dependencyPackage?.name === dependencyName &&
+      dependencyPackage.version === dependencyVersion
+    ) {
+      return dependencyPackage;
+    }
+  }
+
+  const virtualStore = path.join(workspaceRoot, 'node_modules/.pnpm');
+  if (!fs.existsSync(virtualStore)) {
+    return undefined;
+  }
+
+  const encodedName = dependencyName.replaceAll('/', '+');
+  for (const entry of fs.readdirSync(virtualStore)) {
+    if (!entry.startsWith(`${encodedName}@`)) {
+      continue;
+    }
+
+    const candidate = path.join(
+      virtualStore,
+      entry,
+      'node_modules',
+      ...dependencySegments,
+      'package.json',
+    );
+    const dependencyPackage = readOptionalJson(candidate);
+    if (
+      dependencyPackage?.name === dependencyName &&
+      dependencyPackage.version === dependencyVersion
+    ) {
+      return dependencyPackage;
+    }
+  }
+
+  return undefined;
+}
+
+function isCurrentPlatformSupported(packageJson) {
+  return (
+    platformFieldAllows(packageJson.os, process.platform) &&
+    platformFieldAllows(packageJson.cpu, process.arch)
+  );
+}
+
+function platformFieldAllows(field, currentValue) {
+  const values = Array.isArray(field) ? field : typeof field === 'string' ? [field] : [];
+  const excluded = values.some((value) => value === `!${currentValue}` || value === '!*');
+  if (excluded) {
+    return false;
+  }
+
+  const allowed = values.filter((value) => !value.startsWith('!'));
+  return allowed.length === 0 || allowed.includes(currentValue) || allowed.includes('any');
 }
 
 function installRuntimeDependencies(runtimePackage) {

@@ -1,0 +1,1 @@
+ALTER TABLE "core"."data_access_events" ALTER COLUMN "query_hash" DROP NOT NULL;

@@ -1,0 +1,31 @@
+-- Existing rows are successful Action-internal reads. Backfill them while adding the
+-- required governed-read outcome vocabulary, then remove the migration-only defaults.
+ALTER TABLE "core"."data_access_events" ADD COLUMN "outcome" text DEFAULT 'allowed' NOT NULL;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD COLUMN "outcome_stage" text DEFAULT 'execution' NOT NULL;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD COLUMN "outcome_code" text DEFAULT 'action_read_allowed' NOT NULL;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ALTER COLUMN "outcome" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ALTER COLUMN "outcome_stage" DROP DEFAULT;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ALTER COLUMN "outcome_code" DROP DEFAULT;--> statement-breakpoint
+-- Drizzle Kit emits composite foreign keys before their supporting unique indexes.
+-- Install the generated parent indexes first so this migration is executable.
+CREATE UNIQUE INDEX "core_action_invocations_tenant_id_uk" ON "core"."action_invocations" USING btree ("tenant_id","action_invocation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "core_legal_entities_tenant_id_uk" ON "core"."legal_entities" USING btree ("tenant_id","legal_entity_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "core_auth_bindings_tenant_id_uk" ON "core"."principal_auth_bindings" USING btree ("tenant_id","principal_auth_binding_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "core_principals_tenant_id_uk" ON "core"."principals" USING btree ("tenant_id","principal_id");--> statement-breakpoint
+ALTER TABLE "core"."action_invocations" ADD CONSTRAINT "core_action_invocations_tenant_legal_entity_fk" FOREIGN KEY ("tenant_id","legal_entity_id") REFERENCES "core"."legal_entities"("tenant_id","legal_entity_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."action_invocations" ADD CONSTRAINT "core_action_invocations_tenant_principal_fk" FOREIGN KEY ("tenant_id","principal_id") REFERENCES "core"."principals"("tenant_id","principal_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."action_invocations" ADD CONSTRAINT "core_action_invocations_tenant_auth_binding_fk" FOREIGN KEY ("tenant_id","auth_binding_id") REFERENCES "core"."principal_auth_bindings"("tenant_id","principal_auth_binding_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."action_invocations" ADD CONSTRAINT "core_action_invocations_tenant_impersonator_fk" FOREIGN KEY ("tenant_id","impersonated_by_principal_id") REFERENCES "core"."principals"("tenant_id","principal_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."audit_events" ADD CONSTRAINT "core_audit_events_tenant_legal_entity_fk" FOREIGN KEY ("tenant_id","legal_entity_id") REFERENCES "core"."legal_entities"("tenant_id","legal_entity_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."audit_events" ADD CONSTRAINT "core_audit_events_tenant_invocation_fk" FOREIGN KEY ("tenant_id","action_invocation_id") REFERENCES "core"."action_invocations"("tenant_id","action_invocation_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."audit_events" ADD CONSTRAINT "core_audit_events_tenant_principal_fk" FOREIGN KEY ("tenant_id","principal_id") REFERENCES "core"."principals"("tenant_id","principal_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD CONSTRAINT "core_data_access_events_tenant_legal_entity_fk" FOREIGN KEY ("tenant_id","legal_entity_id") REFERENCES "core"."legal_entities"("tenant_id","legal_entity_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD CONSTRAINT "core_data_access_events_tenant_invocation_fk" FOREIGN KEY ("tenant_id","action_invocation_id") REFERENCES "core"."action_invocations"("tenant_id","action_invocation_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD CONSTRAINT "core_data_access_events_tenant_principal_fk" FOREIGN KEY ("tenant_id","principal_id") REFERENCES "core"."principals"("tenant_id","principal_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."domain_events" ADD CONSTRAINT "core_domain_events_tenant_legal_entity_fk" FOREIGN KEY ("tenant_id","legal_entity_id") REFERENCES "core"."legal_entities"("tenant_id","legal_entity_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."domain_events" ADD CONSTRAINT "core_domain_events_tenant_invocation_fk" FOREIGN KEY ("tenant_id","action_invocation_id") REFERENCES "core"."action_invocations"("tenant_id","action_invocation_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."principal_auth_bindings" ADD CONSTRAINT "core_auth_bindings_tenant_principal_fk" FOREIGN KEY ("tenant_id","principal_id") REFERENCES "core"."principals"("tenant_id","principal_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."tenant_module_state_changes" ADD CONSTRAINT "core_module_state_changes_tenant_principal_fk" FOREIGN KEY ("tenant_id","changed_by_principal_id") REFERENCES "core"."principals"("tenant_id","principal_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."tenant_module_state_changes" ADD CONSTRAINT "core_module_state_changes_tenant_invocation_fk" FOREIGN KEY ("tenant_id","action_invocation_id") REFERENCES "core"."action_invocations"("tenant_id","action_invocation_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD CONSTRAINT "core_data_access_events_outcome_ck" CHECK ("core"."data_access_events"."outcome" in ('allowed', 'denied', 'failed'));--> statement-breakpoint
+ALTER TABLE "core"."data_access_events" ADD CONSTRAINT "core_data_access_events_stage_ck" CHECK ("core"."data_access_events"."outcome_stage" in ('authn', 'context', 'module_state', 'authz', 'policy', 'execution', 'evidence'));

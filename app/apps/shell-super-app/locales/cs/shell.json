@@ -1,7 +1,58 @@
 {
   "shell": {
+    "auth": {
+      "identity": {
+        "displayName": "Jméno",
+        "email": "E-mail",
+        "legalEntity": "Právní subjekt",
+        "principal": "Principal",
+        "tenant": "Tenant",
+        "title": "Přihlášená identita"
+      },
+      "loginLink": "Přihlásit se",
+      "logout": {
+        "action": "Odhlásit se",
+        "failed": "Odhlášení selhalo. Zkuste to znovu.",
+        "pending": "Odhlašuji…"
+      }
+    },
     "boundaries": {
       "toggle": "zobrazit hranice týmů"
+    },
+    "dashboard": {
+      "account": {
+        "label": "Nabídka účtu"
+      },
+      "brand": "OntOS",
+      "header": {
+        "label": "Záhlaví přehledu"
+      },
+      "home": {
+        "title": "Domů"
+      },
+      "legalEntity": {
+        "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",
+        "accessibleLabel": "Aktuální právní subjekt",
+        "failed": "Přepnutí právního subjektu selhalo. Zkuste to znovu.",
+        "pending": "Přepínám právní subjekt…",
+        "placeholder": "Vyberte právní subjekt",
+        "selectionRequired": "Před použitím modulů vyberte jeden právní subjekt.",
+        "unavailable": "Výběr právních subjektů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
+      },
+      "navigation": {
+        "home": "Domů",
+        "label": "Navigace přehledu"
+      },
+      "sidebar": {
+        "label": "Postranní panel přehledu"
+      },
+    "tenant": {
+        "accessibleLabel": "Aktuální tenant",
+        "failed": "Přepnutí tenantu selhalo. Zkuste to znovu.",
+        "pending": "Přepínám tenant…",
+      "unavailable": "Výběr tenantů je dočasně nedostupný. Znovu načtěte stránku a zkuste to znovu."
+    },
+    "unavailable": "Přihlášené prostředí je dočasně nedostupné. Znovu načtěte stránku a zkuste to znovu."
     },
     "hero": {
       "cardOne": "Přidejte první business vertical příkazem create <domain> --vertical, až ho opravdu potřebujete.",
@@ -19,6 +70,91 @@
       "en": "Angličtina",
       "switcher": "Jazyk"
     },
+    "login": {
+      "back": "← Zpět na hlavní stránku",
+      "error": {
+        "forbidden": "Tento účet nemá přístup do OntOS.",
+        "internal": "Přihlášení selhalo. Zkuste to znovu.",
+        "invalid": "E-mailová adresa nebo heslo nejsou správné.",
+        "title": "Přihlášení se nezdařilo",
+        "unavailable": "Ověření je dočasně nedostupné. Zkuste to znovu."
+      },
+      "field": {
+        "login": "Přihlašovací jméno",
+        "password": "Heslo"
+      },
+      "required": {
+        "login": "Zadejte přihlašovací jméno.",
+        "password": "Zadejte heslo."
+      },
+      "pending": "Přihlašuji…",
+      "seo": {
+        "description": "Přihlaste se do pracovního prostoru OntOS."
+      },
+      "submit": "Přihlásit se",
+      "title": "Přihlášení",
+      "toast": {
+        "description": "Vyplňte obě povinná pole.",
+        "title": "Přihlašovací údaje nejsou úplné"
+      }
+    },
+    "modules": {
+      "active": {
+        "item": "{{moduleKey}}: {{state}}",
+        "label": "Aktivní MicroVerticaly",
+        "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
+      },
+      "state": {
+        "active": "Aktivní",
+        "deprecated": "Zastaralý",
+        "readOnly": "Jen pro čtení"
+      },
+      "unavailable": "Přístup k modulu je dočasně nedostupný. Zkuste to znovu."
+    },
+    "moduleTarget": {
+      "forbidden": "K otevření tohoto modulu nemáte oprávnění.",
+      "loading": "Načítání modulu…",
+      "not_found": "Tento modul není v aktuálním kontextu dostupný.",
+      "selection_required": "Před otevřením modulu vyberte právní subjekt.",
+      "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
+      "title": "Modul",
+      "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
+    },
+    "search": {
+      "empty": "Nebyly nalezeny žádné autorizované výsledky.",
+      "label": "Hledat v tomto právním subjektu",
+      "partial": "Někteří poskytovatelé vyhledávání jsou dočasně nedostupní. Zobrazujeme dostupné výsledky.",
+      "selection_required": "Před vyhledáváním vyberte právní subjekt.",
+      "seoDescription": "Vyhledávání autorizovaných zdrojů ve vybraném kontextu OntOS.",
+      "submit": "Hledat",
+      "title": "Výsledky hledání",
+      "unavailable": "Vyhledávání je dočasně nedostupné. Zkuste to znovu."
+    },
+    "resource": {
+      "forbidden": "K zobrazení tohoto zdroje nemáte oprávnění.",
+      "media": {
+        "absent": "Tento zdroj nepodporuje mediální přílohy.",
+        "attach": "Připojit médium",
+        "available": "Mediální přílohy jsou dostupné.",
+        "failed": "Připojení média se nepodařilo zahájit. Zkuste to znovu.",
+        "forbidden": "K připojení média nemáte oprávnění.",
+        "pending": "Zahajuje se připojení média…",
+        "read_only": "Mediální přílohy jsou zakázány, když je modul jen pro čtení nebo zastaralý.",
+        "success": "Připojení média bylo zahájeno.",
+        "title": "Média",
+        "unavailable": "Autorizace médií je dočasně nedostupná."
+      },
+      "not_found": "Tento zdroj nebyl v aktuálním kontextu nalezen.",
+      "selection_required": "Před otevřením zdroje vyberte právní subjekt.",
+      "seoDescription": "Autorizovaný detail zdroje OntOS.",
+      "timeline": {
+        "empty": "Nejsou dostupné žádné události časové osy.",
+        "lagging": "Nedávná aktivita se může stále zpracovávat.",
+        "title": "Časová osa"
+      },
+      "title": "Zdroj",
+      "unavailable": "Zdroj je dočasně nedostupný. Zkuste to znovu."
+    },
     "remoteUnavailable": "Remote vertical je nedostupný",
     "remotes": {},
     "routes": {
@@ -28,55 +164,5 @@
       "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
     },
     "title": "UltraModern Workspace"
-  },
-  "auth": {
-    "backHome": "Zpět domů",
-    "emailLabel": "E-mail",
-    "loading": "Ověřuji relaci...",
-    "loginFailedDescription": "Použijte e-mail a heslo k účtu s přístupem.",
-    "loginFailedTitle": "E-mail nebo heslo není správně",
-    "loginLink": "Přihlásit se",
-    "loginSubmit": "Přihlásit se",
-    "loginSubmitting": "Přihlašuji",
-    "loginTitle": "Přihlášení",
-    "logout": "Odhlásit se",
-    "passwordLabel": "Heslo"
-  },
-  "home": {
-    "eyebrow": "OntOS shell",
-    "title": "Domů"
-  },
-  "mainMenu": {
-    "label": "Hlavní menu",
-    "modules": "Moduly"
-  },
-  "ticketing": {
-    "language": {
-      "cs": "Čeština",
-      "en": "Angličtina",
-      "switcher": "Jazyk"
-    },
-    "routes": {
-      "home": "Domů"
-    },
-    "seo": {
-      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
-    },
-    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
-    "remoteUnavailable": "Remote vertical je nedostupný",
-    "role": "ticketing",
-    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
-    "title": "Ticketing Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu.",
-    "pages": {
-      "ticketing": {
-        "body": "Ticketing Ticketing page owned by the ticketing microvertical.",
-        "eyebrow": "Ticketing",
-        "seo": {
-          "description": "Ticketing Ticketing page owned by the ticketing microvertical."
-        },
-        "title": "Ticketing Ticketing"
-      }
-    }
   }
 }

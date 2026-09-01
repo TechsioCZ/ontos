@@ -1,6 +1,82 @@
 # app
 
+> [!IMPORTANT]
+> Read the [development workflow](./DEVELOPMENT.md) before starting feature work. It explains how
+> to create, run, and remove isolated Locki development sandboxes.
+
 Generated UltraModern SuperApp workspace.
+
+## Coding guide
+
+Read this file before application work. Then read only the implementation document relevant to the
+task:
+
+| Concern                                               | Current authority                                                                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| MicroVertical seams and BFF communication             | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md)                                                   |
+| State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                    |
+| Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                      |
+| PostgreSQL ownership and access                       | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
+| Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                   |
+| Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                       |
+| Deployment and business module identity               | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                           |
+| Commerce surfaces                                     | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md)                                       |
+| Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                 |
+| Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
+| Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
+| ARES integration                                      | [ARES reference](docs/integrations/ares.md)                                                                         |
+
+Read a specification only when the task or GitHub issue explicitly names it. A specification with
+`status: done`, `status: complete`, or `status: superseded` is implementation evidence, not
+current guidance: stop unless the task explicitly asks for historical provenance. Do not browse
+`specs/` for general background.
+
+### Coding rules
+
+- Use Effect for application behavior, I/O, resource management, concurrency, dependencies, BFF
+  contracts and clients, schemas, and expected failures. Keep pure synchronous transformations and
+  reusable presentation components as plain TypeScript or React when Effect adds no behavior.
+- Model expected failures as tagged Effect errors. Do not throw, reject a Promise, return an
+  untyped error object, or collapse an expected failure into a string.
+- Prefer direct values and references over stringly typed metadata.
+- Reuse an existing concept or file before adding one. Add an abstraction only for a concrete use
+  case.
+- Preserve owner-local data and executable registration. Never import another deployment's private
+  manifest, registration, table, handler, repository, route, migration, fixture, or test.
+- Create supported business artifacts through Codesmith first. Generated output is the required
+  starting point and may then be adapted. If a business artifact has no approved generator or
+  governed gateway, stop and extend or approve Codesmith before adding it.
+- Infrastructure and architecture files may be created directly when no generator applies.
+- Keep third-party HTTP adapters private to their owning MicroVertical. Define provider-specific
+  schemas, typed errors, request construction, resilience, diagnostics, and business mapping; use
+  the generated Effect `HttpClient` service as the deterministic test seam.
+
+### Mandatory generators
+
+Run generators from this directory through the repository-managed toolchain:
+
+```bash
+mise exec -- pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
+mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>
+mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --action <action>
+mise exec -- pnpm scaffold:action-service -- --vertical <vertical> --service <service>
+mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
+mise exec -- pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
+mise exec -- pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic>
+mise exec -- pnpm scaffold:policy -- --scope <global|microvertical> --policy <policy>
+mise exec -- pnpm scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>
+```
+
+Use each command's `--help` for supported flags. Additional Shell-visible generators are described
+beside the relevant architecture sections below. A MicroVertical-scoped Policy also requires
+`--vertical <vertical>`. The generator requirement applies to delegated work as well as the
+primary coding agent.
+
+All public writes and reads run through Core-owned governed operation lifecycles. Tenant/system
+entrypoint scope and required/optional/forbidden legal-entity scope are independent declarations;
+invalid or indeterminate trusted context fails closed before private code resolves. Business
+handlers receive owner-local transaction-scoped services, never a database executor. See
+[Governed Data Access](docs/architecture/DATA_ACCESS.md).
 
 This workspace keeps `presetUltramodern(...)` as the single public
 UltraModern.js 3.0 SuperApp surface and starts with an explicit shell:
@@ -22,6 +98,60 @@ Each added vertical owns its UI/routes, browser-safe Module Federation exposes,
 private-first route metadata, localized URLs, public-route opt-ins, CSS prefix,
 Effect BFF handlers, local API contract, and typed client surface. Server
 handlers and Effect client/contract modules stay out of browser exposes.
+
+Every module-owned Action, page, API, public component, search provider, report, and Worker is a
+structured entrypoint governed by Core before private code loads or runs. See
+`docs/architecture/MODULE_ENTRYPOINTS.md`. The `module-entrypoints:check` repository command rejects
+missing descriptors, owner/access mismatches, private cross-vertical imports, and raw remote loads.
+
+Each OntOS business vertical also owns one deployment-safe module contract. After creating the
+UltraModern vertical, run `pnpm scaffold:module-contract -- --vertical <vertical> --module
+<dotted.module-id>` before generating Actions, Policies, pages, or Outbox artifacts. The topology
+`appId` remains the deployment, Module Federation, and gateway-audience identity; the dotted
+`moduleId` owns business contracts and tenant state. See
+[`docs/architecture/MODULE_MANIFESTS.md`](./docs/architecture/MODULE_MANIFESTS.md).
+
+The owning build emits `/.well-known/ontos-module-manifest.json`. Shell discovers only explicit
+environment-overlay allowlist entries and never imports a remote vertical's manifest or private
+registration. Deployment installation and per-tenant activation remain separate operations.
+
+Codesmith governs every Shell-visible artifact and patches safe descriptors plus owner-private
+runtime registration atomically:
+
+```bash
+pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> [--url <url>]
+pnpm scaffold:public-component -- --vertical <vertical> --component <component>
+pnpm scaffold:module-api -- --vertical <vertical> --api <api>
+pnpm scaffold:search-provider -- --vertical <vertical> --provider <provider>
+pnpm scaffold:report -- --vertical <vertical> --report <report>
+pnpm check:module-contracts
+pnpm module-entrypoints:check
+```
+
+`scaffold:microvertical-page` keeps the lower-kebab `--page` value as the stable component,
+entrypoint, locale, and Module Federation identity. Its optional `--url` is a complete
+root-relative canonical-path override. Without it, Codesmith uses
+`/<microvertical>/<page>`: `--vertical crm --page customers` produces canonical
+`/crm/customers`, which the localized Shell router exposes as `/cs/crm/customers` and
+`/en/crm/customers`. Do not include a locale in `--url`; the router owns that prefix. The generated
+private, non-indexable starter contains only a localized title, and the authenticated Shell/Core
+gateway must resolve its exact page entrypoint before the private remote loads.
+
+An explicit `--url` may contain unique named parameters using `:parameter` segments whose names
+start with a lowercase letter and continue with letters or digits. Codesmith maps those segments to
+TanStack filesystem directories such as `[parameter]`, while the manifest and route metadata retain
+the canonical `:parameter` spelling:
+
+```bash
+mise exec -- pnpm scaffold:microvertical-page -- --vertical crm --page customer-edit --url /crm/customers/:id/edit
+```
+
+Dynamic page templates are exact, private page contributions, but are omitted from ordinary module
+navigation because a template is not a usable href. After the authenticated Shell/Core gateway has
+resolved and approved the exact page and loaded its allowlisted remote, the remote receives only the
+declared route parameters as a bounded plain string record. Route parameters remain untrusted
+business input and never alter tenant, principal, legal-entity, permission, module-state, or target
+identity context.
 
 ## Private-First Public Surfaces
 
@@ -60,7 +190,15 @@ pnpm check
 pnpm build
 ```
 
-The generated toolchain baseline is Node `>=26` with pnpm `11.13.0`.
+Local PostgreSQL uses the Compose-created `ontos_admin` identity for migrations and the
+non-superuser `ontos_runtime` identity for application pools. Fresh volumes provision the runtime
+login automatically, and `pnpm db:migrate` refreshes its schema/table/sequence grants after the
+Core, Auth, and CRM migration owners finish. CRM owns its `crm` schema and independent
+`drizzle.__drizzle_migrations_crm` history, preserving the rule that every MicroVertical owns a
+separate schema and migration history. For an existing persistent volume, set both database URLs and run
+`mise exec -- pnpm db:bootstrap-runtime-role` before migrations.
+
+The generated toolchain baseline is Node `>=26` with pnpm `11.10.0`.
 `packageManager`, `.mise.toml`, generated validation, and CI should all agree
 on that baseline; do not reintroduce Corepack or older pnpm aliases.
 
@@ -70,10 +208,9 @@ separate matrix jobs so failures are isolated and parallelizable.
 
 Type checking is TS7-first. `pnpm typecheck` runs
 `scripts/ultramodern-typecheck.mts` in TS-Go build mode over
-`tsconfig.json` project references, with native-preview `--checkers` and
-`--builders` enabled by default. `@typescript/native-preview` is the TS7 latest
-dev compiler lane. The classic `typescript` package is pinned to latest TS6
-only where compatibility peers or tooling still require it.
+`tsconfig.json` project references, with `--checkers` and `--builders`
+enabled by default. The stable `typescript` package is pinned to TS7 so
+Modern/Rspack type checking uses TS-Go by default.
 
 Read-only agent reference repositories under `repos/` (Effect and
 UltraModern.js source lookup using squashed git subtrees) are an explicit
@@ -89,12 +226,13 @@ advisory. Existing unrelated `.codex/skills/*` directories are preserved. Set
 `pnpm skills:check` is advisory when local skill bodies are missing so offline
 CI can still run the normal gate.
 
-The topology and ownership metadata are generated under `topology/`. The
-workspace also ships `.github/workflows/ultramodern-workspace-gates.yml` and
-`.github/renovate.json` with read-only workflow permissions, commit-pinned
-actions, frozen installs, StepSecurity audit-mode runner hardening, dependency
-dashboard review, one-day release age, grouped updates, and manual approval for
-major upgrades.
+The topology and ownership metadata are generated under `topology/`. GitHub only discovers Actions
+from the repository-root `.github/workflows/`, so this workspace's gate and stage-deploy workflow is
+maintained at `../.github/workflows/ultramodern-workspace-gates.yml`; this is the explicit exception
+to the otherwise `app/`-only ownership boundary. The workspace also ships `.github/renovate.json`
+with read-only workflow permissions, commit-pinned actions, frozen installs, StepSecurity audit-mode
+runner hardening, dependency dashboard review, one-day release age, grouped updates, and manual
+approval for major upgrades.
 
 Package source provenance is recorded in `.modernjs/ultramodern.json`. The
 default strategy keeps UltraModern.js runtime and tooling packages on
@@ -117,19 +255,21 @@ regenerating or updating the workspace.
 | `ULTRAMODERN_ASSET_PREFIX`        | UltraModern compatibility asset prefix           | Modern/Rspack-emitted asset URLs when `MODERN_ASSET_PREFIX` is unset |
 | `ULTRAMODERN_PUBLIC_URL_<APP_ID>` | Per-app deployment/proof URL                     | Cloudflare proof inputs and Module Federation remote URLs            |
 
-Asset URLs use this precedence: `MODERN_ASSET_PREFIX` →
-`ULTRAMODERN_ASSET_PREFIX` → origin-relative `/`. `MODERN_PUBLIC_SITE_URL` is
-canonical/SEO-only and must not be used as an asset-prefix fallback.
+Shell asset URLs use this precedence: `MODERN_ASSET_PREFIX` →
+`ULTRAMODERN_ASSET_PREFIX` → origin-relative `/`. Module Federation remotes use
+the same env precedence, then fall back to their per-app public origin:
+configured public URL, inferred workers.dev URL, or local dev port.
+`MODERN_PUBLIC_SITE_URL` is canonical/SEO-only and must not be used as an
+asset-prefix fallback.
 SEO output uses `MODERN_PUBLIC_SITE_URL`; if it is unset, generated local and
 preview outputs remain non-public until deployment proof provides explicit
 public URLs.
 
-Without public URLs configured, asset paths are origin-relative (`/`), and the
-dev server uses `dev.assetPrefix: '/'` — so apps work through tunnels and
-reverse proxies (ngrok, cloudflared) without triggering Chrome's Local Network
-Access prompt or mixed-content errors. Shell-only workspaces can set
-`MODERN_PUBLIC_SITE_URL` for SEO output without changing where assets load
-from.
+Without public URLs configured, shell asset paths are origin-relative (`/`).
+Remote dev manifests publish their own local origin so host shells load
+`remoteEntry.js` and exposed chunks from the remote dev server. Shell-only
+workspaces can set `MODERN_PUBLIC_SITE_URL` for SEO output without changing
+where assets load from.
 
 ## Cloudflare Proof
 
@@ -144,7 +284,7 @@ pattern with hyphens converted to underscores and uppercased.
 ```bash
 pnpm cloudflare:deploy
 ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP=https://shell-super-app.example.workers.dev \
-pnpm cloudflare:proof -- --require-public-urls
+pnpm cloudflare:proof --require-public-urls
 ```
 
 ## Strict Effect API
@@ -166,6 +306,68 @@ errors with concrete Effect `Schema` values; generic JSON shortcuts such as
 `Schema.UnknownFromJsonString`, `Schema.Unknown`, and `Schema.Any` are rejected
 in API modules.
 
+The Shell authentication API is the deliberate Shell-owned instance of this topology.
+Authentication and session mechanics remain a Shell/Core capability and must not be
+represented by an Auth MicroVertical.
+
+The Shell is also the only raw-credential boundary for API keys. Better Auth owns key creation,
+hashes, counters, expiry, enabled state, and mechanical support sessions in the private `auth`
+schema. Core stores only stable provider-subject bindings and enforces one Better Auth key ID per
+OntOS tenant/principal binding. External callers exchange `X-API-Key` for the existing five-minute,
+single-audience assertion; MicroVerticals receive the assertion, never the raw key. Human remains
+the V0 kind for internal, external, and guest users; SpiceDB roles and future Party relationships
+express access differences.
+
+Tenant administrators provision `service`, `integration`, and `system` principals through the
+generated `core.identity.*` Actions. API-key issuance binds the provider key before returning its
+secret; binding failure disables it. Disable/revoke closes Core first, re-enable activates Core
+last, and administration lists report `cleanupPending` whenever Core usability and provider enabled
+state disagree so cleanup can be retried without repeating a committed Core transition. Rotation
+either closes the old binding, revokes the replacement before failing, or returns the replacement
+secret with cleanup debt so an active one-time credential is never stranded. Issuance retries first
+reconcile Auth's private binding-pending marker so a failed bind cannot leave an undiscoverable
+active provider key. Markers are leased for five minutes and scoped by trusted tenant and issuer,
+so a concurrent retry cannot disable a key that is still being bound. Cleanup lookup is indexed and
+bounded; another batch defers issuance to a retry. Rotation re-reads Core state after uncertain
+provider cleanup and never withholds the only definitely active replacement. Trusted background jobs use
+a constructor-produced workload registration plus configured tenant/principal
+UUIDs and a bounded non-secret run reference—never HTTP input or a fake Better Auth account.
+
+Support IDs are configured mechanically through `BETTER_AUTH_SUPPORT_USER_IDS` as a comma-separated
+list outside source control. Start and stop still require tenant-local SpiceDB permission and active
+Core user bindings. Impersonation records target/original OntOS principal IDs and safe session
+references; it never exposes provider user IDs, reasons, cookies, or session tokens to clients.
+Before the started checkpoint completes, Auth durably records a non-secret recovery row and retains
+it through provider stop or session expiry. The restored cookie is forwarded on every post-stop
+outcome, and repeated stop completes the
+idempotent stopped checkpoint and removes recovery state. That recovery checkpoint retains the
+restricted Action's normal SpiceDB permission check; session termination succeeds independently and
+evidence remains pending when authorization or storage is unavailable.
+
+Restricted identity Actions also require explicit SpiceDB executor provisioning. Provision
+relations using the exact object ID returned by Core's `toSpiceDbActionObjectId(actionKey)`:
+`action:<object-id>#executor@principal:<principal-uuid>`. Eligible interactive users receive the
+`bind-self-api-key` and `set-self-api-key-binding-status` executors; tenant identity administrators
+receive the create/change and managed-key executors in addition to the separate tenant
+`identity_admin`/`manage_identity` relationship; support administrators receive
+`record-support-impersonation` in addition to tenant `support`/`impersonate`. A configured system
+Principal receives only the executor relations required by its registered jobs. Remove executor
+relations when the corresponding role or workload authorization is removed. The placeholder
+`allowed-principal` bootstrap tuples are test fixtures and are never production provisioning.
+
+When an existing MicroVertical BFF begins accepting Shell-user Action calls, prepare its standard
+identity boundary exactly once:
+
+```bash
+mise exec -- pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>
+```
+
+The command generates a public-JWKS server verifier and a client adapter that obtains a fresh,
+audience-scoped Shell assertion for each invocation attempt. It does not generate an Action,
+permission, Policy, endpoint, Outbox Message, UI, or vertical. Continue to use
+`scaffold:action` independently; no Action may add a per-Action Shell identity endpoint or store an
+assertion in a route loader.
+
 Generated pnpm overrides pin the framework-compatible Effect cohort. Keep
 `effect` and `@effect/vitest` aligned with `pnpm-workspace.yaml`; do not add
 new direct package-level Effect versions unless the whole UltraModern cohort is
@@ -177,8 +379,8 @@ from trusted-publisher metadata to provenance attestations.
 For older generated workspaces, run the framework migration command first:
 
 ```bash
-pnpm dlx @bleedingdev/modern-js-create@3.5.0-ultramodern.10 ultramodern \
-  migrate-strict-effect --version 3.5.0-ultramodern.10
+pnpm dlx @bleedingdev/modern-js-create@3.8.2-ultramodern.12 ultramodern \
+  migrate-strict-effect --version 3.8.2-ultramodern.12
 pnpm api:check
 pnpm contract:check
 ```

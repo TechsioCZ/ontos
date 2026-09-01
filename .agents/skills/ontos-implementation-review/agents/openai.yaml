@@ -1,0 +1,4 @@
+interface:
+  display_name: "OntOS Implementation Review"
+  short_description: "Review and repair OntOS work for PR readiness"
+  default_prompt: "Use $ontos-implementation-review: Is it PR ready? Review it against the task specification, AGENTS.md, and its referenced files. If it does not pass, fix it until it passes."

@@ -1,3 +1,0 @@
-@import 'tailwindcss' prefix(shell) source(none);
-@source '..';
-@import '@mvp2/shared-design-tokens/tokens.css';

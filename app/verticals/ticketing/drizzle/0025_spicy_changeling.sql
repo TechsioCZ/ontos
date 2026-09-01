@@ -1,2 +1,0 @@
-ALTER TABLE "ticketing"."tasks" ADD COLUMN "core_reference_token" uuid DEFAULT gen_random_uuid() NOT NULL;--> statement-breakpoint
-CREATE UNIQUE INDEX "ticketing_tasks_core_reference_token_uk" ON "ticketing"."tasks" USING btree ("core_reference_token");

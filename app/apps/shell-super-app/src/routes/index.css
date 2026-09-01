@@ -1,6 +1,3 @@
-@import 'tailwindcss' source(none);
+@import 'tailwindcss' prefix(shell) source(none);
 @source '..';
-@source '../../node_modules/@techsio/ui-kit/dist';
-
-@import '@techsio/ui-kit/tokens';
-@import '@techsio/ui-kit/theme.css';
+@import '@app/shared-design-tokens/tokens.css';

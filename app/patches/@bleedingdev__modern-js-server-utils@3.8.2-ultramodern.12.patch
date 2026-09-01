@@ -1,0 +1,25 @@
+diff --git a/dist/esm-node/compilers/typescript/index.mjs b/dist/esm-node/compilers/typescript/index.mjs
+index c9840f1..69d6289 100644
+--- a/dist/esm-node/compilers/typescript/index.mjs
++++ b/dist/esm-node/compilers/typescript/index.mjs
+@@ -116,7 +116,7 @@ const getTsgoBinEntry = (pkg)=>{
+ const getTsgoBinEntry = (pkg)=>{
+     if ('string' == typeof pkg.bin) return pkg.bin;
+-    return pkg.bin?.tsgo;
++    return pkg.bin?.tsgo ?? pkg.bin?.tsc;
+ };
+ const resolveTsgoBinPath = (pkgPath)=>{
+     const pkgDir = path.dirname(pkgPath);
+     const pkg = require(pkgPath);
+diff --git a/dist/cjs/compilers/typescript/index.js b/dist/cjs/compilers/typescript/index.js
+index 893adf5..0767038 100644
+--- a/dist/cjs/compilers/typescript/index.js
++++ b/dist/cjs/compilers/typescript/index.js
+@@ -156,6 +156,6 @@ const runTsgo = async (tsgoBinPath, args, options = {})=>new Promise((resolve, r
+ const getTsgoBinEntry = (pkg)=>{
+     if ('string' == typeof pkg.bin) return pkg.bin;
+-    return pkg.bin?.tsgo;
++    return pkg.bin?.tsgo ?? pkg.bin?.tsc;
+ };
+ const resolveTsgoBinPath = (pkgPath)=>{
+     const pkgDir = external_path_default().dirname(pkgPath);

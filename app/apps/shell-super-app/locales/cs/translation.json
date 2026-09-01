@@ -28,34 +28,5 @@
       "description": "UltraModern shell SuperApp s lokalizovaným SSR, Module Federation a frameworkem řízenými public metadata."
     },
     "title": "UltraModern Workspace"
-  },
-  "ticketing": {
-    "language": {
-      "cs": "Čeština",
-      "en": "Angličtina",
-      "switcher": "Jazyk"
-    },
-    "routes": {
-      "home": "Domů"
-    },
-    "seo": {
-      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
-    },
-    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
-    "remoteUnavailable": "Remote vertical je nedostupný",
-    "role": "ticketing",
-    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
-    "title": "Ticketing Vertical",
-    "widgetBody": "Vlastní routovanou plochu verticalu.",
-    "pages": {
-      "ticketing": {
-        "body": "Ticketing Ticketing page owned by the ticketing microvertical.",
-        "eyebrow": "Ticketing",
-        "seo": {
-          "description": "Ticketing Ticketing page owned by the ticketing microvertical."
-        },
-        "title": "Ticketing Ticketing"
-      }
-    }
   }
 }

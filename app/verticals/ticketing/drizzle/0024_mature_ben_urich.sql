@@ -1,1 +1,0 @@
-ALTER TABLE "ticketing"."task_property_definitions" ADD COLUMN "schema_position" numeric(38, 18) DEFAULT extract(epoch from clock_timestamp()) NOT NULL;

@@ -1,0 +1,4 @@
+interface:
+  display_name: "OntOS Prime"
+  short_description: "Load task-ready OntOS project context"
+  default_prompt: "Use $ontos-prime to load the current OntOS project context and summarize the working constraints."

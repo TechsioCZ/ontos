@@ -1,80 +1,50 @@
 name: ontos
 
 services:
-  postgres:
+  ontos-db:
+    container_name: ontos-db
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ontos_app}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ontos}
-      POSTGRES_USER: ${POSTGRES_USER:-ontos}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
     ports:
-      - '${POSTGRES_PORT:-5435}:5432'
+      - '${POSTGRES_PORT}:5432'
     volumes:
-      - ontos_postgres:/var/lib/postgresql/data
+      - ontos_postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres/docker-init-runtime-role.sh:/docker-entrypoint-initdb.d/010-ontos-runtime-role.sh:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d postgres']
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
       interval: 5s
       timeout: 5s
       retries: 20
 
-  postgres-init:
-    image: postgres:17-alpine
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD:-ontos}
-      POSTGRES_USER: ${POSTGRES_USER:-ontos}
-      SPICEDB_POSTGRES_DB: ${SPICEDB_POSTGRES_DB:-ontos_spicedb}
-    command:
-      - sh
-      - -ec
-      - |
-        if ! psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '${SPICEDB_POSTGRES_DB:-ontos_spicedb}'" | grep -q 1; then
-          psql -h postgres -U "${POSTGRES_USER:-ontos}" -d postgres -c 'CREATE DATABASE "${SPICEDB_POSTGRES_DB:-ontos_spicedb}" OWNER "${POSTGRES_USER:-ontos}"'
-        fi
-
-  spicedb-migrate:
-    image: authzed/spicedb:latest
-    depends_on:
-      postgres-init:
-        condition: service_completed_successfully
-    command:
-      - migrate
-      - head
-      - --datastore-engine=postgres
-      - --datastore-conn-uri=${SPICEDB_DATASTORE_URL:-postgres://ontos:ontos@postgres:5432/ontos_spicedb?sslmode=disable}
-
-  spicedb:
-    image: authzed/spicedb:latest
-    depends_on:
-      spicedb-migrate:
-        condition: service_completed_successfully
+  ontos-spicedb:
+    container_name: ontos-spicedb
+    image: authzed/spicedb:v1.56.0
     command:
       - serve
-      - --grpc-preshared-key=${SPICEDB_PRESHARED_KEY:-local-spicedb-key}
-      - --datastore-engine=postgres
-      - --datastore-conn-uri=${SPICEDB_DATASTORE_URL:-postgres://ontos:ontos@postgres:5432/ontos_spicedb?sslmode=disable}
+      - --datastore-engine=memory
+      - --datastore-bootstrap-files=/bootstrap/bootstrap.yaml
+      - --http-enabled=true
+    environment:
+      SPICEDB_GRPC_PRESHARED_KEY: ${SPICEDB_PRESHARED_KEY}
     ports:
-      - '${SPICEDB_GRPC_PORT:-50051}:50051'
-      - '${SPICEDB_HTTP_PORT:-8443}:8443'
+      - '${SPICEDB_GRPC_PORT}:50051'
+      - '${SPICEDB_HTTP_PORT}:8443'
+    volumes:
+      - ./packages/core-runtime/spicedb/bootstrap.yaml:/bootstrap/bootstrap.yaml:ro
     healthcheck:
-      test: ['CMD', 'grpc_health_probe', '-addr=localhost:50051', '-rpc-timeout=2s']
+      test:
+        - CMD
+        - /usr/local/bin/grpc_health_probe
+        - -addr=localhost:50051
       interval: 5s
       timeout: 5s
       retries: 20
 
-  zed:
-    image: authzed/zed:latest
-    profiles:
-      - tools
-    depends_on:
-      spicedb:
-        condition: service_healthy
-    entrypoint:
-      - zed
-    volumes:
-      - ./scripts/spicedb:/spicedb:ro
-
 volumes:
-  ontos_postgres:
+  ontos_postgres_data:
+    name: ontos_postgres_data

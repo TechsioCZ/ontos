@@ -7,14 +7,32 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
-    "verticalRefs": ["ticketing"],
+    "verticalRefs": ["crm"],
+    "authentication": {
+      "kind": "shell-core-capability",
+      "owners": ["shell-super-app", "core-runtime"],
+      "databaseSchema": "auth",
+      "api": {
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "prefix": "/shell-super-app-api",
+        "operations": [
+          "signIn",
+          "currentSession",
+          "signOut",
+          "availableTenants",
+          "switchTenant",
+          "issueGatewayContext"
+        ]
+      }
+    },
     "moduleFederation": {
       "role": "host",
       "name": "shellSuperApp",
       "remotes": [
         {
-          "id": "ticketing",
-          "name": "verticalTicketing",
+          "id": "crm",
+          "name": "verticalCrm",
           "manifestUrl": "http://localhost:4101/mf-manifest.json"
         }
       ],
@@ -121,67 +139,75 @@
           "docs/super-app-rfc-adr/wave2/rollback.md#shell-lkg"
         ]
       }
+    },
+    "deliveryUnit": {
+      "schemaVersion": 1,
+      "kind": "microvertical-delivery-unit",
+      "unitId": "app/shell-super-app",
+      "packageName": "@app/shell-super-app",
+      "version": "0.1.0",
+      "buildMarker": "090dd0a19fdd0853",
+      "sourceRevision": "workspace"
     }
   },
   "verticals": [
     {
-      "id": "ticketing",
+      "id": "crm",
       "kind": "vertical",
-      "domain": "ticketing",
-      "package": "@app/ticketing",
-      "path": "verticals/ticketing",
+      "domain": "crm",
+      "package": "@app/crm",
+      "path": "verticals/crm",
       "moduleFederation": {
         "role": "remote",
-        "name": "verticalTicketing",
+        "name": "verticalCrm",
         "manifestUrl": "http://localhost:4101/mf-manifest.json",
-        "exposes": ["./Route", "./Widget"],
+        "exposes": ["./PageCrm"],
         "ssr": true,
-        "fallbackTelemetryEvent": "modernjs:mv-runtime-parity",
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
       "backendFederation": {
         "role": "microvertical-server",
-        "name": "verticalTicketingBackend",
+        "name": "verticalCrmBackend",
         "runtimeFramework": "effect",
         "strictEffectApproach": true,
         "deliveryUnit": {
           "schemaVersion": 1,
           "kind": "microvertical-delivery-unit",
-          "unitId": "app/ticketing",
-          "packageName": "@app/ticketing",
+          "unitId": "app/crm",
+          "packageName": "@app/crm",
           "version": "0.1.0",
-          "buildMarker": "07a52f1d8403302d",
+          "buildMarker": "b08ddded31ae2315",
           "sourceRevision": "workspace"
         },
         "exposes": {
           "./effect-api": {
-            "contract": "verticals/ticketing/shared/api.ts",
-            "runtime": "verticals/ticketing/api/index.ts",
-            "client": "verticals/ticketing/src/api/ticketing-client.ts",
-            "openapi": "/ticketing-api/openapi.json",
-            "readiness": "/ticketing-api/ticketing/readiness"
+            "contract": "verticals/crm/shared/api.ts",
+            "runtime": "verticals/crm/api/index.ts",
+            "client": "verticals/crm/src/api/crm-client.ts",
+            "openapi": "/crm-api/openapi.json",
+            "readiness": "/crm-api/crm/readiness"
           }
         },
         "versionBoundary": {
           "invariant": "web-and-api-same-build",
           "identityRoot": "deliveryUnit",
-          "packageName": "@app/ticketing",
+          "packageName": "@app/crm",
           "ui": {
-            "manifestEnv": "VERTICAL_TICKETING_MF_MANIFEST",
+            "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
             "manifestUrl": "http://localhost:4101/mf-manifest.json",
-            "buildMarker": "verticals/ticketing/src/routes/ultramodern-route-metadata.ts"
+            "buildMarker": "verticals/crm/src/routes/ultramodern-route-metadata.ts"
           },
           "api": {
-            "readiness": "/ticketing-api/ticketing/readiness",
-            "buildMarker": "verticals/ticketing/shared/ultramodern-build.ts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TICKETING"
+            "readiness": "/crm-api/crm/readiness",
+            "buildMarker": "verticals/crm/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM"
           }
         },
         "executionSurfaces": {
           "cloudflare": {
             "kind": "cloudflare-worker-snapshot",
-            "workerName": "app-ticketing",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TICKETING",
+            "workerName": "app-crm",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -193,40 +219,40 @@
             "zephyr": {
               "runtime": "ssr-worker",
               "integration": "managed-cloudflare",
-              "snapshotIdEnv": "ZEPHYR_TICKETING_SNAPSHOT_ID",
-              "versionIdEnv": "ZEPHYR_TICKETING_VERSION_ID",
-              "applicationUidEnv": "ZEPHYR_TICKETING_APPLICATION_UID"
+              "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
             },
             "workerDispatch": {
               "preferred": "service-binding",
-              "serviceBinding": "VERTICAL_TICKETING_WORKER",
-              "serviceBindingEnv": "VERTICAL_TICKETING_WORKER_BINDING",
-              "dispatchNamespaceEnv": "VERTICAL_TICKETING_DISPATCH_NAMESPACE",
-              "dispatchWorkerNameEnv": "VERTICAL_TICKETING_WORKER_NAME",
+              "serviceBinding": "VERTICAL_CRM_WORKER",
+              "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
               "requestInterface": "fetch"
             }
           },
           "node": {
             "kind": "node-mf-runtime",
             "adapterVersion": "backend-mf-effect-v1",
-            "remoteName": "verticalTicketingBackend",
-            "manifestEnv": "VERTICAL_TICKETING_BACKEND_MF_MANIFEST",
+            "remoteName": "verticalCrmBackend",
+            "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
             "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
-            "containerEntry": "http://localhost:4101/backendRemoteEntry.mjs",
-            "remoteType": "module",
+            "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
             "expose": "./effect-api",
             "runtimePackage": "@modern-js/plugin-bff/effect",
             "expected": {
-              "unitId": "app/ticketing",
-              "buildMarker": "07a52f1d8403302d"
+              "unitId": "app/crm",
+              "buildMarker": "b08ddded31ae2315"
             }
           }
         },
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
-          "packageName": "@app/ticketing",
-          "effectVersion": "4.0.0-beta.92",
-          "moduleFederationVersion": "2.6.0"
+          "packageName": "@app/crm",
+          "effectVersion": "4.0.0-beta.107",
+          "moduleFederationVersion": "2.8.0"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -243,32 +269,32 @@
       "deliveryUnit": {
         "schemaVersion": 1,
         "kind": "microvertical-delivery-unit",
-        "unitId": "app/ticketing",
-        "packageName": "@app/ticketing",
+        "unitId": "app/crm",
+        "packageName": "@app/crm",
         "version": "0.1.0",
-        "buildMarker": "07a52f1d8403302d",
+        "buildMarker": "b08ddded31ae2315",
         "sourceRevision": "workspace"
       },
       "api": {
         "runtime": "effect",
         "bff": {
-          "prefix": "/ticketing-api",
+          "prefix": "/crm-api",
           "openapi": "/openapi.json",
           "strictEffectApproach": true
         },
         "contract": {
           "export": "./api",
-          "path": "verticals/ticketing/shared/api.ts"
+          "path": "verticals/crm/shared/api.ts"
         },
         "client": {
           "export": "./api/client",
-          "path": "verticals/ticketing/src/api/ticketing-client.ts"
+          "path": "verticals/crm/src/api/crm-client.ts"
         },
-        "serverEntry": "verticals/ticketing/api/index.ts",
-        "basePath": "/ticketing-api/ticketing",
-        "consumedBy": ["shell-super-app", "ticketing"],
+        "serverEntry": "verticals/crm/api/index.ts",
+        "basePath": "/crm-api/crm",
+        "consumedBy": ["shell-super-app", "crm"],
         "readiness": {
-          "endpoint": "/ticketing/readiness",
+          "endpoint": "/crm/readiness",
           "marker": {
             "ui": "ultramodernUiMarker",
             "api": "ultramodernApiMarker",
@@ -290,40 +316,40 @@
         },
         "domainOperations": {
           "workspaceFeed": {
-            "client": "listTicketing",
+            "client": "listCrm",
             "method": "GET",
-            "path": "/ticketing",
+            "path": "/crm",
             "resource": "workspace-items",
-            "owner": "ticketing"
+            "owner": "crm"
           },
           "workspaceDetail": {
-            "client": "getTicketing",
+            "client": "getCrm",
             "method": "GET",
-            "path": "/ticketing/:id",
+            "path": "/crm/:id",
             "resource": "workspace-item",
-            "owner": "ticketing"
+            "owner": "crm"
           },
           "workspaceCreate": {
-            "client": "createTicketing",
+            "client": "createCrm",
             "method": "POST",
-            "path": "/ticketing",
-            "resource": "ticketing",
-            "owner": "ticketing"
+            "path": "/crm",
+            "resource": "crm",
+            "owner": "crm"
           }
         }
       },
       "cloudflare": {
         "target": "cloudflare",
-        "workerName": "app-ticketing",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TICKETING",
+        "workerName": "app-crm",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
         "compatibilityDate": "2026-06-02",
         "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
           "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/ticketing.json",
-          "apiReadiness": "/ticketing-api/ticketing/readiness"
+          "locale": "/locales/en/crm.json",
+          "apiReadiness": "/crm-api/crm/readiness"
         },
         "security": {
           "enabled": true,
@@ -398,22 +424,40 @@
         "evidence": {
           "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
-        }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "crm-readiness-smoke",
+            "route": "/crm-api/crm/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
       },
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/ticketing.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#ticketing",
+        "runbookRef": "runbooks/verticals/crm.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#ticketing"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#crm"]
         }
       }
     }
   ],
   "sharedPackages": [
+    {
+      "id": "core-runtime",
+      "package": "@app/core-runtime",
+      "path": "packages/core-runtime",
+      "description": "Server-only Core infrastructure and typed PostgreSQL ownership."
+    },
     {
       "id": "shared-contracts",
       "package": "@app/shared-contracts",
@@ -429,6 +473,11 @@
   ],
   "validation": {
     "script": "scripts/validate-ultramodern-workspace.mts",
-    "commands": ["pnpm i18n:boundaries", "pnpm api:check", "pnpm contract:check"]
+    "commands": [
+      "pnpm i18n:boundaries",
+      "pnpm api:check",
+      "pnpm module-entrypoints:check",
+      "pnpm contract:check"
+    ]
   }
 }

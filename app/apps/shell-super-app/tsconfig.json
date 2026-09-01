@@ -8,10 +8,20 @@
     "incremental": true,
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/apps__shell-super-app",
+    "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/apps__shell-super-app.tsbuildinfo"
   },
-  "include": ["src", "locales/**/*.json", "package.json", "shared"],
+  "include": [
+    "api",
+    "src",
+    "locales/**/*.json",
+    "package.json",
+    "shared"
+  ],
   "references": [
+    {
+      "path": "../../packages/core-runtime"
+    },
     {
       "path": "../../packages/shared-contracts"
     },
@@ -19,7 +29,7 @@
       "path": "../../packages/shared-design-tokens"
     },
     {
-      "path": "../../verticals/ticketing"
+      "path": "../../verticals/crm"
     }
   ]
 }

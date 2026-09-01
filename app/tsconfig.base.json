@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "preserve",
     "moduleResolution": "Bundler",
     "moduleDetection": "force",
@@ -19,7 +23,6 @@
     "noFallthroughCasesInSwitch": true,
     "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,
-    "skipLibCheck": true,
     "resolveJsonModule": true,
     "plugins": [
       {

@@ -17,7 +17,7 @@ type RouteMetadata = Omit<GeneratedRouteMetadata, 'indexable' | 'jsonLd' | 'publ
 const routeMetadata: readonly RouteMetadata[] = ultramodernRouteMetadata;
 
 const isSupportedLanguage = (value: string): value is SupportedLanguage =>
-  supportedLanguages.includes(value as SupportedLanguage);
+  value === supportedLanguages[0] || value === supportedLanguages[1];
 
 const normalisePath = (pathname: string) => {
   const normalised = pathname.replaceAll(/\/+/gu, '/').replace(/\/+$/u, '');

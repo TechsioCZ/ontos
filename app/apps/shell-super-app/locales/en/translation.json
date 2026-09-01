@@ -28,34 +28,5 @@
       "description": "UltraModern shell SuperApp with localized SSR, Module Federation, and framework-owned public metadata."
     },
     "title": "UltraModern Workspace"
-  },
-  "ticketing": {
-    "language": {
-      "cs": "Czech",
-      "en": "English",
-      "switcher": "Language"
-    },
-    "routes": {
-      "home": "Home"
-    },
-    "seo": {
-      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
-    },
-    "federatedSurface": "Federated surface owned by this vertical.",
-    "remoteUnavailable": "Remote vertical unavailable",
-    "role": "ticketing",
-    "routeSurface": "Route surface owned by this vertical.",
-    "title": "Ticketing Vertical",
-    "widgetBody": "Owns a vertical route surface.",
-    "pages": {
-      "ticketing": {
-        "body": "Ticketing Ticketing page owned by the ticketing microvertical.",
-        "eyebrow": "Ticketing",
-        "seo": {
-          "description": "Ticketing Ticketing page owned by the ticketing microvertical."
-        },
-        "title": "Ticketing Ticketing"
-      }
-    }
   }
 }

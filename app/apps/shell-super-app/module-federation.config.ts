@@ -1,27 +1,18 @@
-// @effect-diagnostics nodeBuiltinImport:off processEnv:off
 // ultramodern-mf: host-only
 import { createRequire } from 'node:module';
+
+import { getBuildConfigEnvironment } from '@modern-js/app-tools/config';
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
+import * as Schema from 'effect/Schema';
+
 import { dependencies } from './package.json';
 
-const require = createRequire(import.meta.url);
-const pluginI18nVersion = (require('@modern-js/plugin-i18n/package.json') as { version: string })
-  .version;
-const pluginTanstackVersion = (
-  require('@modern-js/plugin-tanstack/package.json') as { version: string }
-).version;
-const runtimeVersion = (require('@modern-js/runtime/package.json') as { version: string }).version;
-const reactVersion = (require('react/package.json') as { version: string }).version;
-const reactDomVersion = (require('react-dom/package.json') as { version: string }).version;
-const uiKitVersion = dependencies['@techsio/ui-kit'];
-
-const cloudflareDeployEnabled = process.env['MODERNJS_DEPLOY'] === 'cloudflare';
-const cloudflareWorkersDevSubdomain =
-  process.env['ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN']?.trim();
+const cloudflareDeployEnabled = getBuildConfigEnvironment('MODERNJS_DEPLOY') === 'cloudflare';
+const cloudflareWorkersDevSubdomain = getBuildConfigEnvironment(
+  'ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN',
+)?.trim();
 const requireCloudflarePublicUrls =
-  process.env['ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS'] === 'true';
-const shellRemotesEnabled =
-  process.env['ULTRAMODERN_SHELL_REMOTES'] === 'true' || cloudflareDeployEnabled;
+  getBuildConfigEnvironment('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') === 'true';
 
 const createRemoteManifestUrl = (options: {
   manifestEnv: string;
@@ -30,12 +21,12 @@ const createRemoteManifestUrl = (options: {
   publicUrlEnv: string;
   workerName: string;
 }) => {
-  const configuredManifest = process.env[options.manifestEnv]?.trim();
+  const configuredManifest = getBuildConfigEnvironment(options.manifestEnv)?.trim();
   if (configuredManifest !== undefined && configuredManifest.length > 0) {
     return configuredManifest;
   }
 
-  const configuredPublicUrl = process.env[options.publicUrlEnv]?.trim();
+  const configuredPublicUrl = getBuildConfigEnvironment(options.publicUrlEnv)?.trim();
   if (configuredPublicUrl !== undefined && configuredPublicUrl.length > 0) {
     return `${options.mfName}@${configuredPublicUrl.replace(/\/+$/u, '')}/mf-manifest.json`;
   }
@@ -57,14 +48,17 @@ const createRemoteManifestUrl = (options: {
   return `${options.mfName}@http://localhost:${options.port}/mf-manifest.json`;
 };
 
+const require = createRequire(import.meta.url);
+const PackageVersionSchema = Schema.Struct({ version: Schema.String });
+const packageVersion = (packageName: string): string =>
+  Schema.decodeUnknownSync(PackageVersionSchema)(require(`${packageName}/package.json`)).version;
+const i18nVersion = packageVersion('@modern-js/plugin-i18n');
+const runtimeVersion = packageVersion('@modern-js/runtime');
+const reactVersion = packageVersion('react');
+const reactDomVersion = packageVersion('react-dom');
+
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] =
   createModuleFederationConfig({
-    bridge: {
-      enableBridgeRouter: false,
-    },
-    dev: {
-      disableDynamicRemoteTypeHints: true,
-    },
     dts: {
       consumeTypes: true,
       generateTypes: false,
@@ -72,26 +66,21 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     filename: 'remoteEntry.js',
     name: 'shellSuperApp',
-    remotes: shellRemotesEnabled
-      ? {
-          ticketing: createRemoteManifestUrl({
-            manifestEnv: 'VERTICAL_TICKETING_MF_MANIFEST',
-            mfName: 'verticalTicketing',
-            port: 4101,
-            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_TICKETING',
-            workerName: 'app-ticketing',
-          }),
-        }
-      : {},
+    remotes: {
+      crm: createRemoteManifestUrl({
+        manifestEnv: 'VERTICAL_CRM_MF_MANIFEST',
+        mfName: 'verticalCrm',
+        port: 4101,
+        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+        workerName: 'app-crm',
+      }),
+    },
     shared: {
-      '@modern-js/plugin-i18n/runtime/no-react-i18next': {
-        requiredVersion: pluginI18nVersion,
+      '@modern-js/plugin-i18n/runtime': {
+        import: '@modern-js/plugin-i18n/runtime/no-react-i18next',
+        requiredVersion: i18nVersion,
         singleton: true,
-        treeShaking: false,
-      },
-      '@modern-js/plugin-tanstack/runtime': {
-        requiredVersion: pluginTanstackVersion,
-        singleton: true,
+        strictVersion: true,
         treeShaking: false,
       },
       '@modern-js/runtime': {
@@ -101,16 +90,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       },
       '@tanstack/react-router': {
         requiredVersion: dependencies['@tanstack/react-router'],
-        singleton: true,
-        treeShaking: false,
-      },
-      '@techsio/ui-kit': {
-        requiredVersion: uiKitVersion,
-        singleton: true,
-        treeShaking: false,
-      },
-      '@techsio/ui-kit/molecules/toast': {
-        requiredVersion: uiKitVersion,
         singleton: true,
         treeShaking: false,
       },
@@ -130,7 +109,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
         treeShaking: false,
       },
     },
-    treeShakingSharedExcludePlugins: ['RspackModuleFederationPlugin'],
   });
 
 export default moduleFederationConfig;

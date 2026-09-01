@@ -1,0 +1,27 @@
+diff --git a/dist/esm-node/shared/rsc/rscDisabledClientEdgeRuntime.mjs b/dist/esm-node/shared/rsc/rscDisabledClientEdgeRuntime.mjs
+index 353a8e1..6bd975c 100644
+--- a/dist/esm-node/shared/rsc/rscDisabledClientEdgeRuntime.mjs
++++ b/dist/esm-node/shared/rsc/rscDisabledClientEdgeRuntime.mjs
+@@ -1,4 +1,3 @@
+-import "node:module";
+ import { disabledRscRuntime } from "./rscDisabledRuntimeError.mjs";
+ const createFromFetch = disabledRscRuntime;
+ const createFromReadableStream = disabledRscRuntime;
+diff --git a/dist/esm-node/shared/rsc/rscDisabledRuntimeError.mjs b/dist/esm-node/shared/rsc/rscDisabledRuntimeError.mjs
+index e5ac567..7330bd0 100644
+--- a/dist/esm-node/shared/rsc/rscDisabledRuntimeError.mjs
++++ b/dist/esm-node/shared/rsc/rscDisabledRuntimeError.mjs
+@@ -1,4 +1,3 @@
+-import "node:module";
+ function disabledRscRuntime() {
+     throw new Error('React Server Components are disabled for this build.');
+ }
+diff --git a/dist/esm-node/shared/rsc/rscDisabledClientBrowserRuntime.mjs b/dist/esm-node/shared/rsc/rscDisabledClientBrowserRuntime.mjs
+index 99402af..f8c31df 100644
+--- a/dist/esm-node/shared/rsc/rscDisabledClientBrowserRuntime.mjs
++++ b/dist/esm-node/shared/rsc/rscDisabledClientBrowserRuntime.mjs
+@@ -1,4 +1,3 @@
+-import "node:module";
+ import { disabledRscRuntime } from "./rscDisabledRuntimeError.mjs";
+ const createFromFetch = disabledRscRuntime;
+ const createFromReadableStream = disabledRscRuntime;

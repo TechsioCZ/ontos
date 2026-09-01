@@ -1,129 +1,173 @@
+import { Predicate } from 'effect';
+/* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- React handlers stay synchronous while Effect requests complete asynchronously. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { toaster } from '@techsio/ui-kit/molecules/toast';
+import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
+import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { useEffect, useState } from 'react';
-import { authClient } from '../../../auth/auth-client';
+import { runEffectRequest, signIn } from '../../../api/auth-client.ts';
+import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
-const supportedLanguages = new Set(['en', 'cs']);
-type Language = 'en' | 'cs';
+interface LoginValidation {
+  loginMissing: boolean;
+  passwordMissing: boolean;
+}
 
-const normalizeLanguage = (language: string): Language =>
-  supportedLanguages.has(language) ? (language as Language) : 'en';
-
-const safeReturnTo = () => {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  const returnTo = new URLSearchParams(window.location.search).get('returnTo');
-  if (returnTo === null || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
-    return null;
-  }
-
-  try {
-    const url = new URL(returnTo, window.location.origin);
-    if (url.origin !== window.location.origin) {
-      return null;
-    }
-
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return null;
-  }
+const validLogin: LoginValidation = {
+  loginMissing: false,
+  passwordMissing: false,
 };
 
-export default function LoginPage() {
+const authenticationErrorMessageKey = <ErrorTag,>(errorTag: ErrorTag) => {
+  if (errorTag === 'InvalidCredentialsProblem') {
+    return 'shell.login.error.invalid';
+  }
+  if (errorTag === 'OntosIdentityForbiddenProblem') {
+    return 'shell.login.error.forbidden';
+  }
+  if (errorTag === 'AuthenticationUnavailableProblem') {
+    return 'shell.login.error.unavailable';
+  }
+  return 'shell.login.error.internal';
+};
+
+const LoginPage = () => {
   const { language, t } = useModernI18n();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const session = authClient.useSession();
-  const user = session.data?.user;
-  const lang = normalizeLanguage(language);
-  const homePath = `/${lang}`;
-  const postLoginPath = safeReturnTo() ?? homePath;
+  const navigate = useNavigate();
+  const toaster = useToast();
+  const loginRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const [validation, setValidation] = useState<LoginValidation>(validLogin);
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (user !== undefined && user !== null) {
-      window.location.replace(postLoginPath);
-    }
-  }, [postLoginPath, user]);
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsSubmitting(true);
 
-    try {
-      const result = await authClient.signIn.email({
-        email,
-        password,
+    if (submitting) {
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
+    const login = formData.get('login');
+    const password = formData.get('password');
+    const loginValue = Predicate.isString(login) ? login : '';
+    const passwordValue = Predicate.isString(password) ? password : '';
+    const nextValidation = {
+      loginMissing: loginValue.trim().length === 0,
+      passwordMissing: passwordValue.length === 0,
+    };
+
+    setValidation(nextValidation);
+
+    if (nextValidation.loginMissing || nextValidation.passwordMissing) {
+      toaster.create({
+        description: t('shell.login.toast.description'),
+        title: t('shell.login.toast.title'),
+        type: 'error',
       });
 
-      if (result.error !== null) {
-        toaster.create({
-          description: t('auth.loginFailedDescription'),
-          title: t('auth.loginFailedTitle'),
-          type: 'error',
-        });
+      if (nextValidation.loginMissing) {
+        loginRef.current?.focus();
         return;
       }
 
-      window.location.assign(postLoginPath);
-    } catch {
-      toaster.create({
-        description: t('auth.loginFailedDescription'),
-        title: t('auth.loginFailedTitle'),
-        type: 'error',
-      });
-    } finally {
-      setIsSubmitting(false);
+      passwordRef.current?.focus();
+      return;
     }
+
+    setSubmitting(true);
+    void runEffectRequest(
+      signIn(
+        {
+          email: loginValue.trim(),
+          password: passwordValue,
+        },
+        { locale: language },
+      ),
+    )
+      .then(() => navigate({ to: `/${language}/` }))
+      .catch(<Failure,>(error: Failure) => {
+        const errorTag =
+          Predicate.isObjectKeyword(error) && error !== null && '_tag' in error
+            ? error._tag
+            : 'AuthenticationInternalProblem';
+        const messageKey = authenticationErrorMessageKey(errorTag);
+
+        toaster.create({
+          description: t(messageKey),
+          title: t('shell.login.error.title'),
+          type: 'error',
+        });
+        loginRef.current?.focus();
+      })
+      .finally(() => {
+        setSubmitting(false);
+      });
   };
 
   return (
-    <main className="min-h-screen bg-[var(--ui-color-bg-canvas)] text-[var(--ui-color-text)]">
-      <section className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-12">
-        <div className="space-y-8">
-          <div className="space-y-3">
-            <Link href={homePath}>{t('auth.backHome')}</Link>
-            <h1 className="text-3xl font-semibold tracking-normal text-[var(--ui-color-text-strong)]">
-              {t('auth.loginTitle')}
-            </h1>
-          </div>
-
-          <form className="space-y-5" onSubmit={(event) => void handleSubmit(event)}>
-            <FormInput
-              autoComplete="email"
-              id="login-email"
-              label={t('auth.emailLabel')}
-              onChange={(event) => setEmail(event.currentTarget.value)}
-              required
-              type="email"
-              value={email}
-            />
-            <FormInput
-              autoComplete="current-password"
-              id="login-password"
-              label={t('auth.passwordLabel')}
-              onChange={(event) => setPassword(event.currentTarget.value)}
-              required
-              type="password"
-              value={password}
-            />
-            <Button
-              block
-              isLoading={isSubmitting}
-              loadingText={t('auth.loginSubmitting')}
-              type="submit"
+    <>
+      <UltramodernRouteHead />
+      <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:px-4 shell:py-10 shell:text-(--color-page-fg) shell:md:px-20 shell:md:pt-[120px] shell:md:pb-10">
+        <section className="shell:flex shell:w-full shell:max-w-[360px] shell:flex-col">
+          <Link className="shell:self-center" href={`/${language}`}>
+            {t('shell.login.back')}
+          </Link>
+          <div className="shell:mt-6">
+            <h1 className="shell:text-2xl shell:font-bold">{t('shell.login.title')}</h1>
+            <form
+              className="shell:mt-4 shell:flex shell:flex-col shell:gap-4"
+              noValidate
+              onSubmit={handleSubmit}
             >
-              {t('auth.loginSubmit')}
-            </Button>
-          </form>
-        </div>
-      </section>
-    </main>
+              <FormInput
+                aria-invalid={validation.loginMissing || undefined}
+                autoComplete="username"
+                helpText={validation.loginMissing ? t('shell.login.required.login') : undefined}
+                id="login"
+                label={t('shell.login.field.login')}
+                name="login"
+                ref={loginRef}
+                required
+                type="text"
+                validateStatus={validation.loginMissing ? 'error' : 'default'}
+              />
+              <FormInput
+                aria-invalid={validation.passwordMissing || undefined}
+                autoComplete="current-password"
+                helpText={
+                  validation.passwordMissing ? t('shell.login.required.password') : undefined
+                }
+                id="password"
+                label={t('shell.login.field.password')}
+                name="password"
+                ref={passwordRef}
+                required
+                type="password"
+                validateStatus={validation.passwordMissing ? 'error' : 'default'}
+              />
+              <Button
+                block
+                disabled={submitting}
+                isLoading={submitting}
+                loadingText={t('shell.login.pending')}
+                size="md"
+                theme="solid"
+                type="submit"
+                variant="primary"
+              >
+                {t('shell.login.submit')}
+              </Button>
+            </form>
+          </div>
+        </section>
+      </main>
+      <Toaster />
+    </>
   );
-}
+};
+
+export default LoginPage;

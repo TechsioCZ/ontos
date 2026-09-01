@@ -1,0 +1,39 @@
+diff --git a/dist/cjs/plugins/deploy/utils/generator.js b/dist/cjs/plugins/deploy/utils/generator.js
+index 23dbe67eabb37d89f05baa9e14b9527a667d4e55..80811d67b2f03c08facf18fb38f5c1cc2c9ccb16 100644
+--- a/dist/cjs/plugins/deploy/utils/generator.js
++++ b/dist/cjs/plugins/deploy/utils/generator.js
+@@ -61,7 +61,7 @@ const serverAppContextTemplate = (appContext)=>{
+ };
+ const genPluginImportsCode = (plugins, isESM = false)=>plugins.map(([name, options], index)=>{
+         const im = isESM ? `import * as plugin_${index}_ns from '${name}'` : `const plugin_${index}_ns = require('${name}')`;
+-        return `${im};const plugin_${index} = plugin_${index}_ns.default || plugin_${index}_ns`;
++        return `${im};const plugin_${index} = typeof plugin_${index}_ns.default === 'function' ? plugin_${index}_ns.default : typeof plugin_${index}_ns.default?.default === 'function' ? plugin_${index}_ns.default.default : plugin_${index}_ns`;
+     }).join(';\n');
+ const getPluginsCode = (plugins)=>`[${plugins.map(([, options], index)=>`plugin_${index}(${options ? JSON.stringify(options) : ''})`).join(',')}]`;
+ const getServerConfigPath = (meta)=>`path.join(__dirname, "${utils_namespaceObject.SERVER_DIR}", "${meta}.server")`;
+diff --git a/dist/esm/plugins/deploy/utils/generator.mjs b/dist/esm/plugins/deploy/utils/generator.mjs
+index 8b49ef81a1f54506f45c03586b31248cb677b976..24cb2d18020ea04cbdd43d4d714697885fd1ea47 100644
+--- a/dist/esm/plugins/deploy/utils/generator.mjs
++++ b/dist/esm/plugins/deploy/utils/generator.mjs
+@@ -15,7 +15,7 @@ const serverAppContextTemplate = (appContext)=>{
+ };
+ const genPluginImportsCode = (plugins, isESM = false)=>plugins.map(([name, options], index)=>{
+         const im = isESM ? `import * as plugin_${index}_ns from '${name}'` : `const plugin_${index}_ns = require('${name}')`;
+-        return `${im};const plugin_${index} = plugin_${index}_ns.default || plugin_${index}_ns`;
++        return `${im};const plugin_${index} = typeof plugin_${index}_ns.default === 'function' ? plugin_${index}_ns.default : typeof plugin_${index}_ns.default?.default === 'function' ? plugin_${index}_ns.default.default : plugin_${index}_ns`;
+     }).join(';\n');
+ const getPluginsCode = (plugins)=>`[${plugins.map(([, options], index)=>`plugin_${index}(${options ? JSON.stringify(options) : ''})`).join(',')}]`;
+ const getServerConfigPath = (meta)=>`path.join(__dirname, "${SERVER_DIR}", "${meta}.server")`;
+diff --git a/dist/esm-node/plugins/deploy/utils/generator.mjs b/dist/esm-node/plugins/deploy/utils/generator.mjs
+index 5a5b418c5d28a5ebec5c11c272f537c58fb59bb4..3e233f2812fbb5247a9aebf1a035631b8a515f7f 100644
+--- a/dist/esm-node/plugins/deploy/utils/generator.mjs
++++ b/dist/esm-node/plugins/deploy/utils/generator.mjs
+@@ -16,7 +16,7 @@ const serverAppContextTemplate = (appContext)=>{
+ };
+ const genPluginImportsCode = (plugins, isESM = false)=>plugins.map(([name, options], index)=>{
+         const im = isESM ? `import * as plugin_${index}_ns from '${name}'` : `const plugin_${index}_ns = require('${name}')`;
+-        return `${im};const plugin_${index} = plugin_${index}_ns.default || plugin_${index}_ns`;
++        return `${im};const plugin_${index} = typeof plugin_${index}_ns.default === 'function' ? plugin_${index}_ns.default : typeof plugin_${index}_ns.default?.default === 'function' ? plugin_${index}_ns.default.default : plugin_${index}_ns`;
+     }).join(';\n');
+ const getPluginsCode = (plugins)=>`[${plugins.map(([, options], index)=>`plugin_${index}(${options ? JSON.stringify(options) : ''})`).join(',')}]`;
+ const getServerConfigPath = (meta)=>`path.join(__dirname, "${SERVER_DIR}", "${meta}.server")`;
