@@ -70,13 +70,16 @@ All Party state changes are declared Actions. Party create requires idempotency.
 it:
 
 1. decodes and type-normalizes the Party Candidate;
-2. resolves exact active identity claims from the Party Registry operational store;
-3. acquires or conflicts on the type-specific uniqueness claim for every strong Official
-   Identifier;
-4. returns the existing Party when the claim already resolves unambiguously;
-5. creates one Party and its accepted initial assertions only when no conflicting claim exists;
-6. creates or reuses a Duplicate Candidate case instead of guessing when authoritative claims
-   conflict;
+2. resolves exact active identity claims from the Party Registry operational store and
+   partitions them into resolved Party claims and unclaimed claims;
+3. creates or reuses a Duplicate Candidate case when resolved claims point to several Parties or
+   authoritative evidence conflicts;
+4. when all resolved claims point to one Party, validates every remaining authoritative fact and
+   atomically acquires every compatible unclaimed claim for that Party before returning it;
+5. when no claim resolves, acquires or conflicts on every type-specific uniqueness claim before
+   creating one Party and its accepted initial assertions;
+6. restarts canonical claim resolution after a concurrent claim conflict instead of trusting a stale
+   preflight result;
 7. stores one Party Match Decision linked to the Action Invocation and resulting Party or case.
 
 `CREATED`, `MATCHED_EXISTING`, and `AMBIGUOUS` are committed Action results. Ambiguity is not an
@@ -96,7 +99,10 @@ because an eventually consistent search result is absent.
 Core Search, Neo4j, caches, and other projections are never used to enforce identity uniqueness.
 Weak-signal matching may rank candidates, but it cannot replace the transactional exact-claim
 invariant. Creating a Party without a strong identifier is an explicit policy path and may require an
-Identity Reviewer.
+Identity Reviewer. A Duplicate Candidate resolution may authorize `CREATE_NEW` only after a canonical
+transactional recheck proves all qualifying strong claims are unclaimed. Claims already owned by an
+existing Party must be matched, explicitly corrected/reassigned, or resolved through the duplicate
+existing-Party flow; authoritative evidence cannot be silently discarded to create another Party.
 
 ### Party facts share assertion semantics
 

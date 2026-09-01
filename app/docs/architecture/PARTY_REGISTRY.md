@@ -166,19 +166,20 @@ PartyCreate(candidate)
   begin canonical transaction
     lock/reuse Action idempotency anchor
     resolve every qualifying strong identifier claim
+    partition them into resolved Party claims and unclaimed claims
 
-    if all claims resolve to one Party
-      validate non-conflict with the remaining evidence
-      persist MATCHED PartyMatchDecision
-      return MATCHED_EXISTING(partyRef, decisionRef)
-
-    if claims resolve to several Parties or contradict authoritative evidence
+    if resolved claims point to several Parties or contradict authoritative evidence
       create/reuse DuplicateCandidateCase
       persist AMBIGUOUS PartyMatchDecision
       return AMBIGUOUS(caseRef, decisionRef)
 
-    acquire missing strong identifier claims
-      conflict means restart resolution inside the transaction
+    if resolved claims point to exactly one Party
+      validate every remaining authoritative fact against that Party
+      acquire every compatible unclaimed strong claim for that Party
+        conflict means restart claim resolution in a fresh transaction
+      insert accepted compatible assertions on that Party
+      persist MATCHED PartyMatchDecision
+      return MATCHED_EXISTING(partyRef, decisionRef)
 
     if no strong claim exists
       require explicit create-without-strong-identifier policy
@@ -187,9 +188,11 @@ PartyCreate(candidate)
         persist AMBIGUOUS PartyMatchDecision
         return AMBIGUOUS(caseRef, decisionRef)
 
+    reserve every unclaimed qualifying claim for one prospective Party identity
+    conflict means restart claim resolution in a fresh transaction
     insert one Party
     insert accepted initial assertions
-    attach acquired claims to that Party
+    attach every reserved claim to that Party
     persist CREATED PartyMatchDecision
     collect PartyCreated and linked Outbox Messages
     return CREATED(partyRef, decisionRef)
@@ -422,10 +425,23 @@ Allowed resolution outcomes are:
 ```text
 MATCH_EXISTING
 CREATE_NEW
+CORRECT_CLAIM_AND_MATCH
 NEEDS_EVIDENCE
 DISMISSED_AS_NON_SUBJECT
 CONFIRMED_DUPLICATE_PARTIES
 ```
+
+`CREATE_NEW` is available only when a transactional recheck proves that every qualifying strong claim
+is still unclaimed, or when the Candidate legitimately has no strong claim and the explicit
+create-without-strong-identifier policy allows creation. It is forbidden while any qualifying strong
+claim is owned by an existing Party. A reviewer cannot drop authoritative evidence merely to make
+creation pass.
+
+A case whose strong claims resolve to one or several existing Parties must instead match an existing
+Party, correct/retract/reassign the wrong claim through an authorized Party Correction and then match,
+confirm duplicate existing Parties for the separate merge flow, request evidence, or dismiss the input
+as not representing a subject. Every resolution re-enters the atomic Party Create/Match boundary and
+repeats claim resolution; the case decision alone never bypasses uniqueness.
 
 Creating or reusing the case and its AMBIGUOUS Party Match Decision is a committed successful Action
 outcome. Resolution is a separate Action. Repeated identical evidence reuses the prior open or
