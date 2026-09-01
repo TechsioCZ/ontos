@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__contacts",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__contacts.tsbuildinfo"
+  },
+  "include": [
+    "src",
+    "scripts",
+    "tests",
+    "drizzle.config.ts",
+    "locales/**/*.json",
+    "package.json",
+    "shared",
+    "server",
+    "api",
+    "vertical.manifest.ts",
+    "vertical.registration.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/core-runtime"
+    },
+    {
+      "path": "../../packages/shared-contracts"
+    },
+    {
+      "path": "../../packages/shared-design-tokens"
+    }
+  ]
+}

@@ -111,9 +111,9 @@ Use these files to implement the feature:
   outcomes, codes, and terminal `rejected` invocation semantics.
 - `../docs/09_AUTHN_AUTHZ_MODEL.md` — separation of BetterAuth authentication,
   OntOS principals, SpiceDB relationship authorization, and business policy.
-- `../docs/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md` — evidence
+- `../docs/evidence/mvp/22_MVP2_CORESDK_IMPLEMENTATION_REQUIREMENTS.md` — evidence
   transaction and handler non-execution requirements for denied writes.
-- `../docs/23_CORESDK_OPERATION_FLOW_DESIGN.md` — Action permission ordering,
+- `../docs/evidence/mvp/23_CORESDK_OPERATION_FLOW_DESIGN.md` — Action permission ordering,
   `403` semantics, and audit checkpoint guidance.
 - `docker-compose.yml` — local `ontos` Compose project that must gain the
   correctly named, pinned SpiceDB service.

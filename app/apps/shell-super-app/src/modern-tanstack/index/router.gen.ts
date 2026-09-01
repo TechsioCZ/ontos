@@ -13,22 +13,22 @@ import {
 
 import { loader as loader_0 } from "../../routes/[lang]/page.data";
 import component_0 from "../../routes/[lang]/page";
-import { loader as loader_1 } from "../../routes/[lang]/crm/page.data";
-import component_1 from "../../routes/[lang]/crm/page";
-import { loader as loader_2 } from "../../routes/[lang]/crm/customers/page.data";
-import component_2 from "../../routes/[lang]/crm/customers/page";
-import { loader as loader_3 } from "../../routes/[lang]/crm/customers/[id]/page.data";
-import component_3 from "../../routes/[lang]/crm/customers/[id]/page";
-import { loader as loader_4 } from "../../routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.data";
-import component_4 from "../../routes/[lang]/crm/customers/[id]/contacts/[contactId]/page";
-import { loader as loader_5 } from "../../routes/[lang]/crm/customers/[id]/contacts/[contactId]/edit/page.data";
-import component_5 from "../../routes/[lang]/crm/customers/[id]/contacts/[contactId]/edit/page";
-import { loader as loader_6 } from "../../routes/[lang]/crm/customers/[id]/contacts/new/page.data";
-import component_6 from "../../routes/[lang]/crm/customers/[id]/contacts/new/page";
-import { loader as loader_7 } from "../../routes/[lang]/crm/customers/[id]/edit/page.data";
-import component_7 from "../../routes/[lang]/crm/customers/[id]/edit/page";
-import { loader as loader_8 } from "../../routes/[lang]/crm/customers/[id]/new/page.data";
-import component_8 from "../../routes/[lang]/crm/customers/[id]/new/page";
+import { loader as loader_1 } from "../../routes/[lang]/contacts/page.data";
+import component_1 from "../../routes/[lang]/contacts/page";
+import { loader as loader_2 } from "../../routes/[lang]/contacts/customers/page.data";
+import component_2 from "../../routes/[lang]/contacts/customers/page";
+import { loader as loader_3 } from "../../routes/[lang]/contacts/customers/[id]/page.data";
+import component_3 from "../../routes/[lang]/contacts/customers/[id]/page";
+import { loader as loader_4 } from "../../routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page.data";
+import component_4 from "../../routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page";
+import { loader as loader_5 } from "../../routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page.data";
+import component_5 from "../../routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page";
+import { loader as loader_6 } from "../../routes/[lang]/contacts/customers/[id]/contacts/new/page.data";
+import component_6 from "../../routes/[lang]/contacts/customers/[id]/contacts/new/page";
+import { loader as loader_7 } from "../../routes/[lang]/contacts/customers/[id]/edit/page.data";
+import component_7 from "../../routes/[lang]/contacts/customers/[id]/edit/page";
+import { loader as loader_8 } from "../../routes/[lang]/contacts/customers/[id]/new/page.data";
+import component_8 from "../../routes/[lang]/contacts/customers/[id]/new/page";
 import component_9 from "../../routes/[lang]/login/page";
 import { loader as loader_9 } from "../../routes/[lang]/modules/[moduleId]/page.data";
 import component_10 from "../../routes/[lang]/modules/[moduleId]/page";
@@ -56,90 +56,90 @@ const route__lang__page = createRoute({
   }),
 });
 
-const route__lang__crm_page = createRoute({
+const route__lang__contacts_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_1,
-  path: "$lang/crm",
+  path: "$lang/contacts",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_1),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/page",
+    modernRouteId: "(lang)/contacts/page",
     modernRouteLoader: loader_1,
   }),
 });
 
-const route__lang__crm_customers_page = createRoute({
+const route__lang__contacts_customers_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_2,
-  path: "$lang/crm/customers",
+  path: "$lang/contacts/customers",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_2),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/page",
+    modernRouteId: "(lang)/contacts/customers/page",
     modernRouteLoader: loader_2,
   }),
 });
 
-const route__lang__crm_customers__id__page = createRoute({
+const route__lang__contacts_customers__id__page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_3,
-  path: "$lang/crm/customers/$id",
+  path: "$lang/contacts/customers/$id",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_3),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/(id)/page",
+    modernRouteId: "(lang)/contacts/customers/(id)/page",
     modernRouteLoader: loader_3,
   }),
 });
 
-const route__lang__crm_customers__id__contacts__contactId__page = createRoute({
+const route__lang__contacts_customers__id__contacts__contactId__page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_4,
-  path: "$lang/crm/customers/$id/contacts/$contactId",
+  path: "$lang/contacts/customers/$id/contacts/$contactId",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_4),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/(id)/contacts/(contactId)/page",
+    modernRouteId: "(lang)/contacts/customers/(id)/contacts/(contactId)/page",
     modernRouteLoader: loader_4,
   }),
 });
 
-const route__lang__crm_customers__id__contacts__contactId__edit_page = createRoute({
+const route__lang__contacts_customers__id__contacts__contactId__edit_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_5,
-  path: "$lang/crm/customers/$id/contacts/$contactId/edit",
+  path: "$lang/contacts/customers/$id/contacts/$contactId/edit",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_5),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/(id)/contacts/(contactId)/edit/page",
+    modernRouteId: "(lang)/contacts/customers/(id)/contacts/(contactId)/edit/page",
     modernRouteLoader: loader_5,
   }),
 });
 
-const route__lang__crm_customers__id__contacts_new_page = createRoute({
+const route__lang__contacts_customers__id__contacts_new_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_6,
-  path: "$lang/crm/customers/$id/contacts/new",
+  path: "$lang/contacts/customers/$id/contacts/new",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_6),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/(id)/contacts/new/page",
+    modernRouteId: "(lang)/contacts/customers/(id)/contacts/new/page",
     modernRouteLoader: loader_6,
   }),
 });
 
-const route__lang__crm_customers__id__edit_page = createRoute({
+const route__lang__contacts_customers__id__edit_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_7,
-  path: "$lang/crm/customers/$id/edit",
+  path: "$lang/contacts/customers/$id/edit",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_7),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/(id)/edit/page",
+    modernRouteId: "(lang)/contacts/customers/(id)/edit/page",
     modernRouteLoader: loader_7,
   }),
 });
 
-const route__lang__crm_customers__id__new_page = createRoute({
+const route__lang__contacts_customers__id__new_page = createRoute({
   getParentRoute: () => rootRoute,
   component: component_8,
-  path: "$lang/crm/customers/$id/new",
+  path: "$lang/contacts/customers/$id/new",
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_8),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/crm/customers/(id)/new/page",
+    modernRouteId: "(lang)/contacts/customers/(id)/new/page",
     modernRouteLoader: loader_8,
   }),
 });
@@ -208,7 +208,7 @@ const route__lang__search_page__localised_lang_hledat = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__crm_page, route__lang__crm_customers_page, route__lang__crm_customers__id__page, route__lang__crm_customers__id__contacts__contactId__page, route__lang__crm_customers__id__contacts__contactId__edit_page, route__lang__crm_customers__id__contacts_new_page, route__lang__crm_customers__id__edit_page, route__lang__crm_customers__id__new_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId, route__lang__search_page, route__lang__search_page__localised_lang_hledat]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__contacts_page, route__lang__contacts_customers_page, route__lang__contacts_customers__id__page, route__lang__contacts_customers__id__contacts__contactId__page, route__lang__contacts_customers__id__contacts__contactId__edit_page, route__lang__contacts_customers__id__contacts_new_page, route__lang__contacts_customers__id__edit_page, route__lang__contacts_customers__id__new_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__resources__moduleId___resourceType___resourceId__page__localised_lang_zdroje_moduleId_resourceType_resourceId, route__lang__search_page, route__lang__search_page__localised_lang_hledat]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

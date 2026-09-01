@@ -23,6 +23,8 @@ import {
   defineSystemModuleEntrypoint,
   defineTenantModuleEntrypoint,
 } from '../../src/modules/module-entrypoint.ts';
+import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
+import { makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { changeTenantModuleStateAction } from '../../src/modules/actions/change-tenant-module-state.action.ts';
 import { InstalledModuleCatalogService } from '../../src/modules/catalog.ts';
 import type { InstalledModuleCatalog } from '../../src/modules/catalog.ts';
@@ -41,6 +43,7 @@ import {
   domainEvents,
   legalEntities,
   outboxMessages,
+  principalAuthBindings,
   principals,
   tenantModuleStateChanges,
   tenantModuleStates,
@@ -61,8 +64,11 @@ class TestDomainRejected extends Schema.TaggedError<TestDomainRejected>()('TestD
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const principalId = randomUUID();
+const authBindingId = randomUUID();
 
 const principal = {
+  authBindingId,
+  authContextRef: `better-auth-session:${authBindingId}`,
   authMethod: 'session',
   legalEntityId,
   principalId,
@@ -204,6 +210,15 @@ const databasePromise = <Value>(
 ): Promise<Value> =>
   Effect.runPromise(withDatabase((database) => Effect.promise(() => operation(database))));
 
+const liveModuleStateOptions = (database: ContextServiceContract) => {
+  const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
+  return {
+    ...openActionRuntimeOptions,
+    moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
+    moduleStateGate,
+  };
+};
+
 before(async () => {
   await databasePromise(async (database) => {
     await database.executor.insert(tenants).values({
@@ -226,6 +241,15 @@ before(async () => {
       kind: 'human',
       principalId,
       status: 'active',
+      tenantId,
+    });
+    await database.executor.insert(principalAuthBindings).values({
+      principalAuthBindingId: authBindingId,
+      principalId,
+      provider: 'better_auth',
+      providerSubjectId: `action-runtime-${principalId}`,
+      status: 'active',
+      subjectType: 'user',
       tenantId,
     });
     await database.executor.insert(tenantModuleStates).values({
@@ -251,6 +275,9 @@ after(async () => {
     await database.executor
       .delete(actionInvocations)
       .where(eq(actionInvocations.tenantId, tenantId));
+    await database.executor
+      .delete(principalAuthBindings)
+      .where(eq(principalAuthBindings.tenantId, tenantId));
     await database.executor.delete(principals).where(eq(principals.tenantId, tenantId));
     await database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
     await database.executor.delete(tenants).where(eq(tenants.tenantId, tenantId));
@@ -442,7 +469,7 @@ test('rechecks business module state under the tenant lock and retries after Cor
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      liveModuleStateOptions(database),
     );
     const firstAttempt = Effect.runPromise(
       Effect.exit(
@@ -1617,7 +1644,7 @@ test('persists no invocation or evidence for every non-writable business module 
       makeActionRepository(),
       unconfiguredPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      liveModuleStateOptions(database),
     );
     await Effect.runPromise(
       runtime.runAction({

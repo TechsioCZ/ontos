@@ -2,26 +2,20 @@
 
 ```mermaid
 flowchart LR
-  users[Customer business users]
-  internal[Internal operator users]
-  acct[Accountants]
-  admin[Admins]
+  staff[Staff and operators]
+  customers[Retail and B2B customers]
   ontos[OntOS]
-  accsw[Accounting software]
-  bank[Banks / statement files]
-  resweb[Reservation website]
-  shop[E-shop / Medusa / Helios bridge]
-  pulsar[Pulsar Solutions / machine signals]
-  storage[Object storage]
+  storefronts[External Storefront Applications]
+  auth[Authentication and authorization services]
+  business[External business systems]
+  providers[Payment, delivery, and other providers]
+  storage[Object and evidence storage]
 
-  users --> ontos
-  internal --> ontos
-  acct --> ontos
-  admin --> ontos
-  ontos --> accsw
-  bank --> ontos
-  resweb --> ontos
-  shop --> ontos
-  pulsar --> ontos
+  staff --> ontos
+  customers --> storefronts
+  storefronts -->|tenant-bound client and customer/guest context| ontos
+  ontos <--> auth
+  ontos <--> business
+  ontos --> providers
   ontos --> storage
 ```

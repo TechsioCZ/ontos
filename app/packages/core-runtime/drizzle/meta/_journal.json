@@ -57,6 +57,13 @@
       "when": 1786262452464,
       "tag": "0007_daffy_quicksilver",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788258392927,
+      "tag": "0008_rename-crm-module-identity",
+      "breakpoints": true
     }
   ]
 }

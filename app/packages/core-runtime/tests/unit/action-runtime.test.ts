@@ -465,7 +465,10 @@ test('uses a resolver-branded recovery only for the exact support-stop Action an
       tenantId: principal.tenantId,
     }),
   );
-  const harness = makeHarness({ permissionDecision: 'allowed' });
+  const harness = makeHarness({
+    contextAccessDecision: 'denied',
+    permissionDecision: 'allowed',
+  });
 
   const result = await Effect.runPromise(
     harness.runtime.runAction({

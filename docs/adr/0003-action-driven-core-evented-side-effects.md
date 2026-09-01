@@ -1,6 +1,6 @@
 # ADR-0003: State changes through Actions, side effects through events/outbox
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 

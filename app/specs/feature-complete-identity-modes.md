@@ -36,7 +36,7 @@ correct effective actor without exposing credentials or weakening tenant isolati
 
 ## Problem Statement
 
-The `develop` branch currently implements only Better Auth user sessions end to end. Core already
+The `main` branch currently implements only Better Auth user sessions end to end. Core already
 stores principal kinds `human`, `service`, `integration`, `agent`, and `system`; binding subject
 types `user` and `api_key`; Action authentication methods `session`, `api_key`, `system`, and
 `support_impersonation`; and optional binding, context-reference, and impersonator evidence fields.
@@ -113,14 +113,8 @@ Use these files to implement the feature:
   audience-scoped gateway assertions.
 - `docs/architecture/MODULE_ENTRYPOINTS.md` — requires structured Core entrypoints and fail-closed
   context checks before private implementation resolution.
-- `docs/architecture/ULTRAMODERN.md` — requires direct strict Effect API topology and generated
-  business artifacts.
-- `../docs/07_RUNTIME_CONSISTENCY_MODEL.md` — defines authentication and impersonation evidence
-  semantics.
-- `../docs/09_AUTHN_AUTHZ_MODEL.md` — defines Better Auth/API-key ownership, Core bindings, system
-  jobs, impersonation, and effective-actor recording.
-- `../docs/11_V0_SCOPE_AND_MODULES.md` — requires V0 Better Auth user/API-key bindings and basic
-  service/integration principals.
+- `../docs/contexts/ontos/CONTEXT.md` — defines Principal, Principal Auth Binding, Authenticated
+  Principal Session, Tenant, and evidence vocabulary.
 - `../docs/adr/0014-authenticated-principal-session.md` — requires active Better Auth subjects to
   resolve through active tenant-local Core identity.
 - `apps/shell-super-app/package.json` — owns the pinned Better Auth/API-key dependency and focused
@@ -227,7 +221,7 @@ Use these files to implement the feature:
 ### Phase 1: Foundation
 
 Generate every Core identity Action before editing its payload, handler, service factory, or export.
-Install the API-key plugin at the exact Better Auth `1.6.23` cohort used by `develop`, enable the
+Install the API-key plugin at the exact Better Auth `1.6.23` cohort used by `main`, enable the
 Better Auth Admin plugin, regenerate the complete Auth Drizzle model, and generate independent Auth
 and Core migrations. Generalize Core subject resolution, enforce global API-key binding
 cardinality, strengthen trusted-context cross-field invariants, add tenant permission checks, and
@@ -719,9 +713,9 @@ code finding remains open.
 - `human` remains the physical V0 principal kind for internal users, external operator users, and
   guests. Their distinctions belong in authorization roles and future Party/domain relationships,
   not additional authentication modes in this feature.
-- System operations may use a `system` principal or an explicitly configured `service` principal as
-  allowed by `../docs/09_AUTHN_AUTHZ_MODEL.md`. They never create a Better Auth binding and are not
-  callable through the public gateway.
+- System operations may use a `system` principal or an explicitly configured `service` principal
+  as documented in `README.md`. They never create a Better Auth binding and are not callable
+  through the public gateway.
 - Existing Action permission behavior allows an unconfigured Action for compatibility. Every new
   sensitive identity Action must have a restriction marker and explicit executor provisioning so
   that compatibility behavior is never its production authorization posture.

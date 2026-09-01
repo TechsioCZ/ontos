@@ -10,9 +10,19 @@ MicroVertical deployment.
   Federation remote identity, deployment lookup key, and exact Shell gateway JWT audience.
 - `moduleId` is the stable dotted OntOS capability identity. It owns Actions, Policies, resources,
   events, Outbox producers and consumers, and `core.tenant_module_states.module_key`.
+- `implementationId` is the stable explicit identity of one catalogued executable implementation
+  of a `moduleId`, for example `standard` or `akros`. Compatible alternatives may share a
+  `moduleId`; different public semantics require a different `moduleId`.
 - These identities may happen to contain equal text, but their roles never become interchangeable.
 
 For example, deployment `property-registry` may publish module `property.registry`.
+
+The `implementationId` split is an accepted target contract from ADR-0017, not a claim about the
+current schema. The current V0 manifest/catalog still admits one implementation per `moduleId` and
+does not yet serialize or select `implementationId`. Until Codesmith, Effect Schemas, topology,
+catalog validation, Customer Configuration, and tests are extended together, treat the sole
+implementation as implicit `standard`; do not hand-add an unvalidated field or simulate selection
+with customer branches, environment flags, duplicate `moduleId` values, or allowlist aliases.
 
 ## Four layers
 
@@ -23,8 +33,8 @@ For example, deployment `property-registry` may publish module `property.registr
    plain public descriptors.
 3. The owning build emits a deterministic versioned JSON deployment contract, including only safe
    semantic Shell contribution bindings. Shell fetches only
-   allowlisted contracts and builds an immutable catalog indexed independently by `appId` and
-   `moduleId`.
+   allowlisted contracts and builds an immutable catalog indexed by `appId`, `moduleId`, and
+   `implementationId` without collapsing their roles.
 4. `vertical.registration.ts` binds private executable Actions, pages, components, APIs, search,
    reports, and workers for the owning process. Only safe descriptors may be projected into the
    deployment contract.
@@ -74,11 +84,17 @@ Core capabilities are implicit universal infrastructure, not per-module requirem
 system readiness and module-owned setup remain private implementation concerns and are not generic
 activation gates.
 
-A versioned Application Composition owns a dependency-closed DAG of Foundational and Business
-Modules. Core validates that graph without learning its business meaning. Installation, activation,
-and entrypoint execution must preserve dependency closure: a module can activate only when every
-required dependency is installed, compatible, and active. Customer Configurations may select only
-modules permitted by the composition.
+A continuously delivered Application Composition owns a dependency-closed DAG of Foundational and
+Business Module Contract Identities and their permitted implementations. Core validates that graph
+without learning its business meaning. Installation, activation, and entrypoint execution must
+preserve dependency closure: a module can activate only when one selected implementation and every
+required dependency are installed, compatible, healthy, and active. Customer Configurations may
+select only modules and explicit implementations permitted by the composition.
+
+Every generated deployment contract/catalog record includes immutable build revision/digest,
+public-contract hash/version, migration-set identity, owner, and health/readiness. Customers do not
+pin a whole-product version; these fields support skew rejection, canary, audit, and rollback. The
+catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation identities.
 
 Dependency enforcement never authorizes private imports, shared repositories, shared business
 transactions, or direct table access. Typed API, public event, and Outbox communication preserves
@@ -112,14 +128,14 @@ mise exec -- pnpm scaffold:report -- --vertical property-registry --report unit-
 The page name is a stable lower-kebab identity, while `--url` is an optional complete
 root-relative canonical-path override. When `--url` is omitted, Codesmith derives
 `/<microvertical>/<page>` from the validated MicroVertical slug. For example,
-`--vertical crm --page customers` produces canonical `/crm/customers`; the locale-aware Shell
-router exposes it as `/cs/crm/customers` or `/en/crm/customers`. Never include a locale prefix in
+`--vertical contacts --page customers` produces canonical `/contacts/customers`; the locale-aware Shell
+router exposes it as `/cs/contacts/customers` or `/en/contacts/customers`. Never include a locale prefix in
 `--url`. A generated page is private and non-indexable, contains only its localized title, and is
 loaded only after the authenticated Shell/Core gateway resolves that exact governed page
 entrypoint. Private metadata alone is not an authentication mechanism.
 
 An explicit page URL may mix lowercase kebab-case static segments with unique named parameter
-segments such as `/crm/customers/:id/edit`. A parameter name starts with a lowercase letter and
+segments such as `/contacts/customers/:id/edit`. A parameter name starts with a lowercase letter and
 continues with letters or digits. Optional, repeated, wildcard, catch-all, encoded, query, fragment,
 origin, empty, dot, trailing-slash, and locale-prefixed forms are invalid. The serialized `routePath`
 retains the canonical `:id` spelling as bounded plain data; Codesmith maps it deterministically to

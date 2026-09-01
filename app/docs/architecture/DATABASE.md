@@ -79,3 +79,24 @@ exact-match only that owner's schema inventory and migration journal. The root a
 verifier separately exact-matches the complete set of application schemas and owner-specific
 Drizzle journals before invoking every owner verifier. PostgreSQL system catalogs and Drizzle's
 migration bookkeeping remain infrastructure metadata rather than a shared business schema.
+
+## Canonical, Projected, and Artifact Data
+
+PostgreSQL is canonical for operational state. Neo4j, search documents, reporting aggregates, and
+other read models are projections: they may lag, must be rebuildable, and must not become the only
+source for business writes, audit, billing, or authorization. SpiceDB remains the separate
+authorization store and must not be used as the business relationship graph.
+
+Binary content belongs in object storage. PostgreSQL owns its metadata, lifecycle, links, evidence
+references, and authorization context. Storage keys are collision-resistant technical identifiers,
+not user filenames or business hierarchy. Preserve an optional original filename as provenance and
+a sanitized display filename for presentation; neither establishes ownership or uniqueness.
+
+After ingest completes, record exact byte size and a SHA-256 hash of the stored bytes. Treat the
+storage key, provider object-version reference, size, and content hash as immutable content
+identity. Presentation metadata and processing state may change independently.
+
+Legal or compliance immutability requires provider-enforced WORM/Object Lock. Record the requested
+and verified provider state in the evidence reference. Database constraints and application
+permissions alone provide application-level protection and must not be described as storage-level
+WORM.

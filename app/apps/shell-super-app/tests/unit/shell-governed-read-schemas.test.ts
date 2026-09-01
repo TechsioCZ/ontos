@@ -6,16 +6,16 @@ import {
 } from '../../api/modules/shell-governed-read-schemas.ts';
 
 describe('Shell governed module-target schemas', () => {
-  test('decode the production CRM target entirely with the server Effect runtime', () => {
+  test('decode the production Contacts target entirely with the server Effect runtime', () => {
     const input = {
-      entrypointKey: 'crm.core.page.crm',
-      moduleId: 'crm.core',
+      entrypointKey: 'contacts.core.page.contacts',
+      moduleId: 'contacts.core',
     };
     const result = {
-      appId: 'crm',
-      componentKey: 'crm.core.page-crm',
-      entrypointKey: 'crm.core.page.crm',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-contacts',
+      entrypointKey: 'contacts.core.page.contacts',
+      moduleId: 'contacts.core',
       writable: true,
     };
 

@@ -1,10 +1,13 @@
 ---
 type: feature
-status: blocked
+status: superseded
 created: 2026-08-06
 ---
 
 # Feature: Authenticated dashboard layout
+
+> [!IMPORTANT]
+> **Historical scope:** [OntOS #78](https://github.com/TechsioCZ/ontos/issues/78) and [the Tenant switcher specification](./feature-tenant-switcher.md) supersede this feature's disabled-placeholder/no-switching constraint. The feature remains a record of the original dashboard delivery, not the current account-tenancy model.
 
 ## Feature Description
 

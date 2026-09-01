@@ -257,16 +257,16 @@ const workspaceValidationContract = {
         repository: 'BleedingDev/ultramodern.js',
       },
     },
-    appIds: ['shell-super-app', 'crm'],
-    backendAppIds: ['crm'],
-    verticalIds: ['crm'],
+    appIds: ['shell-super-app', 'contacts'],
+    backendAppIds: ['contacts'],
+    verticalIds: ['contacts'],
     sharedPackageIds: ['core-runtime', 'shared-contracts', 'shared-design-tokens'],
     ownerIds: [
       'core-runtime',
       'shell-super-app',
       'shared-contracts',
       'shared-design-tokens',
-      'crm',
+      'contacts',
     ],
     packageManifests: [
       {
@@ -300,9 +300,9 @@ const workspaceValidationContract = {
         role: 'shared-package',
       },
       {
-        id: 'crm',
-        packageName: '@app/crm',
-        path: 'verticals/crm/package.json',
+        id: 'contacts',
+        packageName: '@app/contacts',
+        path: 'verticals/contacts/package.json',
         role: 'vertical',
       },
     ],
@@ -327,13 +327,13 @@ const workspaceValidationContract = {
             role: 'host',
             name: 'shellSuperApp',
             exposes: [],
-            verticalRefs: ['crm'],
+            verticalRefs: ['contacts'],
             remotes: [
               {
-                id: 'crm',
-                alias: 'crm',
-                name: 'verticalCrm',
-                manifestEnv: 'VERTICAL_CRM_MF_MANIFEST',
+                id: 'contacts',
+                alias: 'contacts',
+                name: 'verticalContacts',
+                manifestEnv: 'VERTICAL_CONTACTS_MF_MANIFEST',
                 manifestUrl: 'http://localhost:4101/mf-manifest.json',
               },
             ],
@@ -445,19 +445,19 @@ const workspaceValidationContract = {
           },
         },
         {
-          id: 'crm',
+          id: 'contacts',
           kind: 'vertical',
-          package: '@app/crm',
-          packageSuffix: 'crm',
-          displayName: 'Crm Vertical',
-          path: 'verticals/crm',
-          domain: 'crm',
+          package: '@app/contacts',
+          packageSuffix: 'contacts',
+          displayName: 'Contacts Vertical',
+          path: 'verticals/contacts',
+          domain: 'contacts',
           port: 4101,
-          portEnv: 'VERTICAL_CRM_PORT',
+          portEnv: 'VERTICAL_CONTACTS_PORT',
           moduleFederation: {
             role: 'remote',
-            name: 'verticalCrm',
-            exposes: ['./PageCrm'],
+            name: 'verticalContacts',
+            exposes: ['./PageContacts'],
             ssr: true,
             dts: {
               compilerInstance: 'effect-tsgo',
@@ -466,47 +466,47 @@ const workspaceValidationContract = {
           },
           backendFederation: {
             role: 'microvertical-server',
-            name: 'verticalCrmBackend',
+            name: 'verticalContactsBackend',
             runtimeFramework: 'effect',
             strictEffectApproach: true,
             deliveryUnit: {
               schemaVersion: 1,
               kind: 'microvertical-delivery-unit',
-              unitId: 'app/crm',
-              packageName: '@app/crm',
+              unitId: 'app/contacts',
+              packageName: '@app/contacts',
               version: '0.1.0',
               buildMarker: 'b08ddded31ae2315',
               sourceRevision: 'workspace',
             },
             exposes: {
               './effect-api': {
-                contract: 'verticals/crm/shared/api.ts',
-                runtime: 'verticals/crm/api/index.ts',
-                client: 'verticals/crm/src/api/crm-client.ts',
-                openapi: '/crm-api/openapi.json',
-                readiness: '/crm-api/crm/readiness',
+                contract: 'verticals/contacts/shared/api.ts',
+                runtime: 'verticals/contacts/api/index.ts',
+                client: 'verticals/contacts/src/api/contacts-client.ts',
+                openapi: '/contacts-api/openapi.json',
+                readiness: '/contacts-api/contacts/readiness',
               },
             },
             versionBoundary: {
               invariant: 'web-and-api-same-build',
               identityRoot: 'deliveryUnit',
-              packageName: '@app/crm',
+              packageName: '@app/contacts',
               ui: {
-                manifestEnv: 'VERTICAL_CRM_MF_MANIFEST',
+                manifestEnv: 'VERTICAL_CONTACTS_MF_MANIFEST',
                 manifestUrl: 'http://localhost:4101/mf-manifest.json',
-                buildMarker: 'verticals/crm/src/routes/ultramodern-route-metadata.ts',
+                buildMarker: 'verticals/contacts/src/routes/ultramodern-route-metadata.ts',
               },
               api: {
-                readiness: '/crm-api/crm/readiness',
-                buildMarker: 'verticals/crm/shared/ultramodern-build.ts',
-                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+                readiness: '/contacts-api/contacts/readiness',
+                buildMarker: 'verticals/contacts/shared/ultramodern-build.ts',
+                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
               },
             },
             executionSurfaces: {
               cloudflare: {
                 kind: 'cloudflare-worker-snapshot',
-                workerName: 'app-crm',
-                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+                workerName: 'app-contacts',
+                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
                 ssr: {
                   workerEntry: '.output/server/index.mjs',
                   workerManifest: '.output/server/modern-worker-manifest.json',
@@ -518,38 +518,38 @@ const workspaceValidationContract = {
                 zephyr: {
                   runtime: 'ssr-worker',
                   integration: 'managed-cloudflare',
-                  snapshotIdEnv: 'ZEPHYR_CRM_SNAPSHOT_ID',
-                  versionIdEnv: 'ZEPHYR_CRM_VERSION_ID',
-                  applicationUidEnv: 'ZEPHYR_CRM_APPLICATION_UID',
+                  snapshotIdEnv: 'ZEPHYR_CONTACTS_SNAPSHOT_ID',
+                  versionIdEnv: 'ZEPHYR_CONTACTS_VERSION_ID',
+                  applicationUidEnv: 'ZEPHYR_CONTACTS_APPLICATION_UID',
                 },
                 workerDispatch: {
                   preferred: 'service-binding',
-                  serviceBinding: 'VERTICAL_CRM_WORKER',
-                  serviceBindingEnv: 'VERTICAL_CRM_WORKER_BINDING',
-                  dispatchNamespaceEnv: 'VERTICAL_CRM_DISPATCH_NAMESPACE',
-                  dispatchWorkerNameEnv: 'VERTICAL_CRM_WORKER_NAME',
+                  serviceBinding: 'VERTICAL_CONTACTS_WORKER',
+                  serviceBindingEnv: 'VERTICAL_CONTACTS_WORKER_BINDING',
+                  dispatchNamespaceEnv: 'VERTICAL_CONTACTS_DISPATCH_NAMESPACE',
+                  dispatchWorkerNameEnv: 'VERTICAL_CONTACTS_WORKER_NAME',
                   requestInterface: 'fetch',
                 },
               },
               node: {
                 kind: 'node-mf-runtime',
                 adapterVersion: 'backend-mf-effect-v1',
-                remoteName: 'verticalCrmBackend',
-                manifestEnv: 'VERTICAL_CRM_BACKEND_MF_MANIFEST',
+                remoteName: 'verticalContactsBackend',
+                manifestEnv: 'VERTICAL_CONTACTS_BACKEND_MF_MANIFEST',
                 manifestUrl: 'http://localhost:4101/backend-mf-manifest.json',
                 containerEntry: 'http://localhost:4101/backendRemoteEntry.cjs',
                 remoteType: 'commonjs-module',
                 expose: './effect-api',
                 runtimePackage: '@modern-js/plugin-bff/effect',
                 expected: {
-                  unitId: 'app/crm',
+                  unitId: 'app/contacts',
                   buildMarker: 'b08ddded31ae2315',
                 },
               },
             },
             compatibility: {
               contractVersion: 'microvertical-server-effect-v1',
-              packageName: '@app/crm',
+              packageName: '@app/contacts',
               effectVersion: '4.0.0-beta.107',
               moduleFederationVersion: '2.8.0',
             },
@@ -568,32 +568,32 @@ const workspaceValidationContract = {
           deliveryUnit: {
             schemaVersion: 1,
             kind: 'microvertical-delivery-unit',
-            unitId: 'app/crm',
-            packageName: '@app/crm',
+            unitId: 'app/contacts',
+            packageName: '@app/contacts',
             version: '0.1.0',
             buildMarker: 'b08ddded31ae2315',
             sourceRevision: 'workspace',
           },
           api: {
             runtime: 'effect',
-            stem: 'crm',
-            prefix: '/crm-api',
-            consumedBy: ['shell-super-app', 'crm'],
-            serverEntry: 'verticals/crm/api/index.ts',
+            stem: 'contacts',
+            prefix: '/contacts-api',
+            consumedBy: ['shell-super-app', 'contacts'],
+            serverEntry: 'verticals/contacts/api/index.ts',
           },
           deploy: {
             cloudflare: {
               target: 'cloudflare',
-              workerName: 'app-crm',
-              publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+              workerName: 'app-contacts',
+              publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
               compatibilityDate: '2026-06-02',
               compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
               assetsBinding: 'ASSETS',
               routes: {
                 ssr: '/en',
                 mfManifest: '/mf-manifest.json',
-                locale: '/locales/en/crm.json',
-                apiReadiness: '/crm-api/crm/readiness',
+                locale: '/locales/en/contacts.json',
+                apiReadiness: '/contacts-api/contacts/readiness',
               },
               security: {
                 enabled: true,
@@ -673,8 +673,8 @@ const workspaceValidationContract = {
               },
               jsonSmokeChecks: [
                 {
-                  id: 'crm-readiness-smoke',
-                  route: '/crm-api/crm/readiness',
+                  id: 'contacts-readiness-smoke',
+                  route: '/contacts-api/contacts/readiness',
                   expect: {
                     status: 'ready',
                     'checks.api': 'ready',
@@ -698,7 +698,7 @@ const workspaceValidationContract = {
         id: 'shell-super-app',
         kind: 'shell',
         package: '@app/shell-super-app',
-        verticalRefs: ['crm'],
+        verticalRefs: ['contacts'],
         authentication: {
           kind: 'shell-core-capability',
           owners: ['shell-super-app', 'core-runtime'],
@@ -722,8 +722,8 @@ const workspaceValidationContract = {
           name: 'shellSuperApp',
           remotes: [
             {
-              id: 'crm',
-              name: 'verticalCrm',
+              id: 'contacts',
+              name: 'verticalContacts',
               manifestUrl: 'http://localhost:4101/mf-manifest.json',
             },
           ],
@@ -845,62 +845,62 @@ const workspaceValidationContract = {
       },
       verticals: [
         {
-          id: 'crm',
+          id: 'contacts',
           kind: 'vertical',
-          domain: 'crm',
-          package: '@app/crm',
-          path: 'verticals/crm',
+          domain: 'contacts',
+          package: '@app/contacts',
+          path: 'verticals/contacts',
           moduleFederation: {
             role: 'remote',
-            name: 'verticalCrm',
+            name: 'verticalContacts',
             manifestUrl: 'http://localhost:4101/mf-manifest.json',
-            exposes: ['./PageCrm'],
+            exposes: ['./PageContacts'],
             ssr: true,
             sharedContractVersion: 'mf-ssr-contract-v1',
           },
           backendFederation: {
             role: 'microvertical-server',
-            name: 'verticalCrmBackend',
+            name: 'verticalContactsBackend',
             runtimeFramework: 'effect',
             strictEffectApproach: true,
             deliveryUnit: {
               schemaVersion: 1,
               kind: 'microvertical-delivery-unit',
-              unitId: 'app/crm',
-              packageName: '@app/crm',
+              unitId: 'app/contacts',
+              packageName: '@app/contacts',
               version: '0.1.0',
               buildMarker: 'b08ddded31ae2315',
               sourceRevision: 'workspace',
             },
             exposes: {
               './effect-api': {
-                contract: 'verticals/crm/shared/api.ts',
-                runtime: 'verticals/crm/api/index.ts',
-                client: 'verticals/crm/src/api/crm-client.ts',
-                openapi: '/crm-api/openapi.json',
-                readiness: '/crm-api/crm/readiness',
+                contract: 'verticals/contacts/shared/api.ts',
+                runtime: 'verticals/contacts/api/index.ts',
+                client: 'verticals/contacts/src/api/contacts-client.ts',
+                openapi: '/contacts-api/openapi.json',
+                readiness: '/contacts-api/contacts/readiness',
               },
             },
             versionBoundary: {
               invariant: 'web-and-api-same-build',
               identityRoot: 'deliveryUnit',
-              packageName: '@app/crm',
+              packageName: '@app/contacts',
               ui: {
-                manifestEnv: 'VERTICAL_CRM_MF_MANIFEST',
+                manifestEnv: 'VERTICAL_CONTACTS_MF_MANIFEST',
                 manifestUrl: 'http://localhost:4101/mf-manifest.json',
-                buildMarker: 'verticals/crm/src/routes/ultramodern-route-metadata.ts',
+                buildMarker: 'verticals/contacts/src/routes/ultramodern-route-metadata.ts',
               },
               api: {
-                readiness: '/crm-api/crm/readiness',
-                buildMarker: 'verticals/crm/shared/ultramodern-build.ts',
-                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+                readiness: '/contacts-api/contacts/readiness',
+                buildMarker: 'verticals/contacts/shared/ultramodern-build.ts',
+                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
               },
             },
             executionSurfaces: {
               cloudflare: {
                 kind: 'cloudflare-worker-snapshot',
-                workerName: 'app-crm',
-                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+                workerName: 'app-contacts',
+                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
                 ssr: {
                   workerEntry: '.output/server/index.mjs',
                   workerManifest: '.output/server/modern-worker-manifest.json',
@@ -912,38 +912,38 @@ const workspaceValidationContract = {
                 zephyr: {
                   runtime: 'ssr-worker',
                   integration: 'managed-cloudflare',
-                  snapshotIdEnv: 'ZEPHYR_CRM_SNAPSHOT_ID',
-                  versionIdEnv: 'ZEPHYR_CRM_VERSION_ID',
-                  applicationUidEnv: 'ZEPHYR_CRM_APPLICATION_UID',
+                  snapshotIdEnv: 'ZEPHYR_CONTACTS_SNAPSHOT_ID',
+                  versionIdEnv: 'ZEPHYR_CONTACTS_VERSION_ID',
+                  applicationUidEnv: 'ZEPHYR_CONTACTS_APPLICATION_UID',
                 },
                 workerDispatch: {
                   preferred: 'service-binding',
-                  serviceBinding: 'VERTICAL_CRM_WORKER',
-                  serviceBindingEnv: 'VERTICAL_CRM_WORKER_BINDING',
-                  dispatchNamespaceEnv: 'VERTICAL_CRM_DISPATCH_NAMESPACE',
-                  dispatchWorkerNameEnv: 'VERTICAL_CRM_WORKER_NAME',
+                  serviceBinding: 'VERTICAL_CONTACTS_WORKER',
+                  serviceBindingEnv: 'VERTICAL_CONTACTS_WORKER_BINDING',
+                  dispatchNamespaceEnv: 'VERTICAL_CONTACTS_DISPATCH_NAMESPACE',
+                  dispatchWorkerNameEnv: 'VERTICAL_CONTACTS_WORKER_NAME',
                   requestInterface: 'fetch',
                 },
               },
               node: {
                 kind: 'node-mf-runtime',
                 adapterVersion: 'backend-mf-effect-v1',
-                remoteName: 'verticalCrmBackend',
-                manifestEnv: 'VERTICAL_CRM_BACKEND_MF_MANIFEST',
+                remoteName: 'verticalContactsBackend',
+                manifestEnv: 'VERTICAL_CONTACTS_BACKEND_MF_MANIFEST',
                 manifestUrl: 'http://localhost:4101/backend-mf-manifest.json',
                 containerEntry: 'http://localhost:4101/backendRemoteEntry.cjs',
                 remoteType: 'commonjs-module',
                 expose: './effect-api',
                 runtimePackage: '@modern-js/plugin-bff/effect',
                 expected: {
-                  unitId: 'app/crm',
+                  unitId: 'app/contacts',
                   buildMarker: 'b08ddded31ae2315',
                 },
               },
             },
             compatibility: {
               contractVersion: 'microvertical-server-effect-v1',
-              packageName: '@app/crm',
+              packageName: '@app/contacts',
               effectVersion: '4.0.0-beta.107',
               moduleFederationVersion: '2.8.0',
             },
@@ -962,8 +962,8 @@ const workspaceValidationContract = {
           deliveryUnit: {
             schemaVersion: 1,
             kind: 'microvertical-delivery-unit',
-            unitId: 'app/crm',
-            packageName: '@app/crm',
+            unitId: 'app/contacts',
+            packageName: '@app/contacts',
             version: '0.1.0',
             buildMarker: 'b08ddded31ae2315',
             sourceRevision: 'workspace',
@@ -971,23 +971,23 @@ const workspaceValidationContract = {
           api: {
             runtime: 'effect',
             bff: {
-              prefix: '/crm-api',
+              prefix: '/contacts-api',
               openapi: '/openapi.json',
               strictEffectApproach: true,
             },
             contract: {
               export: './api',
-              path: 'verticals/crm/shared/api.ts',
+              path: 'verticals/contacts/shared/api.ts',
             },
             client: {
               export: './api/client',
-              path: 'verticals/crm/src/api/crm-client.ts',
+              path: 'verticals/contacts/src/api/contacts-client.ts',
             },
-            serverEntry: 'verticals/crm/api/index.ts',
-            basePath: '/crm-api/crm',
-            consumedBy: ['shell-super-app', 'crm'],
+            serverEntry: 'verticals/contacts/api/index.ts',
+            basePath: '/contacts-api/contacts',
+            consumedBy: ['shell-super-app', 'contacts'],
             readiness: {
-              endpoint: '/crm/readiness',
+              endpoint: '/contacts/readiness',
               marker: {
                 ui: 'ultramodernUiMarker',
                 api: 'ultramodernApiMarker',
@@ -1009,40 +1009,40 @@ const workspaceValidationContract = {
             },
             domainOperations: {
               workspaceFeed: {
-                client: 'listCrm',
+                client: 'listContacts',
                 method: 'GET',
-                path: '/crm',
+                path: '/contacts',
                 resource: 'workspace-items',
-                owner: 'crm',
+                owner: 'contacts',
               },
               workspaceDetail: {
-                client: 'getCrm',
+                client: 'getContacts',
                 method: 'GET',
-                path: '/crm/:id',
+                path: '/contacts/:id',
                 resource: 'workspace-item',
-                owner: 'crm',
+                owner: 'contacts',
               },
               workspaceCreate: {
-                client: 'createCrm',
+                client: 'createContacts',
                 method: 'POST',
-                path: '/crm',
-                resource: 'crm',
-                owner: 'crm',
+                path: '/contacts',
+                resource: 'contacts',
+                owner: 'contacts',
               },
             },
           },
           cloudflare: {
             target: 'cloudflare',
-            workerName: 'app-crm',
-            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+            workerName: 'app-contacts',
+            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
             compatibilityDate: '2026-06-02',
             compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
             assetsBinding: 'ASSETS',
             routes: {
               ssr: '/en',
               mfManifest: '/mf-manifest.json',
-              locale: '/locales/en/crm.json',
-              apiReadiness: '/crm-api/crm/readiness',
+              locale: '/locales/en/contacts.json',
+              apiReadiness: '/contacts-api/contacts/readiness',
             },
             security: {
               enabled: true,
@@ -1122,8 +1122,8 @@ const workspaceValidationContract = {
             },
             jsonSmokeChecks: [
               {
-                id: 'crm-readiness-smoke',
-                route: '/crm-api/crm/readiness',
+                id: 'contacts-readiness-smoke',
+                route: '/contacts-api/contacts/readiness',
                 expect: {
                   status: 'ready',
                   'checks.api': 'ready',
@@ -1137,11 +1137,11 @@ const workspaceValidationContract = {
             team: 'super-app-platform',
             slack: '#super-app-platform',
             pagerDuty: 'pd-super-app-platform',
-            runbookRef: 'runbooks/verticals/crm.md',
-            adrRef: 'docs/super-app-rfc-adr/verticals.md#crm',
+            runbookRef: 'runbooks/verticals/contacts.md',
+            adrRef: 'docs/super-app-rfc-adr/verticals.md#contacts',
             blastRadius: {
               tier: 'tier-2-vertical',
-              references: ['docs/super-app-rfc-adr/blast-radius.md#crm'],
+              references: ['docs/super-app-rfc-adr/blast-radius.md#contacts'],
             },
           },
         },
@@ -1248,18 +1248,18 @@ const workspaceValidationContract = {
           },
         },
         {
-          id: 'crm',
-          package: '@app/crm',
-          path: 'verticals/crm',
+          id: 'contacts',
+          package: '@app/contacts',
+          path: 'verticals/contacts',
           ownership: {
             team: 'super-app-platform',
             slack: '#super-app-platform',
             pagerDuty: 'pd-super-app-platform',
-            runbookRef: 'runbooks/verticals/crm.md',
-            adrRef: 'docs/super-app-rfc-adr/verticals.md#crm',
+            runbookRef: 'runbooks/verticals/contacts.md',
+            adrRef: 'docs/super-app-rfc-adr/verticals.md#contacts',
             blastRadius: {
               tier: 'tier-2-vertical',
-              references: ['docs/super-app-rfc-adr/blast-radius.md#crm'],
+              references: ['docs/super-app-rfc-adr/blast-radius.md#contacts'],
             },
           },
         },
@@ -1271,26 +1271,26 @@ const workspaceValidationContract = {
       preset: 'presetUltramodern',
       ports: {
         'shell-super-app': 3020,
-        crm: 4101,
+        contacts: 4101,
       },
       manifests: {
-        crm: 'http://localhost:4101/mf-manifest.json',
+        contacts: 'http://localhost:4101/mf-manifest.json',
       },
       ontosModuleManifests: {
-        crm: 'http://localhost:4101/.well-known/ontos-module-manifest.json',
+        contacts: 'http://localhost:4101/.well-known/ontos-module-manifest.json',
       },
       serverExecution: {
-        crm: {
-          apiBaseUrl: 'http://localhost:4101/crm-api',
+        contacts: {
+          apiBaseUrl: 'http://localhost:4101/contacts-api',
           versionBoundary: 'web-and-api-same-build',
           deliveryUnit: {
-            unitId: 'app/crm',
+            unitId: 'app/contacts',
             buildMarker: 'b08ddded31ae2315',
           },
           cloudflare: {
             kind: 'cloudflare-worker-snapshot',
-            workerName: 'app-crm',
-            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+            workerName: 'app-contacts',
+            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
             ssr: {
               workerEntry: '.output/server/index.mjs',
               workerManifest: '.output/server/modern-worker-manifest.json',
@@ -1302,38 +1302,38 @@ const workspaceValidationContract = {
             zephyr: {
               runtime: 'ssr-worker',
               integration: 'managed-cloudflare',
-              snapshotIdEnv: 'ZEPHYR_CRM_SNAPSHOT_ID',
-              versionIdEnv: 'ZEPHYR_CRM_VERSION_ID',
-              applicationUidEnv: 'ZEPHYR_CRM_APPLICATION_UID',
+              snapshotIdEnv: 'ZEPHYR_CONTACTS_SNAPSHOT_ID',
+              versionIdEnv: 'ZEPHYR_CONTACTS_VERSION_ID',
+              applicationUidEnv: 'ZEPHYR_CONTACTS_APPLICATION_UID',
             },
             workerDispatch: {
               preferred: 'service-binding',
-              serviceBinding: 'VERTICAL_CRM_WORKER',
-              serviceBindingEnv: 'VERTICAL_CRM_WORKER_BINDING',
-              dispatchNamespaceEnv: 'VERTICAL_CRM_DISPATCH_NAMESPACE',
-              dispatchWorkerNameEnv: 'VERTICAL_CRM_WORKER_NAME',
+              serviceBinding: 'VERTICAL_CONTACTS_WORKER',
+              serviceBindingEnv: 'VERTICAL_CONTACTS_WORKER_BINDING',
+              dispatchNamespaceEnv: 'VERTICAL_CONTACTS_DISPATCH_NAMESPACE',
+              dispatchWorkerNameEnv: 'VERTICAL_CONTACTS_WORKER_NAME',
               requestInterface: 'fetch',
             },
           },
           node: {
             kind: 'node-mf-runtime',
             adapterVersion: 'backend-mf-effect-v1',
-            remoteName: 'verticalCrmBackend',
-            manifestEnv: 'VERTICAL_CRM_BACKEND_MF_MANIFEST',
+            remoteName: 'verticalContactsBackend',
+            manifestEnv: 'VERTICAL_CONTACTS_BACKEND_MF_MANIFEST',
             manifestUrl: 'http://localhost:4101/backend-mf-manifest.json',
             containerEntry: 'http://localhost:4101/backendRemoteEntry.cjs',
             remoteType: 'commonjs-module',
             expose: './effect-api',
             runtimePackage: '@modern-js/plugin-bff/effect',
             expected: {
-              unitId: 'app/crm',
+              unitId: 'app/contacts',
               buildMarker: 'b08ddded31ae2315',
             },
           },
         },
       },
       apis: {
-        crm: 'http://localhost:4101/crm-api',
+        contacts: 'http://localhost:4101/contacts-api',
       },
     },
   },
@@ -1376,11 +1376,11 @@ const workspaceValidationContract = {
             hostOnly: true,
           },
           {
-            id: 'crm',
-            path: 'verticals/crm',
+            id: 'contacts',
+            path: 'verticals/contacts',
             role: 'remote',
-            name: 'verticalCrm',
-            exposes: ['./PageCrm'],
+            name: 'verticalContacts',
+            exposes: ['./PageContacts'],
             hostOnly: false,
           },
         ],
@@ -1388,18 +1388,18 @@ const workspaceValidationContract = {
       backendFederation: {
         apps: [
           {
-            id: 'crm',
-            path: 'verticals/crm',
+            id: 'contacts',
+            path: 'verticals/contacts',
             role: 'microvertical-server',
-            name: 'verticalCrmBackend',
+            name: 'verticalContactsBackend',
             runtimeFramework: 'effect',
             strictEffectApproach: true,
             contractVersion: 'microvertical-server-effect-v1',
             deliveryUnit: {
               schemaVersion: 1,
               kind: 'microvertical-delivery-unit',
-              unitId: 'app/crm',
-              packageName: '@app/crm',
+              unitId: 'app/contacts',
+              packageName: '@app/contacts',
               version: '0.1.0',
               buildMarker: 'b08ddded31ae2315',
               sourceRevision: 'workspace',
@@ -1407,8 +1407,8 @@ const workspaceValidationContract = {
             executionSurfaces: {
               cloudflare: {
                 kind: 'cloudflare-worker-snapshot',
-                workerName: 'app-crm',
-                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
+                workerName: 'app-contacts',
+                publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
                 ssr: {
                   workerEntry: '.output/server/index.mjs',
                   workerManifest: '.output/server/modern-worker-manifest.json',
@@ -1420,31 +1420,31 @@ const workspaceValidationContract = {
                 zephyr: {
                   runtime: 'ssr-worker',
                   integration: 'managed-cloudflare',
-                  snapshotIdEnv: 'ZEPHYR_CRM_SNAPSHOT_ID',
-                  versionIdEnv: 'ZEPHYR_CRM_VERSION_ID',
-                  applicationUidEnv: 'ZEPHYR_CRM_APPLICATION_UID',
+                  snapshotIdEnv: 'ZEPHYR_CONTACTS_SNAPSHOT_ID',
+                  versionIdEnv: 'ZEPHYR_CONTACTS_VERSION_ID',
+                  applicationUidEnv: 'ZEPHYR_CONTACTS_APPLICATION_UID',
                 },
                 workerDispatch: {
                   preferred: 'service-binding',
-                  serviceBinding: 'VERTICAL_CRM_WORKER',
-                  serviceBindingEnv: 'VERTICAL_CRM_WORKER_BINDING',
-                  dispatchNamespaceEnv: 'VERTICAL_CRM_DISPATCH_NAMESPACE',
-                  dispatchWorkerNameEnv: 'VERTICAL_CRM_WORKER_NAME',
+                  serviceBinding: 'VERTICAL_CONTACTS_WORKER',
+                  serviceBindingEnv: 'VERTICAL_CONTACTS_WORKER_BINDING',
+                  dispatchNamespaceEnv: 'VERTICAL_CONTACTS_DISPATCH_NAMESPACE',
+                  dispatchWorkerNameEnv: 'VERTICAL_CONTACTS_WORKER_NAME',
                   requestInterface: 'fetch',
                 },
               },
               node: {
                 kind: 'node-mf-runtime',
                 adapterVersion: 'backend-mf-effect-v1',
-                remoteName: 'verticalCrmBackend',
-                manifestEnv: 'VERTICAL_CRM_BACKEND_MF_MANIFEST',
+                remoteName: 'verticalContactsBackend',
+                manifestEnv: 'VERTICAL_CONTACTS_BACKEND_MF_MANIFEST',
                 manifestUrl: 'http://localhost:4101/backend-mf-manifest.json',
                 containerEntry: 'http://localhost:4101/backendRemoteEntry.cjs',
                 remoteType: 'commonjs-module',
                 expose: './effect-api',
                 runtimePackage: '@modern-js/plugin-bff/effect',
                 expected: {
-                  unitId: 'app/crm',
+                  unitId: 'app/contacts',
                   buildMarker: 'b08ddded31ae2315',
                 },
               },
@@ -1507,12 +1507,12 @@ const workspaceValidationContract = {
           },
           {
             kind: 'directory',
-            path: 'verticals/crm/src',
+            path: 'verticals/contacts/src',
             extensions: ['.ts', '.tsx'],
           },
           {
             kind: 'directory',
-            path: 'verticals/crm/api',
+            path: 'verticals/contacts/api',
             extensions: ['.ts', '.tsx'],
           },
           {
@@ -1527,7 +1527,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/modern.config.ts',
+            path: 'verticals/contacts/modern.config.ts',
           },
           {
             kind: 'file',
@@ -1535,7 +1535,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/module-federation.config.ts',
+            path: 'verticals/contacts/module-federation.config.ts',
           },
         ],
         patterns: [
@@ -1561,7 +1561,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/package.json',
+            path: 'verticals/contacts/package.json',
           },
           {
             kind: 'file',
@@ -1569,7 +1569,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/modern.config.ts',
+            path: 'verticals/contacts/modern.config.ts',
           },
           {
             kind: 'file',
@@ -1577,7 +1577,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/module-federation.config.ts',
+            path: 'verticals/contacts/module-federation.config.ts',
           },
         ],
         patterns: [
@@ -1600,7 +1600,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/module-federation.config.ts',
+            path: 'verticals/contacts/module-federation.config.ts',
           },
         ],
         patterns: [
@@ -1688,7 +1688,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/modern.config.ts',
+            path: 'verticals/contacts/modern.config.ts',
           },
           {
             kind: 'file',
@@ -1696,7 +1696,7 @@ const workspaceValidationContract = {
           },
           {
             kind: 'file',
-            path: 'verticals/crm/module-federation.config.ts',
+            path: 'verticals/contacts/module-federation.config.ts',
           },
         ],
         patterns: [
@@ -1822,9 +1822,9 @@ const workspaceValidationContract = {
         srcDir: 'apps/shell-super-app/src',
         remotes: [
           {
-            id: 'crm',
-            directory: 'verticals/crm',
-            packageName: '@app/crm',
+            id: 'contacts',
+            directory: 'verticals/contacts',
+            packageName: '@app/contacts',
           },
         ],
       },
@@ -1857,59 +1857,59 @@ const workspaceValidationContract = {
   },
   fullStackVerticals: [
     {
-      id: 'crm',
-      domain: 'crm',
-      path: 'verticals/crm',
+      id: 'contacts',
+      domain: 'contacts',
+      path: 'verticals/contacts',
       port: 4101,
-      mfName: 'verticalCrm',
+      mfName: 'verticalContacts',
       emitsApi: true,
       emitsUi: true,
       surfaceProfile: 'full-stack',
-      stem: 'crm',
-      group: 'crm',
-      apiPrefix: '/crm-api',
+      stem: 'contacts',
+      group: 'contacts',
+      apiPrefix: '/contacts-api',
       apiProtocol: 'rest',
       apiContractExport: './api',
       apiClientExport: './api/client',
       apiContractPath: 'shared/api.ts',
-      apiClientPath: 'src/api/crm-client.ts',
+      apiClientPath: 'src/api/contacts-client.ts',
       backendFederation: {
         contractVersion: 'microvertical-server-effect-v1',
         deliveryUnit: {
           schemaVersion: 1,
           kind: 'microvertical-delivery-unit',
-          unitId: 'app/crm',
-          packageName: '@app/crm',
+          unitId: 'app/contacts',
+          packageName: '@app/contacts',
           version: '0.1.0',
           buildMarker: 'b08ddded31ae2315',
           sourceRevision: 'workspace',
         },
         executionSurfaces: ['node-mf-runtime'],
         exposes: ['./effect-api'],
-        name: 'verticalCrmBackend',
+        name: 'verticalContactsBackend',
         nodeAdapterVersion: 'backend-mf-effect-v1',
-        openapiPath: '/crm-api/openapi.json',
-        readinessPath: '/crm-api/crm/readiness',
+        openapiPath: '/contacts-api/openapi.json',
+        readinessPath: '/contacts-api/contacts/readiness',
         role: 'microvertical-server',
         runtimeFramework: 'effect',
         strictEffectApproach: true,
       },
-      tailwindPrefix: 'crm',
-      zephyrAlias: 'crm',
-      packageName: '@app/crm',
+      tailwindPrefix: 'contacts',
+      zephyrAlias: 'contacts',
+      packageName: '@app/contacts',
       deliveryUnit: {
-        appId: 'crm',
+        appId: 'contacts',
         buildMarker: 'b08ddded31ae2315',
         deployProfile: 'cloudflare-ssr-mf-effect-v1',
         kind: 'microvertical-delivery-unit',
-        packageName: '@app/crm',
+        packageName: '@app/contacts',
         schemaVersion: 1,
         sourceRevision: 'workspace',
-        unitId: 'app/crm',
+        unitId: 'app/contacts',
         version: '0.1.0',
       },
-      exposes: ['./PageCrm'],
-      componentPaths: ['verticals/crm/src/federation/page-crm.tsx'],
+      exposes: ['./PageContacts'],
+      componentPaths: ['verticals/contacts/src/federation/page-contacts.tsx'],
       typecheckIncludes: [
         'src',
         'scripts',
@@ -1923,9 +1923,9 @@ const workspaceValidationContract = {
         'vertical.manifest.ts',
         'vertical.registration.ts',
       ],
-      namespace: 'crm',
+      namespace: 'contacts',
       routePagePaths: [],
-      routeMetaPaths: ['verticals/crm/src/routes/[lang]/route.meta.ts'],
+      routeMetaPaths: ['verticals/contacts/src/routes/[lang]/route.meta.ts'],
       localisedUrls: {},
       verticalRefs: [],
     },
@@ -1959,12 +1959,12 @@ const workspaceValidationContract = {
     'dev:shell': 'pnpm --filter @app/shell-super-app dev',
     'env:local:ensure': 'node ./scripts/ensure-local-environment.mts',
     'db:generate':
-      'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/crm db:generate',
+      'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/contacts db:generate',
     'db:bootstrap-runtime-role': 'node ./scripts/postgres/bootstrap-runtime-role.mts',
     'db:migrate':
-      'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/crm db:migrate && pnpm db:bootstrap-runtime-role',
+      'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm db:bootstrap-runtime-role',
     'db:test':
-      'pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/crm db:test',
+      'pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/contacts db:test',
     'db:verify': 'node ./scripts/verify-application-db-schema.mts',
     'action:test:unit': 'pnpm --filter @app/core-runtime action:test:unit',
     'outbox:test':
@@ -4976,8 +4976,8 @@ assert(
   'The deployment tracer patch must reject build-host globs before enumeration, bound dependency expansion, exclude build-host system paths, ignore only missing pnpm markers, and reject other missing files',
 );
 if (process.platform !== 'win32') {
-  const crmRequire = createRequire(path.join(root, 'verticals/crm/package.json'));
-  const appToolsRequire = createRequire(crmRequire.resolve('@modern-js/app-tools'));
+  const contactsRequire = createRequire(path.join(root, 'verticals/contacts/package.json'));
+  const appToolsRequire = createRequire(contactsRequire.resolve('@modern-js/app-tools'));
   const ndepeRequire = createRequire(appToolsRequire.resolve('ndepe'));
   const { nodeFileTrace } = ndepeRequire('@vercel/nft') as {
     nodeFileTrace: (
@@ -7513,6 +7513,73 @@ for (const expectedApp of workspaceValidationContract.topology.compactConfig?.ap
     deliveryUnitIdentityFixArea,
   );
 }
+
+const legacyIdentityAllowlist = new Set([
+  'packages/core-runtime/drizzle/0008_rename-crm-module-identity.sql',
+  'packages/core-runtime/drizzle/meta/_journal.json',
+  'packages/core-runtime/tests/integration/contacts-identity-migration.test.ts',
+  'scripts/migrate-contacts-authorization.mts',
+  'scripts/tests/migrate-contacts-authorization.test.mts',
+  'scripts/validate-ultramodern-workspace.mts',
+  'verticals/contacts/drizzle/0000_supreme_famine.sql',
+  'verticals/contacts/drizzle/0001_open_omega_red.sql',
+  'verticals/contacts/drizzle/0002_rename-crm-database-identity.sql',
+  'verticals/contacts/drizzle/meta/0000_snapshot.json',
+  'verticals/contacts/drizzle/meta/0001_snapshot.json',
+  'verticals/contacts/drizzle/meta/_journal.json',
+  'verticals/contacts/scripts/prepare-contacts-migration.mts',
+  'verticals/contacts/tests/unit/prepare-contacts-migration.test.ts',
+  'verticals/contacts/tests/unit/schema-contract.test.ts',
+]);
+const legacyIdentityToken = /(^|[^A-Za-z])(?:crm|CRM|Crm)/u;
+for (const legacyIdentityProbe of ['crm', 'CRM', 'Crm', 'crmClient', 'CrmApi', 'CRM_SERVICE']) {
+  assert(
+    legacyIdentityToken.test(legacyIdentityProbe),
+    `Legacy identity guard does not reject ${legacyIdentityProbe}`,
+  );
+}
+assert(
+  !legacyIdentityToken.test('scrm'),
+  'Legacy identity guard must not match the CRM letters inside another word',
+);
+const staleNameScanPaths = [
+  '.',
+  '../README.md',
+  '../CONTEXT-MAP.md',
+  '../docs',
+  '../.github/workflows',
+];
+const trackedAndUntrackedFiles = [
+  execFileSync('git', ['ls-files', ...staleNameScanPaths], { cwd: root, encoding: 'utf-8' }),
+  execFileSync('git', ['ls-files', '--others', '--exclude-standard', ...staleNameScanPaths], {
+    cwd: root,
+    encoding: 'utf-8',
+  }),
+]
+  .join('\n')
+  .split('\n')
+  .filter((filePath) => filePath.length > 0);
+const legacyIdentityViolations = trackedAndUntrackedFiles.filter((filePath) => {
+  const normalizedPath = filePath.replace(/^\.\//u, '');
+  if (
+    normalizedPath.startsWith('specs/') ||
+    normalizedPath.startsWith('../docs/adr/') ||
+    normalizedPath.startsWith('../docs/decisions/') ||
+    legacyIdentityAllowlist.has(normalizedPath)
+  ) {
+    return false;
+  }
+  const absolutePath = path.resolve(root, filePath);
+  try {
+    return legacyIdentityToken.test(fs.readFileSync(absolutePath, 'utf-8'));
+  } catch {
+    return false;
+  }
+});
+assert(
+  legacyIdentityViolations.length === 0,
+  `Active application and current documentation surfaces contain legacy CRM identity tokens: ${legacyIdentityViolations.join(', ')}`,
+);
 
 await checkOntosModuleContracts(root);
 console.log('UltraModern workspace scaffold validated');

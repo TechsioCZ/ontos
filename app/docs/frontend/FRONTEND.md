@@ -49,6 +49,10 @@ data hook → generated Effect BFF client → BFF endpoint → Action runtime �
 
 `@techsio/ui-kit` is the source of truth for components, tokens, typography, spacing, colors, icons, forms, accessibility, and interaction patterns.
 
+Treat Figma as a wireframe for information hierarchy, component arrangement, and interaction intent.
+Do not copy its styling or introduce visual values from the design file. The installed
+`@techsio/ui-kit` components and tokens remain the visual and accessibility authority.
+
 Before creating UI:
 
 1. Check whether the UI kit already provides it.

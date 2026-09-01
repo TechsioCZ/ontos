@@ -1,6 +1,6 @@
 # ADR-0001: MicroVerticals are unified vertical slices
 
-Status: Superseded on 2026-08-23 by the independently deployable MicroVertical contract in `app/docs/architecture/MICROVERTICALS.md`. The unified full-stack ownership remains; mandatory joint deployment does not.
+Status: Superseded by [ADR-0016](0016-independently-deployable-microverticals.md). Unified full-stack ownership remains; mandatory joint deployment does not.
 
 ## Context
 

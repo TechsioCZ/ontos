@@ -28,7 +28,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'pnpm dev',
-      cwd: '../../verticals/crm',
+      cwd: '../../verticals/contacts',
       env: {
         GIT_CEILING_DIRECTORIES: repositoryRoot,
         ULTRAMODERN_MF_DEV_ORIGIN: origin,
