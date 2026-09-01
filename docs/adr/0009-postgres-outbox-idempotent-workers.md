@@ -1,6 +1,6 @@
 # ADR-0009: Postgres outbox and idempotent workers
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 

@@ -1,6 +1,7 @@
 # ADR-0016: MicroVerticals preserve independent deployment seams
 
-Status: Accepted on 2026-08-28. Supersedes ADR-0001 and ADR-0002, and supersedes the deployment and registration assumptions in ADR-0008.
+Status: Accepted. Supersedes ADR-0001 and ADR-0002, and supersedes the deployment and registration
+assumptions in ADR-0008.
 
 ## Context
 

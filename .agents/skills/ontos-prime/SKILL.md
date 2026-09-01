@@ -28,20 +28,18 @@ Read these files:
 - `../AGENTS.md`
 - `AGENTS.md`
 - `README.md`
-- `docs/architecture/MICROVERTICALS.md`
-- `docs/architecture/ACTIONS.md`
-- `docs/architecture/ERRORS.md`
-- `docs/architecture/ULTRAMODERN.md`
-- `docs/frontend/FRONTEND.md` when the upcoming work is user-facing
 
-Use relevant files under `../docs/` as product and architectural context for the upcoming task. If repository-level context conflicts with guidance under `app/`, follow `app/` guidance and report the discrepancy.
+Use the routing table in `README.md` to read only the implementation document relevant to the
+upcoming task. Use `../CONTEXT-MAP.md` to select at most the relevant product context, and open an
+ADR only when the task or current guidance points to that decision. Do not bulk-read `../docs/`,
+`docs/`, or completed specifications.
 
 ## Instructions
 
 - Identify the shell application, MicroVerticals, shared packages, topology, generators, tests, and validation commands.
 - Preserve the strict deployment seams between MicroVerticals and the generated Effect BFF seam inside each MicroVertical.
 - Note that every state change must use a typed Action and every expected failure must remain a declared typed Effect error.
-- Note the mandatory Codesmith generators from `../AGENTS.md`. Generated output is the required starting point for supported business file types.
+- Note the mandatory Codesmith generators from `README.md`. Generated output is the required starting point for supported business file types.
 - Run pnpm commands from `app/` as `mise exec -- pnpm <command>`.
 - Keep the investigation focused. Read more source only to resolve an important architectural relationship or prepare for the supplied task.
 

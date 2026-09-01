@@ -1,6 +1,8 @@
 # ADR-0011: Internal dogfooding starts early
 
-Status: Proposed
+Status: Superseded planning decision. Property-first sequencing is stale; current architecture
+proof work is tracked in [OntOS #176](https://github.com/TechsioCZ/ontos/issues/176) and
+[#177](https://github.com/TechsioCZ/ontos/issues/177).
 
 ## Context
 

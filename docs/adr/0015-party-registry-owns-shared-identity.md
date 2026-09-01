@@ -1,6 +1,6 @@
 # ADR-0015: Party Registry owns shared identity
 
-Status: Accepted on 2026-08-28.
+Status: Accepted.
 
 ## Context
 

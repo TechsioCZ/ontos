@@ -1,6 +1,6 @@
 # ADR-0013: Broadcast outbox deliveries
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 

@@ -142,13 +142,10 @@ Review the completed work against the specification file, applicable agent instr
 2. Re-read:
    - `../AGENTS.md`;
    - `AGENTS.md`;
-   - every relevant file referenced by `AGENTS.md`, including:
-     - `docs/architecture/MICROVERTICALS.md`;
-     - `docs/architecture/ACTIONS.md`;
-     - `docs/architecture/ERRORS.md`;
-     - `docs/architecture/ULTRAMODERN.md`;
-     - `docs/frontend/FRONTEND.md` for user-facing work;
-   - relevant product or architectural context under `../docs/`.
+   - `README.md`;
+   - each task-specific implementation document named by the specification or selected by the
+     README routing table;
+   - only the focused context or ADR explicitly relevant to the plan.
 3. Compare the final implementation with the complete plan:
    - description, problem, and solution;
    - requirements and non-goals;
