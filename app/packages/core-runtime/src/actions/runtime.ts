@@ -640,13 +640,18 @@ export const makeActionRuntime = (
         return yield* rejectPermission();
       }
 
-      const tenantPermissionDecision = yield* checkTenantActionPermission(
-        options.contextAccess,
+      const tenantPermissionDecision = isTrustedSupportRecoveryPrincipalContext(
         principal,
-        input.registration.descriptor.tenantPermission === undefined
-          ? undefined
-          : () => input.registration.descriptor.tenantPermission?.(payload),
-      );
+        input.registration,
+      )
+        ? 'allowed'
+        : yield* checkTenantActionPermission(
+            options.contextAccess,
+            principal,
+            input.registration.descriptor.tenantPermission === undefined
+              ? undefined
+              : () => input.registration.descriptor.tenantPermission?.(payload),
+          );
       if (tenantPermissionDecision === 'denied') {
         return yield* rejectPermission();
       }

@@ -16,10 +16,10 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { account, authDatabaseSchema, session, user } from '../../api/auth/db/schema.ts';
-import { createCrmE2eCustomersFixture } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
+import { createContactsE2eCustomersFixture } from '../../../../verticals/contacts/tests/support/e2e-customers.ts';
 
-export { crmE2eCustomers as e2eCustomers } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
-export { crmE2eContacts as e2eContacts } from '../../../../verticals/crm/tests/support/e2e-customers.ts';
+export { contactsE2eCustomers as e2eCustomers } from '../../../../verticals/contacts/tests/support/e2e-customers.ts';
+export { contactsE2eContacts as e2eContacts } from '../../../../verticals/contacts/tests/support/e2e-customers.ts';
 
 export const e2eCredentials = {
   email: 'e2e.user@example.test',
@@ -64,7 +64,7 @@ export const createAuthenticationFixture = async () => {
   const authPool = new Pool({ connectionString });
   const coreDatabase = drizzle({ client: corePool, schema: coreDatabaseSchema });
   const authDatabase = drizzle({ client: authPool, schema: authDatabaseSchema });
-  const crmCustomersFixture = createCrmE2eCustomersFixture({
+  const contactsCustomersFixture = createContactsE2eCustomersFixture({
     connectionString: adminConnectionString,
     tenantIds: [e2eTenants.first.tenantId, e2eTenants.second.tenantId],
   });
@@ -136,7 +136,7 @@ export const createAuthenticationFixture = async () => {
     await coreDatabase
       .delete(tenantModuleStates)
       .where(eq(tenantModuleStates.tenantId, e2eTenants.second.tenantId));
-    await crmCustomersFixture.cleanup();
+    await contactsCustomersFixture.cleanup();
     await coreDatabase
       .delete(legalEntities)
       .where(eq(legalEntities.tenantId, e2eTenants.first.tenantId));
@@ -232,18 +232,18 @@ export const createAuthenticationFixture = async () => {
     },
   ]);
   await coreDatabase.insert(tenantModuleStates).values([
-    { moduleKey: 'crm.core', state: 'active', tenantId: e2eTenants.first.tenantId },
-    { moduleKey: 'crm.core', state: 'active', tenantId: e2eTenants.second.tenantId },
+    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.first.tenantId },
+    { moduleKey: 'contacts.core', state: 'active', tenantId: e2eTenants.second.tenantId },
     { moduleKey: 'e2e-first-module', state: 'active', tenantId: e2eTenants.first.tenantId },
     { moduleKey: 'e2e-second-module', state: 'active', tenantId: e2eTenants.second.tenantId },
   ]);
-  await crmCustomersFixture.seed(e2eTenants.first.tenantId);
+  await contactsCustomersFixture.seed(e2eTenants.first.tenantId);
 
   return async () => {
     try {
       await cleanup();
     } finally {
-      await Promise.all([authPool.end(), corePool.end(), crmCustomersFixture.close()]);
+      await Promise.all([authPool.end(), corePool.end(), contactsCustomersFixture.close()]);
     }
   };
 };

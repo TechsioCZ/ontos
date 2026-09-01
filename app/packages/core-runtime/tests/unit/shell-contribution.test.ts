@@ -108,10 +108,10 @@ test('accepts safe dynamic page templates as plain serialized data', () => {
   const dynamic = full();
   dynamic.pages[0] = {
     ...dynamic.pages[0]!,
-    routePath: '/crm/customers/:id/edit',
+    routePath: '/contacts/customers/:id/edit',
   };
   const decoded = validateShellContributions(dynamic, references);
-  assert.equal(decoded.pages[0]?.routePath, '/crm/customers/:id/edit');
+  assert.equal(decoded.pages[0]?.routePath, '/contacts/customers/:id/edit');
   assert.deepEqual(JSON.parse(JSON.stringify(decoded)), decoded);
   assert.doesNotMatch(JSON.stringify(decoded), /handler|loader|sourcePath|remote|import/iu);
 });
@@ -192,22 +192,22 @@ test('rejects incompatible entrypoint roles and arbitrary transport metadata', (
 });
 
 for (const routePath of [
-  '/cs/crm/customers/:id',
-  '/en/crm/customers/:id',
-  '/de/crm/customers/:id',
-  '/pt-br/crm/customers/:id',
-  '/crm/customers/:id/',
-  '/crm//customers/:id',
-  '/crm/customers/:id?mode=edit',
-  '/crm/customers/:id#edit',
-  '/crm/customers/%2e%2e/:id',
-  '/crm/customers/*',
-  '/crm/customers/:id?',
-  '/crm/customers/:id*',
-  '/crm/customers/:id+',
-  '/crm/customers/:customer-id',
-  '/crm/customers/:1id',
-  '/crm/customers/:id/edit/:id',
+  '/cs/contacts/customers/:id',
+  '/en/contacts/customers/:id',
+  '/de/contacts/customers/:id',
+  '/pt-br/contacts/customers/:id',
+  '/contacts/customers/:id/',
+  '/contacts//customers/:id',
+  '/contacts/customers/:id?mode=edit',
+  '/contacts/customers/:id#edit',
+  '/contacts/customers/%2e%2e/:id',
+  '/contacts/customers/*',
+  '/contacts/customers/:id?',
+  '/contacts/customers/:id*',
+  '/contacts/customers/:id+',
+  '/contacts/customers/:customer-id',
+  '/contacts/customers/:1id',
+  '/contacts/customers/:id/edit/:id',
 ] as const) {
   test(`rejects unsafe or ambiguous page route template ${routePath}`, () => {
     const candidate = full();

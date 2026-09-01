@@ -101,11 +101,17 @@ const ResourceRefSchema = Schema.Struct({
   resourceType: Schema.String,
 });
 const OwnerDetailSchema = Schema.Struct({
-  ref: ResourceRefSchema,
+  fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Schema.String })),
   title: Schema.String,
 });
 const OwnerTimelineSchema = Schema.Struct({
-  entries: Schema.Array(Schema.Struct({ summary: Schema.String })),
+  entries: Schema.Array(
+    Schema.Struct({
+      occurredAt: Schema.String,
+      summary: Schema.String,
+      timelineEntryId: Schema.String,
+    }),
+  ),
   projectionLagging: Schema.Boolean,
 });
 const OwnerSearchSchema = Schema.Array(
@@ -488,6 +494,7 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     authBindingId: string,
   ): TrustedPrincipalContext => ({
     authBindingId,
+    authContextRef: `better-auth-session:${authBindingId}`,
     authMethod: 'session',
     legalEntityId,
     principalId,

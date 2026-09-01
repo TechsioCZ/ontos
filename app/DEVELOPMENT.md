@@ -37,7 +37,7 @@ Create and prepare a sandbox from the `main` branch:
 mise exec -- pnpm sandbox:new -- customer-search
 ```
 
-Replace `customer-search` with the feature slug. This command creates the branch and worktree, copies `app/.env`, installs dependencies, starts the containers, runs Drizzle migrations, initializes the local tenant, legal entity, user, and CRM MicroVertical, verifies the database, and opens the configured AI harness. Note the sandbox ID printed by Locki.
+Replace `customer-search` with the feature slug. This command creates the branch and worktree, copies `app/.env`, installs dependencies, starts the containers, runs Drizzle migrations, initializes the local tenant, legal entity, user, and Contacts MicroVertical, verifies the database, and opens the configured AI harness. Note the sandbox ID printed by Locki.
 
 Forward the application ports from macOS to the sandbox:
 

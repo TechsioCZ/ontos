@@ -103,12 +103,12 @@ importers:
 
   apps/shell-super-app:
     dependencies:
+      '@app/contacts':
+        specifier: workspace:*
+        version: link:../../verticals/contacts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
-      '@app/crm':
-        specifier: workspace:*
-        version: link:../../verticals/crm
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -296,7 +296,7 @@ importers:
         specifier: 0.19.0
         version: 0.19.0
 
-  verticals/crm:
+  verticals/contacts:
     dependencies:
       '@app/core-runtime':
         specifier: workspace:*

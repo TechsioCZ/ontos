@@ -76,18 +76,18 @@
       }
     },
     {
-      "id": "crm",
-      "package": "@app/crm",
-      "path": "verticals/crm",
+      "id": "contacts",
+      "package": "@app/contacts",
+      "path": "verticals/contacts",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/crm.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm",
+        "runbookRef": "runbooks/verticals/contacts.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#contacts",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#crm"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#contacts"]
         }
       }
     }

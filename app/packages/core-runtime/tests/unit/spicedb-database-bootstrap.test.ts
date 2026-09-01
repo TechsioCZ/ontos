@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../../../scripts/postgres/spicedb-database-config.mts';
+import { toModuleAccessObjectId } from '../../src/permissions/context-access.ts';
 
 const extractSchema = (source: string): string =>
   source.slice('schema: |-\n'.length, source.indexOf('\nrelationships: |-')).trimEnd();
@@ -52,4 +53,22 @@ test('keeps the stage bootstrap schema aligned without development relationships
   );
   assert.equal(stage.trimEnd(), `schema: |-\n${extractSchema(development)}`);
   assert.doesNotMatch(stage, /relationships:|assertions:/u);
+});
+
+test('grants fresh development module access only to Contacts', async () => {
+  const development = await readFile(
+    new URL('../../spicedb/bootstrap.yaml', import.meta.url),
+    'utf-8',
+  );
+  const tenantId = '50000000-0000-4000-8000-000000000001';
+  const legalEntityId = '55000000-0000-4000-8000-000000000001';
+  const contactsObjectId = toModuleAccessObjectId(tenantId, legalEntityId, 'contacts.core');
+  const legacyObjectId = toModuleAccessObjectId(tenantId, legalEntityId, `${'c'}${'r'}${'m'}.core`);
+  assert.ok(contactsObjectId);
+  assert.ok(legacyObjectId);
+  assert.match(
+    development,
+    new RegExp(`module_access:${contactsObjectId}#accessor@principal:60000000`, 'u'),
+  );
+  assert.doesNotMatch(development, new RegExp(`module_access:${legacyObjectId}`, 'u'));
 });
