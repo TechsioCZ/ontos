@@ -11,20 +11,20 @@ Generated UltraModern SuperApp workspace.
 Read this file before application work. Then read only the implementation document relevant to the
 task:
 
-| Concern                                               | Current authority                                                                                                   |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| MicroVertical seams and BFF communication             | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md)                                                   |
-| State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                    |
-| Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                      |
-| PostgreSQL ownership and access                       | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md) |
-| Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                   |
-| Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                       |
-| Deployment and business module identity               | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                           |
-| Commerce surfaces                                     | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md)                                       |
-| Party identity, Counterparties, and Party evidence    | [Party Registry](docs/architecture/PARTY_REGISTRY.md)                                                               |
-| Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                 |
-| Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                              |
-| Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                  |
+| Concern                                               | Current authority                                                                                                                     |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| MicroVertical seams and BFF communication             | [MicroVertical Architecture](docs/architecture/MICROVERTICALS.md)                                                                     |
+| State-changing operations                             | [Action Execution](docs/architecture/ACTIONS.md)                                                                                      |
+| Typed failures and HTTP responses                     | [Effect Error and HTTP Contracts](docs/architecture/ERRORS.md)                                                                        |
+| PostgreSQL ownership and access                       | [Database Architecture](docs/architecture/DATABASE.md) and [Governed Data Access](docs/architecture/DATA_ACCESS.md)                   |
+| Asynchronous consumers                                | [Outbox Worker Architecture](docs/architecture/OUTBOX_WORKERS.md)                                                                     |
+| Pages, APIs, components, search, reports, and workers | [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md)                                                                         |
+| Deployment and business module identity               | [Module Manifests](docs/architecture/MODULE_MANIFESTS.md)                                                                             |
+| Commerce surfaces                                     | [Commerce Application Boundaries](docs/architecture/COMMERCE_APPLICATIONS.md)                                                         |
+| Party identity, Counterparties, and Party evidence    | [Party Registry](docs/architecture/PARTY_REGISTRY.md)                                                                                 |
+| Entities versus value objects                         | [Value Objects](docs/architecture/VALUE_OBJECTS.md)                                                                                   |
+| Deployment and release work                           | [Deployment Playbook](docs/architecture/DEPLOYMENT.md)                                                                                |
+| Frontend work, including Figma                        | [Frontend Architecture](docs/frontend/FRONTEND.md)                                                                                    |
 | ARES provider lookup                                  | [ARES provider reference](docs/integrations/ares.md); Party application follows [Party Registry](docs/architecture/PARTY_REGISTRY.md) |
 
 Read a specification only when the task or GitHub issue explicitly names it. A specification with

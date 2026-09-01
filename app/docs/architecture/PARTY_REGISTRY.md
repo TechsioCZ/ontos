@@ -69,17 +69,17 @@ a LegalEntityRef explicitly.
 All state changes use declared Actions and require idempotency unless the general Action rules
 explicitly justify otherwise.
 
-| Capability | Legal Entity scope | Permission target | Required authority |
-| --- | --- | --- | --- |
-| Party create/update/archive/unarchive | optional | Tenant | manage Party identity |
-| Official Identifier add/end/correct | optional | Tenant | manage Party identity |
-| Contact Point add/end/correct | optional | Tenant | manage Party identity/contact data |
-| Party Relationship create/end/correct | optional | Tenant | manage Party relationships |
-| Party Matching review | optional | Tenant | review Party identity |
-| Party Merge | optional | Tenant | merge Party identity |
-| Party Read/Search | optional | Tenant | read Party identity/contact data |
-| Counterparty create/read/search | required | Legal Entity or Counterparty | read/manage that commercial context |
-| Counterparty Role add/end | required | Counterparty | manage that commercial context |
+| Capability                            | Legal Entity scope | Permission target            | Required authority                  |
+| ------------------------------------- | ------------------ | ---------------------------- | ----------------------------------- |
+| Party create/update/archive/unarchive | optional           | Tenant                       | manage Party identity               |
+| Official Identifier add/end/correct   | optional           | Tenant                       | manage Party identity               |
+| Contact Point add/end/correct         | optional           | Tenant                       | manage Party identity/contact data  |
+| Party Relationship create/end/correct | optional           | Tenant                       | manage Party relationships          |
+| Party Matching review                 | optional           | Tenant                       | review Party identity               |
+| Party Merge                           | optional           | Tenant                       | merge Party identity                |
+| Party Read/Search                     | optional           | Tenant                       | read Party identity/contact data    |
+| Counterparty create/read/search       | required           | Legal Entity or Counterparty | read/manage that commercial context |
+| Counterparty Role add/end             | required           | Counterparty                 | manage that commercial context      |
 
 `legalEntityScope: optional` means trusted session context may contain a selected Legal Entity. It
 does not scope the Party fact or grant authority. The Action payload never supplies or overrides
