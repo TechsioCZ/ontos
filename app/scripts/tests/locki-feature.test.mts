@@ -133,7 +133,7 @@ const runWorkflow = async (
     child.on('close', (code) => resolve({ code, stderr, stdout }));
   });
 
-test('creates one sandbox from develop, copies .env opaquely, and prepares in order', async () => {
+test('creates one sandbox from main, copies .env opaquely, and prepares in order', async () => {
   const fixture = await makeFixture();
   const result = await runWorkflow(fixture, ['--', 'customer-search', '--no-ai']);
   assert.equal(result.code, 0, result.stderr);
@@ -144,7 +144,7 @@ test('creates one sandbox from develop, copies .env opaquely, and prepares in or
   );
   assert.equal((await stat(path.join(fixture.targetRoot, 'app/.env'))).mode & 0o777, 0o600);
   const log = await readFile(fixture.logPath, 'utf-8');
-  assert.match(log, /locki new --from develop --branch codex\/customer-search --json/u);
+  assert.match(log, /locki new --from main --branch codex\/customer-search --json/u);
   assert.match(
     log,
     /locki exec --match sandbox-42 -- sh app\/scripts\/locki-feature\.sh --prepare/u,
@@ -184,13 +184,13 @@ test('fails before Locki when the source environment is missing', async () => {
   assert.equal((await readFile(fixture.logPath, 'utf-8')).includes('locki new'), false);
 });
 
-test('fails before creating a sandbox when the workflow is not committed on develop', async () => {
+test('fails before creating a sandbox when the workflow is not committed on main', async () => {
   const fixture = await makeFixture();
   const result = await runWorkflow(fixture, ['customer-search'], {
     TEST_WORKFLOW_COMMITTED: 'false',
   });
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /workflow is not yet committed on develop/u);
+  assert.match(result.stderr, /workflow is not yet committed on main/u);
   assert.equal((await readFile(fixture.logPath, 'utf-8')).includes('locki new'), false);
 });
 

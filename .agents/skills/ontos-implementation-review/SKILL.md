@@ -14,7 +14,9 @@ Audit the complete change against the task specification and repository guidance
 Resolve:
 
 - `spec_file` — the task specification supplied by the user. A uniquely identifiable file under `specs/` is acceptable. When omitted, infer it only if exactly one specification unambiguously matches the branch or implementation; otherwise ask for the path.
-- `fixed_point` — the base commit, branch, tag, or merge-base for the intended PR. Prefer the user's value. Otherwise infer the repository's target branch and verify the ref before reviewing.
+- `fixed_point` — the base commit, branch, tag, or merge-base for the intended PR. Prefer the user's
+  value. Otherwise use the canonical `main` development branch and verify `origin/main` before
+  reviewing.
 - `review_diff` — committed changes from `fixed_point...HEAD` plus staged, unstaged, and relevant untracked files in the current worktree.
 
 Treat the specification as the immutable review target. Preserve its requirements and acceptance criteria. Update status, checkboxes, or implementation evidence only when repository guidance requires it and the implementation proves the update accurate.

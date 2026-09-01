@@ -28,6 +28,7 @@ Read these files:
 - `../AGENTS.md`
 - `AGENTS.md`
 - `README.md`
+- `DEVELOPMENT.md`
 
 Use the routing table in `README.md` to read only the implementation document relevant to the
 upcoming task. Use `../CONTEXT-MAP.md` to select at most the relevant product context, and open an
@@ -37,6 +38,8 @@ ADR only when the task or current guidance points to that decision. Do not bulk-
 ## Instructions
 
 - Identify the shell application, MicroVerticals, shared packages, topology, generators, tests, and validation commands.
+- Treat `main` as the canonical development and pull-request base. Report when the current branch
+  is behind, ahead of, or diverged from `main` in a way that affects the requested work.
 - Preserve the strict deployment seams between MicroVerticals and the generated Effect BFF seam inside each MicroVertical.
 - Note that every state change must use a typed Action and every expected failure must remain a declared typed Effect error.
 - Note the mandatory Codesmith generators from `README.md`. Generated output is the required starting point for supported business file types.

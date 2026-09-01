@@ -1,5 +1,14 @@
 # Development
 
+## Development branch
+
+`main` is the canonical development branch and the default base and pull-request target for new
+work. Do not start new work from `develop`; that branch exists only for the one-time transition back
+to `main` and may be removed after the transition is complete.
+
+Promote releases from `main` to the protected `stage` branch. A feature sandbox always creates its
+feature branch from the current committed `main` workflow described below.
+
 ## Locki
 
 [Locki](https://github.com/JanPokorny/locki) creates isolated development sandboxes backed by Git worktrees and containers. OntOS uses it so each feature can have an independent branch, dependencies, services, database, and AI session without affecting another feature or the main checkout.
@@ -22,7 +31,7 @@ Do not copy the entire `~/.codex` directory when prompted; it can contain large 
 
 ## Feature sandbox workflow
 
-Create and prepare a sandbox from the `develop` branch:
+Create and prepare a sandbox from the `main` branch:
 
 ```sh
 mise exec -- pnpm sandbox:new -- customer-search

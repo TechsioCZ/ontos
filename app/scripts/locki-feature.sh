@@ -3,6 +3,7 @@
 set -eu
 
 minimum_locki_version='0.0.27'
+development_branch='main'
 
 usage() {
   printf '%s\n' 'Usage: mise exec -- pnpm sandbox:new -- <feature-slug> [--no-ai]'
@@ -115,33 +116,37 @@ if [ ! -f "$source_environment" ]; then
   exit 1
 fi
 
-required_develop_files='app/.mise.toml
+required_development_files='app/.mise.toml
 app/scripts/locki-feature.sh
 app/scripts/initialize-local-development.mts
 app/package.json
 app/pnpm-lock.yaml'
-for required_file in $required_develop_files; do
-  if ! git -C "$repository_root" cat-file -e "develop:$required_file" 2>/dev/null; then
-    printf 'The workflow is not yet committed on develop (%s is missing).\n' "$required_file" >&2
-    printf '%s\n' 'Commit the workflow files to develop before creating a Locki sandbox.' >&2
+for required_file in $required_development_files; do
+  if ! git -C "$repository_root" cat-file -e "$development_branch:$required_file" 2>/dev/null; then
+    printf 'The workflow is not yet committed on %s (%s is missing).\n' \
+      "$development_branch" "$required_file" >&2
+    printf 'Commit the workflow files to %s before creating a Locki sandbox.\n' \
+      "$development_branch" >&2
     exit 1
   fi
 done
-if ! git -C "$repository_root" diff --quiet develop -- \
+if ! git -C "$repository_root" diff --quiet "$development_branch" -- \
   app/.mise.toml \
   app/scripts/locki-feature.sh \
   app/scripts/initialize-local-development.mts \
   app/package.json \
   app/pnpm-lock.yaml; then
-  printf '%s\n' 'The working-copy workflow differs from the committed develop version.' >&2
-  printf '%s\n' 'Commit the workflow files to develop before creating a Locki sandbox.' >&2
+  printf 'The working-copy workflow differs from the committed %s version.\n' \
+    "$development_branch" >&2
+  printf 'Commit the workflow files to %s before creating a Locki sandbox.\n' \
+    "$development_branch" >&2
   exit 1
 fi
 
 result_file=$(mktemp "${TMPDIR:-/tmp}/ontos-locki-result.XXXXXX")
 trap 'rm -f "$result_file"' EXIT HUP INT TERM
 
-if ! locki new --from develop --branch "codex/$feature_slug" --json >"$result_file"; then
+if ! locki new --from "$development_branch" --branch "codex/$feature_slug" --json >"$result_file"; then
   printf '%s\n' 'Locki could not create the feature sandbox.' >&2
   exit 1
 fi

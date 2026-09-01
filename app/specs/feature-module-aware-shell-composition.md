@@ -22,7 +22,7 @@ So that navigation and every cross-module entrypoint behave consistently and saf
 
 ## Problem Statement
 
-The current `develop` branch has the important lower-level pieces but does not compose them into Shell behavior. It can discover allowlisted deployment contracts in an Installed Module Catalog, define owner-local Vertical Runtime Registrations, and gate structured entrypoints by tenant module state. The Shell still reads `GET /modules/active`, receives only `{ moduleKey, state: "active" }`, guesses `/${moduleKey}` links, and has no module-level permission decision, guarded remote route, or shared composition model for search, resource detail, timeline, and media attachment.
+The current `main` branch has the important lower-level pieces but does not compose them into Shell behavior. It can discover allowlisted deployment contracts in an Installed Module Catalog, define owner-local Vertical Runtime Registrations, and gate structured entrypoints by tenant module state. The Shell still reads `GET /modules/active`, receives only `{ moduleKey, state: "active" }`, guesses `/${moduleKey}` links, and has no module-level permission decision, guarded remote route, or shared composition model for search, resource detail, timeline, and media attachment.
 
 This creates several gaps:
 
@@ -289,7 +289,7 @@ Execute every command to validate the feature with zero regressions.
 ## Notes
 
 - This is intentionally a feature rather than a chore because it creates new observable Shell behavior and the architectural boundary required for future independently deployed modules.
-- The plan is based on `develop` at commit `511a7e9`. The deployment-safe manifest/catalog and universal state gate added by the latest commits are prerequisites to reuse, not work to duplicate.
+- The plan is based on commit `511a7e9`, now part of the `main` development history. The deployment-safe manifest/catalog and universal state gate added by the latest commits are prerequisites to reuse, not work to duplicate.
 - The authoritative `app/docs/architecture/MODULE_MANIFESTS.md` deployment model supersedes older repository-level wording that suggests statically importing an Installed Vertical Registry. Here, “Installed Vertical Registry” means the Shell's deployment-allowlisted Installed Module Catalog assembled from remote serialized contracts.
 - Vertical Runtime Registrations remain owner-local. Only their validated safe descriptor projection participates in Shell composition.
 - The existing tenant selector remains in scope as composition context. A legal-entity selector is explicitly out of scope because there is no current business requirement to expose one.

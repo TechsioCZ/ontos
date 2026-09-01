@@ -36,7 +36,7 @@ correct effective actor without exposing credentials or weakening tenant isolati
 
 ## Problem Statement
 
-The `develop` branch currently implements only Better Auth user sessions end to end. Core already
+The `main` branch currently implements only Better Auth user sessions end to end. Core already
 stores principal kinds `human`, `service`, `integration`, `agent`, and `system`; binding subject
 types `user` and `api_key`; Action authentication methods `session`, `api_key`, `system`, and
 `support_impersonation`; and optional binding, context-reference, and impersonator evidence fields.
@@ -221,7 +221,7 @@ Use these files to implement the feature:
 ### Phase 1: Foundation
 
 Generate every Core identity Action before editing its payload, handler, service factory, or export.
-Install the API-key plugin at the exact Better Auth `1.6.23` cohort used by `develop`, enable the
+Install the API-key plugin at the exact Better Auth `1.6.23` cohort used by `main`, enable the
 Better Auth Admin plugin, regenerate the complete Auth Drizzle model, and generate independent Auth
 and Core migrations. Generalize Core subject resolution, enforce global API-key binding
 cardinality, strengthen trusted-context cross-field invariants, add tenant permission checks, and
