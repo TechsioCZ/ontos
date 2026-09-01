@@ -52,6 +52,7 @@ Diagrams explain current authoritative prose but never override it:
 - [Runtime containers](diagrams/c4-L2-containers.md)
 - [MicroVertical structure](diagrams/c4-L3-microvertical.md)
 - [Resource references](diagrams/entity-model.md)
+- [Party Registry boundaries](diagrams/party-registry-boundaries.md)
 - [Module lifecycle](diagrams/module-lifecycle.md)
 - [Action flow](diagrams/runtime-action-flow.md)
 
