@@ -426,6 +426,13 @@ test('runs identity mutations and tenant-isolated administration through live Ac
       ),
     );
     assert.equal(systemDenied._tag, 'ActionPermissionDenied');
+    const systemTenantMember = relationship(
+      'tenant',
+      tenantId,
+      'member',
+      'principal',
+      systemPrincipalId,
+    );
     const systemIdentityAdministrator = relationship(
       'tenant',
       tenantId,
@@ -433,15 +440,15 @@ test('runs identity mutations and tenant-isolated administration through live Ac
       'principal',
       systemPrincipalId,
     );
-    spiceDbRelationships.push(systemIdentityAdministrator);
+    spiceDbRelationships.push(systemTenantMember, systemIdentityAdministrator);
     await spiceDbClient.promises.writeRelationships(
       v1.WriteRelationshipsRequest.create({
-        updates: [
+        updates: [systemTenantMember, systemIdentityAdministrator].map((item) =>
           v1.RelationshipUpdate.create({
             operation: v1.RelationshipUpdate_Operation.TOUCH,
-            relationship: systemIdentityAdministrator,
+            relationship: item,
           }),
-        ],
+        ),
       }),
     );
     const systemCreated = await Effect.runPromise(

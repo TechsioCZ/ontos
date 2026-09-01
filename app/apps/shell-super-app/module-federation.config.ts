@@ -67,12 +67,12 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     filename: 'remoteEntry.js',
     name: 'shellSuperApp',
     remotes: {
-      crm: createRemoteManifestUrl({
-        manifestEnv: 'VERTICAL_CRM_MF_MANIFEST',
-        mfName: 'verticalCrm',
+      contacts: createRemoteManifestUrl({
+        manifestEnv: 'VERTICAL_CONTACTS_MF_MANIFEST',
+        mfName: 'verticalContacts',
         port: 4101,
-        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CRM',
-        workerName: 'app-crm',
+        publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_CONTACTS',
+        workerName: 'app-contacts',
       }),
     },
     shared: {

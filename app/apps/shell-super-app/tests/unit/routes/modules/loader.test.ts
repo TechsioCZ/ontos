@@ -7,13 +7,13 @@ import {
   loader,
   selectRouteParams,
 } from '../../../../src/routes/[lang]/modules/[moduleId]/page.data.ts';
-import { loader as contactDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/page.data.ts';
-import { loader as contactEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/[contactId]/edit/page.data.ts';
-import { loader as customerDetailLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/page.data.ts';
-import { loader as customerCreateLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/new/page.data.ts';
-import { loader as customerEditLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/edit/page.data.ts';
-import { loader as contactCreateLoader } from '../../../../src/routes/[lang]/crm/customers/[id]/contacts/new/page.data.ts';
-import { loader as customersListLoader } from '../../../../src/routes/[lang]/crm/customers/page.data.ts';
+import { loader as contactDetailLoader } from '../../../../src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/page.data.ts';
+import { loader as contactEditLoader } from '../../../../src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page.data.ts';
+import { loader as customerDetailLoader } from '../../../../src/routes/[lang]/contacts/customers/[id]/page.data.ts';
+import { loader as customerCreateLoader } from '../../../../src/routes/[lang]/contacts/customers/[id]/new/page.data.ts';
+import { loader as customerEditLoader } from '../../../../src/routes/[lang]/contacts/customers/[id]/edit/page.data.ts';
+import { loader as contactCreateLoader } from '../../../../src/routes/[lang]/contacts/customers/[id]/contacts/new/page.data.ts';
+import { loader as customersListLoader } from '../../../../src/routes/[lang]/contacts/customers/page.data.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
   loadHomePageModelMock: rstest.fn(),
@@ -48,7 +48,7 @@ const authenticatedShell = {
 };
 
 const request = () => {
-  const value = new Request('https://shell.example.test/en/crm/customers');
+  const value = new Request('https://shell.example.test/en/contacts/customers');
   Object.defineProperty(value, 'headers', {
     value: new Headers({ cookie: 'session=test-session' }),
   });
@@ -59,10 +59,10 @@ beforeEach(() => {
   loadHomePageModelMock.mockResolvedValue(authenticatedShell);
   resolveModuleTargetMock.mockReturnValue(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-customers',
-      entrypointKey: 'crm.core.page.customers',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-customers',
+      entrypointKey: 'contacts.core.page.customers',
+      moduleId: 'contacts.core',
       writable: true,
     }),
   );
@@ -85,19 +85,19 @@ test('selects only declared safe route parameters and omits overlong values', ()
 test('forwards an exact generated page entrypoint through the authenticated client', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-customers-list',
-      entrypointKey: 'crm.core.page.customers-list',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-customers-list',
+      entrypointKey: 'contacts.core.page.customers-list',
+      moduleId: 'contacts.core',
       writable: true,
     }),
   );
   await expect(customersListLoader({ request: request() })).resolves.toMatchObject({
     state: 'resolved',
-    target: { componentKey: 'crm.core.page-customers-list' },
+    target: { componentKey: 'contacts.core.page-customers-list' },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customers-list', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.customers-list', moduleId: 'contacts.core' },
     {
       baseUrl: new URL('https://shell.example.test/shell-super-app-api'),
       cookie: 'session=test-session',
@@ -108,10 +108,10 @@ test('forwards an exact generated page entrypoint through the authenticated clie
 test('forwards only the declared Customer ID after exact Customer-detail resolution', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-customer-detail',
-      entrypointKey: 'crm.core.page.customer-detail',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-customer-detail',
+      entrypointKey: 'contacts.core.page.customer-detail',
+      moduleId: 'contacts.core',
       writable: true,
     }),
   );
@@ -128,12 +128,12 @@ test('forwards only the declared Customer ID after exact Customer-detail resolut
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
     state: 'resolved',
     target: {
-      componentKey: 'crm.core.page-customer-detail',
-      entrypointKey: 'crm.core.page.customer-detail',
+      componentKey: 'contacts.core.page-customer-detail',
+      entrypointKey: 'contacts.core.page.customer-detail',
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customer-detail', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.customer-detail', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
@@ -141,10 +141,10 @@ test('forwards only the declared Customer ID after exact Customer-detail resolut
 test('gates Contact detail exactly and forwards only its two bounded hierarchical IDs', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-contact-detail',
-      entrypointKey: 'crm.core.page.contact-detail',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-contact-detail',
+      entrypointKey: 'contacts.core.page.contact-detail',
+      moduleId: 'contacts.core',
       writable: true,
     }),
   );
@@ -166,12 +166,12 @@ test('gates Contact detail exactly and forwards only its two bounded hierarchica
     },
     state: 'resolved',
     target: {
-      componentKey: 'crm.core.page-contact-detail',
-      entrypointKey: 'crm.core.page.contact-detail',
+      componentKey: 'contacts.core.page-contact-detail',
+      entrypointKey: 'contacts.core.page.contact-detail',
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.contact-detail', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.contact-detail', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
@@ -179,10 +179,10 @@ test('gates Contact detail exactly and forwards only its two bounded hierarchica
 test('gates ContactEdit exactly and forwards only its ordered bounded hierarchical IDs', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-contact-edit',
-      entrypointKey: 'crm.core.page.contact-edit',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-contact-edit',
+      entrypointKey: 'contacts.core.page.contact-edit',
+      moduleId: 'contacts.core',
       writable: false,
     }),
   );
@@ -204,13 +204,13 @@ test('gates ContactEdit exactly and forwards only its ordered bounded hierarchic
     },
     state: 'resolved',
     target: {
-      componentKey: 'crm.core.page-contact-edit',
-      entrypointKey: 'crm.core.page.contact-edit',
+      componentKey: 'contacts.core.page-contact-edit',
+      entrypointKey: 'contacts.core.page.contact-edit',
       writable: false,
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.contact-edit', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.contact-edit', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 
@@ -228,10 +228,10 @@ test('gates ContactEdit exactly and forwards only its ordered bounded hierarchic
 test('gates CustomerEdit exactly and carries only its declared bounded Customer ID', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-customer-edit',
-      entrypointKey: 'crm.core.page.customer-edit',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-customer-edit',
+      entrypointKey: 'contacts.core.page.customer-edit',
+      moduleId: 'contacts.core',
       writable: false,
     }),
   );
@@ -244,13 +244,13 @@ test('gates CustomerEdit exactly and carries only its declared bounded Customer 
     routeParams: { id: 'customer-1' },
     state: 'resolved',
     target: {
-      componentKey: 'crm.core.page-customer-edit',
-      entrypointKey: 'crm.core.page.customer-edit',
+      componentKey: 'contacts.core.page-customer-edit',
+      entrypointKey: 'contacts.core.page.customer-edit',
       writable: false,
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customer-edit', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.customer-edit', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
@@ -258,10 +258,10 @@ test('gates CustomerEdit exactly and carries only its declared bounded Customer 
 test('gates CustomerCreate exactly and carries only its declared bounded route ID', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-customer-create',
-      entrypointKey: 'crm.core.page.customer-create',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-customer-create',
+      entrypointKey: 'contacts.core.page.customer-create',
+      moduleId: 'contacts.core',
       writable: true,
     }),
   );
@@ -278,13 +278,13 @@ test('gates CustomerCreate exactly and carries only its declared bounded route I
     routeParams: { id: 'untrusted-route-context' },
     state: 'resolved',
     target: {
-      componentKey: 'crm.core.page-customer-create',
-      entrypointKey: 'crm.core.page.customer-create',
+      componentKey: 'contacts.core.page-customer-create',
+      entrypointKey: 'contacts.core.page.customer-create',
       writable: true,
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customer-create', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.customer-create', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 
@@ -296,7 +296,7 @@ test('gates CustomerCreate exactly and carries only its declared bounded route I
     }),
   ).resolves.toMatchObject({ routeParams: {} });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customer-create', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.customer-create', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
@@ -304,10 +304,10 @@ test('gates CustomerCreate exactly and carries only its declared bounded route I
 test('gates ContactCreate exactly and carries only its declared bounded Customer ID', async () => {
   resolveModuleTargetMock.mockReturnValueOnce(
     Effect.succeed({
-      appId: 'crm',
-      componentKey: 'crm.core.page-contact-create',
-      entrypointKey: 'crm.core.page.contact-create',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-contact-create',
+      entrypointKey: 'contacts.core.page.contact-create',
+      moduleId: 'contacts.core',
       writable: false,
     }),
   );
@@ -324,13 +324,13 @@ test('gates ContactCreate exactly and carries only its declared bounded Customer
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
     state: 'resolved',
     target: {
-      componentKey: 'crm.core.page-contact-create',
-      entrypointKey: 'crm.core.page.contact-create',
+      componentKey: 'contacts.core.page-contact-create',
+      entrypointKey: 'contacts.core.page.contact-create',
       writable: false,
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.contact-create', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.contact-create', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
@@ -338,7 +338,7 @@ test('gates ContactCreate exactly and carries only its declared bounded Customer
 test('retains only declared bounded route parameters outside the resolved target identity', async () => {
   await expect(
     loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+      params: { entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' },
       request: request(),
       routeParams: { id: 'customer-1' },
     }),
@@ -346,24 +346,24 @@ test('retains only declared bounded route parameters outside the resolved target
     routeParams: { id: 'customer-1' },
     state: 'resolved',
     target: {
-      appId: 'crm',
-      componentKey: 'crm.core.page-customers',
-      entrypointKey: 'crm.core.page.customers',
-      moduleId: 'crm.core',
+      appId: 'contacts',
+      componentKey: 'contacts.core.page-customers',
+      entrypointKey: 'contacts.core.page.customers',
+      moduleId: 'contacts.core',
     },
   });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+    { entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
 
 test('retains module landing behavior when no exact page entrypoint is supplied', async () => {
   await expect(
-    loader({ params: { moduleId: 'crm.core' }, request: request() }),
+    loader({ params: { moduleId: 'contacts.core' }, request: request() }),
   ).resolves.toMatchObject({ routeParams: {} });
   expect(resolveModuleTargetMock).toHaveBeenCalledWith(
-    { moduleId: 'crm.core' },
+    { moduleId: 'contacts.core' },
     expect.any(Object),
   );
 });
@@ -372,7 +372,7 @@ test('does not request or load a private target before authentication', async ()
   loadHomePageModelMock.mockResolvedValueOnce({ state: 'anonymous' });
   await expect(
     loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+      params: { entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' },
       request: request(),
     }),
   ).resolves.toMatchObject({ state: 'selection_required' });
@@ -388,7 +388,7 @@ test.each([
   resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag }));
   await expect(
     loader({
-      params: { entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' },
+      params: { entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' },
       request: request(),
     }),
   ).resolves.toMatchObject({ state });

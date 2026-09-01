@@ -11,14 +11,14 @@ declare module '@modern-js/plugin-tanstack/runtime' {
 declare module '@modern-js/plugin-i18n/runtime' {
   interface UltramodernCanonicalRoutes {
     '/': Record<string, never>;
-    '/crm': Record<string, never>;
-    '/crm/customers': Record<string, never>;
-    '/crm/customers/$id': { "id": string };
-    '/crm/customers/$id/contacts/$contactId': { "id": string; "contactId": string };
-    '/crm/customers/$id/contacts/$contactId/edit': { "id": string; "contactId": string };
-    '/crm/customers/$id/contacts/new': { "id": string };
-    '/crm/customers/$id/edit': { "id": string };
-    '/crm/customers/$id/new': { "id": string };
+    '/contacts': Record<string, never>;
+    '/contacts/customers': Record<string, never>;
+    '/contacts/customers/$id': { "id": string };
+    '/contacts/customers/$id/contacts/$contactId': { "id": string; "contactId": string };
+    '/contacts/customers/$id/contacts/$contactId/edit': { "id": string; "contactId": string };
+    '/contacts/customers/$id/contacts/new': { "id": string };
+    '/contacts/customers/$id/edit': { "id": string };
+    '/contacts/customers/$id/new': { "id": string };
     '/login': Record<string, never>;
     '/modules/$moduleId': { "moduleId": string };
     '/resources/$moduleId/$resourceType/$resourceId': { "moduleId": string; "resourceType": string; "resourceId": string };

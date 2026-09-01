@@ -90,7 +90,7 @@ jobs:
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
-      ZEROPS_CRM_SERVICE_ID: ${{ vars.ZEROPS_CRM_SERVICE_ID }}
+      ZEROPS_CONTACTS_SERVICE_ID: ${{ vars.ZEROPS_CONTACTS_SERVICE_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
     steps:
       - name: Harden Runner
@@ -109,7 +109,7 @@ jobs:
         env:
           BEFORE_SHA: ${{ github.event.before }}
         run: |
-          crm=false
+          contacts=false
           migrator=false
           shell=false
           spicedb=false
@@ -117,42 +117,42 @@ jobs:
           while IFS= read -r path; do
             case "$path" in
               app/zerops.yaml|app/pnpm-lock.yaml|app/pnpm-workspace.yaml|app/package.json|app/scripts/install-zerops-node.sh)
-                crm=true
+                contacts=true
                 migrator=true
                 shell=true
                 spicedb=true
                 ;;
               app/packages/core-runtime/spicedb/*|app/scripts/run-zerops-spicedb.sh)
-                crm=true
+                contacts=true
                 migrator=true
                 shell=true
                 spicedb=true
                 ;;
               app/packages/core-runtime/*|app/scripts/run-zerops-migrator.mjs)
-                crm=true
+                contacts=true
                 migrator=true
                 shell=true
                 ;;
               app/packages/*|app/topology/*)
-                crm=true
+                contacts=true
                 shell=true
                 ;;
               app/apps/shell-super-app/*)
                 shell=true
                 ;;
-              app/verticals/crm/*)
-                crm=true
+              app/verticals/contacts/*)
+                contacts=true
                 ;;
             esac
           done < <(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
 
           any=false
-          if [[ "$crm" == true || "$migrator" == true || "$shell" == true || "$spicedb" == true ]]; then
+          if [[ "$contacts" == true || "$migrator" == true || "$shell" == true || "$spicedb" == true ]]; then
             any=true
           fi
           {
             echo "any=$any"
-            echo "crm=$crm"
+            echo "contacts=$contacts"
             echo "migrator=$migrator"
             echo "shell=$shell"
             echo "spicedb=$spicedb"
@@ -230,9 +230,9 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Deploy CRM
-        if: steps.changes.outputs.crm == 'true'
-        id: crm
+      - name: Deploy Contacts
+        if: steps.changes.outputs.contacts == 'true'
+        id: contacts
         run: >-
           zcli push
           --working-dir .
@@ -240,27 +240,27 @@ jobs:
           --workspace-state clean
           --deploy-git-folder
           --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_CRM_SERVICE_ID"
-          --setup crm
+          --service-id "$ZEROPS_CONTACTS_SERVICE_ID"
+          --setup contacts
           --version-name "$GITHUB_SHA"
 
-      - name: Show CRM runtime logs after failure
-        if: failure() && steps.crm.outcome == 'failure'
+      - name: Show Contacts runtime logs after failure
+        if: failure() && steps.contacts.outcome == 'failure'
         continue-on-error: true
         run: >-
           zcli service log
           --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_CRM_SERVICE_ID"
+          --service-id "$ZEROPS_CONTACTS_SERVICE_ID"
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Enable CRM Zerops public subdomain
-        if: steps.changes.outputs.crm == 'true'
+      - name: Enable Contacts Zerops public subdomain
+        if: steps.changes.outputs.contacts == 'true'
         continue-on-error: true
         run: >-
           zcli service enable-subdomain
           --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_CRM_SERVICE_ID"
+          --service-id "$ZEROPS_CONTACTS_SERVICE_ID"
 
       - name: Deploy shell super-app
         if: steps.changes.outputs.shell == 'true'

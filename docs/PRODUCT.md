@@ -17,7 +17,7 @@ cohesive capabilities that can evolve without weakening shared runtime guarantee
 - Application Compositions assemble compatible modules for a coherent purpose. Customer
   Configuration selects permitted options and policies without creating hidden forks.
 
-Current product discovery covers shared identity and CRM, flexible Projects work management, and a
+Current product discovery covers shared identity and Contacts, flexible Projects work management, and a
 reusable B2C/B2B Commerce composition. These areas share Core guarantees but retain distinct domain
 ownership. A customer deployment is evidence about real needs; it does not become a separate
 product or silently redefine shared architecture.

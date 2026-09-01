@@ -80,10 +80,10 @@ const resolvedModel: ModuleTargetPageModel = {
   shell,
   state: 'resolved',
   target: {
-    appId: 'crm',
-    componentKey: 'crm.core.page-customers',
-    entrypointKey: 'crm.core.page.customers',
-    moduleId: 'crm.core',
+    appId: 'contacts',
+    componentKey: 'contacts.core.page-customers',
+    entrypointKey: 'contacts.core.page.customers',
+    moduleId: 'contacts.core',
     writable: true,
   },
 };
@@ -124,14 +124,14 @@ test('invokes the exact private page loader only after a resolved authenticated 
   render(<ModuleTargetPage />);
   expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(resolvedModel.target);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('crm.core.page-customers:customer-1')).toBeTruthy();
+  expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
 });
 
 test('passes an empty route-parameter record to a resolved static page', async () => {
   useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
   render(<ModuleTargetPage />);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('crm.core.page-customers:static')).toBeTruthy();
+  expect(await screen.findByText('contacts.core.page-customers:static')).toBeTruthy();
 });
 
 test('loads the generated Customers list page as a static exact target', async () => {
@@ -140,15 +140,15 @@ test('loads the generated Customers list page as a static exact target', async (
     routeParams: {},
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-customers-list',
-      entrypointKey: 'crm.core.page.customers-list',
+      componentKey: 'contacts.core.page-customers-list',
+      entrypointKey: 'contacts.core.page.customers-list',
     },
   };
   useLoaderDataMock.mockReturnValue(customersListModel);
   render(<ModuleTargetPage />);
   expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customersListModel.target);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
-  expect(await screen.findByText('crm.core.page-customers-list:static')).toBeTruthy();
+  expect(await screen.findByText('contacts.core.page-customers-list:static')).toBeTruthy();
 });
 
 test('loads the approved Customer-detail remote once with the exact declared Customer ID', async () => {
@@ -157,8 +157,8 @@ test('loads the approved Customer-detail remote once with the exact declared Cus
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-customer-detail',
-      entrypointKey: 'crm.core.page.customer-detail',
+      componentKey: 'contacts.core.page-customer-detail',
+      entrypointKey: 'contacts.core.page.customer-detail',
     },
   };
   useLoaderDataMock.mockReturnValue(customerDetailModel);
@@ -166,7 +166,9 @@ test('loads the approved Customer-detail remote once with the exact declared Cus
   expect(findApprovedVerticalPageClientMock).toHaveBeenCalledWith(customerDetailModel.target);
   await waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1));
   expect(
-    await screen.findByText('crm.core.page-customer-detail:11111111-1111-4111-8111-111111111111'),
+    await screen.findByText(
+      'contacts.core.page-customer-detail:11111111-1111-4111-8111-111111111111',
+    ),
   ).toBeTruthy();
 });
 
@@ -179,8 +181,8 @@ test('loads the approved Contact-detail remote once with both exact hierarchical
     },
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-contact-detail',
-      entrypointKey: 'crm.core.page.contact-detail',
+      componentKey: 'contacts.core.page-contact-detail',
+      entrypointKey: 'contacts.core.page.contact-detail',
     },
   };
   useLoaderDataMock.mockReturnValue(contactDetailModel);
@@ -203,8 +205,8 @@ test('passes ContactEdit both hierarchical IDs and the resolved fail-closed targ
     },
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-contact-edit',
-      entrypointKey: 'crm.core.page.contact-edit',
+      componentKey: 'contacts.core.page-contact-edit',
+      entrypointKey: 'contacts.core.page.contact-edit',
       writable: false,
     },
   };
@@ -225,8 +227,8 @@ test('passes CustomerEdit its exact ID and fail-closed writable target', async (
     routeParams: { id: 'customer-1' },
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-customer-edit',
-      entrypointKey: 'crm.core.page.customer-edit',
+      componentKey: 'contacts.core.page-customer-edit',
+      entrypointKey: 'contacts.core.page.customer-edit',
       writable: false,
     },
   };
@@ -239,7 +241,7 @@ test('passes CustomerEdit its exact ID and fail-closed writable target', async (
     routeParams: { id: 'customer-1' },
     target: customerEditModel.target,
   });
-  expect(await screen.findByText('crm.core.page-customer-edit:customer-1')).toBeTruthy();
+  expect(await screen.findByText('contacts.core.page-customer-edit:customer-1')).toBeTruthy();
 });
 
 test('passes CustomerCreate its bounded route context and resolved writable target', async () => {
@@ -248,8 +250,8 @@ test('passes CustomerCreate its bounded route context and resolved writable targ
     routeParams: { id: 'untrusted-route-context' },
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-customer-create',
-      entrypointKey: 'crm.core.page.customer-create',
+      componentKey: 'contacts.core.page-customer-create',
+      entrypointKey: 'contacts.core.page.customer-create',
       writable: true,
     },
   };
@@ -263,7 +265,7 @@ test('passes CustomerCreate its bounded route context and resolved writable targ
     target: customerCreateModel.target,
   });
   expect(
-    await screen.findByText('crm.core.page-customer-create:untrusted-route-context'),
+    await screen.findByText('contacts.core.page-customer-create:untrusted-route-context'),
   ).toBeTruthy();
 });
 
@@ -273,8 +275,8 @@ test('passes ContactCreate its exact ID and fail-closed writable target', async 
     routeParams: { id: '11111111-1111-4111-8111-111111111111' },
     target: {
       ...resolvedModel.target,
-      componentKey: 'crm.core.page-contact-create',
-      entrypointKey: 'crm.core.page.contact-create',
+      componentKey: 'contacts.core.page-contact-create',
+      entrypointKey: 'contacts.core.page.contact-create',
       writable: false,
     },
   };
@@ -288,6 +290,8 @@ test('passes ContactCreate its exact ID and fail-closed writable target', async 
     target: contactCreateModel.target,
   });
   expect(
-    await screen.findByText('crm.core.page-contact-create:11111111-1111-4111-8111-111111111111'),
+    await screen.findByText(
+      'contacts.core.page-contact-create:11111111-1111-4111-8111-111111111111',
+    ),
   ).toBeTruthy();
 });

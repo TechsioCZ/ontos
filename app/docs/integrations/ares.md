@@ -9,15 +9,15 @@ Use the public ARES REST API through an OntOS server-side integration:
 1. Trim the entered IČO and require exactly eight digits, preserving leading zeroes.
 2. Fetch the consolidated subject record with `GET /ekonomicke-subjekty/{ico}`.
 3. Map only `name`, `ico`, `dic`, `legalFormCode`, `establishedOn`, and `dissolvedOn` into the flat
-   CRM Customer prefill contract.
+   Contacts Customer prefill contract.
 4. Cache/coalesce successful lookups, bound concurrency and retries, and map upstream errors into
    OntOS's typed BFF error contract.
 
 Direct browser calls currently work, but a server-side adapter is the safer production boundary for centralized validation, caching, throttling, observability, and insulation from undocumented CORS/authentication changes.
 
-## Current OntOS CRM implementation profile
+## Current OntOS Contacts implementation profile
 
-The implemented CRM adapter deliberately uses only the consolidated subject endpoint. It does not
+The implemented Contacts adapter deliberately uses only the consolidated subject endpoint. It does not
 request or persist an address, registration/source/update metadata, CZ-NACE codes, public-register
 activity text, or trade-licence activity data. Those fields remain research context for a future
 separately specified feature and are not part of the Customer model.
@@ -56,7 +56,7 @@ Accept: application/json
 
 The path parameter must be an eight-digit string (`^\d{8}$`); there is no request body. The ARES
 website accepts omitted leading zeroes in its UI, but the REST contract requires all eight digits.
-The current CRM adapter therefore rejects shorter input instead of guessing or padding it. See the
+The current Contacts adapter therefore rejects shorter input instead of guessing or padding it. See the
 [`GET /ekonomicke-subjekty/{ico}` OpenAPI operation](https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/v3/api-docs)
 and the [official ARES search help](https://ares.gov.cz/stranky/napoveda-ekonomicke-subjekty).
 
@@ -218,7 +218,7 @@ Therefore, credential-free browser GETs are technically possible today, and JSON
 ```text
 IČO input
   -> trim, require exactly 8 digits, preserve leading zeroes
-  -> generated CRM governed Read
+  -> generated Contacts governed Read
   -> private server-side ARES adapter
   -> GET consolidated subject
   -> map only name, IČO, DIČ, legal-form code, establishment date, dissolution date

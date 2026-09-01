@@ -151,24 +151,24 @@ test('decodes an optional exact page entrypoint without accepting private routin
   expect(
     await Effect.runPromise(
       Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
-        entrypointKey: 'crm.core.page.customers',
+        entrypointKey: 'contacts.core.page.customers',
         importPath: 'must-not-pass',
-        moduleId: 'crm.core',
-        routePath: '/crm/customers',
+        moduleId: 'contacts.core',
+        routePath: '/contacts/customers',
       }),
     ),
-  ).toEqual({ entrypointKey: 'crm.core.page.customers', moduleId: 'crm.core' });
+  ).toEqual({ entrypointKey: 'contacts.core.page.customers', moduleId: 'contacts.core' });
   expect(
     await Effect.runPromise(
-      Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({ moduleId: 'crm.core' }),
+      Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({ moduleId: 'contacts.core' }),
     ),
-  ).toEqual({ moduleId: 'crm.core' });
+  ).toEqual({ moduleId: 'contacts.core' });
   await expect(
     Effect.runPromise(
       Effect.flip(
         Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
           entrypointKey: '../private-page',
-          moduleId: 'crm.core',
+          moduleId: 'contacts.core',
         }),
       ),
     ),

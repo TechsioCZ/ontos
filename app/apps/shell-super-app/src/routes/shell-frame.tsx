@@ -8,7 +8,7 @@ import type { MenuItem } from '@techsio/ui-kit/molecules/menu';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 
 interface DashboardAccount {
@@ -131,6 +131,12 @@ export const AuthenticatedDashboardLayout = ({
       : legalEntityState === 'unavailable'
         ? t('shell.dashboard.legalEntity.unavailable')
         : null;
+
+  useEffect(() => {
+    if (tenantSwitchFailed) {
+      document.querySelector('#tenant-switch-status')?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [tenantSwitchFailed]);
 
   return (
     <div className="shell:flex shell:min-h-screen shell:min-w-0 shell:flex-col shell:overflow-x-hidden shell:bg-(--color-page-bg) shell:text-(--color-page-fg) shell:md:flex-row">

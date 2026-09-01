@@ -64,7 +64,7 @@ Shell owns the staff BetterAuth realm described in [MicroVertical Architecture](
 
 Commerce owns a separate BetterAuth realm for Portal Account registration and authentication. It has separate configuration, schema/migrations, cookies, session namespace, signing/secrets, origin, rate limits, account verification/recovery, and lifecycle. Portal accounts never enter the staff Auth schema or receive staff session semantics.
 
-Commerce maps a Portal Account through its owner-local binding/profile to a tenant-scoped Principal and stable Party/Counterparty ResourceRefs. Party Registry remains the shared identity owner; Commerce owns portal enrollment and commerce profiles. Publish non-secret lifecycle facts for authorized CRM, support/ticketing, and analytics projections. Never emit credentials, tokens, cookies, password material, or unrestricted identity payloads.
+Commerce maps a Portal Account through its owner-local binding/profile to a tenant-scoped Principal and stable Party/Counterparty ResourceRefs. Party Registry remains the shared identity owner; Commerce owns portal enrollment and commerce profiles. Publish non-secret lifecycle facts for authorized Contacts, support/ticketing, and analytics projections. Never emit credentials, tokens, cookies, password material, or unrestricted identity payloads.
 
 ## Commerce Operations
 

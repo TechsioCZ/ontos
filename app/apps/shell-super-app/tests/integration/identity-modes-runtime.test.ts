@@ -15,6 +15,7 @@ import {
 } from '@app/core-runtime';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import { createNonHumanPrincipalAction } from '../../../../packages/core-runtime/src/modules/actions/create-non-human-principal.action.ts';
 import {
   actionInvocations,
@@ -101,7 +102,7 @@ test('verifies provider keys and completes live support impersonation with durab
     makeActionRepository(),
     { checkActionPermission: () => Effect.succeed('allowed' as const) },
     operationalScope,
-    { contextAccess: allowedContextAccess },
+    { ...openActionRuntimeOptions, contextAccess: allowedContextAccess },
   );
   const fixtureAuthentication = makeAuthenticationService(
     baseConfiguration,

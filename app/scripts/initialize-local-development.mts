@@ -51,7 +51,7 @@ export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   tenantSlug: 'techsio',
 });
 
-export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['crm'] as const);
+export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['contacts'] as const);
 
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;
@@ -201,6 +201,17 @@ export const classifyExactLocalRecord = <Expected extends ExactRecord>(
   }
   return 'existing';
 };
+
+export const classifyLocalModuleState = (
+  label: string,
+  existing: ExactRecord | undefined,
+  expected: ExactRecord,
+): 'create' | 'existing' =>
+  classifyExactLocalRecord(label, existing, {
+    moduleKey: expected['moduleKey'] ?? null,
+    state: expected['state'] ?? null,
+    tenantId: expected['tenantId'] ?? null,
+  });
 
 interface TopologyVertical {
   readonly id?: unknown;
@@ -541,7 +552,7 @@ const reconcileCoreContext = async (
         tenantModuleStateId: moduleStateId,
       } as const;
       if (
-        classifyExactLocalRecord(
+        classifyLocalModuleState(
           `${moduleId} module state`,
           moduleCandidates[0],
           expectedModuleState,

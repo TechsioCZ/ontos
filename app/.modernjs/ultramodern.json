@@ -41,13 +41,13 @@
           "role": "host",
           "name": "shellSuperApp",
           "exposes": [],
-          "verticalRefs": ["crm"],
+          "verticalRefs": ["contacts"],
           "remotes": [
             {
-              "id": "crm",
-              "alias": "crm",
-              "name": "verticalCrm",
-              "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
+              "id": "contacts",
+              "alias": "contacts",
+              "name": "verticalContacts",
+              "manifestEnv": "VERTICAL_CONTACTS_MF_MANIFEST",
               "manifestUrl": "http://localhost:4101/mf-manifest.json"
             }
           ],
@@ -160,19 +160,19 @@
         }
       },
       {
-        "id": "crm",
+        "id": "contacts",
         "kind": "vertical",
-        "package": "@app/crm",
-        "packageSuffix": "crm",
-        "displayName": "Crm Vertical",
-        "path": "verticals/crm",
-        "domain": "crm",
+        "package": "@app/contacts",
+        "packageSuffix": "contacts",
+        "displayName": "Contacts Vertical",
+        "path": "verticals/contacts",
+        "domain": "contacts",
         "port": 4101,
-        "portEnv": "VERTICAL_CRM_PORT",
+        "portEnv": "VERTICAL_CONTACTS_PORT",
         "moduleFederation": {
           "role": "remote",
-          "name": "verticalCrm",
-          "exposes": ["./PageCrm"],
+          "name": "verticalContacts",
+          "exposes": ["./PageContacts"],
           "ssr": true,
           "dts": {
             "compilerInstance": "effect-tsgo",
@@ -181,47 +181,47 @@
         },
         "backendFederation": {
           "role": "microvertical-server",
-          "name": "verticalCrmBackend",
+          "name": "verticalContactsBackend",
           "runtimeFramework": "effect",
           "strictEffectApproach": true,
           "deliveryUnit": {
             "schemaVersion": 1,
             "kind": "microvertical-delivery-unit",
-            "unitId": "app/crm",
-            "packageName": "@app/crm",
+            "unitId": "app/contacts",
+            "packageName": "@app/contacts",
             "version": "0.1.0",
             "buildMarker": "b08ddded31ae2315",
             "sourceRevision": "workspace"
           },
           "exposes": {
             "./effect-api": {
-              "contract": "verticals/crm/shared/api.ts",
-              "runtime": "verticals/crm/api/index.ts",
-              "client": "verticals/crm/src/api/crm-client.ts",
-              "openapi": "/crm-api/openapi.json",
-              "readiness": "/crm-api/crm/readiness"
+              "contract": "verticals/contacts/shared/api.ts",
+              "runtime": "verticals/contacts/api/index.ts",
+              "client": "verticals/contacts/src/api/contacts-client.ts",
+              "openapi": "/contacts-api/openapi.json",
+              "readiness": "/contacts-api/contacts/readiness"
             }
           },
           "versionBoundary": {
             "invariant": "web-and-api-same-build",
             "identityRoot": "deliveryUnit",
-            "packageName": "@app/crm",
+            "packageName": "@app/contacts",
             "ui": {
-              "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
+              "manifestEnv": "VERTICAL_CONTACTS_MF_MANIFEST",
               "manifestUrl": "http://localhost:4101/mf-manifest.json",
-              "buildMarker": "verticals/crm/src/routes/ultramodern-route-metadata.ts"
+              "buildMarker": "verticals/contacts/src/routes/ultramodern-route-metadata.ts"
             },
             "api": {
-              "readiness": "/crm-api/crm/readiness",
-              "buildMarker": "verticals/crm/shared/ultramodern-build.ts",
-              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM"
+              "readiness": "/contacts-api/contacts/readiness",
+              "buildMarker": "verticals/contacts/shared/ultramodern-build.ts",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS"
             }
           },
           "executionSurfaces": {
             "cloudflare": {
               "kind": "cloudflare-worker-snapshot",
-              "workerName": "app-crm",
-              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+              "workerName": "app-contacts",
+              "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
               "ssr": {
                 "workerEntry": ".output/server/index.mjs",
                 "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -233,38 +233,38 @@
               "zephyr": {
                 "runtime": "ssr-worker",
                 "integration": "managed-cloudflare",
-                "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
-                "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
-                "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+                "snapshotIdEnv": "ZEPHYR_CONTACTS_SNAPSHOT_ID",
+                "versionIdEnv": "ZEPHYR_CONTACTS_VERSION_ID",
+                "applicationUidEnv": "ZEPHYR_CONTACTS_APPLICATION_UID"
               },
               "workerDispatch": {
                 "preferred": "service-binding",
-                "serviceBinding": "VERTICAL_CRM_WORKER",
-                "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
-                "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
-                "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+                "serviceBinding": "VERTICAL_CONTACTS_WORKER",
+                "serviceBindingEnv": "VERTICAL_CONTACTS_WORKER_BINDING",
+                "dispatchNamespaceEnv": "VERTICAL_CONTACTS_DISPATCH_NAMESPACE",
+                "dispatchWorkerNameEnv": "VERTICAL_CONTACTS_WORKER_NAME",
                 "requestInterface": "fetch"
               }
             },
             "node": {
               "kind": "node-mf-runtime",
               "adapterVersion": "backend-mf-effect-v1",
-              "remoteName": "verticalCrmBackend",
-              "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+              "remoteName": "verticalContactsBackend",
+              "manifestEnv": "VERTICAL_CONTACTS_BACKEND_MF_MANIFEST",
               "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
               "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
               "remoteType": "commonjs-module",
               "expose": "./effect-api",
               "runtimePackage": "@modern-js/plugin-bff/effect",
               "expected": {
-                "unitId": "app/crm",
+                "unitId": "app/contacts",
                 "buildMarker": "b08ddded31ae2315"
               }
             }
           },
           "compatibility": {
             "contractVersion": "microvertical-server-effect-v1",
-            "packageName": "@app/crm",
+            "packageName": "@app/contacts",
             "effectVersion": "4.0.0-beta.107",
             "moduleFederationVersion": "2.8.0"
           },
@@ -283,24 +283,24 @@
         "deliveryUnit": {
           "schemaVersion": 1,
           "kind": "microvertical-delivery-unit",
-          "unitId": "app/crm",
-          "packageName": "@app/crm",
+          "unitId": "app/contacts",
+          "packageName": "@app/contacts",
           "version": "0.1.0",
           "buildMarker": "b08ddded31ae2315",
           "sourceRevision": "workspace"
         },
         "api": {
           "runtime": "effect",
-          "stem": "crm",
-          "prefix": "/crm-api",
-          "consumedBy": ["shell-super-app", "crm"],
-          "serverEntry": "verticals/crm/api/index.ts"
+          "stem": "contacts",
+          "prefix": "/contacts-api",
+          "consumedBy": ["shell-super-app", "contacts"],
+          "serverEntry": "verticals/contacts/api/index.ts"
         },
         "deploy": {
           "cloudflare": {
             "target": "cloudflare",
-            "workerName": "app-crm",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+            "workerName": "app-contacts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
             "compatibilityDate": "2026-06-02",
             "compatibilityFlags": [
               "nodejs_compat",
@@ -310,8 +310,8 @@
             "routes": {
               "ssr": "/en",
               "mfManifest": "/mf-manifest.json",
-              "locale": "/locales/en/crm.json",
-              "apiReadiness": "/crm-api/crm/readiness"
+              "locale": "/locales/en/contacts.json",
+              "apiReadiness": "/contacts-api/contacts/readiness"
             },
             "security": {
               "enabled": true,
@@ -389,8 +389,8 @@
             },
             "jsonSmokeChecks": [
               {
-                "id": "crm-readiness-smoke",
-                "route": "/crm-api/crm/readiness",
+                "id": "contacts-readiness-smoke",
+                "route": "/contacts-api/contacts/readiness",
                 "expect": {
                   "status": "ready",
                   "checks.api": "ready",
@@ -433,11 +433,11 @@
         "hostOnly": true
       },
       {
-        "id": "crm",
-        "path": "verticals/crm",
+        "id": "contacts",
+        "path": "verticals/contacts",
         "role": "remote",
-        "name": "verticalCrm",
-        "exposes": ["./PageCrm"],
+        "name": "verticalContacts",
+        "exposes": ["./PageContacts"],
         "hostOnly": false
       }
     ]
@@ -445,18 +445,18 @@
   "backendFederation": {
     "apps": [
       {
-        "id": "crm",
-        "path": "verticals/crm",
+        "id": "contacts",
+        "path": "verticals/contacts",
         "role": "microvertical-server",
-        "name": "verticalCrmBackend",
+        "name": "verticalContactsBackend",
         "runtimeFramework": "effect",
         "strictEffectApproach": true,
         "contractVersion": "microvertical-server-effect-v1",
         "deliveryUnit": {
           "schemaVersion": 1,
           "kind": "microvertical-delivery-unit",
-          "unitId": "app/crm",
-          "packageName": "@app/crm",
+          "unitId": "app/contacts",
+          "packageName": "@app/contacts",
           "version": "0.1.0",
           "buildMarker": "b08ddded31ae2315",
           "sourceRevision": "workspace"
@@ -464,8 +464,8 @@
         "executionSurfaces": {
           "cloudflare": {
             "kind": "cloudflare-worker-snapshot",
-            "workerName": "app-crm",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
+            "workerName": "app-contacts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -477,31 +477,31 @@
             "zephyr": {
               "runtime": "ssr-worker",
               "integration": "managed-cloudflare",
-              "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
-              "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
-              "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
+              "snapshotIdEnv": "ZEPHYR_CONTACTS_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_CONTACTS_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_CONTACTS_APPLICATION_UID"
             },
             "workerDispatch": {
               "preferred": "service-binding",
-              "serviceBinding": "VERTICAL_CRM_WORKER",
-              "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
-              "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
-              "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
+              "serviceBinding": "VERTICAL_CONTACTS_WORKER",
+              "serviceBindingEnv": "VERTICAL_CONTACTS_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_CONTACTS_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_CONTACTS_WORKER_NAME",
               "requestInterface": "fetch"
             }
           },
           "node": {
             "kind": "node-mf-runtime",
             "adapterVersion": "backend-mf-effect-v1",
-            "remoteName": "verticalCrmBackend",
-            "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
+            "remoteName": "verticalContactsBackend",
+            "manifestEnv": "VERTICAL_CONTACTS_BACKEND_MF_MANIFEST",
             "manifestUrl": "http://localhost:4101/backend-mf-manifest.json",
             "containerEntry": "http://localhost:4101/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
             "expose": "./effect-api",
             "runtimePackage": "@modern-js/plugin-bff/effect",
             "expected": {
-              "unitId": "app/crm",
+              "unitId": "app/contacts",
               "buildMarker": "b08ddded31ae2315"
             }
           }
