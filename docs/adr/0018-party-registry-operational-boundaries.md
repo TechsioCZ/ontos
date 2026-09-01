@@ -70,16 +70,16 @@ All Party state changes are declared Actions. Party create requires idempotency.
 it:
 
 1. decodes and type-normalizes the Party Candidate;
-2. resolves exact active identity claims from the Party Registry operational store and
-   partitions them into resolved Party claims and unclaimed claims;
-3. creates or reuses a Duplicate Candidate case when resolved claims point to several Parties or
+2. asks a CoreSDK-constructed owner-local claim service to lock every normalized strong-claim key in
+   deterministic order inside the one Core-owned transaction;
+3. resolves exact active claims from the Party Registry operational store and partitions them into
+   resolved Party claims and unclaimed claims;
+4. creates or reuses a Duplicate Candidate case when resolved claims point to several Parties or
    authoritative evidence conflicts;
-4. when all resolved claims point to one Party, validates every remaining authoritative fact and
-   atomically acquires every compatible unclaimed claim for that Party before returning it;
-5. when no claim resolves, acquires or conflicts on every type-specific uniqueness claim before
-   creating one Party and its accepted initial assertions;
-6. restarts canonical claim resolution after a concurrent claim conflict instead of trusting a stale
-   preflight result;
+5. when all resolved claims point to one Party, validates every remaining authoritative fact and
+   atomically attaches every compatible unclaimed claim to that Party before returning it;
+6. when no claim resolves, reserves every type-specific uniqueness claim before creating one Party and
+   its accepted initial assertions;
 7. stores one Party Match Decision linked to the Action Invocation and resulting Party or case.
 
 `CREATED`, `MATCHED_EXISTING`, and `AMBIGUOUS` are committed Action results. Ambiguity is not an
@@ -98,11 +98,22 @@ because an eventually consistent search result is absent.
 
 Core Search, Neo4j, caches, and other projections are never used to enforce identity uniqueness.
 Weak-signal matching may rank candidates, but it cannot replace the transactional exact-claim
-invariant. Creating a Party without a strong identifier is an explicit policy path and may require an
-Identity Reviewer. A Duplicate Candidate resolution may authorize `CREATE_NEW` only after a canonical
+invariant. CoreSDK owns the transaction and supplies the owner-local claim service bound to it; the
+business handler never receives an executor and never opens, commits, rolls back, or retries a
+transaction. Contending Actions serialize on deterministic transaction-scoped claim-key locks and the
+later Action observes the committed owner.
+
+Creating a Party without a strong identifier is an explicit policy path and may require an Identity
+Reviewer. A Duplicate Candidate resolution may authorize `CREATE_NEW` only after a canonical
 transactional recheck proves all qualifying strong claims are unclaimed. Claims already owned by an
 existing Party must be matched, explicitly corrected/reassigned, or resolved through the duplicate
 existing-Party flow; authoritative evidence cannot be silently discarded to create another Party.
+
+A reviewed `MATCH_EXISTING` decision is a dedicated Action carrying `caseRef`, `selectedPartyRef`, and
+expected case revision. Inside one Core-owned transaction it locks the case, selected Party, and every
+Candidate claim key; rejects any claim owned by another Party; attaches compatible unclaimed claims;
+closes the case; and commits a new MATCHED Party Match Decision. It does not loop through ordinary
+matching without consuming the selected Party.
 
 ### Party facts share assertion semantics
 

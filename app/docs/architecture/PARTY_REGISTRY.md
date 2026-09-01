@@ -163,8 +163,9 @@ PartyCreate(candidate)
   normalize candidate with versioned type rules
   reject insufficient evidence that one real-world subject exists
 
-  begin canonical transaction
+  begin CoreSDK-owned canonical transaction
     lock/reuse Action idempotency anchor
+    acquire deterministic transaction-scoped locks for every qualifying claim key
     resolve every qualifying strong identifier claim
     partition them into resolved Party claims and unclaimed claims
 
@@ -175,8 +176,8 @@ PartyCreate(candidate)
 
     if resolved claims point to exactly one Party
       validate every remaining authoritative fact against that Party
-      acquire every compatible unclaimed strong claim for that Party
-        conflict means restart claim resolution in a fresh transaction
+      attach every compatible unclaimed strong claim to that Party
+        uniqueness is protected by the already-held claim-key locks
       insert accepted compatible assertions on that Party
       persist MATCHED PartyMatchDecision
       return MATCHED_EXISTING(partyRef, decisionRef)
@@ -189,7 +190,7 @@ PartyCreate(candidate)
         return AMBIGUOUS(caseRef, decisionRef)
 
     reserve every unclaimed qualifying claim for one prospective Party identity
-    conflict means restart claim resolution in a fresh transaction
+    uniqueness is protected by the already-held claim-key locks
     insert one Party
     insert accepted initial assertions
     attach every reserved claim to that Party
@@ -200,6 +201,18 @@ PartyCreate(candidate)
   commit canonical state, decision/case state, Action evidence,
     Domain Events, linked Outbox Messages, and invocation success atomically
 ```
+
+CoreSDK opens the one canonical transaction and constructs an owner-local
+`PartyIdentifierClaimService` bound to it. Before reading claims, the service sorts every normalized
+claim key and acquires transaction-scoped database locks in that deterministic order. An equivalent
+conflict-tolerant single-transaction primitive is acceptable only when it provides the same observable
+serialization. The service then reads or attaches claims without exposing a database executor and
+without allowing the handler to begin, commit, roll back, or retry a transaction.
+
+A competing Action waits for the same claim-key locks and then observes the committed owner before it
+decides. A uniqueness conflict after those locks indicates a broken invariant, not an instruction for
+the business handler to open a fresh transaction. Database unavailability or an indeterminate commit
+follows the existing Core-owned Action reconciliation lifecycle.
 
 A preflight fuzzy search may improve user experience, but the transaction repeats every invariant
 read against the Party Registry operational store. A result from Core Search is never sufficient to
@@ -440,8 +453,41 @@ creation pass.
 A case whose strong claims resolve to one or several existing Parties must instead match an existing
 Party, correct/retract/reassign the wrong claim through an authorized Party Correction and then match,
 confirm duplicate existing Parties for the separate merge flow, request evidence, or dismiss the input
-as not representing a subject. Every resolution re-enters the atomic Party Create/Match boundary and
-repeats claim resolution; the case decision alone never bypasses uniqueness.
+as not representing a subject.
+
+`MATCH_EXISTING` consumes an explicit canonical `selectedPartyRef`; it does not rerun ordinary matching
+without the review decision:
+
+```text
+ResolveDuplicateCandidateMatch(caseRef, selectedPartyRef, expectedRevision)
+  begin CoreSDK-owned canonical transaction
+    lock the open case and selected canonical Party
+    reject stale case revision, cross-Tenant Party, Party Alias, or closed case
+    acquire deterministic locks for every qualifying Candidate claim key
+    resolve all claims and re-evaluate authoritative conflicts
+
+    if any qualifying claim is owned by a different Party
+      reject ClaimOwnedByDifferentParty
+
+    attach every compatible unclaimed claim to selectedPartyRef
+    insert accepted compatible assertions on selectedPartyRef
+    close the case as MATCH_EXISTING
+    persist a new MATCHED PartyMatchDecision linked to this resolution Action
+    return MATCHED_EXISTING(selectedPartyRef, decisionRef)
+
+  commit case resolution, assertions, claims, Action evidence,
+    Domain Events, Outbox Messages, and invocation success atomically
+```
+
+A weak-evidence case with no strong claims may still be resolved to the selected Party when the
+Identity Reviewer has the required authority and the current Match Rule permits reviewed matching. The
+explicit selection is part of the resolution Action input and evidence; it is never inferred again from
+the unchanged Candidate.
+
+`CREATE_NEW` uses a separate resolution Action with no selected Party. It acquires the same claim-key
+locks, repeats canonical claim resolution, and may create only when every qualifying claim is still
+unclaimed or the approved no-strong-identifier policy applies. The case decision alone never bypasses
+uniqueness.
 
 Creating or reusing the case and its AMBIGUOUS Party Match Decision is a committed successful Action
 outcome. Resolution is a separate Action. Repeated identical evidence reuses the prior open or
