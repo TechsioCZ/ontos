@@ -30,7 +30,7 @@
     "action:test:integration": "pnpm --filter @app/core-runtime action:test:integration",
     "outbox:test": "pnpm --filter @app/core-runtime outbox:test:unit && pnpm --filter @app/core-runtime outbox:test:integration",
     "build": "pnpm -r --filter \"./verticals/*\" run build && pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
-    "cloudflare:build": "pnpm -r --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof",
+    "cloudflare:build": "pnpm -r --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && ULTRAMODERN_MF_TYPES_ARCHIVE=dist-cloudflare/@mf-types.zip pnpm mf:types && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof",
     "cloudflare:deploy": "pnpm -r --filter \"./verticals/*\" run cloudflare:deploy && pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",
     "cloudflare:proof": "node ./scripts/proof-cloudflare-version.mts --out .codex/reports/cloudflare-version-proof/public-url-proof.json",
     "cloudflare-output:verify": "node ./scripts/verify-cloudflare-output.mts",

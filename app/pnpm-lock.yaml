@@ -16,6 +16,7 @@ overrides:
 patchedDependencies:
   '@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12': a465d6a56813231b73185ba1677e4fd8514a3c083c375e83f34a19b60ddd57bf
   '@bleedingdev/modern-js-builder@3.8.2-ultramodern.12': c5bdbbf89a17e39cb43c17f66a1904ed29a1462b09fd19aaf05c7301cbe4601c
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12': 4e3d206c62d154de4a30865d494b5b49a296ce6cc058e9dc889fb942d8dc674f
   '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12': e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0
   '@bleedingdev/modern-js-server-utils@3.8.2-ultramodern.12': 254be68a353f0c3a57aed91447a2de7b86afe26d1badeb9786945fd466fe760d
   '@module-federation/bridge-react@2.8.0': 54bfc79e097473222f83cbfa6d717792e3026bf16b5097c2ed91715b7da126be
@@ -55,7 +56,7 @@ importers:
         version: 2.6.9(supports-color@10.2.2)
       '@modern-js/create':
         specifier: npm:@bleedingdev/modern-js-create@3.8.2-ultramodern.12
-        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(oxlint@1.79.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
+        version: '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=4e3d206c62d154de4a30865d494b5b49a296ce6cc058e9dc889fb942d8dc674f)(oxlint@1.79.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)'
       '@modern-js/plugin-bff':
         specifier: npm:@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12
         version: '@bleedingdev/modern-js-plugin-bff@3.8.2-ultramodern.12(patch_hash=e96021e5be6d0ee85e6656b9110807d08e4b8dda295d17933606ff0472b61ed0)(2e8b371f3e1c728febc8755b856381ce)'
@@ -8280,7 +8281,7 @@ snapshots:
       - react
       - react-dom
 
-  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(oxlint@1.79.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
+  '@bleedingdev/modern-js-create@3.8.2-ultramodern.12(patch_hash=4e3d206c62d154de4a30865d494b5b49a296ce6cc058e9dc889fb942d8dc674f)(oxlint@1.79.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)':
     dependencies:
       '@modern-js/codesmith': 2.6.9(supports-color@10.2.2)
       '@modern-js/i18n-utils': '@bleedingdev/modern-js-i18n-utils@3.8.2-ultramodern.12(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'

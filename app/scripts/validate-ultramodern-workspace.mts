@@ -1936,7 +1936,7 @@ const workspaceValidationContract = {
     build:
       'pnpm -r --filter "./verticals/*" run build && pnpm --filter "./apps/shell-super-app" run build && pnpm mf:types && pnpm performance:readiness',
     cloudflareBuild:
-      'pnpm -r --filter "./verticals/*" run cloudflare:build && pnpm --filter "./apps/shell-super-app" run cloudflare:build && pnpm mf:types && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof',
+      'pnpm -r --filter "./verticals/*" run cloudflare:build && pnpm --filter "./apps/shell-super-app" run cloudflare:build && ULTRAMODERN_MF_TYPES_ARCHIVE=dist-cloudflare/@mf-types.zip pnpm mf:types && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof',
     cloudflareDeploy:
       'pnpm -r --filter "./verticals/*" run cloudflare:deploy && pnpm --filter "./apps/shell-super-app" run cloudflare:deploy',
     cloudflareProof:
@@ -5201,6 +5201,18 @@ assert(
       'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid',
     ),
   'CI workflow must separately prove Node and Cloudflare/workerd runtime artifacts with explicit local proof URLs',
+);
+assert(
+  workflowText.includes(
+    'DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof',
+  ),
+  'CI Node artifact proof must provide a non-secret database URL so the readiness API layer can initialize without a service connection',
+);
+assert(
+  rootPackage.scripts?.['cloudflare:build']?.includes(
+    'ULTRAMODERN_MF_TYPES_ARCHIVE=dist-cloudflare/@mf-types.zip pnpm mf:types',
+  ),
+  'Cloudflare builds must validate the Module Federation DTS archive from the Cloudflare output directory',
 );
 assert(
   workflowText.includes('mise exec -- pnpm deployment-impact:plan') &&
