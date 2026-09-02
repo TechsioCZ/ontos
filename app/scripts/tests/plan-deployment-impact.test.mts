@@ -1,0 +1,401 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { planDeploymentImpact } from '../plan-deployment-impact.mts';
+
+type FixtureOptions = {
+  readonly includeContactOwner?: boolean;
+  readonly setupIds?: readonly string[];
+  readonly verticalId?: string;
+};
+
+const writeJson = async (root: string, relativePath: string, value: object): Promise<void> => {
+  const target = path.join(root, relativePath);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8');
+};
+
+const makeFixture = async (options: FixtureOptions = {}): Promise<string> => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-deployment-impact-'));
+  const verticalId = options.verticalId ?? 'contacts';
+  const verticalPackage = `@app/${verticalId}`;
+  const verticalPath = `verticals/${verticalId}`;
+  await writeJson(root, 'topology/reference-topology.json', {
+    schemaVersion: 1,
+    sharedPackages: [
+      {
+        id: 'core-runtime',
+        package: '@app/core-runtime',
+        path: 'packages/core-runtime',
+      },
+      {
+        id: 'shared-contracts',
+        package: '@app/shared-contracts',
+        path: 'packages/shared-contracts',
+      },
+    ],
+    shell: {
+      id: 'shell-super-app',
+      package: '@app/shell-super-app',
+      verticalRefs: [verticalId],
+    },
+    verticals: [
+      {
+        id: verticalId,
+        moduleFederation: { remotes: [], verticalRefs: [] },
+        package: verticalPackage,
+        path: verticalPath,
+      },
+    ],
+  });
+  await writeJson(root, 'topology/ownership.json', {
+    owners: [
+      { id: 'core-runtime', package: '@app/core-runtime', path: 'packages/core-runtime' },
+      {
+        id: 'shared-contracts',
+        package: '@app/shared-contracts',
+        path: 'packages/shared-contracts',
+      },
+      { id: 'shell-super-app', package: '@app/shell-super-app', path: 'apps/shell-super-app' },
+      ...(options.includeContactOwner === false
+        ? []
+        : [{ id: verticalId, package: verticalPackage, path: verticalPath }]),
+    ],
+    schemaVersion: 1,
+  });
+  const setups = options.setupIds ?? ['migrator', 'spicedb', verticalId, 'shellsuperapp'];
+  await writeFile(
+    path.join(root, 'zerops.yaml'),
+    `zerops:\n${setups.map((setup) => `  - setup: '${setup}'`).join('\n')}\n`,
+    'utf-8',
+  );
+  return root;
+};
+
+const withFixture = async (
+  run: (root: string) => void | Promise<void>,
+  options?: FixtureOptions,
+): Promise<void> => {
+  const root = await makeFixture(options);
+  try {
+    await run(root);
+  } finally {
+    await rm(root, { force: true, recursive: true });
+  }
+};
+
+const runGit = (root: string, argumentsList: readonly string[]): string =>
+  execFileSync('git', argumentsList, {
+    cwd: root,
+    encoding: 'utf-8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_EMAIL: 'ontos-ci@example.invalid',
+      GIT_AUTHOR_NAME: 'OntOS CI',
+      GIT_COMMITTER_EMAIL: 'ontos-ci@example.invalid',
+      GIT_COMMITTER_NAME: 'OntOS CI',
+    },
+  }).trim();
+
+test('plans current Contacts owner-local changes without a hard-coded owner registry', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['app/verticals/contacts/src/features/customers/customer-form.tsx'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(plan.units, {
+      migrator: false,
+      providers: ['contacts'],
+      shell: false,
+      spicedb: false,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['contacts'],
+    );
+  });
+});
+
+test('plans Shell-only changes for the topology-derived Shell owner', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['shell-super-app'],
+    );
+    assert.equal(plan.units.shell, true);
+  });
+});
+
+test('adds the migrator before an owner whose schema or migration contract changed', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['verticals/contacts/drizzle/0003_add_customer.sql'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['migrator', 'contacts'],
+    );
+  });
+});
+
+for (const changedPath of [
+  'scripts/run-zerops-migrator.mjs',
+  'scripts/verify-application-db-schema.mts',
+  'scripts/postgres/bootstrap-runtime-role.mts',
+]) {
+  test(`includes the migrator for root migration contract ${changedPath}`, async () => {
+    await withFixture((root) => {
+      const plan = planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+      assert.deepEqual(
+        plan.phases.map((phase) => phase.id),
+        ['migrator'],
+      );
+    });
+  });
+}
+
+test('includes the migrator, SpiceDB, and every consumer for SpiceDB database bootstrap changes', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['scripts/postgres/bootstrap-spicedb-database.mts'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+    );
+  });
+});
+
+test('expands shared-package changes to every consumer in dependency order', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['packages/shared-contracts/src/gateway-context.ts'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['contacts', 'shell-super-app'],
+    );
+  });
+});
+
+test('expands a provider public-contract change to the dependent Shell', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['verticals/contacts/shared/api.ts'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['contacts', 'shell-super-app'],
+    );
+  });
+});
+
+test('orders SpiceDB before all consumers for authorization runtime changes', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['packages/core-runtime/spicedb/bootstrap.yaml'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['spicedb', 'contacts', 'shell-super-app'],
+    );
+  });
+});
+
+for (const changedPath of [
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  '.mise.toml',
+  'scripts/materialize-zerops-runtime.mjs',
+  'scripts/install-zerops-node.sh',
+  'zerops.yaml',
+  'topology/reference-topology.json',
+]) {
+  test(`conservatively deploys every phase for ${changedPath}`, async () => {
+    await withFixture((root) => {
+      const plan = planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+      assert.deepEqual(
+        plan.phases.map((phase) => phase.id),
+        ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+      );
+    });
+  });
+}
+
+test('produces a reviewed no-op for documentation-only changes', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['docs/architecture/DEPLOYMENT.md'],
+      rootDirectory: root,
+    });
+    assert.equal(plan.any, false);
+    assert.deepEqual(plan.phases, []);
+  });
+});
+
+test('fails closed for the unknown destination of a renamed application directory', async () => {
+  await withFixture((root) => {
+    assert.throws(
+      () =>
+        planDeploymentImpact({
+          changedPaths: ['verticals/contacts/src/index.ts', 'verticals/relationships/src/index.ts'],
+          rootDirectory: root,
+        }),
+      /unknown changed path "verticals\/relationships\/src\/index\.ts" in application area "verticals"/u,
+    );
+  });
+});
+
+test('fails closed when a topology delivery unit has no ownership entry', async () => {
+  await withFixture(
+    (root) => {
+      assert.throws(
+        () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+        /topology delivery unit "contacts" is missing from topology\/ownership\.json/u,
+      );
+    },
+    { includeContactOwner: false },
+  );
+});
+
+test('fails closed when topology and ownership identities disagree', async () => {
+  await withFixture(async (root) => {
+    const ownershipPath = path.join(root, 'topology/ownership.json');
+    await writeJson(root, 'topology/ownership.json', {
+      owners: [
+        { id: 'core-runtime', package: '@app/core-runtime', path: 'packages/core-runtime' },
+        {
+          id: 'shared-contracts',
+          package: '@app/shared-contracts',
+          path: 'packages/shared-contracts',
+        },
+        { id: 'shell-super-app', package: '@app/shell-super-app', path: 'apps/shell-super-app' },
+        { id: 'contacts', package: '@app/contacts-old', path: 'verticals/contacts-old' },
+      ],
+    });
+    assert.equal(typeof ownershipPath, 'string');
+    assert.throws(
+      () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+      /topology and ownership disagree for "contacts"/u,
+    );
+  });
+});
+
+test('fails closed when shared-package topology and ownership identities disagree', async () => {
+  await withFixture(async (root) => {
+    await writeJson(root, 'topology/ownership.json', {
+      owners: [
+        { id: 'core-runtime', package: '@app/core-runtime', path: 'packages/core-runtime-old' },
+        {
+          id: 'shared-contracts',
+          package: '@app/shared-contracts',
+          path: 'packages/shared-contracts',
+        },
+        { id: 'shell-super-app', package: '@app/shell-super-app', path: 'apps/shell-super-app' },
+        { id: 'contacts', package: '@app/contacts', path: 'verticals/contacts' },
+      ],
+    });
+    assert.throws(
+      () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+      /topology and ownership disagree for shared package "core-runtime"/u,
+    );
+  });
+});
+
+test('fails closed when a topology unit has no supported stage setup', async () => {
+  await withFixture(
+    (root) => {
+      assert.throws(
+        () => planDeploymentImpact({ changedPaths: ['docs/README.md'], rootDirectory: root }),
+        /topology delivery unit "contacts" has unsupported stage setup "contacts"/u,
+      );
+    },
+    { setupIds: ['migrator', 'spicedb', 'shellsuperapp'] },
+  );
+});
+
+test('uses a safe full deployment for an all-zero comparison base', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      baseRevision: '0000000000000000000000000000000000000000',
+      headRevision: 'HEAD',
+      rootDirectory: root,
+    });
+    assert.equal(plan.comparison.mode, 'full');
+    assert.match(plan.comparison.reason ?? '', /all-zero/u);
+    assert.deepEqual(
+      plan.phases.map((phase) => phase.id),
+      ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
+    );
+  });
+});
+
+test('uses a safe full deployment for an unavailable comparison base', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      baseRevision: 'missing-base-revision',
+      headRevision: 'HEAD',
+      rootDirectory: root,
+    });
+    assert.equal(plan.comparison.mode, 'full');
+    assert.match(
+      plan.comparison.reason ?? '',
+      /comparison base "missing-base-revision" is unavailable/u,
+    );
+  });
+});
+
+test('uses a safe full deployment when the comparison base is not an ancestor', async () => {
+  await withFixture(async (root) => {
+    runGit(root, ['init']);
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', 'fixture root']);
+    const rootRevision = runGit(root, ['rev-parse', 'HEAD']);
+    await writeFile(path.join(root, 'main-marker.txt'), 'main\n', 'utf-8');
+    runGit(root, ['add', 'main-marker.txt']);
+    runGit(root, ['commit', '-m', 'main change']);
+    const rewrittenBase = runGit(root, ['rev-parse', 'HEAD']);
+    runGit(root, ['checkout', '-b', 'rewritten', rootRevision]);
+    await writeFile(path.join(root, 'rewritten-marker.txt'), 'rewritten\n', 'utf-8');
+    runGit(root, ['add', 'rewritten-marker.txt']);
+    runGit(root, ['commit', '-m', 'rewritten change']);
+
+    const plan = planDeploymentImpact({
+      baseRevision: rewrittenBase,
+      headRevision: 'HEAD',
+      rootDirectory: root,
+    });
+    assert.equal(plan.comparison.mode, 'full');
+    assert.match(plan.comparison.reason ?? '', /is not an ancestor/u);
+  });
+});
+
+test('changing a topology identity changes the plan without editing planner source', async () => {
+  await withFixture(
+    (root) => {
+      const plan = planDeploymentImpact({
+        changedPaths: ['verticals/relationships/src/index.ts'],
+        rootDirectory: root,
+      });
+      assert.deepEqual(plan.units.providers, ['relationships']);
+      assert.deepEqual(
+        plan.phases.map((phase) => phase.id),
+        ['relationships'],
+      );
+      assert.equal(plan.phases[0]?.serviceIdEnv, 'ZEROPS_RELATIONSHIPS_SERVICE_ID');
+    },
+    { verticalId: 'relationships' },
+  );
+});

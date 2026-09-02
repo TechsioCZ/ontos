@@ -2011,6 +2011,17 @@ const workspaceValidationContract = {
     'i18n:boundaries': 'node ./scripts/check-ultramodern-i18n-boundaries.mts',
     postinstall: "node ./scripts/bootstrap-agent-skills.mts --postinstall && oxfmt . '!repos/**'",
   },
+  ciEvidenceScripts: {
+    'action:test:integration': 'pnpm --filter @app/core-runtime action:test:integration',
+    'deployment-impact:plan': 'node ./scripts/plan-deployment-impact.mts',
+    'test:deployment-impact': 'node --test scripts/tests/plan-deployment-impact.test.mts',
+    'test:generation':
+      'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
+    'test:integration': 'pnpm -r --if-present run test:integration',
+    'test:scripts':
+      'node --test scripts/local-environment-values.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts',
+    'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
+  },
   cloudflareSecurity: {
     enabled: true,
     headers: {
@@ -5126,6 +5137,111 @@ assert(
   !workflowText.includes('FORCE_JAVASCRIPT_ACTIONS_TO_NODE24'),
   'CI workflow must not carry the legacy Node 24 override',
 );
+assert(
+  workflowText.includes('jdx/mise-action@') &&
+    workflowText.includes('mise exec -- pnpm install --frozen-lockfile') &&
+    !workflowText.includes('corepack'),
+  'CI workflow must install and execute the repository-pinned pnpm toolchain through mise',
+);
+const requiredWorkflowEvidence = [
+  ['Format', 'pnpm format:check'],
+  ['Lint', 'pnpm lint'],
+  ['Typecheck', 'pnpm typecheck'],
+  ['Skills', 'pnpm skills:check'],
+  ['I18n Boundaries', 'pnpm i18n:boundaries'],
+  ['API Boundaries', 'pnpm api:check'],
+  ['Database Access Boundaries', 'pnpm database-access:check'],
+  ['Module Entrypoint Contracts', 'pnpm module-entrypoints:check'],
+  ['Module Contract Generation', 'pnpm check:module-contracts'],
+  ['Workspace Contract', 'pnpm contract:check'],
+  ['Complete Unit and Component Tests', 'pnpm test:unit'],
+  ['Action Unit Tests', 'pnpm action:test:unit'],
+  ['Repository Tooling Tests', 'pnpm test:scripts'],
+  ['Deployment Impact Planner Tests', 'pnpm test:deployment-impact'],
+  ['Codesmith and Generation Tests', 'pnpm test:generation'],
+];
+for (const [name, command] of requiredWorkflowEvidence) {
+  assert(
+    workflowText.includes(`name: ${name}`) && workflowText.includes(`command: ${command}`),
+    `CI workflow is missing stable ${name} evidence using ${command}`,
+  );
+}
+for (const [jobId, jobName] of [
+  ['service-integration', 'Database, Migration, RLS, Authorization, and Outbox Integration'],
+  ['node-runtime', 'Node Backend Federation Artifact Proof'],
+  ['cloudflare-runtime', 'Cloudflare Workerd Artifact Proof'],
+]) {
+  assert(
+    workflowText.includes(`  ${jobId}:`) && workflowText.includes(`name: ${jobName}`),
+    `CI workflow is missing required job ${jobName}`,
+  );
+}
+assert(
+  workflowText.includes('docker compose up --detach --wait') &&
+    workflowText.includes('mise exec -- pnpm db:migrate') &&
+    workflowText.includes('mise exec -- pnpm db:verify') &&
+    workflowText.includes('mise exec -- pnpm test:integration') &&
+    workflowText.includes('docker compose down --volumes --remove-orphans'),
+  'CI service evidence must start fresh PostgreSQL and SpiceDB, apply and verify migrations, run complete integrations, and always remove volumes',
+);
+assert(
+  workflowText.includes('name: Apply and verify Core, Auth, and Contacts migrations') &&
+    workflowText.includes(
+      'name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests',
+    ),
+  'CI workflow must keep database/migration/RLS and authorization/Outbox integration evidence clearly named',
+);
+assert(
+  workflowText.includes('mise exec -- pnpm build') &&
+    workflowText.includes('mise exec -- pnpm node:proof') &&
+    workflowText.includes('mise exec -- pnpm cloudflare:build') &&
+    workflowText.includes('MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid') &&
+    workflowText.includes('ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid') &&
+    workflowText.includes(
+      'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid',
+    ),
+  'CI workflow must separately prove Node and Cloudflare/workerd runtime artifacts with explicit local proof URLs',
+);
+assert(
+  workflowText.includes('mise exec -- pnpm deployment-impact:plan') &&
+    workflowText.includes('## Reviewed deployment impact plan'),
+  'Stage deployment must invoke and summarize the topology-driven deployment impact planner',
+);
+assert(
+  workflowText.includes(
+    'needs: [workspace-gate, service-integration, node-runtime, cloudflare-runtime]',
+  ),
+  'Stage deployment must depend on every fast, service-backed, Node, and Cloudflare required job',
+);
+assert(
+  !/(?:verticals\/(?:crm|projects)|outputs\.(?:crm|projects)|ZEROPS_(?:CRM|PROJECTS)_SERVICE_ID|--setup\s+(?:crm|projects))/iu.test(
+    workflowText,
+  ) && !workflowText.includes('case "$path"'),
+  'Stage deployment workflow must not contain stale CRM/Projects or hand-written changed-path branches',
+);
+const zeropsDeploymentSource = readText('zerops.yaml');
+for (const vertical of topology.verticals ?? []) {
+  const verticalId = vertical.id;
+  assert(typeof verticalId === 'string', 'Topology vertical deployment identity must be a string');
+  const serviceEnvironment = `ZEROPS_${verticalId
+    .replaceAll(/[^A-Za-z0-9]+/gu, '_')
+    .replaceAll(/^_+|_+$/gu, '')
+    .toUpperCase()}_SERVICE_ID`;
+  assert(
+    zeropsDeploymentSource.includes(`setup: ${quoteYamlString(verticalId)}`),
+    `Topology delivery unit ${verticalId} has no matching Zerops setup`,
+  );
+  assert(
+    workflowText.includes(serviceEnvironment),
+    `Topology delivery unit ${verticalId} has no matching workflow service variable ${serviceEnvironment}`,
+  );
+}
+const shellDeploymentSetup = String(topology.shell?.id ?? '').replaceAll('-', '');
+assert(
+  zeropsDeploymentSource.includes(`setup: ${quoteYamlString(shellDeploymentSetup)}`) &&
+    workflowText.includes('ZEROPS_SHELL_SERVICE_ID'),
+  'Topology Shell delivery unit must match the current Zerops setup and workflow service-variable convention',
+);
 assert(rootPackage.modernjs?.preset === 'presetUltramodern', 'Root must declare presetUltramodern');
 assert(
   rootPackage.modernjs?.packageSource?.config === './.modernjs/ultramodern.json',
@@ -5923,6 +6039,23 @@ if (bridgeConfig) {
 assert(
   rootPackage.scripts?.['contract:check'] === 'node ./scripts/validate-ultramodern-workspace.mts',
   'Root must expose contract:check',
+);
+for (const [scriptName, expectedCommand] of Object.entries(
+  workspaceValidationContract.ciEvidenceScripts,
+)) {
+  assert(
+    rootPackage.scripts?.[scriptName] === expectedCommand,
+    `Root CI evidence command ${scriptName} is missing or incorrect`,
+  );
+}
+const coreRuntimePackage = readJson('packages/core-runtime/package.json');
+assert(
+  coreRuntimePackage.scripts?.['test:unit'] === 'node --test tests/unit/*.test.ts',
+  'Core runtime must expose its complete unit test surface',
+);
+assert(
+  coreRuntimePackage.scripts?.['test:integration'] === 'node --test tests/integration/*.test.ts',
+  'Core runtime must expose its complete service-backed integration test surface',
 );
 assert(
   rootPackage.scripts?.['module-entrypoints:check'] ===

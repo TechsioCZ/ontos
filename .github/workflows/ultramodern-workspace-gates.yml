@@ -28,8 +28,6 @@ jobs:
             command: pnpm format:check
           - name: Lint
             command: pnpm lint
-          - name: Action Unit Tests
-            command: pnpm action:test:unit
           - name: Typecheck
             command: pnpm typecheck
           - name: Skills
@@ -38,16 +36,24 @@ jobs:
             command: pnpm i18n:boundaries
           - name: API Boundaries
             command: pnpm api:check
-          - name: Database Access
+          - name: Database Access Boundaries
             command: pnpm database-access:check
-          - name: Module Entrypoints
+          - name: Module Entrypoint Contracts
             command: pnpm module-entrypoints:check
-          - name: Module Contracts
+          - name: Module Contract Generation
             command: pnpm check:module-contracts
-          - name: Contract
+          - name: Workspace Contract
             command: pnpm contract:check
-          - name: Build
-            command: pnpm build
+          - name: Complete Unit and Component Tests
+            command: pnpm test:unit
+          - name: Action Unit Tests
+            command: pnpm action:test:unit
+          - name: Repository Tooling Tests
+            command: pnpm test:scripts
+          - name: Deployment Impact Planner Tests
+            command: pnpm test:deployment-impact
+          - name: Codesmith and Generation Tests
+            command: pnpm test:generation
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -63,12 +69,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '26.5.0'
+          node-version: "26.5.0"
 
       - name: Setup mise
         uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
 
-      - name: Install Dependencies
+      - name: Install dependencies from the frozen lockfile
         working-directory: app
         run: mise exec -- pnpm install --frozen-lockfile
 
@@ -79,19 +85,173 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- ${{ matrix.command }}
 
+  service-integration:
+    name: Database, Migration, RLS, Authorization, and Outbox Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: "5433"
+      POSTGRES_USER: ontos_ci_admin
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: "50051"
+      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_INSECURE: "true"
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "26.5.0"
+
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+
+      - name: Install dependencies from the frozen lockfile
+        working-directory: app
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Start fresh PostgreSQL and SpiceDB services
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Apply and verify Core, Auth, and Contacts migrations
+        working-directory: app
+        run: |
+          mise exec -- pnpm db:migrate
+          mise exec -- pnpm db:verify
+
+      - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests
+        working-directory: app
+        run: mise exec -- pnpm test:integration
+
+      - name: Show bounded service diagnostics after failure
+        if: failure()
+        working-directory: app
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200
+
+      - name: Remove isolated service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
+
+  node-runtime:
+    name: Node Backend Federation Artifact Proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "26.5.0"
+
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+
+      - name: Install dependencies from the frozen lockfile
+        working-directory: app
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Build Node deployment artifacts
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: mise exec -- pnpm build
+
+      - name: Prove Node backend-federation artifacts
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: mise exec -- pnpm node:proof
+
+  cloudflare-runtime:
+    name: Cloudflare Workerd Artifact Proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "26.5.0"
+
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+
+      - name: Install dependencies from the frozen lockfile
+        working-directory: app
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Build and prove Cloudflare/workerd artifacts
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
+          ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid
+          ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: mise exec -- pnpm cloudflare:build
+
   deploy-stage:
     name: Deploy stage to Zerops
     if: github.event_name == 'push' && github.ref == 'refs/heads/stage'
-    needs: workspace-gate
+    needs: [workspace-gate, service-integration, node-runtime, cloudflare-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: stage
     env:
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
-      ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_CONTACTS_SERVICE_ID: ${{ vars.ZEROPS_CONTACTS_SERVICE_ID }}
+      ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
+      ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -104,78 +264,51 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Detect changed deployment units
-        id: changes
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          contacts=false
-          migrator=false
-          shell=false
-          spicedb=false
-
-          while IFS= read -r path; do
-            case "$path" in
-              app/zerops.yaml|app/pnpm-lock.yaml|app/pnpm-workspace.yaml|app/package.json|app/scripts/install-zerops-node.sh)
-                contacts=true
-                migrator=true
-                shell=true
-                spicedb=true
-                ;;
-              app/packages/core-runtime/spicedb/*|app/scripts/run-zerops-spicedb.sh)
-                contacts=true
-                migrator=true
-                shell=true
-                spicedb=true
-                ;;
-              app/packages/core-runtime/*|app/scripts/run-zerops-migrator.mjs)
-                contacts=true
-                migrator=true
-                shell=true
-                ;;
-              app/packages/*|app/topology/*)
-                contacts=true
-                shell=true
-                ;;
-              app/apps/shell-super-app/*)
-                shell=true
-                ;;
-              app/verticals/contacts/*)
-                contacts=true
-                ;;
-            esac
-          done < <(git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA")
-
-          any=false
-          if [[ "$contacts" == true || "$migrator" == true || "$shell" == true || "$spicedb" == true ]]; then
-            any=true
-          fi
-          {
-            echo "any=$any"
-            echo "contacts=$contacts"
-            echo "migrator=$migrator"
-            echo "shell=$shell"
-            echo "spicedb=$spicedb"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Setup Node.js
-        if: steps.changes.outputs.any == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '26.5.0'
+          node-version: "26.5.0"
+
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+
+      - name: Install deployment planner dependencies
+        working-directory: app
+        run: mise exec -- pnpm install --frozen-lockfile
+
+      - name: Generate topology-driven deployment impact plan
+        id: impact
+        working-directory: app
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: >-
+          mise exec -- pnpm deployment-impact:plan --
+          --base "$BEFORE_SHA"
+          --head "$GITHUB_SHA"
+
+      - name: Record reviewed deployment impact plan
+        env:
+          DEPLOYMENT_PLAN_JSON: ${{ steps.impact.outputs.plan }}
+        run: |
+          {
+            echo '## Reviewed deployment impact plan'
+            echo '```json'
+            jq . <<<"$DEPLOYMENT_PLAN_JSON"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install Zerops CLI
-        if: steps.changes.outputs.any == 'true'
+        if: steps.impact.outputs.any == 'true'
         run: npm install --global @zerops/zcli@1.1.0
 
       - name: Authenticate to Zerops
-        if: steps.changes.outputs.any == 'true'
+        if: steps.impact.outputs.any == 'true'
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: zcli login "$ZEROPS_TOKEN"
 
       - name: Run verified database migrations
-        if: steps.changes.outputs.migrator == 'true'
+        if: steps.impact.outputs.migrator == 'true'
         id: migrator
         run: >-
           zcli push
@@ -188,7 +321,7 @@ jobs:
           --setup migrator
           --version-name "$GITHUB_SHA"
 
-      - name: Show migrator runtime logs after failure
+      - name: Show bounded migrator logs after failure
         if: failure() && steps.migrator.outcome == 'failure'
         continue-on-error: true
         run: >-
@@ -198,7 +331,7 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Stop migrator after verification
+      - name: Stop migrator after any attempted migration
         if: always() && steps.migrator.outcome != 'skipped'
         continue-on-error: true
         run: >-
@@ -206,8 +339,8 @@ jobs:
           --project-id "$ZEROPS_PROJECT_ID"
           --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
 
-      - name: Deploy SpiceDB
-        if: steps.changes.outputs.spicedb == 'true'
+      - name: Deploy SpiceDB when affected
+        if: steps.impact.outputs.spicedb == 'true'
         id: spicedb
         run: >-
           zcli push
@@ -220,7 +353,7 @@ jobs:
           --setup spicedb
           --version-name "$GITHUB_SHA"
 
-      - name: Show SpiceDB runtime logs after failure
+      - name: Show bounded SpiceDB logs after failure
         if: failure() && steps.spicedb.outcome == 'failure'
         continue-on-error: true
         run: >-
@@ -230,40 +363,42 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Deploy Contacts
-        if: steps.changes.outputs.contacts == 'true'
-        id: contacts
-        run: >-
-          zcli push
-          --working-dir .
-          --zerops-yaml-path app/zerops.yaml
-          --workspace-state clean
-          --deploy-git-folder
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_CONTACTS_SERVICE_ID"
-          --setup contacts
-          --version-name "$GITHUB_SHA"
+      - name: Deploy affected provider MicroVerticals in plan order
+        if: steps.impact.outputs.providers != '[]'
+        env:
+          PROVIDERS_JSON: ${{ steps.impact.outputs.providers }}
+        run: |
+          while IFS= read -r unit; do
+            environment_key="ZEROPS_$(printf '%s' "$unit" | tr '[:lower:]' '[:upper:]' | tr '-' '_')_SERVICE_ID"
+            service_id="${!environment_key:-}"
+            if [[ -z "$service_id" ]]; then
+              echo "Missing stage service variable $environment_key for planned unit $unit" >&2
+              exit 1
+            fi
+            if ! zcli push \
+              --working-dir . \
+              --zerops-yaml-path app/zerops.yaml \
+              --workspace-state clean \
+              --deploy-git-folder \
+              --project-id "$ZEROPS_PROJECT_ID" \
+              --service-id "$service_id" \
+              --setup "$unit" \
+              --version-name "$GITHUB_SHA"; then
+              zcli service log \
+                --project-id "$ZEROPS_PROJECT_ID" \
+                --service-id "$service_id" \
+                --limit 200 \
+                --minimum-severity DEBUG || true
+              echo "Deployment failed for planned provider unit $unit" >&2
+              exit 1
+            fi
+            zcli service enable-subdomain \
+              --project-id "$ZEROPS_PROJECT_ID" \
+              --service-id "$service_id" || true
+          done < <(jq -r '.[]' <<<"$PROVIDERS_JSON")
 
-      - name: Show Contacts runtime logs after failure
-        if: failure() && steps.contacts.outcome == 'failure'
-        continue-on-error: true
-        run: >-
-          zcli service log
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_CONTACTS_SERVICE_ID"
-          --limit 200
-          --minimum-severity DEBUG
-
-      - name: Enable Contacts Zerops public subdomain
-        if: steps.changes.outputs.contacts == 'true'
-        continue-on-error: true
-        run: >-
-          zcli service enable-subdomain
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_CONTACTS_SERVICE_ID"
-
-      - name: Deploy shell super-app
-        if: steps.changes.outputs.shell == 'true'
+      - name: Deploy Shell after affected providers
+        if: steps.impact.outputs.shell == 'true'
         id: shell
         run: >-
           zcli push
@@ -276,7 +411,7 @@ jobs:
           --setup shellsuperapp
           --version-name "$GITHUB_SHA"
 
-      - name: Show shell runtime logs after failure
+      - name: Show bounded Shell logs after failure
         if: failure() && steps.shell.outcome == 'failure'
         continue-on-error: true
         run: >-
@@ -286,8 +421,8 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Enable shell Zerops public subdomain
-        if: steps.changes.outputs.shell == 'true'
+      - name: Enable Shell Zerops public subdomain
+        if: steps.impact.outputs.shell == 'true'
         continue-on-error: true
         run: >-
           zcli service enable-subdomain
