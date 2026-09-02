@@ -1,0 +1,26 @@
+diff --git a/dist/cjs/loader.js b/dist/cjs/loader.js
+index c8c5fb6..b4c228a 100644
+--- a/dist/cjs/loader.js
++++ b/dist/cjs/loader.js
+@@ -89,7 +89,7 @@ async function loader(source) {
+         apiDir: draftOptions.apiDir,
+         effectEntry: draftOptions.effectEntry
+     });
+-    if ('effect' === draftOptions.bffRuntimeFramework && effectEntryFile && external_path_default().resolve(effectEntryFile) === external_path_default().resolve(resourcePath) && resourceQueries.has(EFFECT_BFF_WORKER_RUNTIME_SOURCE_QUERY)) {
++    if ('effect' === draftOptions.bffRuntimeFramework && resourceQueries.has(EFFECT_BFF_WORKER_RUNTIME_SOURCE_QUERY)) {
+         const code = await transformEffectRuntimeSource(source, resourcePath);
+         callback(void 0, code);
+         return;
+diff --git a/dist/esm-node/loader.mjs b/dist/esm-node/loader.mjs
+index 7fd0cd8..246016f 100644
+--- a/dist/esm-node/loader.mjs
++++ b/dist/esm-node/loader.mjs
+@@ -47,7 +47,7 @@ async function loader(source) {
+         apiDir: draftOptions.apiDir,
+         effectEntry: draftOptions.effectEntry
+     });
+-    if ('effect' === draftOptions.bffRuntimeFramework && effectEntryFile && path.resolve(effectEntryFile) === path.resolve(resourcePath) && resourceQueries.has(EFFECT_BFF_WORKER_RUNTIME_SOURCE_QUERY)) {
++    if ('effect' === draftOptions.bffRuntimeFramework && resourceQueries.has(EFFECT_BFF_WORKER_RUNTIME_SOURCE_QUERY)) {
+         const code = await transformEffectRuntimeSource(source, resourcePath);
+         callback(void 0, code);
+         return;
