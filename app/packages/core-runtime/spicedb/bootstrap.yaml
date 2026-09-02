@@ -32,7 +32,7 @@ schema: |-
 
   definition action {
     relation restriction: action
-    relation executor: principal
+    relation executor: principal | tenant#member
 
     permission is_restricted = restriction
     permission execute = executor
@@ -41,6 +41,7 @@ schema: |-
 relationships: |-
   action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#restriction@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
   action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#executor@principal:allowed-principal
+  action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#executor@tenant:test-tenant#member
   action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#restriction@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
   action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#executor@principal:allowed-principal
   action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#restriction@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
@@ -88,6 +89,7 @@ assertions:
   assertTrue:
     - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU
     - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:allowed-principal
+    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:allowed-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA
     - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:allowed-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#is_restricted@action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw
@@ -119,6 +121,7 @@ assertions:
   assertFalse:
     - action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA#is_restricted@action:ak_aW52ZW50b3J5LnN0b2NrLnVuY29uZmlndXJlZA
     - action:ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU#execute@principal:denied-principal
+    - action:ak_aW52ZW50b3J5LnN0b2NrLm1lbWJlci1yZXNlcnZl#execute@principal:denied-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jcmVhdGUtbm9uLWh1bWFuLXByaW5jaXBhbA#execute@principal:denied-principal
     - action:ak_Y29yZS5pZGVudGl0eS5jaGFuZ2UtcHJpbmNpcGFsLXN0YXR1cw#execute@principal:denied-principal
     - action:ak_Y29yZS5pZGVudGl0eS5iaW5kLXNlbGYtYXBpLWtleQ#execute@principal:denied-principal

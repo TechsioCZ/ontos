@@ -426,6 +426,10 @@ export type {
   VerticalRuntimeSafeDescriptors,
 } from './modules/runtime-registration.ts';
 
+export { coreActionCatalog } from './modules/actions/catalog.ts';
+export type { CoreActionDescriptor } from './modules/actions/catalog.ts';
+export { ONTOS_SPICEDB_SCHEMA } from './permissions/schema.ts';
+
 // <generated-core-action-exports>
 export { bindManagedApiKeyAction } from './modules/actions/bind-managed-api-key.action.ts';
 export { bindSelfApiKeyAction } from './modules/actions/bind-self-api-key.action.ts';

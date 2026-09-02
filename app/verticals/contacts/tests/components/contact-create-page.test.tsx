@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/c
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/contacts.json';
@@ -81,7 +82,11 @@ const contact = {
 } as const;
 
 const renderFeature = (
-  options: { readonly id?: string | undefined; readonly writable?: boolean } = {},
+  options: {
+    readonly id?: string | undefined;
+    readonly withToaster?: boolean;
+    readonly writable?: boolean;
+  } = {},
 ) => {
   const id = 'id' in options ? options.id : customerId;
   const writable = options.writable ?? true;
@@ -91,6 +96,7 @@ const renderFeature = (
   const view = render(
     <QueryClientProvider client={queryClient}>
       <ContactCreateFeature routeParams={id === undefined ? {} : { id }} target={{ writable }} />
+      {options.withToaster === true ? <Toaster /> : null}
     </QueryClientProvider>,
   );
   return {
@@ -125,7 +131,24 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toaster.remove();
   rstest.clearAllMocks();
+});
+
+test('shows one accessible error Toast for a definite create denial', async () => {
+  const message = 'You do not have permission to create a Contact for this Customer.';
+  createContactMock.mockReturnValue(Effect.fail({ _tag: 'ContactsForbiddenProblem' }));
+  renderFeature({ withToaster: true });
+  const user = await fillForm();
+
+  await user.click(screen.getByRole('button', { name: 'Create Contact' }));
+  await waitFor(() => {
+    const toastTitles = screen
+      .getAllByText(message)
+      .filter((element) => element.closest('[data-scope="toast"][data-part="root"]') !== null);
+    expect(toastTitles).toHaveLength(1);
+  });
+  expect(navigateMock).not.toHaveBeenCalled();
 });
 
 test('renders the empty ready form without loading the parent Customer', () => {

@@ -24,7 +24,7 @@ export const SPICEDB_EXECUTE_PERMISSION = 'execute';
 export const toSpiceDbActionObjectId = (actionKey: string): string =>
   `ak_${Buffer.from(actionKey, 'utf-8').toString('base64url')}`;
 
-export type ActionPermissionDecision = 'allowed' | 'denied' | 'unconfigured';
+export type ActionPermissionDecision = 'allowed' | 'denied';
 
 export interface CheckActionPermissionInput {
   readonly actionKey: string;
@@ -80,16 +80,6 @@ const principalReference = (principalId: string) =>
     }),
   });
 
-const restrictionRequest = (actionKey: string) => {
-  const action = actionReference(actionKey);
-  return v1.CheckPermissionRequest.create({
-    consistency: fullyConsistent,
-    permission: SPICEDB_RESTRICTION_PERMISSION,
-    resource: action,
-    subject: v1.SubjectReference.create({ object: action }),
-  });
-};
-
 const executionRequest = (actionKey: string, principalId: string) =>
   v1.CheckPermissionRequest.create({
     consistency: fullyConsistent,
@@ -134,11 +124,6 @@ export const makeActionPermissionService = (
   Object.freeze({
     checkActionPermission: (input: CheckActionPermissionInput) =>
       Effect.gen(function* checkActionPermissionEffect() {
-        const restriction = yield* runCheck(client, restrictionRequest(input.actionKey));
-        if (restriction === 'none') {
-          return 'unconfigured' as const;
-        }
-
         const execution = yield* runCheck(
           client,
           executionRequest(input.actionKey, input.principalId),

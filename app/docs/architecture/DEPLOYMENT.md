@@ -167,6 +167,23 @@ For every authorization-schema change:
 Bootstrap files are only for an empty installation. They are not the ongoing authorization-schema
 deployment mechanism.
 
+The fail-closed Action authorization rollout uses an explicit expand/provision/verify/deploy gate:
+
+1. deploy or run the candidate migration artifact while the previous runtime remains active;
+2. ensure the two fixed stage contexts and their Tenant membership relationships already exist;
+3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact to
+   publish the compatible schema and `TOUCH` 32 membership-set executor grants for the 16 current
+   Actions across the two fixed stage Tenants;
+4. verify every Action for both fixed stage Principals and verify a representative non-member is
+   denied;
+5. only then deploy the runtime that treats missing `action#execute` permission as denial;
+6. smoke one provisioned Action and one deliberately unconfigured Action denial.
+
+The command is operator-invoked, idempotent, accepts no scope arguments, and must not be attached to
+PostgreSQL migrations, SpiceDB startup, application startup, or automatic deployment. A failure or
+catalog mismatch blocks promotion. Rollback restores the previous application artifact while
+leaving the additive schema and relationships in place.
+
 ### Stage/demo bootstrap
 
 Stage bootstrap is an operator action, not a migration, startup hook, or automatic deploy step. It
@@ -228,7 +245,9 @@ Use this sequence for a new or changed MicroVertical:
    migration, flag, smoke, and rollback declarations.
 2. **Preflight:** validate configuration and record last-known-good artifacts.
 3. **Build:** produce and verify immutable target-shaped artifacts.
-4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB.
+4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB
+   and complete any required operator-controlled relationship provisioning before deploying a
+   fail-closed consumer.
 5. **Deploy providers:** deploy affected MicroVerticals in dependency order, initially dark.
 6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint;
    make endpoint provisioning idempotent by checking its final state.

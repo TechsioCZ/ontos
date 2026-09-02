@@ -57,6 +57,24 @@ mise exec -- pnpm dev
 
 `locki x` opens a shell in the selected sandbox. `pnpm dev` starts the OntOS development processes and occupies that terminal until stopped.
 
+### Fail-closed Action authorization checkpoint
+
+Sandbox preparation intentionally creates the fixed development context and Tenant membership but
+does not provision Action executor relationships. For authorization changes, keep one sandbox
+unchanged and verify the rollout in this order:
+
+1. start the candidate application and invoke a representative Contacts mutation as `demo@test.com`;
+2. confirm a localized error Toast and `403`, one rejected invocation/audit record, and no business
+   write or handler effect;
+3. run `mise exec -- pnpm authorization:provision-current-actions` and run it a second time to prove
+   idempotence;
+4. retry the same mutation and confirm normal success with no denial Toast;
+5. confirm a Principal outside the fixed development Tenant remains denied.
+
+The command discovers all current Actions and grants their executor relation to the fixed
+development Tenant membership set. It accepts no caller-supplied scope and never writes stage from a
+development sandbox.
+
 When the feature sandbox is no longer needed, stop its running processes and remove it:
 
 ```sh

@@ -42,6 +42,7 @@
     "migrate:strict-effect": "node ./scripts/migrate-strict-effect.mts",
     "zerops:materialize": "node ./scripts/materialize-zerops-runtime.mjs",
     "stage:bootstrap-demo": "pnpm --filter @app/shell-super-app stage:bootstrap-demo",
+    "authorization:provision-current-actions": "node ./scripts/provision-current-action-authorization.mts",
     "scaffold:action": "node ./scripts/scaffolding/cli.mts action",
     "scaffold:action-service": "node ./scripts/scaffolding/cli.mts action-service",
     "scaffold:external-http-adapter": "node ./scripts/scaffolding/cli.mts external-http-adapter",

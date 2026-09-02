@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { AnchorHTMLAttributes } from 'react';
 import csCatalog from '../../locales/cs/contacts.json';
@@ -351,7 +352,33 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toaster.remove();
   rstest.clearAllMocks();
+});
+
+test('shows one accessible error Toast for a definite Contact lifecycle denial', async () => {
+  archiveContactMock.mockReturnValue(Effect.fail({ _tag: 'ContactsForbiddenProblem' }));
+  const user = userEvent.setup();
+  render(
+    <>
+      <CustomerDetailPage routeParams={{ id: activeCustomer.customerId }} />
+      <Toaster />
+    </>,
+  );
+
+  const [archiveButton] = await screen.findAllByRole('button', { name: 'Archive' });
+  if (archiveButton === undefined) {
+    throw new Error('Expected at least one Contact archive action');
+  }
+  await user.click(archiveButton);
+  await waitFor(() => {
+    const toastTitles = screen
+      .getAllByText('The change is forbidden.')
+      .filter((element) => element.closest('[data-scope="toast"][data-part="root"]') !== null);
+    expect(toastTitles).toHaveLength(1);
+  });
+  expect(getContactListMock).toHaveBeenCalledTimes(1);
+  expect(navigateMock).not.toHaveBeenCalled();
 });
 
 describe('Customer detail route input', () => {

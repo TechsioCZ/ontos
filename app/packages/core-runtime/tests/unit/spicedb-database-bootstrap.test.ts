@@ -3,9 +3,20 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../../../scripts/postgres/spicedb-database-config.mts';
 import { toModuleAccessObjectId } from '../../src/permissions/context-access.ts';
+import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 
 const extractSchema = (source: string): string =>
-  source.slice('schema: |-\n'.length, source.indexOf('\nrelationships: |-')).trimEnd();
+  source
+    .slice(
+      'schema: |-\n'.length,
+      source.includes('\nrelationships: |-')
+        ? source.indexOf('\nrelationships: |-')
+        : source.length,
+    )
+    .trimEnd()
+    .split('\n')
+    .map((line) => line.replace(/^ {2}/u, ''))
+    .join('\n');
 
 test('accepts a distinct SpiceDB role and database on the administrative server', () => {
   assert.deepEqual(
@@ -51,8 +62,11 @@ test('keeps the stage bootstrap schema aligned without development relationships
     new URL('../../spicedb/stage-bootstrap.yaml', import.meta.url),
     'utf-8',
   );
-  assert.equal(stage.trimEnd(), `schema: |-\n${extractSchema(development)}`);
+  assert.equal(extractSchema(development), ONTOS_SPICEDB_SCHEMA);
+  assert.equal(extractSchema(stage), ONTOS_SPICEDB_SCHEMA);
   assert.doesNotMatch(stage, /relationships:|assertions:/u);
+  assert.match(development, /#executor@tenant:test-tenant#member/u);
+  assert.match(development, /#executor@principal:allowed-principal/u);
 });
 
 test('grants fresh development module access only to Contacts', async () => {

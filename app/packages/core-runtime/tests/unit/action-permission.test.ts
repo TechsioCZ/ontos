@@ -13,7 +13,6 @@ import {
   SPICEDB_CHECK_TIMEOUT_MS,
   SPICEDB_EXECUTE_PERMISSION,
   SPICEDB_PRINCIPAL_OBJECT_TYPE,
-  SPICEDB_RESTRICTION_PERMISSION,
   acquirePermissionClientResource,
   makeActionPermissionLive,
   makeActionPermissionService,
@@ -174,19 +173,13 @@ test('allows insecure transport only for the exact Zerops stage private endpoint
 test('losslessly maps Action keys and exact principal identities using fully consistent requests', async () => {
   const requests: v1.CheckPermissionRequest[] = [];
   const service = makeActionPermissionService(
-    makeClient(
-      [
-        response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-        response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-      ],
-      requests,
-    ),
+    makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)], requests),
   );
 
   const decision = await Effect.runPromise(service.checkActionPermission(input));
 
   assert.equal(decision, 'allowed');
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 1);
   assert.deepEqual(requests[0]?.resource, {
     objectId: toSpiceDbActionObjectId(input.actionKey),
     objectType: SPICEDB_ACTION_OBJECT_TYPE,
@@ -196,14 +189,11 @@ test('losslessly maps Action keys and exact principal identities using fully con
     toSpiceDbActionObjectId('inventory.stock.reserve'),
     toSpiceDbActionObjectId('inventory-stock-reserve'),
   );
-  assert.deepEqual(requests[0]?.subject?.object, requests[0]?.resource);
-  assert.equal(requests[0]?.permission, SPICEDB_RESTRICTION_PERMISSION);
-  assert.deepEqual(requests[1]?.resource, requests[0]?.resource);
-  assert.deepEqual(requests[1]?.subject?.object, {
+  assert.deepEqual(requests[0]?.subject?.object, {
     objectId: input.principalId,
     objectType: SPICEDB_PRINCIPAL_OBJECT_TYPE,
   });
-  assert.equal(requests[1]?.permission, SPICEDB_EXECUTE_PERMISSION);
+  assert.equal(requests[0]?.permission, SPICEDB_EXECUTE_PERMISSION);
   for (const request of requests) {
     assert.deepEqual(request.consistency?.requirement, {
       fullyConsistent: true,
@@ -212,31 +202,18 @@ test('losslessly maps Action keys and exact principal identities using fully con
   }
 });
 
-test('classifies unconfigured, allowed, and denied decisions without extra checks', async () => {
-  const unconfiguredRequests: v1.CheckPermissionRequest[] = [];
-  const unconfigured = makeActionPermissionService(
-    makeClient(
-      [response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)],
-      unconfiguredRequests,
-    ),
-  );
+test('classifies fully consistent execute permission as allowed or denied with one check', async () => {
+  const deniedRequests: v1.CheckPermissionRequest[] = [];
   const allowed = makeActionPermissionService(
-    makeClient([
-      response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-      response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-    ]),
+    makeClient([response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION)]),
   );
   const denied = makeActionPermissionService(
-    makeClient([
-      response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-      response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-    ]),
+    makeClient([response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)], deniedRequests),
   );
 
-  assert.equal(await Effect.runPromise(unconfigured.checkActionPermission(input)), 'unconfigured');
   assert.equal(await Effect.runPromise(allowed.checkActionPermission(input)), 'allowed');
   assert.equal(await Effect.runPromise(denied.checkActionPermission(input)), 'denied');
-  assert.equal(unconfiguredRequests.length, 1);
+  assert.equal(deniedRequests.length, 1);
 });
 
 test('fails closed for conditional, unspecified, malformed, and client failures', async () => {

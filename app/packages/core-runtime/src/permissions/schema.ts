@@ -1,0 +1,38 @@
+export const ONTOS_SPICEDB_SCHEMA = `definition principal {}
+
+definition tenant {
+  relation member: principal
+  relation identity_admin: principal
+  relation support: principal
+  permission access = member
+  permission manage_identity = identity_admin & access
+  permission impersonate = support & access
+}
+
+definition legal_entity {
+  relation tenant: tenant
+  relation member: principal
+  permission access = member & tenant->access
+}
+
+definition module_access {
+  relation legal_entity: legal_entity
+  relation accessor: principal
+  permission access = accessor & legal_entity->access
+}
+
+definition resource {
+  relation module: module_access
+  relation reader: principal
+  relation writer: principal
+  permission read = reader & module->access
+  permission write = writer & module->access
+}
+
+definition action {
+  relation restriction: action
+  relation executor: principal | tenant#member
+
+  permission is_restricted = restriction
+  permission execute = executor
+}`;

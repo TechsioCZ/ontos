@@ -142,8 +142,8 @@ const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   outboxSubscriptions: Object.freeze([]),
 });
 
-const unconfiguredPermission = {
-  checkActionPermission: () => Effect.succeed('unconfigured' as const),
+const allowedPermission = {
+  checkActionPermission: () => Effect.succeed('allowed' as const),
 };
 
 const withDatabase = <Value, Error>(
@@ -467,7 +467,7 @@ test('rechecks business module state under the tenant lock and retries after Cor
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       liveModuleStateOptions(database),
     );
@@ -559,7 +559,7 @@ test('atomically commits business state, all success evidence, and the succeeded
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -634,7 +634,7 @@ test('commits allowed Policy checkpoints atomically before handler success evide
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -750,7 +750,7 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -853,7 +853,7 @@ test('rolls back every denied-Policy finalization persistence failure', async ()
       const runtime = makeActionRuntime(
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -923,7 +923,7 @@ test('rolls back domain rejection, evidence persistence failure, and orphan outb
           ? withEvidencePersistenceFailure(database, 'audit')
           : database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -1008,7 +1008,7 @@ test('rolls back every individual success-evidence persistence failure', async (
       const runtime = makeActionRuntime(
         withEvidencePersistenceFailure(database, stage),
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -1073,7 +1073,7 @@ test('keeps Policy rejection terminal and deduplicates repeated and concurrent e
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1172,14 +1172,14 @@ test('never lets a losing Policy denial replace a running or successful invocati
     const allowedRuntime = makeActionRuntime(
       database,
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
     const deniedRuntime = makeActionRuntime(
       database,
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1241,7 +1241,7 @@ test('serializes concurrent requests and enforces committed, open-retry, and has
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -1350,14 +1350,14 @@ test('serializes Domain Event allocation by tenant commit order', async () => {
     const firstRuntime = makeActionRuntime(
       { executor: delayedExecutor },
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
     const secondRuntime = makeActionRuntime(
       database,
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1434,7 +1434,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     const uncertainRuntime = makeActionRuntime(
       { executor: uncertainExecutor },
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1453,7 +1453,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     const resolvingRuntime = makeActionRuntime(
       database,
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1486,7 +1486,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
             }),
           ),
       },
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1555,7 +1555,7 @@ test('resolves a lost commit acknowledgement from the durable succeeded marker',
     const uncertainOpenRuntime = makeActionRuntime(
       { executor: uncertainRollbackExecutor },
       repository,
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       openActionRuntimeOptions,
     );
@@ -1642,7 +1642,7 @@ test('persists no invocation or evidence for every non-writable business module 
     const runtime = makeActionRuntime(
       database,
       makeActionRepository(),
-      unconfiguredPermission,
+      allowedPermission,
       testOperationalScopeResolver,
       liveModuleStateOptions(database),
     );

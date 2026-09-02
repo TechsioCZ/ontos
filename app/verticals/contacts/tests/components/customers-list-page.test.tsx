@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/core';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/contacts.json';
@@ -230,7 +231,31 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toaster.remove();
   rstest.clearAllMocks();
+});
+
+test('shows one localized Czech error Toast for a definite lifecycle denial', async () => {
+  localeState.current = 'cs';
+  searchState.current = '?status=all';
+  archiveCustomerMock.mockReturnValue(Effect.fail({ _tag: 'ContactsForbiddenProblem' }));
+  const user = userEvent.setup();
+  render(
+    <>
+      <CustomersListPage />
+      <Toaster />
+    </>,
+  );
+
+  await user.click(await screen.findByRole('button', { name: 'Archivovat' }));
+  await waitFor(() => {
+    const toastTitles = screen
+      .getAllByText('Změna není povolena.')
+      .filter((element) => element.closest('[data-scope="toast"][data-part="root"]') !== null);
+    expect(toastTitles).toHaveLength(1);
+  });
+  expect(getCustomerListMock).toHaveBeenCalledTimes(1);
+  expect(navigateMock).not.toHaveBeenCalled();
 });
 
 describe('Customer list URL state', () => {
@@ -564,6 +589,27 @@ test('owns the UI-kit token, theme, class source, and local overflow boundary', 
   expect(screen.getByRole('table', { name: 'Customers' }).className).toContain(
     'contacts:min-w-3xl',
   );
+});
+
+test('mounts one Toast portal at every standalone and federated Contacts boundary', () => {
+  const boundaryPaths = [
+    '../../src/routes/layout.tsx',
+    '../../src/federation/page-contact-create.tsx',
+    '../../src/federation/page-contact-detail.tsx',
+    '../../src/federation/page-contact-edit.tsx',
+    '../../src/federation/page-contacts.tsx',
+    '../../src/federation/page-customer-create.tsx',
+    '../../src/federation/page-customer-detail.tsx',
+    '../../src/federation/page-customer-edit.tsx',
+    '../../src/federation/page-customers-list.tsx',
+  ] as const;
+
+  for (const boundaryPath of boundaryPaths) {
+    const source = readFileSync(new URL(boundaryPath, import.meta.url), 'utf-8');
+
+    expect(source).toContain("import { Toaster } from '@techsio/ui-kit/molecules/toast';");
+    expect(source.match(/<Toaster \/>/gu)).toHaveLength(1);
+  }
 });
 
 test('keeps English and Czech Customer-list locale structures in parity', () => {

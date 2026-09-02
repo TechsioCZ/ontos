@@ -219,8 +219,8 @@ before(async () => {
 
 after(cleanup);
 
-const unconfiguredPermission = {
-  checkActionPermission: () => Effect.succeed('unconfigured' as const),
+const allowedPermission = {
+  checkActionPermission: () => Effect.succeed('allowed' as const),
 };
 
 const principal = (tenantId = tenantOne, principalId = principalOne) => ({
@@ -304,7 +304,7 @@ test('atomically creates and transitions state with truthful Action history and 
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -414,7 +414,7 @@ test('supports every declared state independently of other installed module stat
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -478,7 +478,7 @@ test('idempotent replay and same-state rejection create no duplicate history or 
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -490,7 +490,7 @@ test('idempotent replay and same-state rejection create no duplicate history or 
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -504,7 +504,7 @@ test('idempotent replay and same-state rejection create no duplicate history or 
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -568,7 +568,7 @@ test('rolls back history and Action evidence when current-state persistence fail
       const runtime = makeActionRuntime(
         withTenantStateWriteFailure(database),
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -608,7 +608,7 @@ test('serializes concurrent transitions into one truthful history chain', async 
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );
@@ -628,7 +628,7 @@ test('serializes concurrent transitions into one truthful history chain', async 
           const runtime = makeActionRuntime(
             database,
             makeActionRepository(),
-            unconfiguredPermission,
+            allowedPermission,
             testOperationalScopeResolver,
             openActionRuntimeOptions,
           );
@@ -676,7 +676,7 @@ test('derives tenant scope only from the trusted principal', async () => {
       const runtime = makeActionRuntime(
         database,
         makeActionRepository(),
-        unconfiguredPermission,
+        allowedPermission,
         testOperationalScopeResolver,
         openActionRuntimeOptions,
       );

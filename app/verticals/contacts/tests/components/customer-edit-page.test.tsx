@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/c
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/contacts.json';
@@ -113,14 +114,16 @@ const nullableArchivedCustomer = {
 
 const renderFeature = ({
   id = customerId,
+  withToaster = false,
   writable = true,
-}: { readonly id?: string; readonly writable?: boolean } = {}) => {
+}: { readonly id?: string; readonly withToaster?: boolean; readonly writable?: boolean } = {}) => {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
       <CustomerEditFeature routeParams={{ id }} target={{ writable }} />
+      {withToaster ? <Toaster /> : null}
     </QueryClientProvider>,
   );
   return queryClient;
@@ -147,7 +150,25 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toaster.remove();
   rstest.clearAllMocks();
+});
+
+test('shows one accessible error Toast for a definite edit denial', async () => {
+  const message = 'You do not have permission to edit this Customer.';
+  editCustomerMock.mockReturnValue(Effect.fail({ _tag: 'ContactsForbiddenProblem' }));
+  const user = userEvent.setup();
+  renderFeature({ withToaster: true });
+  await screen.findByRole('textbox', { name: /^Customer name/u });
+
+  await user.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => {
+    const toastTitles = screen
+      .getAllByText(message)
+      .filter((element) => element.closest('[data-scope="toast"][data-part="root"]') !== null);
+    expect(toastTitles).toHaveLength(1);
+  });
+  expect(navigateMock).not.toHaveBeenCalled();
 });
 
 test('loads the exact route Customer through the typed client and prefills the form', async () => {

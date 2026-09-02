@@ -1,4 +1,5 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
+import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { contactsI18nResources } from '../i18n/resources';
 import { ContactEditPage } from '../routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page';
 import type { ContactEditPageTarget } from '../routes/[lang]/contacts/customers/[id]/contacts/[contactId]/edit/page';
@@ -18,6 +19,7 @@ const ContactEditFederatedPage = ({ routeParams, target }: ContactEditFederatedP
     supportedLanguages={['en', 'cs']}
   >
     <ContactEditPage routeParams={routeParams} target={target} />
+    <Toaster />
   </FederatedI18nBoundary>
 );
 

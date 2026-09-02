@@ -1,4 +1,5 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
+import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { contactsI18nResources } from '../i18n/resources';
 import { CustomerCreatePage } from '../routes/[lang]/contacts/customers/[id]/new/page';
 import type { CustomerCreatePageTarget } from '../routes/[lang]/contacts/customers/[id]/new/page';
@@ -19,6 +20,7 @@ const CustomerCreateFederatedPage = ({ routeParams, target }: CustomerCreateFede
     supportedLanguages={['en', 'cs']}
   >
     <CustomerCreatePage routeParams={routeParams} target={target} />
+    <Toaster />
   </FederatedI18nBoundary>
 );
 
