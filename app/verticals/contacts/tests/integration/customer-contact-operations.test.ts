@@ -195,14 +195,14 @@ test('runs Contacts writes and reads through the governed runtimes with durable 
           const actions = makeActionRuntime(
             database,
             makeActionRepository(),
-            { checkActionPermission: () => Effect.succeed('unconfigured' as const) },
+            { checkActionPermission: () => Effect.succeed('allowed' as const) },
             scopeResolver,
             { moduleEntrypointGateway: moduleGateway, moduleStateGate },
           );
           const rollbackActions = makeActionRuntime(
             database,
             makeActionRepository(),
-            { checkActionPermission: () => Effect.succeed('unconfigured' as const) },
+            { checkActionPermission: () => Effect.succeed('allowed' as const) },
             scopeResolver,
             {
               moduleEntrypointGateway: moduleGateway,

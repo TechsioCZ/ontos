@@ -3,6 +3,7 @@ import { Link as RouterLink, useNavigate, useParams } from '@modern-js/plugin-ta
 import { QueryClient, QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
 import { useMemo, useRef, useState } from 'react';
 import { ContactsUuidSchema } from '../../../../../../../../shared/apis/customer-detail.ts';
@@ -196,6 +197,7 @@ const contactIntent = (customerId: string, values: ContactFormValues) =>
 
 export const ContactCreateFeature = ({ routeParams, target }: ContactCreatePageProps) => {
   const { language, t } = useModernI18n();
+  const toaster = useToast();
   const navigate = useNavigate();
   const customerId = decodeContactCreateId(routeParams);
   const [feedback, setFeedback] = useState<MutationFeedback | null>(null);
@@ -309,6 +311,9 @@ export const ContactCreateFeature = ({ routeParams, target }: ContactCreatePageP
       // oxlint-disable-next-line promise/prefer-await-to-callbacks -- The typed rejection branch maps TanStack Query failures without an async UI callback.
       (error: CreateContactClientError) => {
         const state = classifyCreateContactError(error);
+        if (state.state === 'forbidden') {
+          toaster.create({ title: copy.mutation.forbidden, type: 'error' });
+        }
         logicalAttemptRef.current =
           state.state === 'unavailable' ? { idempotencyKey, intent, uncertain: true } : null;
         setFeedback(mutationFeedback(state, copy));

@@ -1,6 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import {
   ACTION_GENERATOR_HEADER,
+  CORE_ACTION_CATALOG_IMPORT_SLOT_END,
+  CORE_ACTION_CATALOG_IMPORT_SLOT_START,
+  CORE_ACTION_CATALOG_VALUE_SLOT_END,
+  CORE_ACTION_CATALOG_VALUE_SLOT_START,
   CORE_ACTION_SLOT_END,
   CORE_ACTION_SLOT_START,
   MODULE_MANIFEST_ACTION_SLOT_END,
@@ -176,6 +180,20 @@ const isCoreActionExport = (candidate: string): boolean =>
     candidate,
   );
 
+const coreCatalogImportEntry = (action: string): string =>
+  `import { ${toCamelCase(action)}Action } from './${action}.action.ts';`;
+
+const isCoreActionCatalogImport = (candidate: string): boolean =>
+  /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*\.action\.ts';$/u.test(
+    candidate,
+  );
+
+const coreCatalogValueEntry = (action: string): string =>
+  `${toCamelCase(action)}Action.descriptor,`;
+
+const isCoreActionCatalogValue = (candidate: string): boolean =>
+  /^[a-z][A-Za-z0-9]*Action\.descriptor,$/u.test(candidate);
+
 const planCoreActionScaffold = async (
   workspaceRoot: string,
   moduleKeyInput: string,
@@ -199,6 +217,15 @@ const planCoreActionScaffold = async (
     'src',
     'index.ts',
   );
+  const catalogPath = resolveContainedPath(
+    workspaceRoot,
+    'packages',
+    'core-runtime',
+    'src',
+    'modules',
+    'actions',
+    'catalog.ts',
+  );
   const actionMutation = await createMutation(
     actionPath,
     renderCoreAction(moduleKey, action, legalEntityScope),
@@ -212,8 +239,24 @@ const planCoreActionScaffold = async (
     isCoreActionExport,
   );
   const indexMutation = updateMutation(indexPath, indexContent, nextIndex);
-  const mutations =
-    indexMutation === undefined ? [actionMutation] : [actionMutation, indexMutation];
+  const catalogContent = await readFile(catalogPath, 'utf-8');
+  const nextCatalog = insertSortedSlot(
+    insertSortedSlot(
+      catalogContent,
+      CORE_ACTION_CATALOG_IMPORT_SLOT_START,
+      CORE_ACTION_CATALOG_IMPORT_SLOT_END,
+      [coreCatalogImportEntry(action)],
+      isCoreActionCatalogImport,
+    ),
+    CORE_ACTION_CATALOG_VALUE_SLOT_START,
+    CORE_ACTION_CATALOG_VALUE_SLOT_END,
+    [coreCatalogValueEntry(action)],
+    isCoreActionCatalogValue,
+  );
+  const catalogMutation = updateMutation(catalogPath, catalogContent, nextCatalog);
+  const mutations = [actionMutation, indexMutation, catalogMutation].filter(
+    (mutation) => mutation !== undefined,
+  );
   ensureUniqueMutationPaths(mutations);
   return { mutations, result: { actionPath } };
 };

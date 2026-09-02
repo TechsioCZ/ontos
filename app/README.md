@@ -344,8 +344,14 @@ idempotent stopped checkpoint and removes recovery state. That recovery checkpoi
 restricted Action's normal SpiceDB permission check; session termination succeeds independently and
 evidence remains pending when authorization or storage is unavailable.
 
-Restricted identity Actions also require explicit SpiceDB executor provisioning. Provision
-relations using the exact object ID returned by Core's `toSpiceDbActionObjectId(actionKey)`:
+Every Action requires explicit SpiceDB executor provisioning; missing configuration is a definite
+denial. The default environment rule is
+`action:<object-id>#executor@tenant:<fixed-tenant-uuid>#member`, provisioned for the complete current
+catalog with the parameterless, idempotent operator command
+`mise exec -- pnpm authorization:provision-current-actions`. This grants authenticated active
+members of that one trusted Tenant, not anonymous users or Principals from another Tenant. Direct
+Principal relations remain valid for narrower authorization and use the exact object ID returned by
+Core's `toSpiceDbActionObjectId(actionKey)`:
 `action:<object-id>#executor@principal:<principal-uuid>`. Eligible interactive users receive the
 `bind-self-api-key` and `set-self-api-key-binding-status` executors; tenant identity administrators
 receive the create/change and managed-key executors in addition to the separate tenant

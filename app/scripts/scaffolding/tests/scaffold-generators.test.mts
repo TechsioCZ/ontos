@@ -284,6 +284,20 @@ const createFixture = async (): Promise<Fixture> => {
   );
   await writeFixtureFile(
     root,
+    'packages/core-runtime/src/modules/actions/catalog.ts',
+    `export const existingCatalogSurface = true;
+
+// <generated-core-action-catalog-imports>
+// </generated-core-action-catalog-imports>
+
+export const coreActionCatalog = [
+  // <generated-core-action-catalog-values>
+  // </generated-core-action-catalog-values>
+];
+`,
+  );
+  await writeFixtureFile(
+    root,
     'apps/shell-super-app/src/sentinel.ts',
     'export const shell = true;\n',
   );
@@ -1647,6 +1661,19 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     assert.ok(coreIndex.indexOf(accountExport) < coreIndex.indexOf(zExport));
     assert.match(coreIndex, /export const existingCoreSurface = true/u);
 
+    const coreCatalog = await readFixtureFile(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/catalog.ts',
+    );
+    const accountImport = "import { accountChangeAction } from './account-change.action.ts';";
+    const zImport = "import { zLastChangeAction } from './z-last-change.action.ts';";
+    assert.ok(coreCatalog.indexOf(accountImport) < coreCatalog.indexOf(zImport));
+    assert.ok(
+      coreCatalog.indexOf('accountChangeAction.descriptor,') <
+        coreCatalog.indexOf('zLastChangeAction.descriptor,'),
+    );
+    assert.match(coreCatalog, /export const existingCatalogSurface = true/u);
+
     const beforeOverwrite = await snapshotTree(fixture.root);
     await assert.rejects(
       run(fixture, 'action', [
@@ -1692,6 +1719,35 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       index.replace(
         '// <generated-core-action-exports>\n',
         '// <generated-core-action-exports>\nexport const developerOwned = true;\n',
+      ),
+      'utf-8',
+    );
+    const before = await snapshotTree(fixture.root);
+    await assert.rejects(
+      run(fixture, 'action', [
+        '--scope',
+        'core',
+        '--module',
+        'core.modules',
+        '--action',
+        'create-order',
+      ]),
+      /unsupported developer content/u,
+    );
+    assert.deepEqual(await snapshotTree(fixture.root), before);
+  });
+
+  await withFixture(async (fixture) => {
+    const catalogPath = path.join(
+      fixture.root,
+      'packages/core-runtime/src/modules/actions/catalog.ts',
+    );
+    const catalog = await readFile(catalogPath, 'utf-8');
+    await writeFile(
+      catalogPath,
+      catalog.replace(
+        '// <generated-core-action-catalog-values>\n',
+        '// <generated-core-action-catalog-values>\n  developerOwned.descriptor,\n',
       ),
       'utf-8',
     );

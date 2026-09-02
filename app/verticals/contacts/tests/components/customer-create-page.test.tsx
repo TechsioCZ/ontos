@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, rstest, test } from '@rstest/c
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { Toaster, toaster } from '@techsio/ui-kit/molecules/toast';
 import { Effect } from 'effect';
 import type { ReactNode } from 'react';
 import csCatalog from '../../locales/cs/contacts.json';
@@ -112,7 +113,10 @@ const getCustomerIco = () => requireInput(document.querySelector('#customer-ico'
 const getInputByLabel = (label: string) =>
   requireInput(screen.getByLabelText(label), `${label} field`);
 
-const renderFeature = ({ writable = true }: { readonly writable?: boolean } = {}) => {
+const renderFeature = ({
+  withToaster = false,
+  writable = true,
+}: { readonly withToaster?: boolean; readonly writable?: boolean } = {}) => {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -122,6 +126,7 @@ const renderFeature = ({ writable = true }: { readonly writable?: boolean } = {}
         routeParams={{ id: 'untrusted-route-context' }}
         target={{ writable }}
       />
+      {withToaster ? <Toaster /> : null}
     </QueryClientProvider>,
   );
 };
@@ -139,7 +144,25 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toaster.remove();
   rstest.clearAllMocks();
+});
+
+test('shows one accessible error Toast for a definite create denial', async () => {
+  const message = 'You do not have permission to create Customers.';
+  createCustomerMock.mockReturnValue(Effect.fail({ _tag: 'ContactsForbiddenProblem' }));
+  const user = userEvent.setup();
+  renderFeature({ withToaster: true });
+  await user.type(screen.getByRole('textbox', { name: /^Customer name/u }), 'Acme');
+
+  await user.click(screen.getByRole('button', { name: 'Create Customer' }));
+  await waitFor(() => {
+    const toastTitles = screen
+      .getAllByText(message)
+      .filter((element) => element.closest('[data-scope="toast"][data-part="root"]') !== null);
+    expect(toastTitles).toHaveLength(1);
+  });
+  expect(navigateMock).not.toHaveBeenCalled();
 });
 
 test('composes the existing form with empty localized create values and accessible validation', async () => {

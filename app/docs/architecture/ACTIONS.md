@@ -14,6 +14,9 @@ receive or import a database executor.
 - Every Action descriptor declares an explicit readonly array of immutable Policy object references. A global Shell/Core Policy may be referenced by any Action; an executable MicroVertical Policy may be referenced only by an Action with the same owning module key. Raw Policy keys, registries, and cross-owner Policy imports are forbidden.
 - A Domain Event is a past-tense business fact produced by a successfully committed Action. Domain Events describe what happened; they do not initiate hidden synchronous business state changes.
 - Generate Actions, Permissions, Policies, and Outbox Messages with their respective Codesmith generators.
+- Every Action requires an explicit SpiceDB `executor` relationship. A fully consistent
+  `action#execute` result of `NO_PERMISSION`, including an Action with no relationships, is a
+  definite denial; there is no unconfigured allow path.
 - Every Action descriptor owns a structured `action`/`write` entrypoint. Business Actions are tenant-scoped; Core recovery capabilities are explicitly system-scoped as defined by [Module Entrypoints and Tenant State](./MODULE_ENTRYPOINTS.md).
 - A MicroVertical Action's `owningModuleKey`, key prefix, event producer, and access-policy identity
   use the manifest's dotted OntOS `moduleId`, never the topology deployment `appId`. The real Action
@@ -50,12 +53,19 @@ safe reason, original/effective principal IDs, checkpoint, and optional safe ses
 the sensitive `action.executed` evidence; the audit row supplies tenant, timestamp, and Action
 identity.
 
-Restricted Action execution and tenant role authorization are independent grants. The self-key
-Actions require their explicit Action executor. Principal creation/status and managed-key mutations
+Action execution and tenant role authorization are independent grants. The default environment
+rule is an explicit `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relationship, so it
+allows every authenticated active Principal in that trusted Tenant and nobody outside it. Direct
+`principal` executor relationships remain supported for narrower grants and rollout compatibility.
+The self-key Actions require their explicit Action executor. Principal creation/status and managed-key mutations
 require both their Action executor and tenant `manage_identity`; support start requires the support
 checkpoint executor and tenant `impersonate`. Provision Action relations with the lossless object ID
 from `toSpiceDbActionObjectId`, never a hand-maintained alternate encoding, and remove them when the
-role or workload authorization is revoked. Bootstrap `allowed-principal` tuples are test-only.
+role, membership, or workload authorization is revoked. The parameterless operator command
+`mise exec -- pnpm authorization:provision-current-actions` discovers the complete current Action
+catalog and provisions only the fixed development or stage Tenant sets. It is idempotent, accepts no
+caller-supplied Tenant or Action identifiers, and must never run during startup, migration, sandbox
+preparation, or automatic deployment. Bootstrap `allowed-principal` tuples are test-only.
 The generated Action descriptor declares the additional tenant permission, and Core evaluates it
 inside the canonical Action authorization boundary after the executor check. A definite tenant-role
 denial produces the same durable permission-denial outcome; an indeterminate check fails retryably.
@@ -103,7 +113,15 @@ Process every Action request in this order:
 9. Only after permission and all Policies allow, persist the accepted invocation transition from `received` to `running` independently so a definite business rollback leaves it open.
 10. Open the Core-owned transaction, lock and recheck the invocation, install and verify the transaction-local operational database scope, then lock the tenant and authoritatively recheck tenant `write` access. Only then may Core construct owner-local services, create the collector, resolve the private handler, and execute it. Competing requests may repeat read-only gates, but their handlers must never run concurrently.
 
-The first Shell/Core runtime receives an already trusted principal context. Permission and Policy evaluation are both enforced before the invocation becomes `running`, the business transaction opens, or the handler and collector are created. An Action is unconfigured in SpiceDB only when a fully consistent check of its self-referential restriction marker returns a definite negative decision; that compatibility case is allowed. A marked Action requires a definite positive `execute` decision for the trusted principal. Missing configuration, timeout, unavailability, authentication/schema failure, conditional decisions, and every other indeterminate result fail closed while leaving the invocation open in `received`.
+The first Shell/Core runtime receives an already trusted principal context. Permission and Policy
+evaluation are both enforced before the invocation becomes `running`, the business transaction
+opens, or the handler and collector are created. Core performs one fully consistent `execute` check:
+`HAS_PERMISSION` allows and `NO_PERMISSION` durably rejects the invocation before Policy, service,
+or handler resolution. Timeout, unavailability, authentication/schema failure, conditional
+decisions, and every other indeterminate result return a sanitized retryable check error while
+leaving the invocation open in `received`. The legacy `restriction` relation and `is_restricted`
+permission remain in the compatible schema only for N/N-1 rollout; the candidate runtime does not
+read them. Remove them only in a later contract release after previous runtimes and tuples are gone.
 
 ## Outcomes
 

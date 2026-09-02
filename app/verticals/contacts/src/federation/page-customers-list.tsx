@@ -1,4 +1,5 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
+import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { contactsI18nResources } from '../i18n/resources';
 import '../routes/index.css';
 import CustomersListPage from './page-customers-list.runtime.js';
@@ -11,6 +12,7 @@ const CustomersListFederatedPage = () => (
     supportedLanguages={['en', 'cs']}
   >
     <CustomersListPage />
+    <Toaster />
   </FederatedI18nBoundary>
 );
 

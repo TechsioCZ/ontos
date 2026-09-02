@@ -188,8 +188,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
     },
   };
 
-  let installedTenantId = principal.tenantId;
-  let installedLegalEntityId = principal.legalEntityId;
+  let installedTenantId: string = principal.tenantId;
+  let installedLegalEntityId: string = principal.legalEntityId;
   const query = <Query, Values>(queryInput: Query, values?: Values) =>
     Promise.resolve().then(() => {
       const { text } = Schema.decodeUnknownSync(QueryConfigSchema)(queryInput);
@@ -254,7 +254,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
               reason: 'test authorization service unavailable',
             }),
           )
-        : Effect.succeed(options.permissionDecision ?? 'unconfigured');
+        : Effect.succeed(options.permissionDecision ?? 'allowed');
     },
   };
 
@@ -682,25 +682,23 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
   });
 });
 
-test('allows configured and unconfigured Actions before Policy evaluation', async () => {
-  for (const decision of ['allowed', 'unconfigured'] as const) {
-    const harness = makeHarness({ permissionDecision: decision });
-    const result = await Effect.runPromise(
-      harness.runtime.runAction({
-        payload: { amount: 2 },
-        principal,
-        registration: registration(),
-        transport: transport(decision),
-      }),
-    );
+test('allows an explicitly authorized Action before Policy evaluation', async () => {
+  const harness = makeHarness({ permissionDecision: 'allowed' });
+  const result = await Effect.runPromise(
+    harness.runtime.runAction({
+      payload: { amount: 2 },
+      principal,
+      registration: registration(),
+      transport: transport('allowed'),
+    }),
+  );
 
-    assert.deepEqual(result, { total: 2 });
-    assert.ok(
-      harness.stages.indexOf('permission_checked') < harness.stages.indexOf('policy_boundary'),
-    );
-    assert.equal(harness.counts().transitionCount, 1);
-    assert.equal(harness.counts().transactionCount, 1);
-  }
+  assert.deepEqual(result, { total: 2 });
+  assert.ok(
+    harness.stages.indexOf('permission_checked') < harness.stages.indexOf('policy_boundary'),
+  );
+  assert.equal(harness.counts().transitionCount, 1);
+  assert.equal(harness.counts().transactionCount, 1);
 });
 
 test('requires a declared tenant role independently from the Action executor relation', async () => {
@@ -769,6 +767,7 @@ test('requires a declared tenant role independently from the Action executor rel
 test('persists a definite permission denial before returning it and never evaluates Policies', async () => {
   let handlerCount = 0;
   let policyCount = 0;
+  let serviceFactoryCount = 0;
   const harness = makeHarness({ permissionDecision: 'denied' });
   const deniedRegistration = defineAction(
     {
@@ -803,6 +802,10 @@ test('persists a definite permission denial before returning it and never evalua
       handlerCount += 1;
       return Effect.void;
     },
+    () => {
+      serviceFactoryCount += 1;
+      return Effect.succeed({});
+    },
   );
 
   const failure = await Effect.runPromise(
@@ -820,6 +823,7 @@ test('persists a definite permission denial before returning it and never evalua
   assert.equal(failure.code, 'action_permission_denied');
   assert.equal(handlerCount, 0);
   assert.equal(policyCount, 0);
+  assert.equal(serviceFactoryCount, 0);
   assert.deepEqual(harness.stages, [
     'payload_decoded',
     'trusted_context_validated',

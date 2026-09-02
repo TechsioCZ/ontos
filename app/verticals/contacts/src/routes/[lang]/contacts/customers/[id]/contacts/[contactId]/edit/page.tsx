@@ -15,6 +15,7 @@ import {
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
 import { useMemo, useRef, useState } from 'react';
 import type { MouseEvent } from 'react';
@@ -322,6 +323,7 @@ const contactIntent = (contactId: string, values: ContactFormValues) =>
 
 export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps) => {
   const { language, t } = useModernI18n();
+  const toaster = useToast();
   const navigate = useNavigate();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -501,6 +503,9 @@ export const ContactEditFeature = ({ routeParams, target }: ContactEditPageProps
         // oxlint-disable-next-line promise/prefer-await-to-callbacks -- The typed rejection branch maps TanStack Query failures without an async UI callback.
         (error: EditContactClientError) => {
           const state = classifyEditContactError(error);
+          if (state.state === 'forbidden') {
+            toaster.create({ title: copy.mutation.forbidden, type: 'error' });
+          }
           logicalAttemptRef.current =
             state.state === 'unavailable' ? { idempotencyKey, intent, uncertain: true } : null;
           setFeedback(mutationFeedback(state, copy));

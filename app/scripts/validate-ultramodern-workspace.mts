@@ -6143,6 +6143,37 @@ assert(
     'node ./scripts/ultramodern-performance-readiness.mts',
   'Root must expose default-on performance readiness diagnostics',
 );
+const actionAuthorizationProvisioningCommand =
+  'node ./scripts/provision-current-action-authorization.mts';
+assert(
+  rootPackage.scripts?.['authorization:provision-current-actions'] ===
+    actionAuthorizationProvisioningCommand,
+  'Root must expose the explicit current-Action authorization provisioning command',
+);
+assert(
+  rootPackage.scripts?.['local:initialize'] === 'node ./scripts/initialize-local-development.mts' &&
+    !readText('scripts/initialize-local-development.mts').includes(
+      'provision-current-action-authorization',
+    ),
+  'Ordinary local initialization must not provision Action authorization',
+);
+for (const startupPath of [
+  'scripts/locki-feature.sh',
+  'docker-compose.yml',
+  'scripts/run-zerops-spicedb.sh',
+]) {
+  assert(
+    !readText(startupPath).includes('provision-current-action-authorization'),
+    `${startupPath} must not provision Action authorization automatically`,
+  );
+}
+for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
+  assert(
+    !rootPackage.scripts?.[automaticScript]?.includes('authorization:provision-current-actions') &&
+      !rootPackage.scripts?.[automaticScript]?.includes('provision-current-action-authorization'),
+    `${automaticScript} must not invoke Action authorization provisioning`,
+  );
+}
 if (hasBackendSurfaces) {
   assert(
     rootPackage.scripts?.['node:backend-federation:generate'] ===
@@ -6206,6 +6237,11 @@ if (hasDeliveryUnits) {
   const zeropsMigrator = readText('scripts/run-zerops-migrator.mjs');
   const zeropsSpiceDbStart = readText('scripts/run-zerops-spicedb.sh');
   assert(zeropsYaml.includes('zerops:'), 'Zerops manifest must include zerops services');
+  assert(
+    !zeropsYaml.includes('provision-current-action-authorization') &&
+      !zeropsYaml.includes('authorization:provision-current-actions'),
+    'Zerops startup and deployment must not provision Action authorization automatically',
+  );
   assert(
     zeropsYaml.includes(`setup: ${quoteYamlString('shellsuperapp')}`),
     'Zerops manifest must include shell service',

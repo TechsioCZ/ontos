@@ -3,6 +3,7 @@ import { Link as RouterLink, useNavigate, useParams } from '@modern-js/plugin-ta
 import { QueryClient, QueryClientProvider, useMutation } from '@tanstack/react-query';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect as EffectRuntime, Random } from 'effect';
 import { useMemo, useRef, useState } from 'react';
 import {
@@ -353,6 +354,7 @@ const feedbackForLookupError = (
 export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePageProps) => {
   void routeParams;
   const { language, t } = useModernI18n();
+  const toaster = useToast();
   const navigate = useNavigate();
   const [feedback, setFeedback] = useState<MutationFeedback | null>(null);
   const [formValues, setFormValues] = useState<CustomerFormValues>(emptyCustomerFormValues);
@@ -514,6 +516,9 @@ export const CustomerCreateFeature = ({ routeParams, target }: CustomerCreatePag
       // oxlint-disable-next-line promise/prefer-await-to-callbacks -- The typed rejection branch maps TanStack Query failures without an async UI callback.
       (error: CreateCustomerClientError) => {
         const state = classifyCreateCustomerError(error);
+        if (state.state === 'forbidden') {
+          toaster.create({ title: copy.mutation.forbidden, type: 'error' });
+        }
         logicalAttemptRef.current =
           state.state === 'unavailable'
             ? { idempotencyKey, payload: values, uncertain: true }

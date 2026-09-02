@@ -102,11 +102,12 @@ Core keeps its Action errors transport-neutral. A future Action BFF endpoint
 must exhaustively map `ActionPermissionDenied` to a declared `403` Problem
 Details schema and `ActionPermissionCheckError` to a declared `503` Problem
 Details schema. The denial exposes only its stable code and safe reason. The
-check error covers missing configuration, timeout, unavailability,
-authentication or schema failure, and any conditional or otherwise
-indeterminate SpiceDB decision; it must never be reclassified as an
-unconfigured-Action allow. Do not introduce a generic Action HTTP endpoint to
-perform this mapping.
+absence of an executor relationship is a definite `NO_PERMISSION` denial, not
+an unavailable configuration state. The check error covers timeout,
+unavailability, authentication or schema failure, and any conditional or
+otherwise indeterminate SpiceDB decision; it must never be reclassified as a
+permission denial or an unconfigured-Action allow. Do not introduce a generic
+Action HTTP endpoint to perform this mapping.
 
 ## Problem Details
 

@@ -19,6 +19,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Select } from '@techsio/ui-kit/molecules/select';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Effect as EffectRuntime, Random, Schema } from 'effect';
 import { useMemo, useRef } from 'react';
@@ -978,6 +979,7 @@ const CustomerContactsQuery = ({
   readonly customerId: string;
   readonly language: string;
 }) => {
+  const toaster = useToast();
   const queryClient = useQueryClient();
   const search = useLocation({ select: (location) => location.searchStr });
   const navigate = useNavigate();
@@ -1053,6 +1055,9 @@ const CustomerContactsQuery = ({
       {
         onError: (error) => {
           const state = classifyContactLifecycleError(error);
+          if (state.state === 'forbidden') {
+            toaster.create({ title: copy.lifecycleForbidden, type: 'error' });
+          }
           lifecycleAttemptRef.current =
             state.state === 'unavailable'
               ? { contactId, idempotencyKey, operation, uncertain: true }

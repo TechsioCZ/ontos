@@ -22,6 +22,7 @@ to the task. An accepted ADR is current unless a later ADR explicitly supersedes
 | [0015](0015-party-registry-owns-shared-identity.md)        | Party Registry owns shared identity                       | Accepted                     |
 | [0016](0016-independently-deployable-microverticals.md)    | Independent MicroVertical deployment seams                | Accepted                     |
 | [0017](0017-commerce-application-boundaries.md)            | Commerce application boundaries                           | Accepted                     |
+| [0019](0019-explicit-action-authorization.md)              | Explicit fail-closed Action authorization                 | Accepted                     |
 
 ## Status meanings
 

@@ -1,4 +1,5 @@
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
+import { Toaster } from '@techsio/ui-kit/molecules/toast';
 import { contactsI18nResources } from '../i18n/resources';
 import { ContactsPage } from '../routes/[lang]/contacts/page';
 
@@ -10,6 +11,7 @@ const ContactsFederatedPage = () => (
     supportedLanguages={['en', 'cs']}
   >
     <ContactsPage />
+    <Toaster />
   </FederatedI18nBoundary>
 );
 
