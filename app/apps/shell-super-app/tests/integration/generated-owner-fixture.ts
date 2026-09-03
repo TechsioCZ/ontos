@@ -163,6 +163,7 @@ const addResourceType = async (root: string): Promise<void> => {
           contributionKey: '${GENERATED_OWNER.moduleId}.detail.record',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -183,6 +184,7 @@ const addResourceType = async (root: string): Promise<void> => {
           contributionKey: '${GENERATED_OWNER.moduleId}.timeline.record',
           entrypoint: {
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
             moduleKey: '${GENERATED_OWNER.moduleId}',
             role: 'api',
@@ -559,24 +561,57 @@ export const createGeneratedOwnerFixture = async (
         GENERATED_OWNER.slug,
         '--action',
         'create-record',
+        '--authorization',
+        'action_execution',
         '--legal-entity-scope',
         'required',
+        '--provisioning',
+        'tenant_membership_default',
       ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'module-api',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-detail'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-detail',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'module-api',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'resource-list'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'resource-list',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await runScaffold(
       'search-provider',
-      ['--vertical', GENERATED_OWNER.slug, '--name', 'records', '--resource', 'record'],
+      [
+        '--vertical',
+        GENERATED_OWNER.slug,
+        '--name',
+        'records',
+        '--resource',
+        'record',
+        '--authorization',
+        'context_permission',
+        '--permission',
+        'module.access',
+      ],
       { workspaceRoot: root },
     );
     await adaptGeneratedOwner(root, schemaName);
