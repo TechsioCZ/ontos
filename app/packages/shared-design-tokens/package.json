@@ -2,6 +2,7 @@
   "name": "@app/shared-design-tokens",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Generated design tokens consumed by shell and verticals.",
   "type": "module",
   "exports": {

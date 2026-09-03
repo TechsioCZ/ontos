@@ -2,6 +2,7 @@
   "name": "@app/shared-contracts",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Generated route, ownership, and topology contracts.",
   "type": "module",
   "exports": {
