@@ -51,9 +51,13 @@ Use the `specs/*.md` path supplied with the skill invocation. A uniquely identif
 ## Implementation
 
 - Execute every `Step by Step Task` in order, top to bottom.
-- Before creating any supported business artifact, resolve its `scaffold:*` script from
-  `package.json`, inspect `mise exec -- pnpm <script> -- --help`, and run the generator required by
-  the plan and `README.md`. Do not maintain a partial generator list in this skill.
+- Run every mandatory Codesmith generator from `app/` before adapting its generated output:
+  - Action: `mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>`
+  - MicroVertical page: `mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>`
+  - Outbox Message: `mise exec -- pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>`
+  - Global Policy: `mise exec -- pnpm scaffold:policy -- --scope global --policy <policy>`
+  - MicroVertical Policy: `mise exec -- pnpm scaffold:policy -- --scope microvertical --policy <policy> --vertical <vertical>`
+- Confirm the matching `scaffold:*` script in `package.json` and inspect its `--help` output before running it. The explicit commands above preserve the common mandatory baseline; task-specific guidance or `package.json` may require additional generators.
 - Never recreate generated initial files or registration wiring manually.
 - Do not create business-functionality files directly. If a required business file type has no Codesmith generator, stop and ask the developer how to proceed.
 - Follow existing patterns and preserve strict MicroVertical deployment seams, the generated Effect BFF client seam, typed Action state changes, and typed Effect error contracts.
@@ -140,8 +144,10 @@ Review the completed work against the specification file, applicable agent instr
    - `../AGENTS.md`;
    - `AGENTS.md`;
    - `README.md`;
-   - each implementation document whose README trigger matches the changed behavior;
-   - every focused context row materially matched by the plan, plus only the relevant ADR.
+   - each task-specific implementation document named by the specification or selected by the
+     README routing table;
+   - each focused context or ADR materially relevant to the plan; cross-domain work may require
+     several focused contexts.
 3. Compare the final implementation with the complete plan:
    - description, problem, and solution;
    - requirements and non-goals;
