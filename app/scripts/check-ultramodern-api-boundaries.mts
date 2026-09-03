@@ -13,6 +13,7 @@ const ignoredDirectories = new Set([
   '.output',
   'coverage',
   'dist',
+  'dist-cloudflare',
   'node_modules',
   'repos',
 ]);
@@ -218,7 +219,9 @@ for (const file of textFiles) {
   );
 }
 
-const verticalDirectories = listDirectories('verticals');
+const verticalDirectories = listDirectories('verticals').filter((verticalPath) =>
+  exists(`${verticalPath}/package.json`),
+);
 const shellClient = 'apps/shell-super-app/src/api/vertical-clients.ts';
 if (exists('apps/shell-super-app') && verticalDirectories.length > 0) {
   assert(exists(shellClient), `${shellClient} must aggregate vertical API clients.`);

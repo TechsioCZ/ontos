@@ -2,18 +2,18 @@
 
 ```mermaid
 flowchart LR
-  staff[Staff and operators]
-  customers[Retail and B2B customers]
+  staff[Staff Principals and External Operators]
+  commerceActors[Retail Customers, Guests, and Counterparty Principals]
   ontos[OntOS]
   storefronts[External Storefront Applications]
   auth[Authentication and authorization services]
-  business[External business systems]
+  business[External Business Systems]
   providers[Payment, delivery, and other providers]
-  storage[Object and evidence storage]
+  storage[Object and Evidence Artifact storage]
 
   staff --> ontos
-  customers --> storefronts
-  storefronts -->|tenant-bound client and customer/guest context| ontos
+  commerceActors --> storefronts
+  storefronts -->|Storefront Client plus Commerce Portal Account or Guest Purchase Context| ontos
   ontos <--> auth
   ontos <--> business
   ontos --> providers

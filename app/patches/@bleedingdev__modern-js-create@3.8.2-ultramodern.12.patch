@@ -1,0 +1,47 @@
+diff --git a/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs b/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs
+index 6fcc6362e30b4e844302227dc64f39075f0fb20b..5c65e3d3e8fb8646e8cdb263a07ca522efe85dd3 100644
+--- a/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs
++++ b/dist/cjs/ultramodern-workspace/mf-validation/constants.cjs
+@@ -28,7 +28,7 @@ var __webpack_require__ = {};
+ var __webpack_exports__ = {};
+ __webpack_require__.r(__webpack_exports__);
+ const moduleFederationConfigFile = 'module-federation.config.ts';
+-const mfTypesArchive = 'dist/@mf-types.zip';
++const mfTypesArchive = process.env.ULTRAMODERN_MF_TYPES_ARCHIVE || 'dist/@mf-types.zip';
+ const generatedMetadataPaths = [
+     '.modernjs/ultramodern.json'
+ ];
+diff --git a/dist/esm/ultramodern-workspace/mf-validation/constants.js b/dist/esm/ultramodern-workspace/mf-validation/constants.js
+index eb2e286b9e3f8dfd6fdb3b0e4473efcc87d2f0a6..32509a4e998fa4dec3ef4d53fc58a5a2b92c3a20 100644
+--- a/dist/esm/ultramodern-workspace/mf-validation/constants.js
++++ b/dist/esm/ultramodern-workspace/mf-validation/constants.js
+@@ -1,5 +1,5 @@
+ const moduleFederationConfigFile = 'module-federation.config.ts';
+-const mfTypesArchive = 'dist/@mf-types.zip';
++const mfTypesArchive = process.env.ULTRAMODERN_MF_TYPES_ARCHIVE || 'dist/@mf-types.zip';
+ const generatedMetadataPaths = [
+     '.modernjs/ultramodern.json'
+ ];
+diff --git a/dist/esm-node/ultramodern-workspace/mf-validation/constants.js b/dist/esm-node/ultramodern-workspace/mf-validation/constants.js
+index f52edfd11fbd7ade07b5b37ec90186e66f3573b8..cfdd41d84464e05894479b3e4c09a28f3f952e38 100644
+--- a/dist/esm-node/ultramodern-workspace/mf-validation/constants.js
++++ b/dist/esm-node/ultramodern-workspace/mf-validation/constants.js
+@@ -1,6 +1,6 @@
+ import "node:module";
+ const moduleFederationConfigFile = 'module-federation.config.ts';
+-const mfTypesArchive = 'dist/@mf-types.zip';
++const mfTypesArchive = process.env.ULTRAMODERN_MF_TYPES_ARCHIVE || 'dist/@mf-types.zip';
+ const generatedMetadataPaths = [
+     '.modernjs/ultramodern.json'
+ ];
+diff --git a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts b/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
+index ebbc5176bacfd3790c8f01c8000e258ad348ce00..2d9e878b3f30650b0ca3e7b78d8c63de31f1489d 100644
+--- a/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
++++ b/dist/types/ultramodern-workspace/mf-validation/constants.d.ts
+@@ -1,5 +1,5 @@
+ export declare const moduleFederationConfigFile = "module-federation.config.ts";
+-export declare const mfTypesArchive = "dist/@mf-types.zip";
++export declare const mfTypesArchive: string;
+ export declare const generatedMetadataPaths: string[];
+ export declare const defaultAppRootDirs: string[];
+ export declare const skippedScanDirs: Set<string>;

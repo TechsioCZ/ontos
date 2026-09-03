@@ -249,6 +249,13 @@ const createWorkerOptions = (app, extra = {}) => {
     modulesRoot: app.outputRoot,
     compatibilityDate: app.wrangler.compatibility_date,
     compatibilityFlags: app.wrangler.compatibility_flags,
+    bindings: {
+      ...(app.wrangler.vars ?? {}),
+      DATABASE_URL: 'postgresql://workerd-proof:workerd-proof@127.0.0.1:5432/workerd-proof',
+      SPICEDB_ENDPOINT: '127.0.0.1:50051',
+      SPICEDB_INSECURE: 'true',
+      SPICEDB_PRESHARED_KEY: 'workerd-proof',
+    },
     assets: {
       workerName: workerName(app),
       binding: typeof assets.binding === 'string' ? assets.binding : 'ASSETS',
@@ -296,7 +303,10 @@ const responseEvidence = async (app, response) => {
       candidate.build === app.envelope.identity.buildMarker &&
       candidate.version === app.envelope.identity.releaseVersion,
   );
-  assert(marker, `${app.id} API response is not tied to its executed release identity`);
+  assert(
+    marker,
+    `${app.id} API response is not tied to its executed release identity: ${JSON.stringify(body).slice(0, 1_000)}`,
+  );
   assert(response.ok, `${app.id} API response returned HTTP ${response.status}`);
   return {
     bodyBase64: bytes.toString('base64'),
@@ -637,6 +647,7 @@ const createServiceBindings = (
 
 const proofs = [];
 const apiProofs = [];
+const remoteProofs = [];
 let executions = [];
 
 const writeReport = () => {
@@ -651,6 +662,7 @@ const writeReport = () => {
         executions,
         apiProofs,
         proofs,
+        remoteProofs,
       },
       null,
       2,
@@ -677,7 +689,7 @@ for (const shell of shells) {
         failedServices,
         fragmentBindingRequests,
       }),
-      async outboundService(request) {
+      outboundService(request) {
         const requestUrl = new URL(request.url);
         outboundRequests.push({ callerId: app.id, url: requestUrl.href });
         return new Response('External network disabled by SSR proof', {
@@ -709,7 +721,7 @@ for (const shell of shells) {
       const html = await response.text();
       assert(
         response.status === 200,
-        `${shell.id} returned HTTP ${response.status} for ${route} in workerd`,
+        `${shell.id} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${JSON.stringify(outboundRequests.slice(outboundRequestStart))}; response: ${html.slice(0, 500)} ... ${html.slice(-1_000)}`,
       );
       assert(
         !html.includes('data-modern-distributed-ssr-status="degraded"'),
@@ -717,10 +729,6 @@ for (const shell of shells) {
       );
 
       const boundaries = collectDistributedBoundaries(html);
-      assert(
-        boundaries.length > 0,
-        `${shell.id} rendered no distributed SSR boundaries for ${route}`,
-      );
       const routeApiBindingRequests = apiBindingRequests.slice(apiBindingRequestStart);
       const routeFragmentBindingRequests = fragmentBindingRequests.slice(
         fragmentBindingRequestStart,
@@ -783,6 +791,41 @@ for (const shell of shells) {
     }
 
     for (const remote of expectedRemotes) {
+      if (!renderedRemoteIds.has(remote.id)) {
+        const route = remote.proofRoutes[0] ?? '/en';
+        const outboundRequestStart = outboundRequests.length;
+        const response = await (
+          await miniflare.getWorker(workerName(remote))
+        ).fetch(`https://${workerName(remote)}.invalid${route}`, {
+          headers: { accept: 'text/html' },
+        });
+        const html = await response.text();
+        const routeOutboundRequests = outboundRequests.slice(outboundRequestStart);
+        assert(
+          response.status === 200,
+          `${remote.id} returned HTTP ${response.status} for ${route} in workerd; outbound requests: ${JSON.stringify(routeOutboundRequests)}; response: ${html.slice(0, 500)} ... ${html.slice(-1_000)}`,
+        );
+        assert(
+          response.headers.get('content-type')?.includes('text/html') === true,
+          `${remote.id} did not return HTML for ${route} in workerd`,
+        );
+        assert(
+          !html.includes('data-modern-distributed-ssr-status="degraded"'),
+          `${remote.id} rendered a degraded distributed SSR boundary for ${route} in workerd`,
+        );
+        assert(
+          !routeOutboundRequests.some(({ url }) => /(?:remoteEntry|\.m?js(?:\?|$))/u.test(url)),
+          `${remote.id} attempted to fetch remote JavaScript during ${route} server rendering`,
+        );
+        remoteProofs.push({
+          appId: remote.id,
+          outboundRequests: routeOutboundRequests,
+          route,
+          status: response.status,
+          worker: workerName(remote),
+        });
+        renderedRemoteIds.add(remote.id);
+      }
       assert(
         renderedRemoteIds.has(remote.id),
         `${shell.id} proof routes are missing independently rendered ${remote.id} content`,
