@@ -52,6 +52,10 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
         'shell.dashboard.tenant.pending': 'Switching tenant…',
         'shell.dashboard.tenant.unavailable': 'Tenant choices are temporarily unavailable.',
+        'shell.modules.discovery.incompatible': 'Incompatible module deployment',
+        'shell.modules.discovery.revoked': 'Module revoked',
+        'shell.modules.discovery.timeout': 'Module deployment timed out',
+        'shell.modules.discovery.unavailable': 'Module deployment unavailable',
       })[key] ?? key,
   }),
 }));
@@ -118,6 +122,7 @@ const tenantProps = {
   tenantState: 'available' as const,
   tenantSwitchFailed: false,
   tenantSwitchPending: false,
+  unavailableDeployments: [],
 };
 const testingWorkspaceTitle = 'Testing workspace';
 
@@ -235,6 +240,36 @@ test('keeps Home as the only navigation link when no active modules are supplied
   expect(
     screen.getByRole('navigation', { name: 'Dashboard navigation' }).querySelectorAll('a'),
   ).toHaveLength(1);
+});
+
+test('shows failed installed deployments as disabled identities with typed reasons', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      identity={identity}
+      logoutPending={false}
+      navigation={navigation}
+      onLogout={noopLogout}
+      title={homeTitle}
+      unavailableDeployments={[
+        { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
+        { appId: 'reporting-center', reason: 'incompatible', status: 'unavailable' },
+        { appId: 'legacy-center', status: 'revoked' },
+      ]}
+    >
+      Content
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(screen.getByText('property-registry')).toBeTruthy();
+  expect(screen.getByText('Module deployment timed out')).toBeTruthy();
+  expect(screen.getByText('reporting-center')).toBeTruthy();
+  expect(screen.getByText('Incompatible module deployment')).toBeTruthy();
+  expect(screen.getByText('legacy-center')).toBeTruthy();
+  expect(screen.getByText('Module revoked')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'property-registry' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'reporting-center' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'legacy-center' })).toBeNull();
 });
 
 test('renders the account Menu last and dispatches only the logout command by keyboard', async () => {

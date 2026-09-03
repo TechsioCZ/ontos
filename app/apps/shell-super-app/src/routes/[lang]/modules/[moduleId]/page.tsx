@@ -2,18 +2,25 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
 import { runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ApprovedVerticalPageComponent } from '../../../../api/vertical-clients.ts';
 import { findApprovedVerticalPageClient } from '../../../../api/vertical-clients.ts';
-import { resolveThenLoadModuleTarget } from '../../../module-entrypoint-loader.ts';
+import {
+  resolveThenLoadModuleTarget,
+  settleModuleEntrypointLoad,
+} from '../../../module-entrypoint-loader.ts';
 import { AuthenticatedDashboardLayout } from '../../../shell-frame.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './page.data.ts';
 
 type RemoteState =
-  | { readonly state: 'loading' | 'unavailable' }
+  | { readonly state: 'loading' }
+  | {
+      readonly reason: 'incompatible' | 'timeout' | 'unavailable';
+      readonly state: 'unavailable';
+    }
   | { readonly Component: ApprovedVerticalPageComponent; readonly state: 'ready' };
 
 const ResolvedTarget = ({
@@ -24,7 +31,7 @@ const ResolvedTarget = ({
   const { t } = useModernI18n();
   const client = findApprovedVerticalPageClient(model.target);
   const [remote, setRemote] = useState<RemoteState>(() =>
-    client === undefined ? { state: 'unavailable' } : { state: 'loading' },
+    client === undefined ? { reason: 'incompatible', state: 'unavailable' } : { state: 'loading' },
   );
 
   useEffect(() => {
@@ -35,20 +42,16 @@ const ResolvedTarget = ({
     const load = () =>
       runEffectRequest(
         resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
-          Effect.tryPromise(() => client.load()),
+          settleModuleEntrypointLoad(client.load, (loaded) => Predicate.isFunction(loaded.default)),
         ),
-      ).then(
-        ({ default: Component }) => {
-          if (current) {
-            setRemote({ Component, state: 'ready' });
-          }
-        },
-        () => {
-          if (current) {
-            setRemote({ state: 'unavailable' });
-          }
-        },
-      );
+      ).then((result) => {
+        if (!current) {
+          return;
+        }
+        setRemote(
+          result.state === 'ready' ? { Component: result.value.default, state: 'ready' } : result,
+        );
+      });
     void load();
     return () => {
       current = false;
@@ -64,7 +67,7 @@ const ResolvedTarget = ({
       showIcon
       status={remote.state === 'loading' ? 'default' : 'error'}
     >
-      {t(`shell.moduleTarget.${remote.state}`)}
+      {t(`shell.moduleTarget.${remote.state === 'unavailable' ? remote.reason : remote.state}`)}
     </StatusText>
   );
 };
@@ -119,6 +122,7 @@ const ModuleTargetPage = () => {
       tenantState={model.shell.tenants.state}
       tenantSwitchFailed={controls.tenantSwitchFailed}
       tenantSwitchPending={controls.tenantSwitchPending}
+      unavailableDeployments={model.shell.navigation.unavailableDeployments}
     >
       {controls.logoutFailed ? (
         <StatusText aria-live="polite" showIcon status="error">

@@ -1,6 +1,6 @@
 /* eslint-disable unicorn/no-await-expression-member -- Each assertion resolves an independent direct-target request. */
 import { expect, test } from '@rstest/core';
-import { buildInstalledModuleCatalog } from '@app/core-runtime';
+import { buildInstalledModuleCatalog, resolveInstalledModuleCatalog } from '@app/core-runtime';
 import type {
   ContextAccessDecision,
   ContextAccessService,
@@ -236,8 +236,44 @@ test('composes one deterministic state and permission batch with lifecycle affor
       },
     ],
     state: 'available',
+    unavailableDeployments: [],
   });
   expect({ permissionBatches, stateBatches }).toEqual({ permissionBatches: 1, stateBatches: 1 });
+});
+
+test('keeps healthy navigation and exposes failed installed deployments separately', async () => {
+  const degradedCatalog = resolveInstalledModuleCatalog([
+    {
+      contract: deployment('documents-center', 'documents.center', 'Documents', 10),
+      expectedAppId: 'documents-center',
+      outcome: 'fetched',
+    },
+    {
+      expectedAppId: 'property-registry',
+      outcome: 'failed',
+      reason: 'timeout',
+    },
+  ]);
+  const result = await Effect.runPromise(
+    makeShellComposition({
+      catalog: Effect.succeed(degradedCatalog),
+      contextAccess: contextAccess({ 'documents.center': 'allowed' }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+    }).compose(context),
+  );
+
+  expect(result.state).toBe('available');
+  if (result.state !== 'available') {
+    throw new Error('expected an available degraded composition');
+  }
+  expect(result.navigation.map(({ moduleId }) => moduleId)).toEqual(['documents.center']);
+  expect(result.unavailableDeployments).toEqual([
+    { appId: 'property-registry', reason: 'timeout', status: 'unavailable' },
+  ]);
+  expect(() => Schema.decodeUnknownSync(ShellCompositionSchema)(result)).not.toThrow();
 });
 
 test('normalizes number-like module order before returning the public composition', async () => {
@@ -276,7 +312,7 @@ test.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
         },
       }).compose(context),
     );
-    expect(result).toEqual({ navigation: [], state: 'available' });
+    expect(result).toEqual({ navigation: [], state: 'available', unavailableDeployments: [] });
   },
 );
 

@@ -98,12 +98,21 @@ const governedShellNavigationItemSchema = Schema.Struct({
   unavailable: Schema.Boolean,
   writable: Schema.Boolean,
 });
+const governedShellUnavailableDeploymentSchema = Schema.Union([
+  Schema.Struct({ appId: Schema.String, status: Schema.Literals(['disabled', 'revoked']) }),
+  Schema.Struct({
+    appId: Schema.String,
+    reason: Schema.Literals(['incompatible', 'timeout', 'unavailable']),
+    status: Schema.Literal('unavailable'),
+  }),
+]);
 const governedShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Union([
   Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('access_blocked') }),
   Schema.Struct({ navigation: Schema.Tuple([]), state: Schema.Literal('selection_required') }),
   Schema.Struct({
     navigation: Schema.Array(governedShellNavigationItemSchema),
     state: Schema.Literal('available'),
+    unavailableDeployments: Schema.Array(governedShellUnavailableDeploymentSchema),
   }),
 ]);
 const compositionEntrypoint = defineSystemModuleEntrypoint({

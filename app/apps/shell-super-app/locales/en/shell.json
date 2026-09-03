@@ -104,6 +104,13 @@
         "label": "Active MicroVerticals",
         "unavailable": "Active MicroVerticals are temporarily unavailable. Reload the page to try again."
       },
+      "discovery": {
+        "disabled": "The module is disabled.",
+        "incompatible": "The deployed module contract is incompatible.",
+        "revoked": "The module has been revoked.",
+        "timeout": "The module deployment timed out.",
+        "unavailable": "The module deployment is temporarily unavailable."
+      },
       "state": {
         "active": "Active",
         "deprecated": "Deprecated",
@@ -113,11 +120,13 @@
     },
     "moduleTarget": {
       "forbidden": "You do not have permission to open this module.",
+      "incompatible": "The deployed module entrypoint is incompatible.",
       "loading": "Loading module…",
       "not_found": "This module is not available in the current context.",
       "selection_required": "Select a legal entity before opening a module.",
       "seoDescription": "An authorized OntOS module workspace.",
       "title": "Module",
+      "timeout": "The module entrypoint timed out. Try again.",
       "unavailable": "The module is temporarily unavailable. Try again."
     },
     "search": {

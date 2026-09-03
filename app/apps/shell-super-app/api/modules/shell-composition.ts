@@ -2,6 +2,7 @@
 /* eslint-disable max-classes-per-file, prefer-destructuring -- Shell composition owns one closed safe-failure vocabulary and keeps correlation access explicit. */
 import type {
   ContextAccessService,
+  InstalledDeploymentFailureReason,
   InstalledModuleCatalog,
   ModuleEntrypointAccess,
   OntosShellContributions,
@@ -50,9 +51,21 @@ export interface ShellNavigationItem {
   readonly writable: boolean;
 }
 
+export type ShellUnavailableDeployment =
+  | { readonly appId: string; readonly status: 'disabled' | 'revoked' }
+  | {
+      readonly appId: string;
+      readonly reason: InstalledDeploymentFailureReason;
+      readonly status: 'unavailable';
+    };
+
 export type ShellCompositionModel =
   | { readonly navigation: readonly []; readonly state: 'selection_required' }
-  | { readonly navigation: readonly ShellNavigationItem[]; readonly state: 'available' };
+  | {
+      readonly navigation: readonly ShellNavigationItem[];
+      readonly state: 'available';
+      readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
+    };
 
 export type ShellTargetResolution =
   | { readonly outcome: 'selection_required' }
@@ -172,6 +185,19 @@ export const makeShellComposition = (dependencies: ShellCompositionDependencies)
             left.moduleId.localeCompare(right.moduleId),
         ),
         state: 'available',
+        unavailableDeployments: catalog.deploymentStatuses.flatMap((deployment) =>
+          deployment.status === 'available'
+            ? []
+            : [
+                deployment.status === 'unavailable'
+                  ? {
+                      appId: deployment.appId,
+                      reason: deployment.reason,
+                      status: deployment.status,
+                    }
+                  : { appId: deployment.appId, status: deployment.status },
+              ],
+        ),
       } as const;
     });
 

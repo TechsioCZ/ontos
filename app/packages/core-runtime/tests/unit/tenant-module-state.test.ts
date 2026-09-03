@@ -73,6 +73,13 @@ const catalog = (
   return Object.freeze({
     contracts: Object.freeze([...contracts]),
     deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
+    deploymentStatuses: Object.freeze(
+      contracts.map((moduleContract) => ({
+        appId: moduleContract.deployment.appId,
+        moduleId: moduleContract.manifest.module.id,
+        status: 'available' as const,
+      })),
+    ),
     getByDeploymentAppId: (appId: string) =>
       contracts.find(({ deployment }) => deployment.appId === appId),
     getByModuleId: (moduleId: string) => byModule.get(moduleId),

@@ -137,6 +137,7 @@ const ResourcePage = () => {
       tenantSwitchFailed={controls.tenantSwitchFailed}
       tenantSwitchPending={controls.tenantSwitchPending}
       title={model.state === 'ready' ? model.resource.detail.title : t('shell.resource.title')}
+      unavailableDeployments={model.shell.navigation.unavailableDeployments}
     >
       {controls.logoutFailed ? (
         <StatusText aria-live="polite" showIcon status="error">
