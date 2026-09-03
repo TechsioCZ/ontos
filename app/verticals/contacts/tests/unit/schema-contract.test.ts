@@ -321,7 +321,7 @@ test('creates the runtime role before Contacts policies and refreshes grants aft
 
   assert.equal(
     rootPackage.scripts?.['db:migrate'],
-    'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm db:bootstrap-runtime-role',
+    'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm --filter @app/projects db:migrate && pnpm db:bootstrap-runtime-role',
   );
   assert.match(bootstrap, /pg_catalog\.pg_namespace where nspname = \$1/u);
   assert.match(bootstrap, /schemaExists\.rows\[0\]\?\.exists !== true/u);
