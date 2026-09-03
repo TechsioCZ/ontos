@@ -63,9 +63,15 @@ mise exec -- pnpm run
 mise exec -- pnpm <scaffold-script> -- --help
 ```
 
-Generate a MicroVertical module contract before its business artifacts. Generated files and
+Create a new full-stack MicroVertical with the workspace-pinned `@modern-js/create` binary:
+
+```sh
+mise exec -- pnpm exec modern-js-create <vertical> --vertical
+```
+
+Then generate its MicroVertical module contract before its business artifacts. Generated files and
 registration slots are the required starting point and may then be adapted. The same rule applies
-to delegated work.
+to delegated work. Do not replace the pinned binary with an unversioned `pnpm dlx` invocation.
 
 ## Sources of truth
 
