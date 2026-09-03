@@ -51,6 +51,7 @@ test('retains the exact generated governed read identity and access policy', () 
     accessKind: 'detail',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.api.customer-ares-lookup',
       moduleKey: 'contacts.core',
       role: 'api',

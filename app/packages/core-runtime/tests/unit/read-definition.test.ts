@@ -14,6 +14,7 @@ test('defines immutable read metadata while keeping handler and service factory 
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.shell.list',
         moduleKey: 'core.shell',
         role: 'api',
@@ -42,6 +43,7 @@ test('requires an explicit valid owner-scoped read entrypoint', () => {
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.foreign.detail',
         moduleKey: 'core.foreign',
         role: 'api',
@@ -60,6 +62,7 @@ test('supports every governed access kind and rejects forged scope metadata', ()
           accessKind,
           entrypoint: defineSystemModuleEntrypoint({
             access: 'read',
+            authorization: { kind: 'context_permission', permission: 'module.access' },
             entrypointKey: `core.shell.${accessKind}`,
             moduleKey: 'core.shell',
             role: 'api',
@@ -88,6 +91,7 @@ test('supports every governed access kind and rejects forged scope metadata', ()
     validateReadDescriptorInput({
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.shell.valid',
         moduleKey: 'core.shell',
         role: 'api',

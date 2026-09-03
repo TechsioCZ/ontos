@@ -279,6 +279,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-detail',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -332,6 +333,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const resourceListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.api.resource-list',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'api',
@@ -389,6 +391,7 @@ import { makeOwnerRepository } from '../isolation/owner-repository.ts';
 
 export const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: '${GENERATED_OWNER.moduleId}.search.records',
   moduleKey: '${GENERATED_OWNER.moduleId}',
   role: 'search',
@@ -460,6 +463,7 @@ export const createRecordAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: '${GENERATED_OWNER.actionKey}',
       moduleKey: '${GENERATED_OWNER.moduleId}',
       role: 'action',

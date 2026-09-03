@@ -20,6 +20,7 @@ const makeWorker = (workerKey = 'consumer.message-logger') =>
       consumerModuleKey: 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: workerKey,
         moduleKey: 'consumer',
         role: 'worker',
@@ -46,6 +47,7 @@ test('defines an exact immutable registration while keeping the handler opaque',
     consumerModuleKey: 'consumer',
     entrypoint: {
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'consumer.message-logger',
       moduleKey: 'consumer',
       role: 'worker',
@@ -94,6 +96,7 @@ test('preserves schema inference for a typed handler payload', () => {
       consumerModuleKey: 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: 'consumer.inference-proof',
         moduleKey: 'consumer',
         role: 'worker',
@@ -125,6 +128,7 @@ test('rejects invalid identities, retry policies, and lease policies', () => {
       ...valid,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: valid.workerKey,
         moduleKey: 'foreign',
         role: 'worker',

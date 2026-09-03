@@ -30,6 +30,10 @@ const context = {
 const ref = { moduleId, resourceId: 'unit-1', resourceType } as const;
 const entrypoint = (role: 'api' | 'search', access: 'read' | 'write' = 'read') => ({
   access,
+  authorization: {
+    kind: 'context_permission' as const,
+    permission: access === 'write' ? 'resource_write' : 'resource_read',
+  },
   entrypointKey: `${moduleId}.${role}.${access}`,
   moduleKey: moduleId,
   role,
@@ -68,6 +72,17 @@ const catalog = (): InstalledModuleCatalog =>
               {
                 actionKey: 'property.registry.attach-media',
                 auditProfile: 'standard',
+                entrypoint: {
+                  access: 'write',
+                  authorization: {
+                    kind: 'action_execution',
+                    provisioning: 'tenant_membership_default',
+                  },
+                  entrypointKey: 'property.registry.attach-media',
+                  moduleKey: moduleId,
+                  role: 'action',
+                  scope: 'tenant',
+                },
                 idempotency: 'required',
                 legalEntityScope: 'required',
                 owningModuleId: moduleId,

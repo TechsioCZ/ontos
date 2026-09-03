@@ -183,3 +183,16 @@ or otherwise unusable assertions to its declared `401` Problem Details response 
 `WWW-Authenticate: Bearer` challenge. Public-JWKS or verification configuration unavailability maps
 to a declared retryable `503`. These endpoint-specific mappings do not replace the separate Core
 permission and Policy mappings and do not justify a generic Action HTTP endpoint.
+
+## Authorization provisioning and compatibility
+
+Every Action descriptor declares `authorization.kind = action_execution` and one provisioning
+intent. `tenant_membership_default` permits the fixed development/stage provisioner to create the
+tenant-member executor relation. `explicit` requires its intended relation to exist already and is
+never granted blanket tenant membership.
+
+The default runtime remains fail closed. A bounded `report_only` contract may preserve only an
+explicitly baselined, pre-existing missing-policy allow while computing the candidate denial and
+emitting one sanitized `authorization.would_deny` event. Explicit denials, infrastructure errors,
+cross-tenant scope, invalid or expired credentials, disabled modules, and replay are never
+compatible. New Actions cannot enter the baseline implicitly.

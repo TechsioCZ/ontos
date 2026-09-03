@@ -6,6 +6,7 @@ import { validateShellContributions } from '../../src/modules/shell-contribution
 const moduleId = 'property.registry';
 const entrypoint = (role: 'api' | 'page' | 'public_component' | 'report' | 'search') => ({
   access: role === 'api' ? ('read' as const) : ('read' as const),
+  authorization: { kind: 'context_permission' as const, permission: 'module.access' },
   entrypointKey: `${moduleId}.${role.replace('_', '-')}.primary`,
   moduleKey: moduleId,
   role,

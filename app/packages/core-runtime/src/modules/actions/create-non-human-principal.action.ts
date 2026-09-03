@@ -54,6 +54,7 @@ export const createNonHumanPrincipalAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.identity.create-non-human-principal',
       moduleKey: 'core.identity',
       role: 'action',

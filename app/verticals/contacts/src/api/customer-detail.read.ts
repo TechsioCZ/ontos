@@ -20,6 +20,7 @@ import type { LookupResult } from '../services/customer-contact-persistence.serv
 
 export const customerDetailEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'contacts.core.api.customer-detail',
   moduleKey: 'contacts.core',
   role: 'api',

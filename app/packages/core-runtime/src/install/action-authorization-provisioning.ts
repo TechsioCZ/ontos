@@ -13,9 +13,14 @@ export interface ActionAuthorizationContext {
 }
 
 export interface ActionAuthorizationProvisioningInput {
-  readonly actionKeys: readonly string[];
+  readonly actions: readonly ActionAuthorizationProvisioningAction[];
   readonly contexts: readonly ActionAuthorizationContext[];
   readonly deniedPrincipalId?: string;
+}
+
+export interface ActionAuthorizationProvisioningAction {
+  readonly actionKey: string;
+  readonly provisioning: 'explicit' | 'tenant_membership_default';
 }
 
 export interface ActionAuthorizationProvisioningResult {
@@ -56,14 +61,21 @@ const failure = (
   new ActionAuthorizationProvisioningError({ code, reason });
 
 const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) => {
-  const actionKeys = input.actionKeys.toSorted((left, right) => left.localeCompare(right));
+  const actions = input.actions.toSorted((left, right) =>
+    left.actionKey.localeCompare(right.actionKey),
+  );
+  const actionKeys = actions.map(({ actionKey }) => actionKey);
   const contexts = input.contexts.toSorted((left, right) =>
     left.tenantId.localeCompare(right.tenantId),
   );
   if (
-    actionKeys.length === 0 ||
+    actions.length === 0 ||
     actionKeys.some((actionKey) => actionKey.length === 0 || actionKey.length > 256) ||
-    new Set(actionKeys).size !== actionKeys.length
+    new Set(actionKeys).size !== actionKeys.length ||
+    actions.some(
+      ({ provisioning }) =>
+        provisioning !== 'tenant_membership_default' && provisioning !== 'explicit',
+    )
   ) {
     throw failure(
       'action_authorization_input_invalid',
@@ -92,7 +104,7 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
       'The denied verification Principal must be outside the fixed context set',
     );
   }
-  return { actionKeys, contexts, deniedPrincipalId };
+  return { actions, contexts, deniedPrincipalId };
 };
 
 const tenantAccessRequest = (context: ActionAuthorizationContext) =>
@@ -191,7 +203,7 @@ export const provisionActionAuthorization = (
   input: ActionAuthorizationProvisioningInput,
 ): Effect.Effect<ActionAuthorizationProvisioningResult, ActionAuthorizationProvisioningError> =>
   Effect.gen(function* provisionActionAuthorizationEffect() {
-    const { actionKeys, contexts, deniedPrincipalId } = yield* Effect.try({
+    const { actions, contexts, deniedPrincipalId } = yield* Effect.try({
       catch: (error) =>
         Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(),
       try: () => assertProvisioningInput(input),
@@ -212,7 +224,10 @@ export const provisionActionAuthorization = (
       );
     }
 
-    const relationships = buildActionAuthorizationRelationships(actionKeys, contexts);
+    const defaultActionKeys = actions
+      .filter(({ provisioning }) => provisioning === 'tenant_membership_default')
+      .map(({ actionKey }) => actionKey);
+    const relationships = buildActionAuthorizationRelationships(defaultActionKeys, contexts);
     yield* callClient(() =>
       client.writeRelationships(
         v1.WriteRelationshipsRequest.create({
@@ -227,7 +242,7 @@ export const provisionActionAuthorization = (
     );
 
     for (const context of contexts) {
-      for (const actionKey of actionKeys) {
+      for (const { actionKey } of actions) {
         yield* checkHasPermission(
           client,
           actionExecuteRequest(actionKey, context.principalId),
@@ -238,7 +253,7 @@ export const provisionActionAuthorization = (
         );
       }
     }
-    const [representativeAction] = actionKeys;
+    const [representativeAction] = actions.map(({ actionKey }) => actionKey);
     if (representativeAction === undefined) {
       return yield* failure(
         'action_authorization_input_invalid',
@@ -248,7 +263,7 @@ export const provisionActionAuthorization = (
     yield* checkNoPermission(client, actionExecuteRequest(representativeAction, deniedPrincipalId));
 
     return {
-      actionCount: actionKeys.length,
+      actionCount: actions.length,
       grantCount: relationships.length,
       tenantCount: contexts.length,
     };

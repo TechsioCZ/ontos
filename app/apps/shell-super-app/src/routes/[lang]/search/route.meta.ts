@@ -5,6 +5,7 @@ const routeMeta = {
   descriptionKey: 'shell.search.seoDescription',
   entrypoint: defineSystemModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'authenticated_principal' },
     entrypointKey: 'shell-super-app.page.search',
     moduleKey: 'shell-super-app',
     role: 'page',

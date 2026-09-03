@@ -19,7 +19,7 @@ scans unrelated vertical source or rewrites a shared source-time subscription re
 prevents the first polling process from marking a message with only its local handlers and starving
 other independently hosted consumers.
 
-`scaffold:outbox-worker` creates the owner-local process host and adds `dev:worker` and
+`scaffold:outbox-worker -- --authorization owner_local_background` creates the owner-local process host and adds `dev:worker` and
 `worker:start` scripts to the consumer package when needed. Run one consumer with
 `mise exec -- pnpm --filter @app/<consumer> worker:start`; the normal `mise exec -- pnpm dev`
 command starts every generated worker host alongside the applications. Each process performs one
@@ -43,7 +43,7 @@ remain at-least-once and must still be idempotent.
 - Producer, consumer, and worker ownership use dotted OntOS module IDs. Deployment app IDs are not
   Outbox business identities.
 - A consumer imports that published subpath and its own Core descriptor API. It never deep-imports another MicroVertical's source or executes another MicroVertical's implementation.
-- Generate producer messages with `pnpm scaffold:outbox-message` and consumers with `pnpm scaffold:outbox-worker`. Generated worker registries stay server-side and are not Module Federation or BFF surfaces.
+- Generate producer messages with `mise exec -- pnpm scaffold:outbox-message` and consumers with `mise exec -- pnpm scaffold:outbox-worker -- --authorization owner_local_background`. Generated worker registries stay server-side and are not Module Federation or BFF surfaces.
 
 ## Immutable Matching
 
@@ -78,3 +78,11 @@ Runtime telemetry identifies the worker, consumer and producer modules, topic, t
 `worker_checkpoints` is mutable cursor state, not audit evidence. Its identity is tenant plus `consumer_name = workerKey` plus a stable producer/topic stream key. The cursor stores the linked Domain Event's `tenant_sequence_no` and advances only after successful delivery finalization.
 
 Checkpoint advancement must not skip an earlier matching delivery in `pending`, `processing`, or `dead` state. Matching, claiming, decoding failure, handler failure, lease expiry, and dead-lettering never create or advance a checkpoint. Delivery finalization and checkpoint advancement are one transaction so neither can be observed without the other.
+
+## Authorization inventory
+
+Generated workers must declare `owner_local_background`; no other authorization class is valid for
+the `worker` role. The inventory checker reconciles the registered worker, its owner deployment,
+and its generated descriptor. Worker execution remains independently gated by the active tenant
+module state and exact owner-local registration. Report-only rollout never turns a missing owner,
+disabled module, unavailable state check, or foreign deployment into an allow.

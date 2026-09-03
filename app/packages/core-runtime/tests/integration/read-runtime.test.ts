@@ -44,6 +44,7 @@ test('commits live allowed evidence before releasing a governed read result', as
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: readKey,
         moduleKey: 'core.shell',
         role: 'api',

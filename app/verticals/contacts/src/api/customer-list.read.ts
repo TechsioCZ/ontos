@@ -16,6 +16,7 @@ import { listCustomerRecords } from '../services/customer-contact-persistence.se
 
 export const customerListEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'contacts.core.api.customer-list',
   moduleKey: 'contacts.core',
   role: 'api',

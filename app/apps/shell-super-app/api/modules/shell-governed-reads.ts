@@ -108,24 +108,28 @@ const governedShellCompositionSchema: Schema.Codec<ShellComposition> = Schema.Un
 ]);
 const compositionEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.composition',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const searchEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.search',
   moduleKey: 'core.shell',
   role: 'search',
 });
 const moduleTargetEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.module-target',
   moduleKey: 'core.shell',
   role: 'api',
 });
 const resourceDetailEntrypoint = defineSystemModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'core.shell.resource-detail-timeline',
   moduleKey: 'core.shell',
   role: 'api',

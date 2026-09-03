@@ -114,7 +114,7 @@ interface CapturedInvocation {
 
 const startServer = async (
   handler: { readonly handler: (request: Request) => Promise<Response> },
-  assertion: string,
+  issueAssertion: () => Promise<string>,
   onGatewayIssue: () => void,
 ) => {
   const server = createServer(async (request, response) => {
@@ -125,6 +125,7 @@ const startServer = async (
     const url = `http://${request.headers.host ?? '127.0.0.1'}${request.url ?? '/'}`;
     if (new URL(url).pathname === '/auth/gateway-context') {
       onGatewayIssue();
+      const assertion = await issueAssertion();
       response.statusCode = 200;
       response.setHeader('content-type', 'application/json');
       response.end(
@@ -160,15 +161,17 @@ test('runs every Contacts client operation through the real governed BFF boundar
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const publicJwk = await exportJWK(publicKey);
   const now = Math.floor(Date.now() / 1000);
-  const assertion = await new SignJWT({ principal, ver: 1 })
-    .setProtectedHeader({ alg: 'EdDSA', kid: 'contacts-bff', typ: 'JWT' })
-    .setIssuer(issuer)
-    .setAudience('contacts')
-    .setSubject(principal.principalId)
-    .setIssuedAt(now)
-    .setExpirationTime(now + 300)
-    .setJti(randomUUID())
-    .sign(privateKey);
+  const issueAssertion = () =>
+    new SignJWT({ principal, ver: 1 })
+      .setProtectedHeader({ alg: 'EdDSA', kid: 'contacts-bff', typ: 'JWT' })
+      .setIssuer(issuer)
+      .setAudience('contacts')
+      .setSubject(principal.principalId)
+      .setIssuedAt(now)
+      .setExpirationTime(now + 300)
+      .setJti(randomUUID())
+      .sign(privateKey);
+  const assertion = await issueAssertion();
   process.env['ONTOS_GATEWAY_ISSUER'] = issuer;
   process.env['ONTOS_GATEWAY_PUBLIC_JWKS'] = JSON.stringify({
     keys: [{ ...publicJwk, alg: 'EdDSA', kid: 'contacts-bff', use: 'sig' }],
@@ -360,7 +363,7 @@ test('runs every Contacts client operation through the real governed BFF boundar
   );
   const handler = runtime.createHandler();
   let gatewayIssues = 0;
-  const server = await startServer(handler, assertion, () => {
+  const server = await startServer(handler, issueAssertion, () => {
     gatewayIssues += 1;
   });
 
@@ -454,7 +457,7 @@ test('runs every Contacts client operation through the real governed BFF boundar
             ),
           ),
       },
-      assertion,
+      issueAssertion,
       () => {
         malformedGatewayIssues += 1;
       },
@@ -588,7 +591,7 @@ test('runs every Contacts client operation through the real governed BFF boundar
       new Request('https://contacts.test/contacts/customers/create', {
         body: JSON.stringify(customerPayload('Acme')),
         headers: {
-          authorization: `Bearer ${assertion}`,
+          authorization: `Bearer ${await issueAssertion()}`,
           'content-type': 'application/json',
           'x-correlation-id': 'raw-correlation',
         },

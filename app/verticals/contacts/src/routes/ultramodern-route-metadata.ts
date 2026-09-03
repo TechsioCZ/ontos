@@ -10,6 +10,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.seo.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.home',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -34,6 +35,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.contacts.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.contacts',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -58,6 +60,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.customersList.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.customers-list',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -82,6 +85,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.customerDetail.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.customer-detail',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -106,6 +110,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.contactDetail.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.contact-detail',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -130,6 +135,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.contactEdit.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.contact-edit',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -154,6 +160,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.contactCreate.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.contact-create',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -178,6 +185,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.customerEdit.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.customer-edit',
       moduleKey: 'contacts.core',
       role: 'page',
@@ -202,6 +210,7 @@ export const ultramodernRouteMetadata = [
     descriptionKey: 'contacts.pages.customerCreate.description',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module.access' },
       entrypointKey: 'contacts.core.page.customer-create',
       moduleKey: 'contacts.core',
       role: 'page',

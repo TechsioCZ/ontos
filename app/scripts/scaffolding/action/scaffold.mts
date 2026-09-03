@@ -42,6 +42,7 @@ const renderAction = (
   vertical: OntosVerticalMetadata,
   action: string,
   legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
+  provisioning: ActionScaffoldConfig['provisioning'],
 ): string => {
   const actionType = toPascalCase(action);
   const actionValue = `${toCamelCase(action)}Action`;
@@ -86,6 +87,7 @@ export const ${actionValue} = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: '${provisioning}' },
       entrypointKey: '${vertical.moduleId}.${action}',
       moduleKey: '${vertical.moduleId}',
       role: 'action',
@@ -110,6 +112,7 @@ const renderCoreAction = (
   moduleKey: string,
   action: string,
   legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
+  provisioning: ActionScaffoldConfig['provisioning'],
 ): string => {
   const actionType = toPascalCase(action);
   const actionValue = `${toCamelCase(action)}Action`;
@@ -155,6 +158,7 @@ export const ${actionValue} = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: '${provisioning}' },
       entrypointKey: '${moduleKey}.${action}',
       moduleKey: '${moduleKey}',
       role: 'action',
@@ -199,6 +203,7 @@ const planCoreActionScaffold = async (
   moduleKeyInput: string,
   action: string,
   legalEntityScope: ActionScaffoldConfig['legalEntityScope'],
+  provisioning: ActionScaffoldConfig['provisioning'],
 ): Promise<ScaffoldPlan<ActionScaffoldResult>> => {
   const moduleKey = requireCoreModuleKey(moduleKeyInput);
   const actionPath = resolveContainedPath(
@@ -228,7 +233,7 @@ const planCoreActionScaffold = async (
   );
   const actionMutation = await createMutation(
     actionPath,
-    renderCoreAction(moduleKey, action, legalEntityScope),
+    renderCoreAction(moduleKey, action, legalEntityScope, provisioning),
   );
   const indexContent = await readFile(indexPath, 'utf-8');
   const nextIndex = insertSortedSlot(
@@ -267,7 +272,13 @@ export const planActionScaffold = async (
 ): Promise<ScaffoldPlan<ActionScaffoldResult>> => {
   const action = requireCanonicalSlug(config.action, 'action');
   if (config.scope === 'core') {
-    return planCoreActionScaffold(workspaceRoot, config.module, action, config.legalEntityScope);
+    return planCoreActionScaffold(
+      workspaceRoot,
+      config.module,
+      action,
+      config.legalEntityScope,
+      config.provisioning,
+    );
   }
   const vertical = await discoverOntosModule(workspaceRoot, config.vertical);
   const actionPath = resolveContainedPath(
@@ -280,7 +291,7 @@ export const planActionScaffold = async (
   );
   const actionMutation = await createMutation(
     actionPath,
-    renderAction(vertical, action, config.legalEntityScope),
+    renderAction(vertical, action, config.legalEntityScope, config.provisioning),
   );
   const actionValue = `${toCamelCase(action)}Action`;
   const ownerImport = `import { ${actionValue} } from './src/actions/${action}.action.ts';`;

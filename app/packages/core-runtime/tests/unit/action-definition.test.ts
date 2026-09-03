@@ -24,6 +24,7 @@ test('defines an immutable typed descriptor and decodes typed payloads and resul
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -63,6 +64,7 @@ test('uses Schema.Void for a no-payload Action', async () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.cache.refresh',
         moduleKey: 'core.shell',
         role: 'action',
@@ -100,6 +102,7 @@ test('keeps the private handler outside the public Action registration', () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -148,6 +151,7 @@ test('accepts global and same-owner Policy references and copies the collection'
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -184,6 +188,7 @@ test('rejects cross-owner, string, copied, and missing Policy references at defi
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'inventory.stock.reserve',
       moduleKey: 'inventory.stock',
       role: 'action',
@@ -251,6 +256,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -270,6 +276,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'billing.invoice.reserve',
         moduleKey: 'billing.invoice',
         role: 'action',
@@ -281,6 +288,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -292,6 +300,7 @@ test('rejects Action entrypoint owner, scope, role/access, and forged immutabili
       ...registration.descriptor,
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'core.modules.change-state',
         moduleKey: 'core.modules',
         role: 'action',

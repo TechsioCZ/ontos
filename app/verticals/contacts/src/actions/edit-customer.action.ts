@@ -76,6 +76,7 @@ export const editCustomerAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'contacts.core.edit-customer',
       moduleKey: 'contacts.core',
       role: 'action',

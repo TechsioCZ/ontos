@@ -204,10 +204,26 @@ test('business generators fail closed before the mandatory module contract exist
           'create-property',
           '--legal-entity-scope',
           'optional',
+          '--authorization',
+          'action_execution',
+          '--provisioning',
+          'tenant_membership_default',
         ],
       ],
       ['microvertical-action-boundary', ['--vertical', 'property-registry']],
-      ['microvertical-page', ['--vertical', 'property-registry', '--page', 'properties']],
+      [
+        'microvertical-page',
+        [
+          '--vertical',
+          'property-registry',
+          '--page',
+          'properties',
+          '--authorization',
+          'context_permission',
+          '--permission',
+          'module.access',
+        ],
+      ],
       [
         'outbox-message',
         [
@@ -230,6 +246,8 @@ test('business generators fail closed before the mandatory module contract exist
           'documents-center',
           '--topic',
           'document.created',
+          '--authorization',
+          'owner_local_background',
         ],
       ],
       [

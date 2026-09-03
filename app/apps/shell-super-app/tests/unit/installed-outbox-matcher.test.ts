@@ -52,6 +52,7 @@ test('passes a dormant subscription with an absent producer to Core matching', a
     consumerModuleKey: 'property.registry',
     entrypoint: {
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'property.registry.document-projector',
       moduleKey: 'property.registry',
       role: 'worker',

@@ -70,6 +70,7 @@ export const changePrincipalStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.identity.change-principal-status',
       moduleKey: 'core.identity',
       role: 'action',

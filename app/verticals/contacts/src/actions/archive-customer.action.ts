@@ -82,6 +82,7 @@ export const archiveCustomerAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'contacts.core.archive-customer',
       moduleKey: 'contacts.core',
       role: 'action',

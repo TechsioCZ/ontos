@@ -76,6 +76,7 @@ test('accepts a valid owner-local subscription whose producer is not installed',
     consumerModuleKey: 'property.registry',
     entrypoint: {
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'property.registry.document-projector',
       moduleKey: 'property.registry',
       role: 'worker',
@@ -99,6 +100,7 @@ test('rejects contradictory or incomplete Outbox subscription snapshots', () => 
     consumerModuleKey: 'other.module',
     entrypoint: {
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'property.registry.projector',
       moduleKey: 'other.module',
       role: 'worker',
@@ -139,6 +141,7 @@ test('rejects contradictory or incomplete Outbox subscription snapshots', () => 
             consumerModuleKey: 'property.registry',
             entrypoint: {
               access: 'background',
+              authorization: { kind: 'owner_local_background' },
               entrypointKey: duplicateWorkerKey,
               moduleKey: 'property.registry',
               role: 'worker',
@@ -157,6 +160,7 @@ test('rejects contradictory or incomplete Outbox subscription snapshots', () => 
             consumerModuleKey: 'documents.center',
             entrypoint: {
               access: 'background',
+              authorization: { kind: 'owner_local_background' },
               entrypointKey: duplicateWorkerKey,
               moduleKey: 'documents.center',
               role: 'worker',

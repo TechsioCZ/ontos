@@ -1,4 +1,43 @@
 export {
+  ACTION_PROVISIONING_INTENTS,
+  ActionExecutionAuthorizationSchema,
+  ActionProvisioningIntentSchema,
+  AuthenticatedPrincipalAuthorizationSchema,
+  CapabilityIssuanceAuthorizationSchema,
+  ContextPermissionAuthorizationSchema,
+  EntrypointAuthorizationSchema,
+  IntentionalPublicAuthorizationSchema,
+  OwnerLocalBackgroundAuthorizationSchema,
+  decodeEntrypointAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export {
+  AUTHORIZATION_WOULD_DENY_SCHEMA_VERSION,
+  decideAuthorizationRollout,
+} from './authorization/rollout-decision.ts';
+export type {
+  AuthorizationDenialReason,
+  AuthorizationRolloutDecisionInput,
+  AuthorizationRolloutDecisionOptions,
+  AuthorizationRolloutMode,
+  AuthorizationRolloutRuntimeContract,
+  AuthorizationWouldDenyEvent,
+} from './authorization/rollout-decision.ts';
+export {
+  GatewayAssertionRedemptionService,
+  GatewayAssertionRedemptionUnavailableError,
+  GatewayAssertionReplayError,
+} from './auth/gateway-assertion-redemption.ts';
+export type {
+  GatewayAssertionRedemption,
+  GatewayAssertionRedemptionError,
+  GatewayAssertionRedemptionInput,
+} from './auth/gateway-assertion-redemption.ts';
+export type {
+  ActionExecutionAuthorization,
+  ActionProvisioningIntent,
+  EntrypointAuthorization,
+} from './authorization/entrypoint-classification.ts';
+export {
   PrincipalBindingAmbiguousError,
   PrincipalBindingInactiveError,
   PrincipalBindingMissingError,

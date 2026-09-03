@@ -44,6 +44,11 @@ const currentActionKeys = [
   'core.modules.change-tenant-module-state',
 ] as const;
 
+const currentActions = currentActionKeys.map((actionKey) => ({
+  actionKey,
+  provisioning: 'tenant_membership_default' as const,
+}));
+
 const developmentConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'development',
   endpoint: 'localhost:50051',
@@ -213,7 +218,7 @@ test('provisions with TOUCH, verifies both outcomes, and is safe to rerun', asyn
     selectActionAuthorizationProvisioningTarget(developmentConfiguration),
   );
   const { client, state } = makeProvisioningClient(target.contexts);
-  const input = { actionKeys: currentActionKeys, contexts: target.contexts };
+  const input = { actions: currentActions, contexts: target.contexts };
 
   const first = await Effect.runPromise(provisionActionAuthorization(client, input));
   const second = await Effect.runPromise(provisionActionAuthorization(client, input));
@@ -232,6 +237,36 @@ test('provisions with TOUCH, verifies both outcomes, and is safe to rerun', asyn
   );
 });
 
+test('never grants explicit Actions through Tenant membership and verifies their existing policy', async () => {
+  const target = await Effect.runPromise(
+    selectActionAuthorizationProvisioningTarget(developmentConfiguration),
+  );
+  const { client, state } = makeProvisioningClient(target.contexts);
+  const [context] = target.contexts;
+  assert.ok(context !== undefined);
+  state.grants.add(`${toSpiceDbActionObjectId('core.identity.restricted')}:${context.tenantId}`);
+
+  const result = await Effect.runPromise(
+    provisionActionAuthorization(client, {
+      actions: [
+        {
+          actionKey: 'contacts.core.create-customer',
+          provisioning: 'tenant_membership_default',
+        },
+        { actionKey: 'core.identity.restricted', provisioning: 'explicit' },
+      ],
+      contexts: target.contexts,
+    }),
+  );
+
+  assert.deepEqual(result, { actionCount: 2, grantCount: 1, tenantCount: 1 });
+  assert.equal(state.updates.length, 1);
+  assert.equal(
+    state.updates[0]?.relationship?.resource?.objectId,
+    toSpiceDbActionObjectId('contacts.core.create-customer'),
+  );
+});
+
 test('rejects invalid input and missing membership before writing grants', async () => {
   const target = await Effect.runPromise(
     selectActionAuthorizationProvisioningTarget(developmentConfiguration),
@@ -239,7 +274,7 @@ test('rejects invalid input and missing membership before writing grants', async
   const { client, state } = makeProvisioningClient([]);
   const missingMembership = await failureOf(
     provisionActionAuthorization(client, {
-      actionKeys: currentActionKeys,
+      actions: currentActions,
       contexts: target.contexts,
     }),
   );
@@ -249,7 +284,16 @@ test('rejects invalid input and missing membership before writing grants', async
 
   const duplicate = await failureOf(
     provisionActionAuthorization(client, {
-      actionKeys: ['contacts.core.edit-customer', 'contacts.core.edit-customer'],
+      actions: [
+        {
+          actionKey: 'contacts.core.edit-customer',
+          provisioning: 'tenant_membership_default',
+        },
+        {
+          actionKey: 'contacts.core.edit-customer',
+          provisioning: 'tenant_membership_default',
+        },
+      ],
       contexts: target.contexts,
     }),
   );
@@ -271,7 +315,7 @@ test('sanitizes authorization service failures', async () => {
   };
   const error = await failureOf(
     provisionActionAuthorization(unavailable, {
-      actionKeys: currentActionKeys,
+      actions: currentActions,
       contexts: target.contexts,
     }),
   );

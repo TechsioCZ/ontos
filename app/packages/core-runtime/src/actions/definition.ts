@@ -126,6 +126,7 @@ export interface AnyActionRegistration {
       >,
       | 'actionKey'
       | 'auditProfile'
+      | 'entrypoint'
       | 'idempotency'
       | 'legalEntityScope'
       | 'owningModuleKey'

@@ -84,7 +84,9 @@ export const MODULE_REGISTRATION_WORKER_SLOT_END = '// </generated-module-regist
 
 export interface VerticalActionScaffoldConfig {
   readonly action: string;
+  readonly authorization: 'action_execution';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
+  readonly provisioning: 'explicit' | 'tenant_membership_default';
   readonly vertical: string;
   readonly module?: never;
   readonly scope?: never;
@@ -92,8 +94,10 @@ export interface VerticalActionScaffoldConfig {
 
 export interface CoreActionScaffoldConfig {
   readonly action: string;
+  readonly authorization: 'action_execution';
   readonly legalEntityScope: 'forbidden' | 'optional' | 'required';
   readonly module: string;
+  readonly provisioning: 'explicit' | 'tenant_membership_default';
   readonly scope: 'core';
   readonly vertical?: never;
 }
@@ -118,6 +122,7 @@ export interface OutboxScaffoldConfig {
 }
 
 export interface OutboxWorkerScaffoldConfig {
+  readonly authorization: 'owner_local_background';
   readonly producer: string;
   readonly topic: string;
   readonly vertical: string;
@@ -125,13 +130,17 @@ export interface OutboxWorkerScaffoldConfig {
 }
 
 export interface PageScaffoldConfig {
+  readonly authorization: 'authenticated_principal' | 'context_permission' | 'public';
   readonly page: string;
+  readonly permission?: string;
   readonly url?: string;
   readonly vertical: string;
 }
 
 export interface GovernedContributionScaffoldConfig {
+  readonly authorization: 'authenticated_principal' | 'context_permission' | 'public';
   readonly name: string;
+  readonly permission?: string;
   readonly resource?: string;
   readonly vertical: string;
 }
@@ -203,6 +212,7 @@ export interface GovernedContributionScaffoldResult {
 export interface ActionBoundaryScaffoldResult {
   readonly appId: string;
   readonly clientPath: string;
+  readonly redemptionPath: string;
   readonly serverPath: string;
 }
 
