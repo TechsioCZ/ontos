@@ -25,15 +25,19 @@ assertion semantics, merge readiness, and migration rules are defined by
 [ADR-0018](0018-party-registry-operational-boundaries.md).
 
 Other modules address Parties and Counterparties through public ResourceRefs and Party Registry
-contracts. Contacts owns engagement profiles and workflows; Commerce owns retail, channel, and B2B
-purchasing profiles and workflows. Neither duplicates shared Party identity. Connector Registries
-own provider-issued external-ID correlations, and Principal authorization owns permission to buy,
-approve, or administer access; a Party Relationship grants no authorization by itself.
+contracts. Contacts owns engagement profiles and workflows. Commerce owns Commerce Retail Customer
+Profiles, Commerce Counterparty Purchasing Profiles, channel workflows, customer commercial
+settings, and their explicit profile/account bindings. Neither duplicates shared Party identity.
+Connector Registries own provider-issued external-ID correlations, and Principal authorization owns
+permission to buy, approve, administer access, read history, or manage customer settings. A Party
+Relationship, Counterparty Role, selected context, profile, or account grants no authorization by
+itself.
 
 Commerce also owns its separate Portal Account lifecycle and links each account/profile to stable
-Party/Counterparty references. Registration and authentication do not move Party identity into
-BetterAuth or Commerce; lifecycle events let Contacts, support/ticketing, analytics, and other
-authorized consumers project the linkage without sharing an account realm.
+Party/Counterparty references through owner-local bindings. Registration, matching Contact Points,
+Party correction or merge, authentication, or account ownership do not move Party identity into
+BetterAuth or Commerce and must never silently grant profile access, Counterparty permission, or
+guest Order visibility.
 
 Party Registry publishes identity and relationship lifecycle events for consumer projections.
 Imports contribute observations and Party Candidates but cannot write a competing canonical Party.
@@ -59,7 +63,8 @@ decision and the current Commerce delivery.
 ## Consequences
 
 - “Customer” must be qualified as Customer Configuration, Retail Customer, Counterparty Role,
-  Contacts profile, or another explicit context.
+  Contacts profile, Commerce Retail Customer Profile, Commerce Counterparty Purchasing Profile, or
+  another explicit context.
 - One Party may participate in several Party Relationships and Counterparty Roles without identity
   duplication.
 - LegalEntityRef and PartyRef remain distinct; contracts do not convert them implicitly.
@@ -68,6 +73,8 @@ decision and the current Commerce delivery.
   corrects identity.
 - Contacts and Commerce schemas, APIs, and workflows must reference Party/Counterparty contracts
   instead of becoming alternative identity registries.
+- Historical Resources retain their accepted facts and actor attribution; current Party correction
+  or merge does not rewrite them.
 - Party identity Actions require explicit Tenant authority; Counterparty Actions require explicit
   Legal Entity or Counterparty authority.
 - Core Search is a projection and cannot enforce Party uniqueness or decide Party Matching.

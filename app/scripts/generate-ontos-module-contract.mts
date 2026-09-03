@@ -205,7 +205,7 @@ const deriveApiOperationKeys = (api: HttpApi.AnyWithProps): readonly string[] =>
   Object.values(api.groups)
     .flatMap((group) =>
       Object.values(group.endpoints).map((endpoint) =>
-        group.topLevel ? endpoint.name : `${group.identifier}.${endpoint.name}`,
+        group.topLevel ? endpoint.identifier : `${group.identifier}.${endpoint.identifier}`,
       ),
     )
     .toSorted((left, right) => left.localeCompare(right));
