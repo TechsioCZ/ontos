@@ -1,193 +1,150 @@
 ---
 name: ontos-implement-spec
-description: Implement one approved OntOS plan from app/specs/, including writing required tests, running targeted and repository validation, reviewing and fixing the diff against the complete specification, applicable AGENTS.md files, and all relevant referenced guidance. Use when the user explicitly asks to implement a named or uniquely identifiable OntOS specification.
+description: Implement one approved OntOS specification in a required Locki sandbox, including package-owned tests, focused and repository validation, final diff review, and accurate implementation evidence. Use when the user explicitly asks to implement a named or uniquely identifiable plan under app/specs/.
 ---
 
-# Implement the Following Plan
+# Implement an OntOS specification
 
-Follow the `Instructions` to implement the `Plan`, execute the `Application Validation Test Suite`, complete the `Review`, fix every in-scope finding, then `Report` the completed work.
+Resolve the named plan, implement every ordered task, validate the result, fix in-scope review
+findings, and update the plan with accurate evidence.
 
-## Locki Sandbox (Required)
+## Locki sandbox
 
 > [!IMPORTANT]
-> Implement specifications only in a Locki sandbox. Never create a worktree with Git or Codex,
-> and never implement a specification in the primary checkout. Do not fall back to either approach
-> when Locki is unavailable or fails.
+> Implement only in a Locki sandbox. Never create a worktree manually or edit the primary checkout.
 
-- Read the canonical [OntOS development workflow](../../../app/DEVELOPMENT.md) before creating or
-  operating a sandbox.
-- If `LOCKI_SANDBOX_ID` is non-empty, use the current Locki sandbox and do not create another one.
-- Otherwise, run `command -v locki` before any implementation change. If it fails, stop and tell the
-  developer to install Locki with `uv tool install locki`. Do not create a worktree or change code.
-- When Locki is available but no sandbox is active, derive a lower-kebab-case feature slug from the
-  specification basename and run this from the primary `app/` directory:
+1. Read [`app/DEVELOPMENT.md`](../../../app/DEVELOPMENT.md).
+2. If `LOCKI_SANDBOX_ID` is set, use the current sandbox.
+3. Otherwise derive a lower-kebab slug from the specification basename and run from the primary
+   `app/` directory:
+
+   ```sh
+   mise exec -- pnpm sandbox:new -- <feature-slug> --no-ai
+   ```
+
+4. Continue from the returned sandbox `app/` directory. For host control:
+
+   ```sh
+   locki exec --match <sandbox-id> -- sh -lc 'cd app && <command>'
+   ```
+
+The repository script owns Locki availability, minimum version, committed workflow inputs, setup,
+and recovery checks. If it fails, preserve its exact error and stop; do not create a fallback
+worktree. If this agent cannot continue in the returned sandbox, stop after preparation and tell the
+developer to resume with `locki ai --match <sandbox-id>`.
+
+## Resolve the plan
+
+Use the supplied `specs/*.md` path or a unique basename. Without a path, proceed only when exactly
+one `planned` or `in_progress` specification matches the request; otherwise ask which plan to use.
+
+Read the complete plan. Accept only `planned` or `in_progress`; change `planned` to `in_progress`
+before implementation.
+
+## Prepare
+
+From the sandbox `app/` directory:
+
+1. Capture `git status --short --branch`; preserve unrelated changes.
+2. Read `../AGENTS.md`, `AGENTS.md`, and `README.md`.
+3. Read only the implementation documents named by the plan or selected by the README routing table.
+4. Read one focused context or ADR only when the plan requires its business semantics or decision.
+5. Inspect the relevant source, tests, package scripts, topology, and generated contracts.
+6. Use `$ontos-prime` first when project context is stale.
+
+Do not browse completed specifications or broad documentation trees for background.
+
+## Implement
+
+- Execute every `Step by Step Task` in order.
+- Stay inside the plan's requirements and non-goals. Ask before changing observable product scope or
+  architecture beyond the approved plan.
+- Discover the current generator catalog from `package.json` `scaffold:*` scripts. For every
+  supported business artifact, run the matching generator first and inspect its current interface:
 
   ```sh
-  mise exec -- pnpm sandbox:new -- <feature-slug> --no-ai
+  mise exec -- pnpm scaffold:<artifact> -- --help
   ```
 
-- Continue all reads and edits from the returned Locki worktree's `app/` directory. Run project
-  commands inside that sandbox. When controlling it from the host, use
-  `locki exec --match <sandbox-id> -- sh -lc 'cd app && <command>'`.
-- If the agent cannot transfer its work to the returned Locki worktree, stop after preparation and
-  tell the developer to resume there with `locki ai --match <sandbox-id>`. Do not continue in the
-  primary checkout.
+- Adapt generated output; never recreate generated wiring manually. If the required artifact has no
+  approved generator or governed gateway, stop and record the blocking decision.
+- Preserve owner-local MicroVertical data and executables, generated Effect BFF clients, typed
+  Actions, governed reads, and tagged expected errors.
+- Add or update tests beside every changed behavior and important failure path.
+- Keep tests with their deployable owner:
+  - Shell: `apps/<shell>/tests/{unit,integration,e2e}/`
+  - MicroVertical: `verticals/<vertical>/tests/{unit,integration,e2e}/`
+  - Shared package: `packages/<package>/tests/{unit,integration}/`
+- Update test discovery and package scripts when adding or moving tests.
+- Run the narrowest relevant tests after each meaningful slice. Mark a plan checkbox complete only
+  after its implementation and tests are verified.
 
-## Instructions
+## Validate
 
-- Work from the OntOS `app/` directory inside the required Locki worktree.
-- Read the plan, think hard about the plan, and implement the plan.
-- If project context is not fresh, use `$ontos-prime` before continuing.
-- Read `../AGENTS.md`, `AGENTS.md`, and every relevant guidance file referenced by `AGENTS.md`. Do not rely on memory or a previous summary.
-- Read the relevant source, tests, package scripts, topology, and product context before changing code.
-- Capture the starting `git status --short`. Preserve unrelated and pre-existing changes.
-- Accept only a plan with status `planned` or `in_progress`. Change `planned` to `in_progress` before implementation.
-- Stay inside the plan's requirements and non-goals. Ask before making a materially different architectural or product decision.
+Run from `app/` through `mise exec -- pnpm`. Derive commands from current package scripts; do not
+invent them. Record the exact command and `passed`, `failed`, or `not run` with a reason.
 
-## Plan
+1. Run focused tests for every changed behavior and failure path.
+2. Run every command under the plan's `Validation Commands`, in order.
+3. Run the repository gate:
 
-Use the `specs/*.md` path supplied with the skill invocation. A uniquely identifiable basename is acceptable. If no path is supplied, proceed only when exactly one planned specification unambiguously matches the request; otherwise ask which plan to implement.
+   ```bash
+   mise exec -- pnpm check
+   ```
 
-## Implementation
+4. Run `mise exec -- pnpm build` when required by the plan or when the change affects routing,
+   public surfaces, Module Federation, deployment artifacts, or runtime bundling.
+5. Run the applicable browser or runtime path when acceptance criteria are user-visible or
+   cross-boundary. This supplements tests; it does not replace them.
 
-- Execute every `Step by Step Task` in order, top to bottom.
-- Run every mandatory Codesmith generator from `app/` before adapting its generated output:
-  - Action: `mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>`
-  - MicroVertical page: `mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>`
-  - Outbox Message: `mise exec -- pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>`
-  - Global Policy: `mise exec -- pnpm scaffold:policy -- --scope global --policy <policy>`
-  - MicroVertical Policy: `mise exec -- pnpm scaffold:policy -- --scope microvertical --policy <policy> --vertical <vertical>`
-- Use a generator's `--help` option to discover supported customization flags. Never recreate its initial files or wiring manually.
-- Do not create business-functionality files directly. If a required business file type has no Codesmith generator, stop and ask the developer how to proceed.
-- Follow existing patterns and preserve strict MicroVertical deployment seams, the generated Effect BFF client seam, typed Action state changes, and typed Effect error contracts.
-- Write new tests or update existing tests for every changed behavior and important failure path. Validation commands are not a substitute for test coverage.
-- Keep tests owned by the deployable package they validate:
-  - shell tests live under `apps/<shell>/tests/`;
-  - each MicroVertical's tests live under `apps/<microvertical>/tests/`;
-  - shared-package tests live under `packages/<package>/tests/`.
-- Organize each package-owned test tree by level as applicable: `tests/unit/`, `tests/integration/`, and `tests/e2e/`. Do not place test files in production `src/` unless an explicit repository instruction requires colocated tests.
-- Update test-runner discovery, imports, and package scripts when adding or moving package-owned tests.
-- Run focused tests after each meaningful implementation slice and fix failures before continuing.
-- Mark each plan task complete only after its implementation and tests are verified.
+Fix implementation-caused failures and rerun the affected commands. Record unrelated baseline
+failures precisely and continue with independent checks where possible. Never report an unrun test
+as passed.
 
-# Application Validation Test Suite
+## Review and fix
 
-Execute comprehensive validation for the changed OntOS behavior and capture accurate evidence in the plan.
-
-## Purpose
-
-Proactively identify and fix implementation problems before completion:
-
-- syntax, type, import, format, and lint failures;
-- broken focused, component, contract, or integration tests;
-- architecture and generated-contract violations;
-- build or runtime regressions;
-- user-visible loading, empty, error, accessibility, and interaction failures.
-
-## Variables
-
-`TEST_COMMAND_TIMEOUT`: 5 minutes unless an existing repository command normally needs longer.
-
-## Test Instructions
-
-- Run commands from `app/` through `mise exec -- pnpm`.
-- Derive focused commands from actual package scripts and the plan. Do not invent commands.
-- Record the exact command and whether it passed, failed, or was not run with a reason.
-- If a command fails because of the implementation, fix the failure and rerun it.
-- If an unrelated baseline failure occurs, record it precisely and continue with independent validation when possible.
-- Never claim a test passed when it was not run.
-
-## Test Execution Sequence
-
-### 1. Focused Tests
-
-Run the smallest tests that prove each changed behavior and important failure path. Include all tests added or modified during implementation.
-
-### 2. Plan Validation Commands
-
-Run every command under the plan's `Validation Commands` in the specified order.
-
-### 3. Repository Quality Gate
-
-Run:
+Inspect:
 
 ```bash
-mise exec -- pnpm check
+git status --short
+git diff --check
+git diff --stat
+git diff
 ```
 
-### 4. Build Validation
+Then re-read the plan, applicable agent instructions, and the focused current guidance used during
+implementation. Compare the final diff with every task, acceptance criterion, non-goal, test
+strategy, and validation command.
 
-Run `mise exec -- pnpm build` when the plan requires it or the change affects build output, Module Federation, routing, public surfaces, deployment artifacts, or runtime bundling.
+Check specifically for:
 
-### 5. Runtime or Browser Validation
+- unintended scope or public API expansion;
+- private imports or transactions across MicroVerticals;
+- state changes outside typed Actions or reads outside their governed lifecycle;
+- missing authorization, policy, evidence, transaction, event, or outbox behavior;
+- untyped expected errors or incorrect HTTP mappings;
+- frontend calls outside generated Effect BFF clients;
+- generated artifacts recreated manually;
+- missing or weak failure-path tests;
+- incorrect loading, empty, forbidden, validation, conflict, retry, accessibility, or responsive
+  behavior;
+- UI outside `@techsio/ui-kit`, plain CSS, or an unapproved component;
+- duplication, dead code, unsafe assumptions, or unrelated edits.
 
-When acceptance criteria involve user-visible or cross-boundary behavior, run the relevant application and validate the critical path in a browser. Tests remain required; runtime validation does not replace them.
+For applicable UI work, validate the critical browser path and retain only 1–5 useful screenshots
+under `app/.codex/reports/review/<spec-basename>/`.
 
-# Review
+Fix every in-scope finding, rerun affected tests, and rerun `mise exec -- pnpm check` after code
+changes. Classify only unresolved findings as `skippable`, `tech_debt`, or `blocker`.
 
-Review the completed work against the specification file, applicable agent instructions, and the final diff. Fix issues found during the review rather than merely reporting them.
+## Complete the plan
 
-## Review Variables
+Set status to `done` only when all tasks and acceptance criteria are complete, changed behavior has
+tests, required validation passes, review findings are resolved or explicitly accepted, and the
+diff has no unexplained changes. Otherwise set status to `blocked`, preserve truthful checkboxes,
+and record the blocker.
 
-- `spec_file`: the resolved `specs/*.md` plan.
-- `review_image_dir`: `app/.codex/reports/review/<spec-basename>/` when screenshots are applicable.
-
-## Review Instructions
-
-1. Inspect:
-   - `git status --short`
-   - `git diff --check`
-   - `git diff --stat`
-   - the complete task-relevant final diff
-2. Re-read:
-   - `../AGENTS.md`;
-   - `AGENTS.md`;
-   - `README.md`;
-   - each task-specific implementation document named by the specification or selected by the
-     README routing table;
-   - only the focused context or ADR explicitly relevant to the plan.
-3. Compare the final implementation with the complete plan:
-   - description, problem, and solution;
-   - requirements and non-goals;
-   - every ordered task;
-   - testing strategy and validation commands;
-   - every acceptance criterion;
-   - review checklist, risks, assumptions, and deliberate tradeoffs.
-4. Check specifically for:
-   - unintended scope or API expansion;
-   - MicroVertical boundary violations or imports across private implementations;
-   - state changes that bypass typed Actions;
-   - missing Action lifecycle, transaction, event, permission, policy, or evidence behavior;
-   - expected failures that bypass declared typed Effect errors or use incorrect HTTP statuses;
-   - frontend calls that bypass the generated Effect BFF client;
-   - missing tests, weak assertions, and untested failure paths;
-   - incorrect loading, empty, error, forbidden, validation, conflict, retry, accessibility, or responsive behavior;
-   - UI that bypasses `@techsio/ui-kit`, introduces plain CSS, or creates a component without required developer approval;
-   - dead code, duplication, unsafe assumptions, accidental edits, and generated files recreated by hand.
-5. For applicable UI work:
-   - use browser validation to review critical functionality against the plan;
-   - capture only 1–5 useful screenshots and store them in `review_image_dir`;
-   - use screenshots as review evidence, not as a substitute for tests.
-6. Classify findings when useful:
-   - `skippable` — a real non-blocking issue;
-   - `tech_debt` — non-blocking but creates future maintenance cost;
-   - `blocker` — prevents release or violates a required behavior or architecture rule.
-7. Fix every in-scope finding. Rerun affected tests and validation commands after each review fix. Rerun `mise exec -- pnpm check` when code changed.
-
-## Completion
-
-Set the plan status to `done` only when:
-
-- every implementation task and acceptance criterion is complete;
-- tests were written or updated for every changed behavior and important failure path;
-- required focused tests, plan validation commands, and the final quality gate pass;
-- the final diff complies with `../AGENTS.md`, `AGENTS.md`, and every relevant referenced guidance file;
-- review findings are resolved or explicitly accepted by the developer;
-- the final diff contains no unexplained changes.
-
-If adequate confidence is impossible, set the status to `blocked`, preserve accurate task checkboxes, and record the blocker without claiming completion.
-
-Create or update one section in the plan:
+Create or update exactly one section:
 
 ```md
 ## Implementation Evidence
@@ -198,11 +155,11 @@ Create or update one section in the plan:
 
 ### Changed Files
 
-<Concise output from git diff --stat.>
+<Concise `git diff --stat` output.>
 
 ### Tests Written or Updated
 
-- `<test path>` — <behavior and failure path it proves>.
+- `<test path>` — <behavior and failure path proved>.
 
 ### Validation
 
@@ -210,7 +167,7 @@ Create or update one section in the plan:
 
 ### Review
 
-- <AGENTS.md files and referenced guidance reviewed, findings, fixes, and any screenshots.>
+- <Instructions and focused guidance reviewed, findings, fixes, and screenshots.>
 
 ### Deviations and Follow-ups
 
@@ -219,11 +176,8 @@ Create or update one section in the plan:
 
 ## Report
 
-- Summarize the completed work in a concise bullet list.
-- Report the plan path and final status.
-- Report tests written or updated and every validation command with its result.
-- Report review findings and fixes, including compliance with both applicable `AGENTS.md` files and their relevant referenced guidance.
-- Report files and total lines changed with `git diff --stat`.
-- Report blockers, deviations, or follow-ups.
+Report the plan path and final status, implemented behavior, tests, every validation result, review
+findings and fixes, `git diff --stat`, and any blocker or deviation.
 
-Do not create branches, commits, pushes, pull requests, or GitHub issues unless the user explicitly requests those actions.
+The required Locki feature branch is part of this workflow. Do not create additional branches,
+commits, pushes, pull requests, or GitHub issues unless the user explicitly requests them.

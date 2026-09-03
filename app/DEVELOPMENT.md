@@ -2,52 +2,48 @@
 
 ## Development branch
 
-`main` is the canonical development branch and the default base and pull-request target for new
-work. Do not start new work from `develop`; that branch exists only for the one-time transition back
-to `main` and may be removed after the transition is complete.
+`main` is the canonical development branch and the default pull-request base. Do not start new work
+from `develop`; it exists only for the one-time transition back to `main`.
 
-Promote releases from `main` to the protected `stage` branch. A feature sandbox always creates its
-feature branch from the current committed `main` workflow described below.
+Promote releases from `main` to the protected `stage` branch. Feature work starts from the current
+committed `main`.
 
 ## Locki
 
-[Locki](https://github.com/JanPokorny/locki) creates isolated development sandboxes backed by Git worktrees and containers. OntOS uses it so each feature can have an independent branch, dependencies, services, database, and AI session without affecting another feature or the main checkout.
+[Locki](https://github.com/JanPokorny/locki) creates isolated worktree-and-container sandboxes.
+Each feature receives its own branch, dependencies, services, database, and AI session without
+changing the primary checkout.
 
-## Installation
+The repository command below validates Locki availability and minimum version, committed workflow
+inputs, and recovery. When it reports a missing or old installation, follow its exact versioned
+install command, then run `locki setup` once.
 
-Install Locki globally with `uv` (the current directory does not matter):
-
-```sh
-uv tool install locki
-```
-
-Run the one-time interactive setup to select the preferred AI harness and editor:
-
-```sh
-locki setup
-```
-
-Do not copy the entire `~/.codex` directory when prompted; it can contain large Codex worktrees. Authenticate the selected AI harness inside Locki separately if necessary.
+Do not copy the complete `~/.codex` directory during setup; it may contain large worktrees.
+Authenticate the selected AI harness inside Locki when needed. Treat the repository script as the
+executable source instead of duplicating its checks here.
 
 ## Feature sandbox workflow
 
-Create and prepare a sandbox from the `main` branch:
+From the primary `app/` directory:
 
 ```sh
 mise exec -- pnpm sandbox:new -- customer-search
 ```
 
-Replace `customer-search` with the feature slug. This command creates the branch and worktree, copies `app/.env`, installs dependencies, starts the containers, runs Drizzle migrations, initializes the local tenant, legal entity, user, and Contacts MicroVertical, verifies the database, and opens the configured AI harness. Note the sandbox ID printed by Locki.
+Replace `customer-search` with a lower-kebab feature slug. The command creates the branch and
+sandbox, copies the local environment file without requiring agents to inspect it, installs
+dependencies, starts services, runs migrations, initializes the configured local context and
+MicroVerticals, verifies the database, and opens the configured AI harness. Record the sandbox ID.
 
-Forward the application ports from macOS to the sandbox:
+Forward application ports from macOS:
 
 ```sh
 locki pf --match 1aixi9oo 3020 4101
 ```
 
-Replace `1aixi9oo` with the sandbox ID. This maps macOS ports `3020` and `4101` to the same ports inside the sandbox. The command returns immediately and does not require a dedicated terminal.
+Replace `1aixi9oo` with the sandbox ID. The command returns immediately.
 
-Enter the sandbox and run OntOS in another terminal:
+Enter the sandbox and start OntOS:
 
 ```sh
 locki x --match 1aixi9oo
@@ -55,46 +51,38 @@ cd app
 mise exec -- pnpm dev
 ```
 
-`locki x` opens a shell in the selected sandbox. `pnpm dev` starts the OntOS development processes and occupies that terminal until stopped.
+For non-interactive host control:
 
-### Fail-closed Action authorization checkpoint
+```sh
+locki exec --match 1aixi9oo -- sh -lc 'cd app && mise exec -- pnpm <script>'
+```
 
-Sandbox preparation intentionally creates the fixed development context and Tenant membership but
-does not provision Action executor relationships. For authorization changes, keep one sandbox
-unchanged and verify the rollout in this order:
+Release and authorization rollout work follows
+[Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md) and the
+[Deployment Playbook](docs/architecture/DEPLOYMENT.md); do not copy feature-specific rollout
+sequences into this onboarding guide.
 
-1. start the candidate application and invoke a representative Contacts mutation as `demo@test.com`;
-2. confirm a localized error Toast and `403`, one rejected invocation/audit record, and no business
-   write or handler effect;
-3. run `mise exec -- pnpm authorization:provision-current-actions` and run it a second time to prove
-   idempotence;
-4. retry the same mutation and confirm normal success with no denial Toast;
-5. confirm a Principal outside the fixed development Tenant remains denied.
+## Cleanup
 
-The command discovers all current Actions and grants their executor relation to the fixed
-development Tenant membership set. It accepts no caller-supplied scope and never writes stage from a
-development sandbox.
-
-When the feature sandbox is no longer needed, stop its running processes and remove it:
+Stop running processes, then remove the sandbox:
 
 ```sh
 locki rm --match 1aixi9oo --branches
 ```
 
-This removes the sandbox container, worktree, port forwards, and sandbox branches. Locki refuses when uncommitted changes are present; review or preserve them before removal.
+Locki refuses removal while uncommitted changes exist. Review or preserve them first.
 
-Delete the complete shared Locki VM when it is no longer needed:
+Delete the shared Locki VM only when no sandbox needs it:
 
 ```sh
 locki vm delete
 ```
 
-This stops and deletes the VM, including its containers, images, volumes, and VM caches. Locki preserves host-side worktrees and its shared sandbox home.
+This deletes VM containers, images, volumes, and caches. Host-side worktrees and the shared sandbox
+home remain.
 
-## Prepared Environment:
+## Prepared local environment
 
-Each new sandbox has login:
-`demo@test.com`
-`password1234`
-
-There is a Tenant `Techsio` with a legal entity `TechsioCZ`
+[`scripts/initialize-local-development.mts`](scripts/initialize-local-development.mts) owns the
+local login and seeded Tenant, Legal Entity, Principal, and module state. Read that executable
+source only when the task needs the exact local values; do not duplicate them in guidance.

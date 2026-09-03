@@ -1,21 +1,30 @@
 # ADR-0011: Internal dogfooding starts early
 
-Status: Superseded planning decision. Property-first sequencing is stale; current architecture
-proof work is tracked in [OntOS #176](https://github.com/TechsioCZ/ontos/issues/176) and
-[#177](https://github.com/TechsioCZ/ontos/issues/177).
+Status: Superseded. This record preserves a historical sequencing decision; GitHub issues own
+current sequencing.
 
 ## Context
 
-The system will be used by a customer, but the internal operator also needs an operational slice: clients, projects, tickets, media/documents, and invoices with draft status. This is a low-friction way to validate foundations, but it must not displace the customer-domain dependency root.
+The system was expected to serve a customer while the internal operator also needed an operational
+slice: clients, projects, tickets, media/documents, and invoices with draft status. This appeared to
+offer a low-friction way to validate foundations without displacing the customer-domain dependency
+root.
 
 ## Decision
 
-Current planning assumption: `property.registry` is the likely first customer-domain slice after the foundation skeleton. The `internal.delivery` MicroVertical can start early after those rails are proven, validating ResourceRef linking, media attachment, permissions, audit, invoices with `status = draft`, and tenant-level module activation without distracting from committed customer scope.
+At the time of acceptance, planning assumed `property.registry` would be the first customer-domain
+slice after the foundation skeleton. The `internal.delivery` MicroVertical could then start early,
+using the same rails to validate ResourceRef linking, media attachment, permissions, audit, draft
+invoices, and tenant-level module activation.
 
 ## Consequences
 
-The customer-domain backbone is explored first. The team still experiences its own UX and architecture issues early, but dogfooding follows the same rails instead of setting the initial direction.
+This sequencing no longer governs current work. The record remains useful as evidence of why early
+dogfooding was considered and which foundation behaviors it was expected to exercise. Follow-up
+proof work was tracked in [#176](https://github.com/TechsioCZ/ontos/issues/176) and
+[#177](https://github.com/TechsioCZ/ontos/issues/177); GitHub owns their current state.
 
 ## Risks
 
-Dogfooding must not distract from committed customer scope. It should remain narrow and foundation-oriented.
+Dogfooding could distract from committed customer scope. The historical decision therefore kept it
+narrow and foundation-oriented.

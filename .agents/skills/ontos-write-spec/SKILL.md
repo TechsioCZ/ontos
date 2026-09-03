@@ -1,58 +1,73 @@
 ---
 name: ontos-write-spec
-description: Research an OntOS feature, bug, or chore and create an implementation-ready Markdown plan or ticket under app/specs/ using the matching feature, bug, or chore format. Use when the user asks to plan, specify, ticket, or decompose OntOS work without implementing it or creating a GitHub issue.
+description: Research an OntOS feature, bug, or chore and create one implementation-ready plan under app/specs/ using the matching template. Use when the user asks to plan, specify, ticket, or decompose OntOS work without implementing it or creating a GitHub issue.
 ---
 
-# Feature, Bug, or Chore Planning
+# Plan OntOS work
 
-Create a new plan in `specs/*.md` to implement the `Feature`, resolve the `Bug`, or accomplish the `Chore` using the matching exact `Plan Format`. Follow the `Instructions` to create the plan and use the `Relevant Files` to focus on the right files.
+Create one `specs/*.md` plan for the supplied Feature, Bug, or Chore. Research current owners and
+contracts first; do not duplicate or contradict an existing active plan.
 
-## Input
+## Classify
 
-Use the request supplied with the skill invocation. Classify it as one of:
+- `Feature` — net-new user or product value.
+- `Bug` — incorrect behavior requiring root-cause analysis and regression protection.
+- `Chore` — bounded maintenance, refactoring, tooling, or documentation work.
 
-- `Feature` — net-new user or product value;
-- `Bug` — incorrect behavior that requires root-cause analysis and regression protection;
-- `Chore` — maintenance, refactoring, tooling, documentation, or another bounded non-feature task.
+Ask only when the answer changes observable scope, architecture, or ownership. Otherwise make the
+smallest conservative assumption and record it in `Notes`.
 
-Ask a question only when its answer would materially change scope, observable behavior, or architecture. Otherwise make the smallest conservative assumption and record it in `Notes`.
+## Research
 
-## Instructions
+Work from `app/`.
 
-- Work from the OntOS `app/` directory.
-- If project context is not fresh, use `$ontos-prime` before continuing.
-- Read `../AGENTS.md`, `AGENTS.md`, `README.md`, and every task-relevant guidance file referenced by `AGENTS.md`.
-- Research the real codebase to understand existing patterns, architecture, conventions, tests, package scripts, and ownership before planning.
-- Create the plan in `specs/<type>-<descriptive-name>.md`, using a short kebab-case description. Do not overwrite an existing plan.
-- Write one plan by default. Split the request only when the pieces can be implemented and validated independently; record dependencies and intended order.
-- Use the matching `Plan Format` below.
-- Replace every `<placeholder>` in the selected format. Add as much detail as needed to complete the work successfully.
-- Be precise and implementation-ready without inventing APIs, files, or validation commands that repository research does not support.
-- Follow existing patterns and conventions. Do not reinvent the wheel or add an abstraction without a concrete reuse case.
-- Include tests throughout `Step by Step Tasks`; do not defer all test writing until the final step.
-- Make the last task run the `Validation Commands`.
-- Include the matching Codesmith generator as the first implementation task when creating an Action, MicroVertical page, Outbox Message, or Policy. Run it from `app/` through `mise exec -- pnpm`.
-- If business functionality requires a new file type without a Codesmith generator, record a blocking developer decision instead of planning to create it manually.
-- For user-facing work, plan loading, empty, error, forbidden, validation, conflict, retry, accessibility, and responsive behavior as applicable.
-- Stop after writing the plan. Do not implement it, modify application code, create a branch or commit, push, open a pull request, or create a GitHub issue.
+1. Use `$ontos-prime` when project context is stale.
+2. Read `../AGENTS.md`, `AGENTS.md`, and `README.md`.
+3. Use the README routing table to open only the implementation document for this concern.
+4. Use `../CONTEXT-MAP.md` to select one domain context when business semantics or vocabulary are
+   needed. Open only the relevant shared OntOS section when referenced.
+5. Open an ADR only when the task or current guidance points to its decision.
+6. Inspect the current owning code, tests, package scripts, topology, generators, and contracts.
+7. Search `specs/` by capability and frontmatter before creating a file:
+   - update or extend the matching `planned` or `in_progress` plan instead of creating a competitor;
+   - treat `done`, `complete`, and `superseded` plans as history;
+   - when a historical plan still appears current, plan the smallest explicit supersession fix.
 
-## Relevant Files
+Do not bulk-read documentation, specifications, apps, verticals, or packages. Follow references
+only when they resolve an implementation decision.
 
-Start with:
+## Write the plan
 
-- `../AGENTS.md` — repository-wide constraints and mandatory Codesmith generators.
-- `AGENTS.md` — authoritative OntOS application guidance.
-- `README.md` — workspace overview and toolchain.
-- `docs/architecture/**` — MicroVertical, Action, Effect error, and UltraModern.js rules.
-- `docs/frontend/FRONTEND.md` — required for user-facing work.
-- `apps/**` — shell application and route assembly.
-- `verticals/**` — independently deployable MicroVerticals.
-- `packages/**` — genuinely shared contracts and infrastructure.
-- `scripts/**` — Codesmith generators and repository validation.
-- `topology/**` — generated ownership and topology metadata.
-- `../docs/**` — task-relevant product and architectural context.
+- Create `specs/<type>-<descriptive-name>.md` with a short kebab-case name. Do not overwrite an
+  unrelated plan.
+- Write one plan by default. Split only independently implementable and independently verifiable
+  work; record dependencies and order.
+- Use the exact matching template below and replace every placeholder.
+- Ground every file, API, command, and assertion in repository evidence. Do not invent them.
+- Name concrete owners and paths. Link to current authorities instead of restating their rules.
+- Put tests beside the behavior they prove; do not defer all testing to the last task.
+- Make the last task run every `Validation Command`.
+- Discover supported business generators from `package.json` `scaffold:*` scripts. When the plan
+  creates a supported artifact, make the matching generator and its current `--help` contract the
+  first implementation step.
+- When required business functionality has no approved generator or governed gateway, record a
+  blocking developer decision instead of planning manual creation.
+- For user-facing work, cover applicable loading, empty, error, forbidden, validation, conflict,
+  retry, accessibility, and responsive behavior.
+- Stop after writing the plan. Do not implement code, create a branch or commit, push, open a pull
+  request, or create a GitHub issue.
 
-Focus on files relevant to the request. Do not read or plan changes under `mvp/` or `mvp2/`; they are read-only.
+## Relevant-file routing
+
+Start narrow:
+
+- `../AGENTS.md`, `AGENTS.md`, and `README.md` — scope, stop conditions, and routing.
+- One document selected from `docs/architecture/`, `docs/frontend/`, or `docs/integrations/`.
+- The exact owning paths under `apps/`, `verticals/`, or `packages/`.
+- `package.json` and the relevant `scripts/` files for commands, generators, and validation.
+- `topology/` only for deployment, ownership, or release work.
+- One focused `../docs/contexts/` file or ADR only when its semantics or decision are required.
+- `../docs/evidence/` only when the task explicitly asks for historical provenance.
 
 ## Feature Plan Format
 
@@ -264,4 +279,5 @@ Execute every command to validate the chore with zero regressions.
 
 ## Report
 
-Return the path to each created plan in implementation order and identify any unresolved decision that blocks implementation. Do not implement the plan.
+Return each created or updated plan path in implementation order and identify any unresolved
+decision that blocks implementation. Do not implement the plan.
