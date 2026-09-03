@@ -21,11 +21,8 @@ Ask a question only when its answer would materially change scope, observable be
 
 - Work from the OntOS `app/` directory.
 - If project context is not fresh, use `$ontos-prime` before continuing.
-- Read `../AGENTS.md`, `AGENTS.md`, and `README.md`, then only the implementation documents and
-  product contexts whose routing triggers match the requested behavior. Do not follow unrelated
-  references transitively.
-- Research the real codebase to understand existing patterns, architecture, conventions, tests,
-  package scripts, and ownership before planning.
+- Read `../AGENTS.md`, `AGENTS.md`, `README.md`, and every task-relevant guidance file referenced by `AGENTS.md`. Follow mandatory references transitively when they govern the requested behavior, but do not bulk-read unrelated documentation, completed specifications, or historical evidence.
+- Research the real codebase to understand existing patterns, architecture, conventions, tests, package scripts, and ownership before planning.
 - Create the plan in `specs/<type>-<descriptive-name>.md`, using a short kebab-case description. Do not overwrite an existing plan.
 - Write one plan by default. Split the request only when the pieces can be implemented and validated independently; record dependencies and intended order.
 - Use the matching `Plan Format` below.
@@ -34,29 +31,28 @@ Ask a question only when its answer would materially change scope, observable be
 - Follow existing patterns and conventions. Do not reinvent the wheel or add an abstraction without a concrete reuse case.
 - Include tests throughout `Step by Step Tasks`; do not defer all test writing until the final step.
 - Make the last task run the `Validation Commands`.
-- When the change creates a supported business artifact, derive its `scaffold:*` script from
-  `package.json`, inspect `--help`, and put that generator first in the implementation tasks. Run it
-  from `app/` through `mise exec -- pnpm`.
+- Include the matching Codesmith generator as the first implementation task when creating an Action, MicroVertical page, Outbox Message, or Policy. Confirm its `scaffold:*` script in `package.json`, inspect its `--help` output, and run it from `app/` through `mise exec -- pnpm`.
 - If business functionality requires a new file type without a Codesmith generator, record a blocking developer decision instead of planning to create it manually.
 - For user-facing work, plan loading, empty, error, forbidden, validation, conflict, retry, accessibility, and responsive behavior as applicable.
 - Stop after writing the plan. Do not implement it, modify application code, create a branch or commit, push, open a pull request, or create a GitHub issue.
 
 ## Relevant Files
 
-Start with `../AGENTS.md`, `AGENTS.md`, and `README.md`. Then branch by the request:
+Start with:
 
-| Trigger                                      | Inspect                                                                 |
-| -------------------------------------------- | ----------------------------------------------------------------------- |
-| Product meaning or cross-domain invariants   | Matching rows from `../CONTEXT-MAP.md`                                  |
-| Durable architecture rationale               | The one relevant ADR selected through `../docs/README.md`                |
-| Current implementation mechanics             | Matching rows from the `README.md` routing table                         |
-| Shell behavior                               | Relevant files under `apps/` and their owner-local tests                 |
-| MicroVertical behavior                       | The owning `verticals/<name>/` package and its tests                      |
-| Shared runtime or contracts                  | Relevant `packages/`, consumers, and contract tests                       |
-| Generators, validation, topology, or delivery| Relevant `scripts/`, `package.json`, `topology/`, or workflow sources     |
+- `../AGENTS.md` — repository-wide constraints and mandatory Codesmith generators.
+- `AGENTS.md` — authoritative OntOS application guidance.
+- `README.md` — workspace overview and toolchain.
+- `docs/architecture/**` — MicroVertical, Action, Effect error, and UltraModern.js rules.
+- `docs/frontend/FRONTEND.md` — required for user-facing work.
+- `apps/**` — shell application and route assembly.
+- `verticals/**` — independently deployable MicroVerticals.
+- `packages/**` — genuinely shared contracts and infrastructure.
+- `scripts/**` — Codesmith generators and repository validation.
+- `topology/**` — generated ownership and topology metadata.
+- `../docs/**` — task-relevant product and architectural context.
 
-Open only matched paths. Completed specifications and delivery evidence are provenance, not planning
-guidance, unless the request explicitly asks for them.
+These are candidate areas, not instructions to read every file. Use `README.md` and `../CONTEXT-MAP.md` to select the task-relevant subset, follow its mandatory references, and treat completed specifications and historical evidence as provenance unless the request explicitly requires them.
 
 ## Feature Plan Format
 
