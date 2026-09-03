@@ -1,8 +1,15 @@
 # Deployment Architecture and Release Playbook
 
-This document is the authoritative release guidance for OntOS application delivery. It applies to
+This playbook is the authoritative release guidance for OntOS application delivery. It covers
 deployment configuration, CI/CD, PostgreSQL and SpiceDB changes, runtime packaging, Shell changes,
 and every new or changed MicroVertical.
+
+> [!IMPORTANT]
+> Explicit `implementationId`, dependency-closure selection, public-contract hashes, migration-set
+> identity, and full artifact metadata are accepted target architecture, not fields in the current
+> manifest/catalog schema. Requirements below that name them become mandatory with that contract.
+> Until then, releases use one implicit `standard` implementation per `moduleId` and the current
+> generated `buildMarker`; do not simulate missing fields with ad hoc configuration.
 
 The rules exist because the first Zerops stage rollout was merged after source-level validation and
 then required 43 linear repair commits. Stage had become the first production-shaped integration
@@ -40,14 +47,15 @@ These are non-negotiable:
 
 A new MicroVertical is not deployable until its delivery contract accounts for all of these fields:
 
-- topology `appId`, dotted Module Contract Identity `moduleId`, and explicit `implementationId`,
-  kept distinct;
+- topology `appId` and dotted Module Contract Identity `moduleId`, kept distinct; add explicit
+  `implementationId` when the accepted target contract is implemented;
 - package name and workspace-relative owner path;
 - provider service/setup identity and environment service-ID key;
 - build and runtime Node/pnpm versions;
 - declared `PORT`, service-specific port variable, and readiness route;
 - immutable artifact build/materialization command;
-- immutable build revision/digest, public-contract hash/version, and migration-set identity;
+- current immutable `buildMarker`, plus build revision/digest, public-contract hash/version, and
+  migration-set identity when the target metadata contract is implemented;
 - owned PostgreSQL schema, Drizzle journal, migration, grant, and verifier commands;
 - compatible SpiceDB schema requirements;
 - public URL and module-manifest URL;
@@ -171,11 +179,11 @@ The fail-closed Action authorization rollout uses an explicit expand/provision/v
 
 1. prepare the candidate application/release artifact for the operator command while the previous
    runtime remains active; this is separate from the PostgreSQL migration artifact;
-2. ensure the two fixed stage contexts and their Tenant membership relationships already exist;
+2. ensure the fixed stage contexts and their Tenant membership relationships already exist;
 3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact to
-   publish the compatible schema and `TOUCH` 32 membership-set executor grants for the 16 current
-   Actions across the two fixed stage Tenants;
-4. verify every Action for both fixed stage Principals and verify a representative non-member is
+   publish the compatible schema and membership-set executor grants for the complete current Action
+   catalog across the fixed stage Tenants;
+4. verify every Action for the fixed stage Principals and verify representative non-members are
    denied;
 5. only then deploy the runtime that treats missing `action#execute` permission as denial;
 6. smoke one provisioned Action and one deliberately unconfigured Action denial.
@@ -231,8 +239,9 @@ the expanded PostgreSQL and SpiceDB models.
   module state or disable unrelated modules.
 - Server-governed schemas stay server-local and use the Core Effect runtime. Do not reuse a client
   package's runtime schema object inside the governed server registration.
-- A Customer Configuration resolves exactly one permitted healthy `implementationId` for each
-  selected `moduleId`; reject missing, ambiguous, invisible, or contract-incompatible alternatives.
+- Once explicit alternatives are supported, a Customer Configuration resolves exactly one permitted
+  healthy `implementationId` for each selected `moduleId` and rejects missing, ambiguous, invisible,
+  or contract-incompatible alternatives. Until then, one implicit `standard` implementation exists.
 - Compatibility versions and immutable build revisions are rollout evidence, not customer-selectable
   product releases.
 
@@ -269,8 +278,8 @@ Use this sequence for a new or changed MicroVertical:
    make endpoint provisioning idempotent by checking its final state.
 7. **Deploy Shell:** deploy only after every referenced provider is healthy.
 8. **Smoke:** execute the authenticated distributed smoke suite.
-9. **Canary:** activate the selected module implementation and affected Storefront Clients for one
-   approved tenant/cohort.
+9. **Canary:** activate the selected module—and its explicit implementation once supported—plus
+   affected Storefront Clients for one approved tenant/cohort.
 10. **Observe:** hold expansion until the canary window and required signals are healthy.
 11. **Expand:** activate additional tenants gradually.
 12. **Close:** record deployed digests, smoke evidence, and the new last-known-good set.
@@ -294,7 +303,7 @@ Provider readiness alone is insufficient. The post-deploy release gate exercises
 - logout redirect and cookie clearing;
 - isolation of staff and Commerce Portal BetterAuth cookies/sessions;
 - one Storefront Client plus anonymous, B2C, and B2B customer-context checks when Commerce is affected;
-- implementation-selection and contract/build-skew rejection;
+- contract/build-skew rejection and, once supported, explicit implementation-selection rejection;
 - native Commerce Storefront API and declared Medusa compatibility-route checks when present;
 - basic responsive layout/CSS geometry;
 - absence of unexpected browser errors and HTTP 5xx responses.
@@ -369,25 +378,11 @@ After any failed rehearsal or rollout:
 Use the CI provider's rerun or manual dispatch for a genuine retry. Do not create empty commits to
 retrigger a pipeline.
 
-## Historical failure map
+## Historical release evidence
 
-These commits are retained as examples of the failure classes this playbook prevents:
-
-- provider syntax and process semantics: `eb57b335`, `ef96d729`;
-- minimal runtime, cache, home, and artifact relocation: `d3ccf9a8`–`66e08e50`;
-- administrative database identity and serialized SpiceDB: `3dc494a8`, `a41d400f`;
-- pnpm store contamination: `1e8e5dd3`, `6e4cc89e`, `900ff534`, `c32c8312`;
-- dependency tracing, memory, host paths, OS/CPU, and generated plugin loading:
-  `d394f133`–`ab978ab8`;
-- ports and provider-before-Shell ordering: `46aced42`, `780d30f2`;
-- stage contexts and idempotent endpoint setup: `112571c8`, `4329b058`;
-- canonical auth origin and build-time stage discovery: `727a5c28`, `64b7f76b`;
-- public schema/runtime normalization: `61f3d96d`, `a86503d0`, `8a09f710`, `3ebf0569`;
-- federated i18n and CSS/runtime isolation: `1475532d`, `47e3ecb9`;
-- missing diagnostics discovered during rollout: `18716eba`, `83f79b5d`–`9eef5a3f`.
-
-When changing deployment behavior, convert the relevant historical failure into a permanent
-automated contract test rather than relying on this list as institutional memory.
+Git history and regression tests own the detailed rollout-failure record. When a failure class
+recurs or deployment behavior changes, add a permanent automated contract test instead of extending
+a prose commit list.
 
 ## Fail-closed authorization promotion
 
@@ -409,9 +404,10 @@ policy/module/worker/issuer/replay data, or a failed negative smoke.
 
 Production remains blocked while no approved source-controlled production context exists; the
 development/stage provisioner must continue rejecting production and arbitrary tenant or Action
-arguments. Issue #169 is still the governance record and issue #173 is the rollout tracker; the
-implementation override does not record Petr/Jiří acceptance or permit production enforcement.
-The checked-in stage context deliberately remains `pending`; approval requires the recorded
-governance decision and observed evidence, not a code-only override.
+arguments. Issue #173 owns technical implementation and readiness; issue #369 owns the separate
+production-promotion approval gate. Issue #169 is broader review context, not approval. Their current
+records—not this playbook—determine whether the gates are satisfied. An implementation override
+never records Petr/Jiří approval or permits production enforcement. The checked-in stage context
+remains `pending`; code-only override is not approval.
 Rollback restores the prior application mode only after preserving the exact evidence and must not
 remove the expanded schema or durable redemption rows while old/new consumers overlap.

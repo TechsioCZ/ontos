@@ -1345,7 +1345,7 @@ const workspaceValidationContract = {
         packageScope: 'app',
         packageManager: {
           name: 'pnpm',
-          version: '11.21.0',
+          version: '11.25.0',
         },
         node: {
           version: '26.5.0',
@@ -1729,7 +1729,7 @@ const workspaceValidationContract = {
     effect: '4.0.0-beta.107',
     moduleFederation: '2.8.0',
     node: '26.5.0',
-    pnpm: '11.17.0',
+    pnpm: '11.25.0',
   },
   tailwindEnabled: true,
   structuralShellPolicy: {

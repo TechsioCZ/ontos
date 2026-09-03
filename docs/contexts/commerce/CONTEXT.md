@@ -1,8 +1,9 @@
 # Commerce language
 
 Commerce is a reusable B2C/B2B Application Composition. Customer deployments provide evidence and
-configuration; they do not create separate products or hidden forks. This glossary extends
-`../ontos/CONTEXT.md`; when the two glossaries conflict, the OntOS glossary and accepted ADRs govern.
+configuration; they do not create separate products or hidden forks. This context owns accepted
+Commerce semantics and vocabulary, not storage or transport mechanics. It extends
+`../ontos/CONTEXT.md`; when the two contexts conflict, the OntOS context and accepted ADRs govern.
 
 ## Language rules and shared purchase context
 
@@ -12,11 +13,6 @@ Profile, Commerce Counterparty Purchasing Profile, Commerce Customer Group, Cust
 another explicit context. Avoid unqualified `customer`, `customer record`, `customer ID`, and
 `B2B Customer` when the intended subject is a Party, Counterparty, Principal, account, role, or
 profile.
-
-**Planning Identifier** — Uppercase issue keys are navigation labels for a planning tree. They do not
-redefine canonical terms. A legacy or compact issue key remains addressable by issue number, but its
-current title and description must name the canonical concept it specifies. Current issue
-descriptions and this glossary override older discovery/GOLD comments.
 
 **Current** — Evaluated from authoritative facts, Permissions, Business Policies, and Effective
 Periods valid at the trusted operation time. A value retained by a Cart, client, cache, proposal, or

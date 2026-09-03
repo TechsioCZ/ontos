@@ -1,7 +1,11 @@
 # ADR-0019: Action authorization is explicit and fail-closed
 
-Status: Accepted. Decision tracked in
-[issue #169](https://github.com/TechsioCZ/ontos/issues/169).
+Status: Accepted.
+
+Scope: Action authorization. [Issue #173](https://github.com/TechsioCZ/ontos/issues/173)
+tracks wider protected-entrypoint implementation and readiness;
+[issue #369](https://github.com/TechsioCZ/ontos/issues/369) owns the separate production-promotion
+approval gate.
 
 Every Action requires explicit SpiceDB authorization configuration. Missing configuration denies
 execution; it is never an implicit allow rule. The default authorization rule is an explicit
