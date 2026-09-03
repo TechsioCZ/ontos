@@ -2019,7 +2019,7 @@ const workspaceValidationContract = {
       'node --test scripts/scaffolding/tests/module-contract-generator.test.mts scripts/scaffolding/tests/scaffold-generators.test.mts',
     'test:integration': 'pnpm -r --if-present run test:integration',
     'test:scripts':
-      'node --test scripts/local-environment-values.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts',
+      'node --test scripts/local-environment-values.test.mts scripts/tests/audit-database-trust-boundaries.test.mts scripts/tests/authorization-rollout-contract.test.mts scripts/tests/check-authorization-readiness.test.mts scripts/tests/database-access-boundaries.test.mts scripts/tests/initialize-local-development.test.mts scripts/tests/locki-feature.test.mts scripts/tests/migrate-contacts-authorization.test.mts scripts/tests/module-entrypoint-boundaries.test.mts scripts/tests/plan-deployment-impact.test.mts scripts/tests/protected-entrypoint-inventory.test.mts scripts/tests/provision-current-action-authorization.test.mts scripts/tests/report-fail-closed-authorization-impact.test.mts',
     'test:unit': 'pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component',
   },
   cloudflareSecurity: {

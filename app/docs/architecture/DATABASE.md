@@ -1,7 +1,9 @@
 # Database Architecture
 
 For operation-scope validation, scoped owner services, RLS, runtime/admin roles, and same-tenant
-constraints, also follow [Governed Data Access and Operation Scope](./DATA_ACCESS.md). Business
+constraints, also follow [Governed Data Access and Operation Scope](./DATA_ACCESS.md). The current
+effective-role evidence and trusted-context limitations are recorded in
+[Database Trust-Boundary Audit](./DATABASE_TRUST_BOUNDARIES.md). Business
 handlers and BFF adapters never receive or import a database executor; owner repositories are built
 inside a Core-owned scoped transaction.
 
