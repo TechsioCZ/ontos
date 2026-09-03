@@ -22,8 +22,10 @@ mise exec -- pnpm database-trust:audit
 
 It writes `.codex/reports/database/database-trust-boundary.json`. The report is intentionally
 ignored because it describes the database being inspected. It includes role names, effective
-privileges, ownership, RLS flags, and finding codes, but no URL, password, secret, tenant ID, or
-legal-entity ID. Its pure report builder is covered by
+privileges, direct/`PUBLIC`/inherited/assumable default ACL sources, ownership, RLS flags, and
+finding codes, but no URL, password, secret, tenant ID, or legal-entity ID. The command rejects an
+admin/runtime pair that resolves to different PostgreSQL servers or databases. Its pure report
+builder and target validator are covered by
 `scripts/tests/audit-database-trust-boundaries.test.mts`.
 
 ## Reproduced local baseline
@@ -35,7 +37,7 @@ baseline, the audit reported:
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Cluster role     | Login; no superuser, `BYPASSRLS`, database creation, role creation, replication, inheritance, or role memberships                       |
 | Database         | `CONNECT` and temporary objects; no database `CREATE`                                                                                   |
-| Schemas          | `USAGE` on `core`, `auth`, and `contacts`; neither `USAGE` nor `CREATE` on `drizzle`; no schema `CREATE` anywhere                       |
+| Schemas          | `USAGE` on `core`, `auth`, `contacts`, and `public`; neither `USAGE` nor `CREATE` on `drizzle`; no `CREATE` on any non-system schema    |
 | Tables           | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals                         |
 | Sequences        | `USAGE` and `SELECT` on the one application sequence; no privilege on the three `drizzle` sequences and no `UPDATE` anywhere            |
 | Future objects   | Default table DML and sequence `USAGE`/`SELECT` in all three schemas                                                                    |
@@ -99,15 +101,15 @@ unforgeable trust boundary.
 
 ## Existing negative evidence and gaps
 
-| Threat                                          | Existing evidence                                                                                                  | Remaining gap                                                                                                                                                     |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Superuser or `BYPASSRLS` runtime                | Bootstrap verifies both are false; the audit reads effective role attributes.                                      | Production must be audited rather than inferred from bootstrap source.                                                                                            |
-| Admin/runtime identity collapse                 | Config tests reject identical URLs/users and a `postgres` runtime login.                                           | Deployed secret injection is outside repository evidence.                                                                                                         |
-| Missing, malformed, or leaked transaction scope | Core tenant-isolation integration tests verify no match and no scope leakage; the audit probes rollback retention. | The runtime role can deliberately install a different valid value.                                                                                                |
-| Cross-tenant rows and references                | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.   | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                |
-| Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.    | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
-| DDL and role escalation                         | Audit verifies no database/schema `CREATE`, privileged role attributes, or assumable admin membership.             | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
-| Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                         | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
+| Threat                                          | Existing evidence                                                                                                                                        | Remaining gap                                                                                                                                                     |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Superuser or `BYPASSRLS` runtime                | Bootstrap verifies both are false; the audit reads effective role attributes.                                                                            | Production must be audited rather than inferred from bootstrap source.                                                                                            |
+| Admin/runtime identity collapse                 | Config tests reject identical URLs/users and a `postgres` runtime login.                                                                                 | Deployed secret injection is outside repository evidence.                                                                                                         |
+| Missing, malformed, or leaked transaction scope | Core tenant-isolation integration tests verify no match and no scope leakage; the audit probes rollback retention.                                       | The runtime role can deliberately install a different valid value.                                                                                                |
+| Cross-tenant rows and references                | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.                                         | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                |
+| Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                          | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
+| DDL and role escalation                         | Audit checks every non-system schema plus cluster/schema authority for every assumable role; the baseline has no database/schema `CREATE` or membership. | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
+| Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                                                               | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
 
 ## Bounded pilot options
 
