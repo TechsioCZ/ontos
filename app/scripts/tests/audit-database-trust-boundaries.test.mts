@@ -65,6 +65,7 @@ const snapshot = {
       sequence: 'customers_id_seq',
     },
   ],
+  routines: [],
   tables: [
     {
       kind: 'table',
@@ -156,6 +157,8 @@ test('builds deterministic current-state evidence and identifies the material tr
     dmlSchemaCount: 3,
     dmlTableCount: 3,
     findingCount: 2,
+    routineCount: 0,
+    securityDefinerExecutableCount: 0,
     sequenceCount: 1,
     tableCount: 3,
   });
@@ -175,6 +178,7 @@ test('reports privilege escalation paths without embedding credentials or contex
         ownedSchemas: [],
         relationPrivilegeSchemas: [],
         role: 'ontos_admin',
+        securityDefinerRoutines: [],
       },
     ],
     role: { ...snapshot.role, bypassRls: true },
@@ -249,6 +253,63 @@ test('flags ownership of an audited relation as DDL authority', () => {
   );
 });
 
+test('flags direct relation control and executable security-definer authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        executable: true,
+        identityArguments: 'uuid',
+        kind: 'function',
+        owner: 'ontos_admin',
+        routine: 'enter_trusted_scope',
+        schema: 'contacts',
+        securityDefiner: true,
+      },
+    ],
+    tables: [
+      {
+        ...snapshot.tables[0],
+        privileges: { ...snapshot.tables[0].privileges, truncate: true },
+      },
+    ],
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_relation_control_authority', 'runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('flags direct sequence mutation authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    sequences: [
+      {
+        ...snapshot.sequences[0],
+        privileges: { ...snapshot.sequences[0].privileges, update: true },
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_sequence_mutation_authority'],
+  );
+});
+
 test('classifies every assumable role and escalates relation authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -262,6 +323,7 @@ test('classifies every assumable role and escalates relation authority', () => {
         ownedSchemas: [],
         relationPrivilegeSchemas: ['private'],
         role: 'table_truncator',
+        securityDefinerRoutines: [],
       },
       {
         attributes: ordinaryRole,
@@ -272,6 +334,7 @@ test('classifies every assumable role and escalates relation authority', () => {
         ownedSchemas: [],
         relationPrivilegeSchemas: [],
         role: 'report_reader',
+        securityDefinerRoutines: [],
       },
     ],
   });

@@ -34,6 +34,7 @@ interface RoleMembership {
   readonly ownedSchemas: readonly string[];
   readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
+  readonly securityDefinerRoutines: readonly string[];
 }
 
 interface RoleAttributes {
@@ -51,6 +52,16 @@ interface SchemaPrivilege {
   readonly owner: string;
   readonly schema: string;
   readonly usage: boolean;
+}
+
+interface RoutinePrivilege {
+  readonly executable: boolean;
+  readonly identityArguments: string;
+  readonly kind: 'aggregate' | 'function' | 'procedure' | 'window';
+  readonly owner: string;
+  readonly routine: string;
+  readonly schema: string;
+  readonly securityDefiner: boolean;
 }
 
 interface SequencePrivilege {
@@ -105,6 +116,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly defaultPrivileges: readonly DefaultPrivilege[];
   readonly memberships: readonly RoleMembership[];
   readonly role: RoleAttributes;
+  readonly routines: readonly RoutinePrivilege[];
   readonly runtimeRole: string;
   readonly schemas: readonly SchemaPrivilege[];
   readonly sequences: readonly SequencePrivilege[];
@@ -118,8 +130,11 @@ interface DatabaseTrustBoundaryFinding {
     | 'runtime_role_can_assume_other_role'
     | 'runtime_role_can_assume_privileged_role'
     | 'runtime_role_can_forge_trusted_context'
+    | 'runtime_role_can_execute_security_definer'
     | 'runtime_role_has_ddl_authority'
     | 'runtime_role_has_cross_owner_dml'
+    | 'runtime_role_has_relation_control_authority'
+    | 'runtime_role_has_sequence_mutation_authority'
     | 'runtime_role_is_privileged'
     | 'trusted_context_survives_transaction';
   readonly evidence: string;
@@ -135,6 +150,8 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly dmlSchemaCount: number;
     readonly dmlTableCount: number;
     readonly findingCount: number;
+    readonly routineCount: number;
+    readonly securityDefinerExecutableCount: number;
     readonly sequenceCount: number;
     readonly tableCount: number;
   };
@@ -192,6 +209,12 @@ export const buildDatabaseTrustBoundaryReport = (
     (left, right) =>
       left.schema.localeCompare(right.schema) || left.sequence.localeCompare(right.sequence),
   );
+  const routines = [...snapshot.routines].toSorted(
+    (left, right) =>
+      left.schema.localeCompare(right.schema) ||
+      left.routine.localeCompare(right.routine) ||
+      left.identityArguments.localeCompare(right.identityArguments),
+  );
   const defaultPrivileges = [...snapshot.defaultPrivileges].toSorted(
     (left, right) =>
       (left.schema ?? '').localeCompare(right.schema ?? '') ||
@@ -233,13 +256,15 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedRelations,
       ownedSchemas,
       relationPrivilegeSchemas,
+      securityDefinerRoutines,
     }) =>
       hasClusterPrivilege(attributes) ||
       databaseCreate ||
       createSchemas.length > 0 ||
       ownedRelations.length > 0 ||
       ownedSchemas.length > 0 ||
-      relationPrivilegeSchemas.length > 0,
+      relationPrivilegeSchemas.length > 0 ||
+      securityDefinerRoutines.length > 0,
   );
   if (privilegedMemberships.length > 0) {
     findings.push({
@@ -263,6 +288,36 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence: 'The runtime role has database/schema CREATE or owns an audited relation.',
+      severity: 'high',
+    });
+  }
+  const relationControlTables = tables.filter(
+    ({ privileges }) => privileges.references || privileges.trigger || privileges.truncate,
+  );
+  if (relationControlTables.length > 0) {
+    findings.push({
+      code: 'runtime_role_has_relation_control_authority',
+      evidence:
+        'The runtime role has TRUNCATE, REFERENCES, or TRIGGER on an audited table-like relation.',
+      severity: 'high',
+    });
+  }
+  const executableSecurityDefiners = routines.filter(
+    ({ executable, owner, securityDefiner }) =>
+      executable && securityDefiner && owner !== snapshot.runtimeRole,
+  );
+  if (executableSecurityDefiners.length > 0) {
+    findings.push({
+      code: 'runtime_role_can_execute_security_definer',
+      evidence:
+        'The runtime role can execute a SECURITY DEFINER routine owned by another role in an audited schema.',
+      severity: 'high',
+    });
+  }
+  if (sequences.some(({ privileges }) => privileges.update)) {
+    findings.push({
+      code: 'runtime_role_has_sequence_mutation_authority',
+      evidence: 'The runtime role has UPDATE on an audited sequence.',
       severity: 'high',
     });
   }
@@ -300,6 +355,7 @@ export const buildDatabaseTrustBoundaryReport = (
     defaultPrivileges,
     findings,
     memberships,
+    routines,
     schemaVersion: 1,
     schemas,
     sequences,
@@ -309,6 +365,8 @@ export const buildDatabaseTrustBoundaryReport = (
       dmlSchemaCount: new Set(dmlTables.map(({ schema }) => schema)).size,
       dmlTableCount: dmlTables.length,
       findingCount: findings.length,
+      routineCount: routines.length,
+      securityDefinerExecutableCount: executableSecurityDefiners.length,
       sequenceCount: sequences.length,
       tableCount: tables.length,
     },
@@ -340,6 +398,7 @@ interface MembershipRow {
   readonly relation_privilege_schemas: string[];
   readonly replication: boolean;
   readonly role: string;
+  readonly security_definer_routines: string[];
   readonly superuser: boolean;
 }
 
@@ -361,6 +420,16 @@ interface SchemaPrivilegeRow {
   readonly owner: string;
   readonly schema: string;
   readonly usage: boolean;
+}
+
+interface RoutinePrivilegeRow {
+  readonly executable: boolean;
+  readonly identity_arguments: string;
+  readonly kind: 'aggregate' | 'function' | 'procedure' | 'window';
+  readonly owner: string;
+  readonly routine: string;
+  readonly schema: string;
+  readonly security_definer: boolean;
 }
 
 interface TablePrivilegeRow {
@@ -524,22 +593,43 @@ const collectSnapshot = async (
          join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
          where namespace.nspname !~ '^pg_'
            and namespace.nspname <> 'information_schema'
-           and relation.relkind in ('r', 'p', 'v', 'm', 'f')
-           and (
-             has_table_privilege(candidate.oid, relation.oid, 'SELECT')
-             or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
-             or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-             or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
-             or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-             or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
-             or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
-             or has_table_privilege(candidate.oid, relation.oid, 'TRUNCATE')
-             or has_table_privilege(candidate.oid, relation.oid, 'REFERENCES')
-             or has_any_column_privilege(candidate.oid, relation.oid, 'REFERENCES')
-             or has_table_privilege(candidate.oid, relation.oid, 'TRIGGER')
-           )
+           and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+           and case
+             when relation.relkind = 'S' then
+               has_sequence_privilege(candidate.oid, relation.oid, 'USAGE')
+               or has_sequence_privilege(candidate.oid, relation.oid, 'SELECT')
+               or has_sequence_privilege(candidate.oid, relation.oid, 'UPDATE')
+             else
+               has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+               or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+               or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+               or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+               or has_table_privilege(candidate.oid, relation.oid, 'TRUNCATE')
+               or has_table_privilege(candidate.oid, relation.oid, 'REFERENCES')
+               or has_any_column_privilege(candidate.oid, relation.oid, 'REFERENCES')
+               or has_table_privilege(candidate.oid, relation.oid, 'TRIGGER')
+           end
          order by namespace.nspname
-       ) as relation_privilege_schemas
+       ) as relation_privilege_schemas,
+       array(
+         select format(
+           '%I.%I(%s)',
+           namespace.nspname,
+           routine.proname,
+           pg_get_function_identity_arguments(routine.oid)
+         )
+         from pg_catalog.pg_proc as routine
+         join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+         where namespace.nspname !~ '^pg_'
+           and namespace.nspname <> 'information_schema'
+           and routine.prosecdef
+           and routine.proowner <> candidate.oid
+           and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
+         order by namespace.nspname, routine.proname, routine.oid
+       ) as security_definer_routines
      from pg_catalog.pg_roles as candidate
      where candidate.rolname <> $1 and pg_has_role($1, candidate.oid, 'MEMBER')
      order by candidate.rolname`,
@@ -570,6 +660,27 @@ const collectSnapshot = async (
     [runtimeRole],
   );
   const schemaNames = schemas.rows.map(({ schema }) => schema);
+  const routines = await admin.query<RoutinePrivilegeRow>(
+    `select
+       namespace.nspname as schema,
+       routine.proname as routine,
+       pg_get_function_identity_arguments(routine.oid) as identity_arguments,
+       case routine.prokind
+         when 'a' then 'aggregate'
+         when 'f' then 'function'
+         when 'p' then 'procedure'
+         when 'w' then 'window'
+       end as kind,
+       owner.rolname as owner,
+       routine.prosecdef as security_definer,
+       has_function_privilege($1, routine.oid, 'EXECUTE') as executable
+     from pg_catalog.pg_proc as routine
+     join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+     join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
+     where namespace.nspname = any($2::text[])
+     order by namespace.nspname, routine.proname, routine.oid`,
+    [runtimeRole, schemaNames],
+  );
   const tables = await admin.query<TablePrivilegeRow>(
     `select
        namespace.nspname as schema,
@@ -598,7 +709,10 @@ const collectSnapshot = async (
        ) as update,
        has_table_privilege($1, relation.oid, 'DELETE') as delete,
        has_table_privilege($1, relation.oid, 'TRUNCATE') as truncate,
-       has_table_privilege($1, relation.oid, 'REFERENCES') as references,
+       (
+         has_table_privilege($1, relation.oid, 'REFERENCES')
+         or has_any_column_privilege($1, relation.oid, 'REFERENCES')
+       ) as references,
        has_table_privilege($1, relation.oid, 'TRIGGER') as trigger
      from pg_catalog.pg_class as relation
      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -654,7 +768,8 @@ const collectSnapshot = async (
          ('r'::"char", 'table'::text),
          ('S'::"char", 'sequence'::text),
          ('f'::"char", 'function'::text),
-         ('T'::"char", 'type'::text)
+         ('T'::"char", 'type'::text),
+         ('n'::"char", 'schema'::text)
      ),
      global_acl as (
        select
@@ -678,6 +793,7 @@ const collectSnapshot = async (
            when 'S' then 'sequence'
            when 'f' then 'function'
            when 'T' then 'type'
+           when 'n' then 'schema'
            else defaults.defaclobjtype::text
          end as object_type,
          defaults.defaclacl as acl
@@ -768,6 +884,7 @@ const collectSnapshot = async (
       ownedSchemas: membership.owned_schemas,
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
+      securityDefinerRoutines: membership.security_definer_routines,
     })),
     role: {
       bypassRls: roleRow.bypass_rls,
@@ -778,6 +895,15 @@ const collectSnapshot = async (
       replication: roleRow.replication,
       superuser: roleRow.superuser,
     },
+    routines: routines.rows.map((routine) => ({
+      executable: routine.executable,
+      identityArguments: routine.identity_arguments,
+      kind: routine.kind,
+      owner: routine.owner,
+      routine: routine.routine,
+      schema: routine.schema,
+      securityDefiner: routine.security_definer,
+    })),
     runtimeRole,
     schemas: schemas.rows,
     sequences: sequences.rows.map((sequence) => ({
