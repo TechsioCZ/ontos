@@ -138,6 +138,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
                   contributionKey: 'testing.pages.navigation.home',
                   entrypoint: {
                     access: 'read',
+                    authorization: { kind: 'authenticated_principal' },
                     entrypointKey: 'testing.pages.page.home',
                     moduleKey: 'testing.pages',
                     role: 'page',
@@ -154,6 +155,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
                   contributionKey: 'testing.pages.page.home',
                   entrypoint: {
                     access: 'read',
+                    authorization: { kind: 'authenticated_principal' },
                     entrypointKey: 'testing.pages.page.home',
                     moduleKey: 'testing.pages',
                     role: 'page',
@@ -166,6 +168,7 @@ const installedPageCatalog = (): InstalledModuleCatalog =>
                   contributionKey: 'testing.pages.page.customers',
                   entrypoint: {
                     access: 'read',
+                    authorization: { kind: 'authenticated_principal' },
                     entrypointKey: 'testing.pages.page.customers',
                     moduleKey: 'testing.pages',
                     role: 'page',
