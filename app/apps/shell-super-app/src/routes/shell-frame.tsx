@@ -10,6 +10,7 @@ import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -34,14 +35,6 @@ interface DashboardLegalEntityItem {
   readonly legalName: string;
 }
 
-type DashboardUnavailableDeployment =
-  | { readonly appId: string; readonly status: 'disabled' | 'revoked' }
-  | {
-      readonly appId: string;
-      readonly reason: 'incompatible' | 'timeout' | 'unavailable';
-      readonly status: 'unavailable';
-    };
-
 export interface AuthenticatedDashboardLayoutProps {
   readonly children: ReactNode;
   readonly currentLegalEntityId?: string;
@@ -64,7 +57,7 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantSwitchFailed: boolean;
   readonly tenantSwitchPending: boolean;
   readonly title?: string;
-  readonly unavailableDeployments: readonly DashboardUnavailableDeployment[];
+  readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
 }
 
 export const AuthenticatedDashboardLayout = ({

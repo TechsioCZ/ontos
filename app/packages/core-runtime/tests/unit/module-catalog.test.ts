@@ -309,3 +309,26 @@ void test('rejects duplicate deployment identities from tolerant candidate promo
     { appId: 'property-registry', reason: 'incompatible', status: 'unavailable' },
   ]);
 });
+
+void test('keeps authoritative revocation ahead of a stale fetched candidate', () => {
+  const catalog = resolveInstalledModuleCatalog([
+    {
+      contract: contract('property-registry', 'property.registry'),
+      expectedAppId: 'property-registry',
+      outcome: 'fetched',
+    },
+    { expectedAppId: 'property-registry', outcome: 'disabled' },
+    { expectedAppId: 'property-registry', outcome: 'revoked' },
+    {
+      contract: contract('documents-center', 'documents.center'),
+      expectedAppId: 'documents-center',
+      outcome: 'fetched',
+    },
+  ]);
+
+  assert.deepEqual(catalog.moduleIds, ['documents.center']);
+  assert.deepEqual(catalog.deploymentStatuses, [
+    { appId: 'documents-center', moduleId: 'documents.center', status: 'available' },
+    { appId: 'property-registry', status: 'revoked' },
+  ]);
+});

@@ -18,6 +18,7 @@ import {
   loadModuleEntrypointComposition,
   resolveThenLoadModuleTarget,
   settleModuleEntrypointLoad,
+  settleModuleEntrypointLoads,
 } from '../../src/routes/module-entrypoint-loader.ts';
 
 const trustedContext: TrustedPrincipalContext = {
@@ -248,6 +249,40 @@ test('settles browser entrypoint success, rejection, incompatibility, and timeou
   expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
   expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
   expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
+});
+
+test('settles several browser entrypoints without one failure hiding healthy loads', async () => {
+  const results = await Effect.runPromise(
+    settleModuleEntrypointLoads([
+      {
+        identity: 'documents-center/page',
+        isCompatible: compatibleRemoteModule,
+        load: async () => ({ default: () => null }),
+        timeoutMs: 50,
+      },
+      {
+        identity: 'property-registry/page',
+        isCompatible: compatibleRemoteModule,
+        load: async () => {
+          throw new Error('remote unavailable');
+        },
+        timeoutMs: 50,
+      },
+    ]),
+  );
+
+  expect(results).toEqual([
+    {
+      identity: 'documents-center/page',
+      state: 'ready',
+      value: expect.objectContaining({ default: expect.any(Function) }),
+    },
+    {
+      identity: 'property-registry/page',
+      reason: 'unavailable',
+      state: 'unavailable',
+    },
+  ]);
 });
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(

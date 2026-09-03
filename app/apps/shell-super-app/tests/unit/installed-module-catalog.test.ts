@@ -110,7 +110,7 @@ test('loads two independent deployment contracts once and preserves both identit
   expect(first.getByModuleId('property.registry')?.deployment.appId).toBe('property-registry');
 });
 
-test('keeps a healthy deployment available when another deployment is unreachable', async () => {
+test('keeps a healthy deployment available on cold start when another is unreachable', async () => {
   const loader = makeInstalledModuleCatalogLoader(
     allowlist([
       {
