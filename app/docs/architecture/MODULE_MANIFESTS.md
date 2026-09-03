@@ -1,8 +1,9 @@
 # OntOS Module Manifests
 
-An OntOS Module Manifest is a validated business-capability contract. It is data, not an executable
-plugin and not an UltraModern deployment inventory. V0 supports exactly one `business_module` per
-MicroVertical deployment.
+An OntOS Module Manifest is a validated capability contract. It is data, not an executable plugin
+or an UltraModern deployment inventory. A V0 MicroVertical deployment currently admits exactly one
+`business_module`. The schema vocabulary reserves `foundational_module` and `system_module`, but
+current authored-manifest validation does not deploy them through this MicroVertical path.
 
 ## Identity
 
@@ -10,9 +11,9 @@ MicroVertical deployment.
   Federation remote identity, deployment lookup key, and exact Shell gateway JWT audience.
 - `moduleId` is the stable dotted OntOS capability identity. It owns Actions, Policies, resources,
   events, Outbox producers and consumers, and `core.tenant_module_states.module_key`.
-- `implementationId` is the stable explicit identity of one catalogued executable implementation
-  of a `moduleId`, for example `standard` or `akros`. Compatible alternatives may share a
-  `moduleId`; different public semantics require a different `moduleId`.
+- Target `implementationId` is the stable explicit identity of one catalogued executable
+  implementation of a `moduleId`, for example `standard` or `akros`. Compatible alternatives may
+  share a `moduleId`; different public semantics require a different `moduleId`.
 - These identities may happen to contain equal text, but their roles never become interchangeable.
 
 For example, deployment `property-registry` may publish module `property.registry`.
@@ -32,9 +33,9 @@ with customer branches, environment flags, duplicate `moduleId` values, or allow
    real typed Actions, Effect API values, Module Federation component values, payload Schemas, and
    plain public descriptors.
 3. The owning build emits a deterministic versioned JSON deployment contract, including only safe
-   semantic Shell contribution bindings. Shell fetches only
-   allowlisted contracts and builds an immutable catalog indexed by `appId`, `moduleId`, and
-   `implementationId` without collapsing their roles.
+   semantic Shell contribution bindings. Shell fetches only allowlisted contracts and builds an immutable current catalog indexed by
+   `appId` and `moduleId` without collapsing their roles. Explicit `implementationId` indexing belongs
+   to the accepted target contract described below.
 4. `vertical.registration.ts` binds private executable Actions, pages, components, APIs, search,
    reports, and workers for the owning process. Only safe descriptors may be projected into the
    deployment contract.
@@ -84,23 +85,29 @@ Core capabilities are implicit universal infrastructure, not per-module requirem
 system readiness and module-owned setup remain private implementation concerns and are not generic
 activation gates.
 
+## Accepted target architecture
+
+The following contract is accepted but is not represented by the current manifest/catalog schema.
+Implement it only by extending Codesmith, Effect Schemas, serialized contracts, topology validation,
+Customer Configuration resolution, and tests together.
+
 A continuously delivered Application Composition owns a dependency-closed DAG of Foundational and
 Business Module Contract Identities and their permitted implementations. Core validates that graph
-without learning its business meaning. Installation, activation, and entrypoint execution must
-preserve dependency closure: a module can activate only when one selected implementation and every
-required dependency are installed, compatible, healthy, and active. Customer Configurations may
-select only modules and explicit implementations permitted by the composition.
+without learning its business meaning. Installation, activation, and entrypoint execution preserve
+dependency closure: a module activates only when one selected implementation and every required
+dependency are installed, compatible, healthy, and active. Customer Configurations select only
+modules and explicit implementations permitted by the composition.
 
-Every generated deployment contract/catalog record includes immutable build revision/digest,
-public-contract hash/version, migration-set identity, owner, and health/readiness. Customers do not
-pin a whole-product version; these fields support skew rejection, canary, audit, and rollback. The
-catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation identities.
+The target deployment record adds immutable build revision/digest, public-contract hash/version,
+migration-set identity, owner, health, and readiness to the current `buildMarker`. These fields
+support skew rejection, canary, audit, and rollback without customer-pinned whole-product versions.
+The target catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation
+identities.
 
 Dependency enforcement never authorizes private imports, shared repositories, shared business
 transactions, or direct table access. Typed API, public event, and Outbox communication preserves
 the deployment seams. A dependency outage produces an explicit unavailable/degraded result for the
-affected entrypoint without rewriting or cascading persisted module states; unrelated modules keep
-their independent lifecycles and remain operable.
+affected entrypoint without rewriting persisted module states; unrelated modules remain operable.
 
 ## Generator order
 
@@ -149,7 +156,7 @@ contains route values, loader functions, imports, private source paths, or execu
 
 ## Documentation authority
 
-Repository-level product vocabulary and the app-local implementation contract agree that OntOS
+Repository-level product semantics and the app-local implementation contract agree that OntOS
 Business Modules preserve independently deployable MicroVertical seams. Proposed historical ADRs
 remain decision history and do not override this app-local implementation rule. If future product
 vocabulary and implementation guidance diverge, update both explicitly rather than silently

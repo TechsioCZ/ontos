@@ -24,7 +24,7 @@ OntOS currently has several independent protection mechanisms: Action execution 
 
 Gateway capabilities also contain a `jti`, but the receiving MicroVertical only verifies signature and claims; it does not atomically consume the identifier. A still-valid assertion can therefore be replayed. The current tests cover wrong audience but do not provide the full negative matrix required by issue #173.
 
-The governance decision that should authorize this rollout is not complete: issue #169 remains open without recorded acceptance of the proposed boundary and sequencing decisions. The repository also has no approved, source-controlled production deployment context for this migration; the current provisioning command supports development and stage and deliberately rejects production. Those decisions must be resolved before enforcement can be enabled.
+ADR-0019 accepts explicit fail-closed Action authorization, but it does not decide the wider protected-entrypoint classification and rollout contract in this specification. Issue #173 owns that technical implementation and readiness work. Production promotion is a separate human gate in issue #369, and the repository has no approved source-controlled production authorization context. Issue #169 is broader review context, not approval. Production enforcement must remain blocked until the technical and production gates are satisfied.
 
 ## Solution Statement
 
@@ -42,8 +42,8 @@ Implement capability replay rejection at the receiving deployment boundary so in
 
 Use these files to implement the feature:
 
-- `../docs/adr/0019-explicit-action-authorization.md` — proposed authorization decision that must be approved and expanded from Actions to all protected entrypoint classes before implementation proceeds.
-- `../docs/contexts/ontos/CONTEXT.md` — records the product/security context and the decision dependencies tracked by issues #169 and #173.
+- `../docs/adr/0019-explicit-action-authorization.md` — accepted Action authorization decision; it does not by itself accept the wider cross-surface contract or production promotion.
+- `../docs/contexts/ontos/CONTEXT.md` — product and security semantics relevant to the protected-entrypoint work; current technical and production decisions remain in issues #173 and #369.
 - `package.json` — exposes the inventory, impact-report, readiness, focused-test, and final quality-gate commands.
 - `packages/core-runtime/src/modules/module-entrypoint.ts` — owns the Effect schema and descriptor shared by generated entrypoints.
 - `packages/core-runtime/src/modules/module-entrypoint-gateway.ts` — enforces module-entrypoint state separately from the new authorization classification.
@@ -105,7 +105,7 @@ Use these files to implement the feature:
 
 ### Phase 1: Foundation
 
-Resolve the pending authorization decision, define a closed classification and rollout contract, and extend Codesmith before creating or changing generated entrypoint artifacts. Reuse the existing module-entrypoint boundary checker as the single inventory source and make omissions fail the repository contract gate.
+Align the accepted Action decision with the still-open cross-surface and production gates, define a closed classification and rollout contract, and extend Codesmith before creating or changing generated entrypoint artifacts. Reuse the existing module-entrypoint boundary checker as the single inventory source and make omissions fail the repository contract gate.
 
 ### Phase 2: Core Implementation
 
@@ -119,10 +119,11 @@ Wire readiness evidence into deployment planning and production promotion, run t
 
 IMPORTANT: Execute every step in order, top to bottom.
 
-### 1. Ratify the authorization rollout decision
+### 1. Align decision scope and rollout ownership
 
-- [ ] Resolve GitHub issue #169 with Petr and Jiří, recording accept/reject/defer outcomes for the full protected-entrypoint boundary, classification vocabulary, compatibility behavior, owner-local replay storage, production context ownership, non-goals, and implementation order.
-- [ ] Update `../docs/adr/0019-explicit-action-authorization.md`, `../docs/adr/README.md`, and `../docs/contexts/ontos/CONTEXT.md` so an accepted ADR explicitly covers Actions, HTTP routes, workers, capability issuance, rollout evidence, and the production gate; stop implementation if the decision is not accepted.
+- [x] Treat ADR-0019 as accepted for Action authorization only; do not represent it as acceptance of the wider protected-entrypoint contract or production rollout.
+- [ ] Resolve remaining technical architecture and readiness decisions in issue #173 and record production context and rollout-window approval in issue #369. Issue #169 remains broader review context, not an approval gate.
+- [ ] Extend ADR-0019 or add a separate ADR before claiming the cross-surface classification, compatibility, replay, and evidence model as accepted durable architecture. Production promotion remains separately gated by issue #369.
 
 ### 2. Define explicit entrypoint authorization classifications
 
@@ -180,13 +181,13 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### 10. Document the protected-entrypoint contract and operator runbook
 
-- [ ] Update `docs/architecture/MODULE_ENTRYPOINTS.md`, `ACTIONS.md`, `OUTBOX_WORKERS.md`, `ERRORS.md`, and `DEPLOYMENT.md` with the accepted classification table, inventory ownership, generator workflow, report-only restrictions, evidence schemas, replay semantics, policy/data migration order, rollback behavior, and production promotion/abort procedure.
+- [ ] Update `docs/architecture/MODULE_ENTRYPOINTS.md`, `ACTIONS.md`, `OUTBOX_WORKERS.md`, `ERRORS.md`, and `DEPLOYMENT.md` with the implemented classification table, inventory ownership, generator workflow, report-only restrictions, evidence schemas, replay semantics, policy/data migration order, rollback behavior, and production promotion/abort procedure. Distinguish accepted Action scope, open cross-surface decisions, and production approval.
 - [x] Update `README.md` with the supported inventory, impact, readiness, and focused validation commands and identify generated `.codex/reports/authorization/` artifacts as non-secret operator evidence.
-- [x] Cross-link GitHub issues #169 and #173, PR #315, and the proposed ADR so implementation and operational approval remain auditable without representing the ADR as accepted.
+- [x] Cross-link technical issue #173, production gate #369, broader review #169, PR #315, and accepted ADR-0019 without implying that the wider cross-surface contract or production enforcement is approved.
 
 ### 11. Run all validation commands
 
-- [ ] Execute every command in `Validation Commands` in order, retain the generated inventory evidence needed for review, and resolve every implementation failure without weakening a contract or skipping a required negative case. All non-build commands pass, but the literal `mise exec -- pnpm build` command rejects the dirty review worktree's non-promotable `workspace` source revision; the build passes when `ULTRAMODERN_SOURCE_REVISION` is set to the reviewed HEAD. Impact/readiness promotion evidence is intentionally not fabricated while #169 and the production context remain unapproved.
+- [ ] Execute every command in `Validation Commands` in order, retain the generated inventory evidence needed for review, and resolve every implementation failure without weakening a contract or skipping a required negative case. All non-build commands pass, but the literal `mise exec -- pnpm build` command rejects the dirty review worktree's non-promotable `workspace` source revision; the build passes when `ULTRAMODERN_SOURCE_REVISION` is set to the reviewed HEAD. Impact/readiness promotion evidence is intentionally not fabricated while issue #173 remains incomplete and issue #369 plus the production context remain unapproved.
 
 ## Testing Strategy
 
@@ -226,7 +227,7 @@ Exercise the actual Shell issuer, shared gateway contract, Contacts receiver, ow
 - [x] Gateway assertions are single use at the receiving owner boundary: sequential and concurrent replay are rejected, exactly one concurrent redemption succeeds, and storage failure fails closed without creating a Shell runtime dependency.
 - [ ] Automated negative tests cover missing policy, wrong tenant, expired capability, replay, and wrong audience across both session and API-key issuance paths.
 - [ ] Architecture and deployment documentation describes the accepted classification, compatibility, evidence, migration, replay, promotion, abort, and rollback contracts.
-- [ ] GitHub issue #169 records the required Petr/Jiří agreement before implementation proceeds, and issue #173 can be closed only after every criterion above is evidenced.
+- [ ] Issue #173 records completion of the technical criteria, and issue #369 records Petr/Jiří production approval before enforcement. Issue #169 remains broader review context, not an approval gate.
 
 ## Validation Commands
 
@@ -259,16 +260,16 @@ Execute every command to validate the feature with zero regressions.
 ## Notes
 
 - Implementation depends on PR #315 being merged or its exact Action authorization changes being present. This plan intentionally does not duplicate that PR's Action permission model, current Action catalog, or fail-closed Action runtime work.
-- Implementation is blocked until issue #169 records Petr and Jiří's agreement and ADR-0019 is accepted with the expanded cross-surface scope. The current unapproved ADR text must not be treated as authorization to proceed.
-- Production enforcement is also blocked until OntOS has an approved, source-controlled production deployment context. The existing development/stage-only provisioning contract must continue to reject production rather than accepting arbitrary tenant or Action inputs.
+- ADR-0019 is accepted for Action authorization. This plan's wider cross-surface classification, replay, readiness, and evidence contract remains owned by issue #173; do not present it as accepted durable architecture without a corresponding ADR or explicit decision.
+- Production enforcement remains blocked until issue #369 records approval and OntOS has an approved source-controlled production deployment context. The development/stage-only provisioning contract must continue to reject production rather than accepting arbitrary tenant or Action inputs.
 - The recommended replay design is owner-local durable redemption because it preserves MicroVertical deployment independence. If the accepted ADR assigns redemption ownership elsewhere, revise this plan before implementation instead of adding a synchronous private Shell dependency.
 - `.codex/reports/authorization/` is an operator-evidence output location, not a source of runtime policy. Runtime configuration and approval references remain source controlled; reports must be reproducible and safe to retain in CI artifacts.
-- The classification literal names in this plan are the proposed contract. Task 1 must either ratify them or update this plan and the ADR consistently before code changes begin.
+- The classification literals already present in schemas and inventory are the current implemented technical contract under issue #173; they do not prove the remaining readiness criteria or production approval. Any semantic change must update the owning ADR or decision, this plan, implementation guidance, schemas, and tests together.
 - No user-facing UI work is included; the scope is runtime authorization, generators, storage, deployment evidence, tests, and operator documentation.
 
 ### Implementation evidence and explicit deviation (2026-09-02)
 
-- The user explicitly directed implementation to proceed despite issue #169. This is a scoped implementation override only: it does not record Petr/Jiří acceptance, accept ADR-0019, authorize production, or satisfy the two governance checkboxes in task 1.
+- The user explicitly directed implementation to proceed while wider governance remained open. This scoped override did not expand ADR-0019 beyond Actions, accept the cross-surface contract as durable architecture, authorize production, or satisfy issue #369.
 - Production provisioning and readiness remain blocked. No impact or readiness promotion artifact was fabricated from an unobserved window or an unapproved decision.
 - The deterministic inventory contains 51 entries (16 Actions, 33 route/read surfaces, and both capability issuers), is bound to source revision `e402b254ce9c08699f4e8ccea42b74f24d11f1db`, and has inventory hash `b529d6b394d276982917765cc8413a9d9da404ad63063fcdce4c0cf0b8f63e9c`.
 - The report-only contract is bounded from 2026-09-02 through 2026-09-30 and has an empty compatibility baseline, so no existing or new entrypoint receives a legacy authorization bypass.

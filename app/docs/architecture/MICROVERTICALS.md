@@ -167,7 +167,7 @@ Action runtime still performs the Action-specific SpiceDB permission check and e
 evaluation. Co-location with the Shell never bypasses this boundary.
 
 Prepare an existing MicroVertical once with
-`pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>` before its BFF accepts
+`mise exec -- pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>` before its BFF accepts
 Shell-user Action calls. The generated server verifier and client acquisition adapter embed the
 vertical's authoritative topology app ID. Actions remain independently generated, and adding an
 Action must never require a new Shell endpoint or a hand-maintained audience registry.

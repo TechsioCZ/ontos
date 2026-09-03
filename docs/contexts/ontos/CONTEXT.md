@@ -1,7 +1,8 @@
 # OntOS language
 
 Use these terms consistently across product, architecture, and implementation discussions. This
-context defines language only; it does not override accepted ADRs or current application guidance.
+context owns canonical product semantics and vocabulary, not storage, file layout, transport, or
+other implementation mechanics. It does not override accepted ADRs or current application guidance.
 
 ## Language guardrails
 
@@ -56,10 +57,13 @@ It is not a BFF business layer or a direct database path.
 deployable seam. It owns its UI and server behavior; co-location does not permit private imports,
 shared repositories, or shared business transactions.
 
-**OntOS Business Module** — A product capability normally implemented as a MicroVertical and
-published through an OntOS Module Manifest.
+**OntOS Module** — Umbrella for a capability described by an OntOS Module Manifest. The current
+module kinds are Business Module, Foundational Module, and System Module.
 
-**Foundational Module** — A Business Module that owns shared business reality used by several
+**OntOS Business Module** — Module kind that owns one cohesive business capability, normally behind
+an independently deployable MicroVertical seam.
+
+**Foundational Module** — Separate module kind that owns shared business reality used by several
 domains. It remains outside Core because its concepts evolve through domain discovery.
 
 **Organization Registry** — Foundational Module for shared organizational groupings and views over
@@ -96,9 +100,9 @@ invisible forks are forbidden.
 **Build Revision** — Immutable source and artifact identity used for compatibility, canary, audit,
 and rollback. It is not a customer-selectable product version.
 
-**OntOS Module Manifest** — Effect Schema-defined public module contract. It declares identity,
-dependencies, Actions, APIs, components, Resource types, events, search, and reports, but excludes
-private tables, migrations, handlers, registrations, routes, fixtures, and tests.
+**OntOS Module Manifest** — Effect Schema-defined public module contract that exposes safe module
+semantics while excluding private tables, migrations, handlers, registrations, routes, fixtures,
+and tests. The exact current and target fields are owned by app-local manifest guidance.
 
 **Vertical Runtime Registration** — Owner-local private binding from a module's public contract to
 its executable Actions, APIs, pages, policies, migrations, workers, search, and reports. It never
