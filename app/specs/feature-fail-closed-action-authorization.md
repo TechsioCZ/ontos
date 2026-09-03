@@ -12,7 +12,11 @@ created: 2026-09-02
 > `tenant_membership_default` or `explicit` provisioning. Only the former receives a fixed
 > tenant-member grant; the latter must already have its intended policy and never receives a
 > blanket membership grant. This is implemented in `provisionActionAuthorization` and covered by
-> the restricted-Action regression in `scripts/tests/provision-current-action-authorization.test.mts`.
+> the restricted-Action regressions in
+> `scripts/tests/provision-current-action-authorization.test.mts`. Default Actions verify every
+> fixed context and a representative non-member. Explicit Actions instead require a unique recorded
+> per-Action assertion set with at least one allowed and one denied Principal; incomplete or unknown
+> assertion sets fail before any schema or relationship write.
 
 ## Feature Description
 

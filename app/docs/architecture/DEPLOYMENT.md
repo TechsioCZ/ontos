@@ -194,6 +194,11 @@ reviewed removal of their obsolete executor relations. Derive Action object IDs 
 `toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke
 access. Record and verify this policy-data transition before promotion. An application rollback
 must not silently restore a revoked grant; any policy restoration needs its own reviewed decision.
+The fixed environment's provisioning input records at least one allowed and one denied Principal
+assertion for every `explicit` Action. Promotion verifies every fixed context plus the representative
+non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action
+assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit
+assertion sets fail before schema or relationship writes.
 
 ### Stage/demo bootstrap
 

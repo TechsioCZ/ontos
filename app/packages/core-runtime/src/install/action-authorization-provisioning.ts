@@ -16,6 +16,15 @@ export interface ActionAuthorizationProvisioningInput {
   readonly actions: readonly ActionAuthorizationProvisioningAction[];
   readonly contexts: readonly ActionAuthorizationContext[];
   readonly deniedPrincipalId?: string;
+  readonly explicitActionAssertions?: readonly ActionAuthorizationExplicitAssertionSet[];
+}
+
+export interface ActionAuthorizationExplicitAssertionSet {
+  readonly actionKey: string;
+  readonly assertions: readonly {
+    readonly expected: 'allowed' | 'denied';
+    readonly principalId: string;
+  }[];
 }
 
 export interface ActionAuthorizationProvisioningAction {
@@ -104,7 +113,35 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
       'The denied verification Principal must be outside the fixed context set',
     );
   }
-  return { actions, contexts, deniedPrincipalId };
+  const explicitActionKeys = actions
+    .filter(({ provisioning }) => provisioning === 'explicit')
+    .map(({ actionKey }) => actionKey);
+  const explicitActionAssertions = (input.explicitActionAssertions ?? []).toSorted((left, right) =>
+    left.actionKey.localeCompare(right.actionKey),
+  );
+  if (
+    explicitActionAssertions.length !== explicitActionKeys.length ||
+    explicitActionAssertions.some(
+      ({ actionKey, assertions }) =>
+        !explicitActionKeys.includes(actionKey) ||
+        assertions.length < 2 ||
+        new Set(assertions.map(({ principalId }) => principalId)).size !== assertions.length ||
+        assertions.some(
+          ({ expected, principalId }) =>
+            principalId.length === 0 || (expected !== 'allowed' && expected !== 'denied'),
+        ) ||
+        !assertions.some(({ expected }) => expected === 'allowed') ||
+        !assertions.some(({ expected }) => expected === 'denied'),
+    ) ||
+    new Set(explicitActionAssertions.map(({ actionKey }) => actionKey)).size !==
+      explicitActionAssertions.length
+  ) {
+    throw failure(
+      'action_authorization_input_invalid',
+      'Each explicit Action requires unique recorded allowed and denied verification assertions',
+    );
+  }
+  return { actions, contexts, deniedPrincipalId, explicitActionAssertions };
 };
 
 const tenantAccessRequest = (context: ActionAuthorizationContext) =>
@@ -184,17 +221,16 @@ const checkHasPermission = (
 const checkNoPermission = (
   client: ActionAuthorizationProvisioningClient,
   request: v1.CheckPermissionRequest,
+  error: ActionAuthorizationProvisioningError = failure(
+    'action_authorization_verification_failed',
+    'The representative non-member authorization check did not deny',
+  ),
 ) =>
   callClient(() => client.checkPermission(request)).pipe(
     Effect.flatMap((response) =>
       response?.permissionship === v1.CheckPermissionResponse_Permissionship.NO_PERMISSION
         ? Effect.void
-        : Effect.fail(
-            failure(
-              'action_authorization_verification_failed',
-              'The representative non-member authorization check did not deny',
-            ),
-          ),
+        : Effect.fail(error),
     ),
   );
 
@@ -203,7 +239,7 @@ export const provisionActionAuthorization = (
   input: ActionAuthorizationProvisioningInput,
 ): Effect.Effect<ActionAuthorizationProvisioningResult, ActionAuthorizationProvisioningError> =>
   Effect.gen(function* provisionActionAuthorizationEffect() {
-    const { actions, contexts, deniedPrincipalId } = yield* Effect.try({
+    const { actions, contexts, deniedPrincipalId, explicitActionAssertions } = yield* Effect.try({
       catch: (error) =>
         Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(),
       try: () => assertProvisioningInput(input),
@@ -241,8 +277,8 @@ export const provisionActionAuthorization = (
       ),
     );
 
-    for (const context of contexts) {
-      for (const { actionKey } of actions) {
+    for (const actionKey of defaultActionKeys) {
+      for (const context of contexts) {
         yield* checkHasPermission(
           client,
           actionExecuteRequest(actionKey, context.principalId),
@@ -252,15 +288,30 @@ export const provisionActionAuthorization = (
           ),
         );
       }
+      yield* checkNoPermission(client, actionExecuteRequest(actionKey, deniedPrincipalId));
     }
-    const [representativeAction] = actions.map(({ actionKey }) => actionKey);
-    if (representativeAction === undefined) {
-      return yield* failure(
-        'action_authorization_input_invalid',
-        'Current Action discovery must not be empty',
-      );
+    for (const { actionKey, assertions } of explicitActionAssertions) {
+      for (const assertion of assertions) {
+        const request = actionExecuteRequest(actionKey, assertion.principalId);
+        yield* assertion.expected === 'allowed'
+          ? checkHasPermission(
+              client,
+              request,
+              failure(
+                'action_authorization_verification_failed',
+                'An explicit Action allowed assertion did not verify',
+              ),
+            )
+          : checkNoPermission(
+              client,
+              request,
+              failure(
+                'action_authorization_verification_failed',
+                'An explicit Action denied assertion did not verify',
+              ),
+            );
+      }
     }
-    yield* checkNoPermission(client, actionExecuteRequest(representativeAction, deniedPrincipalId));
 
     return {
       actionCount: actions.length,
