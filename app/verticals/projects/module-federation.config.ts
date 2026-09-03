@@ -1,3 +1,4 @@
+// ultramodern-mf: no-exposes
 import { createModuleFederationConfig } from '@module-federation/modern-js-v3';
 
 const config: ReturnType<typeof createModuleFederationConfig> = createModuleFederationConfig({

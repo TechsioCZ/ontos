@@ -5502,10 +5502,10 @@ assert(
   'Stage deployment must depend on every fast, service-backed, Node, and Cloudflare required job',
 );
 assert(
-  !/(?:verticals\/(?:crm|projects)|outputs\.(?:crm|projects)|ZEROPS_(?:CRM|PROJECTS)_SERVICE_ID|--setup\s+(?:crm|projects))/iu.test(
+  !/(?:verticals\/(?:crm)|outputs\.(?:crm)|ZEROPS_(?:CRM)_SERVICE_ID|--setup\s+(?:crm))/iu.test(
     workflowText,
   ) && !workflowText.includes('case "$path"'),
-  'Stage deployment workflow must not contain stale CRM/Projects or hand-written changed-path branches',
+  'Stage deployment workflow must not contain stale CRM or hand-written changed-path branches',
 );
 const zeropsDeploymentSource = readText('zerops.yaml');
 for (const vertical of topology.verticals ?? []) {
