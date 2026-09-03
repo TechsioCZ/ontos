@@ -268,6 +268,14 @@ test('settles several browser entrypoints without one failure hiding healthy loa
         },
         timeoutMs: 50,
       },
+      {
+        identity: 'throwing-validator/page',
+        isCompatible: () => {
+          throw new TypeError('malformed runtime value');
+        },
+        load: async () => ({ default: () => null }),
+        timeoutMs: 50,
+      },
     ]),
   );
 
@@ -280,6 +288,11 @@ test('settles several browser entrypoints without one failure hiding healthy loa
     {
       identity: 'property-registry/page',
       reason: 'unavailable',
+      state: 'unavailable',
+    },
+    {
+      identity: 'throwing-validator/page',
+      reason: 'incompatible',
       state: 'unavailable',
     },
   ]);

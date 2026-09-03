@@ -23,6 +23,17 @@ export interface ModuleEntrypointLoadRequest<Identity, Value> {
 export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> =
   SettledModuleEntrypointLoad<Value> & { readonly identity: Identity };
 
+const safelyCheckCompatibility = <Value>(
+  value: Value,
+  isCompatible: (value: Value) => boolean,
+): boolean => {
+  try {
+    return isCompatible(value);
+  } catch {
+    return false;
+  }
+};
+
 /** Settles one browser entrypoint independently with a bounded, audience-safe result. */
 export const settleModuleEntrypointLoad = <Value>(
   load: () => Promise<Value>,
@@ -32,7 +43,7 @@ export const settleModuleEntrypointLoad = <Value>(
   Effect.tryPromise(load).pipe(
     Effect.timeout(`${timeoutMs} millis`),
     Effect.map((value): SettledModuleEntrypointLoad<Value> =>
-      isCompatible(value)
+      safelyCheckCompatibility(value, isCompatible)
         ? { state: 'ready', value }
         : { reason: 'incompatible', state: 'unavailable' },
     ),
