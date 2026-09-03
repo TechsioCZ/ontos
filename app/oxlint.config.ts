@@ -78,6 +78,8 @@ export default defineConfig({
     '.modernjs',
     '**/modern-tanstack/**',
     '**/routeTree.gen.*',
+    // Modern.js requires this conventional PascalCase root filename.
+    'verticals/projects/src/App.tsx',
     'tools/oxlint/anti-slop/**',
   ],
 });

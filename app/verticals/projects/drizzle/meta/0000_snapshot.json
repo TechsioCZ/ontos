@@ -1,0 +1,232 @@
+{
+  "id": "701c5cee-8efb-4089-8eba-7e229e6e7e69",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "projects.projects": {
+      "name": "projects",
+      "schema": "projects",
+      "columns": {
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prefix": {
+          "name": "prefix",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "short_text": {
+          "name": "short_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_principal_id": {
+          "name": "owner_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_project_id": {
+          "name": "parent_project_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lifecycle_state": {
+          "name": "lifecycle_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "created_by_principal_id": {
+          "name": "created_by_principal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "projects_projects_tenant_prefix_uk": {
+          "name": "projects_projects_tenant_prefix_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "prefix",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "projects_projects_tenant_parent_idx": {
+          "name": "projects_projects_tenant_parent_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "parent_project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "projects_projects_tenant_parent_fk": {
+          "name": "projects_projects_tenant_parent_fk",
+          "tableFrom": "projects",
+          "tableTo": "projects",
+          "schemaTo": "projects",
+          "columnsFrom": [
+            "tenant_id",
+            "parent_project_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "project_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "projects_projects_tenant_id_uk": {
+          "name": "projects_projects_tenant_id_uk",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "project_id"
+          ]
+        }
+      },
+      "policies": {
+        "projects_projects_tenant_select": {
+          "name": "projects_projects_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"projects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_projects_tenant_insert": {
+          "name": "projects_projects_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"projects\".\"projects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_projects_tenant_update": {
+          "name": "projects_projects_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"projects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"projects\".\"projects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "projects_projects_tenant_delete": {
+          "name": "projects_projects_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"projects\".\"projects\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "projects_projects_prefix_ck": {
+          "name": "projects_projects_prefix_ck",
+          "value": "\"projects\".\"projects\".\"prefix\" ~ '^[A-Z]{2,5}$'"
+        },
+        "projects_projects_name_ck": {
+          "name": "projects_projects_name_ck",
+          "value": "length(btrim(\"projects\".\"projects\".\"name\")) > 0"
+        },
+        "projects_projects_short_text_ck": {
+          "name": "projects_projects_short_text_ck",
+          "value": "\"projects\".\"projects\".\"short_text\" is null or char_length(\"projects\".\"projects\".\"short_text\") <= 255"
+        },
+        "projects_projects_not_own_parent_ck": {
+          "name": "projects_projects_not_own_parent_ck",
+          "value": "\"projects\".\"projects\".\"parent_project_id\" is null or \"projects\".\"projects\".\"parent_project_id\" <> \"projects\".\"projects\".\"project_id\""
+        },
+        "projects_projects_lifecycle_state_ck": {
+          "name": "projects_projects_lifecycle_state_ck",
+          "value": "\"projects\".\"projects\".\"lifecycle_state\" in ('active', 'archived')"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "projects": "projects"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

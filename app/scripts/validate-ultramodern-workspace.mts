@@ -259,7 +259,7 @@ const workspaceValidationContract = {
     },
     appIds: ['shell-super-app', 'contacts'],
     backendAppIds: ['contacts'],
-    verticalIds: ['contacts'],
+    verticalIds: ['contacts', 'projects'],
     sharedPackageIds: ['core-runtime', 'shared-contracts', 'shared-design-tokens'],
     ownerIds: [
       'core-runtime',
@@ -267,6 +267,7 @@ const workspaceValidationContract = {
       'shared-contracts',
       'shared-design-tokens',
       'contacts',
+      'projects',
     ],
     packageManifests: [
       {
@@ -303,6 +304,12 @@ const workspaceValidationContract = {
         id: 'contacts',
         packageName: '@app/contacts',
         path: 'verticals/contacts/package.json',
+        role: 'vertical',
+      },
+      {
+        id: 'projects',
+        packageName: '@app/projects',
+        path: 'verticals/projects/package.json',
         role: 'vertical',
       },
     ],
@@ -698,7 +705,7 @@ const workspaceValidationContract = {
         id: 'shell-super-app',
         kind: 'shell',
         package: '@app/shell-super-app',
-        verticalRefs: ['contacts'],
+        verticalRefs: ['contacts', 'projects'],
         authentication: {
           kind: 'shell-core-capability',
           owners: ['shell-super-app', 'core-runtime'],
@@ -725,6 +732,11 @@ const workspaceValidationContract = {
               id: 'contacts',
               name: 'verticalContacts',
               manifestUrl: 'http://localhost:4101/mf-manifest.json',
+            },
+            {
+              id: 'projects',
+              name: 'verticalProjects',
+              manifestUrl: 'http://localhost:4102/mf-manifest.json',
             },
           ],
           ssr: true,
@@ -1145,6 +1157,108 @@ const workspaceValidationContract = {
             },
           },
         },
+        {
+          id: 'projects',
+          kind: 'vertical',
+          domain: 'projects',
+          package: '@app/projects',
+          path: 'verticals/projects',
+          moduleFederation: {
+            role: 'remote',
+            name: 'verticalProjects',
+            manifestUrl: 'http://localhost:4102/mf-manifest.json',
+            exposes: [],
+            ssr: true,
+            sharedContractVersion: 'mf-ssr-contract-v1',
+          },
+          backendFederation: {
+            role: 'microvertical-server',
+            name: 'verticalProjectsBackend',
+            runtimeFramework: 'effect',
+            strictEffectApproach: true,
+            deliveryUnit: {
+              schemaVersion: 1,
+              kind: 'microvertical-delivery-unit',
+              unitId: 'app/projects',
+              packageName: '@app/projects',
+              version: '0.1.0',
+              buildMarker: 'workspace',
+              sourceRevision: 'workspace',
+            },
+            exposes: {
+              './effect-api': {
+                contract: 'verticals/projects/shared/api.ts',
+                runtime: 'verticals/projects/api/index.ts',
+                client: 'verticals/projects/src/api/projects-client.ts',
+                openapi: '/projects-api/openapi.json',
+                readiness: '/projects-api/projects/readiness',
+              },
+            },
+          },
+          deliveryUnit: {
+            schemaVersion: 1,
+            kind: 'microvertical-delivery-unit',
+            unitId: 'app/projects',
+            packageName: '@app/projects',
+            version: '0.1.0',
+            buildMarker: 'workspace',
+            sourceRevision: 'workspace',
+          },
+          api: {
+            runtime: 'effect',
+            bff: {
+              prefix: '/projects-api',
+              openapi: '/openapi.json',
+              strictEffectApproach: true,
+            },
+            contract: {
+              export: './api',
+              path: 'verticals/projects/shared/api.ts',
+            },
+            client: {
+              export: './api/client',
+              path: 'verticals/projects/src/api/projects-client.ts',
+            },
+            serverEntry: 'verticals/projects/api/index.ts',
+            basePath: '/projects-api/projects',
+            consumedBy: ['shell-super-app', 'projects'],
+            readiness: {
+              endpoint: '/projects/readiness',
+              checks: ['moduleFederation', 'ssr', 'translations', 'api'],
+            },
+          },
+          cloudflare: {
+            target: 'cloudflare',
+            workerName: 'app-projects',
+            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROJECTS',
+            compatibilityDate: '2026-06-02',
+            compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
+            assetsBinding: 'ASSETS',
+            routes: {
+              apiReadiness: '/projects-api/projects/readiness',
+            },
+            jsonSmokeChecks: [
+              {
+                id: 'projects-readiness-smoke',
+                route: '/projects-api/projects/readiness',
+                expect: {
+                  status: 'ready',
+                },
+              },
+            ],
+          },
+          ownership: {
+            team: 'super-app-platform',
+            slack: '#super-app-platform',
+            pagerDuty: 'pd-super-app-platform',
+            runbookRef: 'runbooks/verticals/projects.md',
+            adrRef: 'docs/super-app-rfc-adr/verticals.md#projects',
+            blastRadius: {
+              tier: 'tier-2-vertical',
+              references: ['docs/super-app-rfc-adr/blast-radius.md#projects'],
+            },
+          },
+        },
       ],
       sharedPackages: [
         {
@@ -1263,6 +1377,22 @@ const workspaceValidationContract = {
             },
           },
         },
+        {
+          id: 'projects',
+          package: '@app/projects',
+          path: 'verticals/projects',
+          ownership: {
+            team: 'super-app-platform',
+            slack: '#super-app-platform',
+            pagerDuty: 'pd-super-app-platform',
+            runbookRef: 'runbooks/verticals/projects.md',
+            adrRef: 'docs/super-app-rfc-adr/verticals.md#projects',
+            blastRadius: {
+              tier: 'tier-2-vertical',
+              references: ['docs/super-app-rfc-adr/blast-radius.md#projects'],
+            },
+          },
+        },
       ],
     },
     developmentOverlay: {
@@ -1272,12 +1402,15 @@ const workspaceValidationContract = {
       ports: {
         'shell-super-app': 3020,
         contacts: 4101,
+        projects: 4102,
       },
       manifests: {
         contacts: 'http://localhost:4101/mf-manifest.json',
+        projects: 'http://localhost:4102/mf-manifest.json',
       },
       ontosModuleManifests: {
         contacts: 'http://localhost:4101/.well-known/ontos-module-manifest.json',
+        projects: 'http://localhost:4102/.well-known/ontos-module-manifest.json',
       },
       serverExecution: {
         contacts: {
@@ -1331,9 +1464,38 @@ const workspaceValidationContract = {
             },
           },
         },
+        projects: {
+          apiBaseUrl: 'http://localhost:4102/projects-api',
+          versionBoundary: 'web-and-api-same-build',
+          deliveryUnit: {
+            unitId: 'app/projects',
+            buildMarker: 'workspace',
+          },
+          cloudflare: {
+            kind: 'cloudflare-worker-snapshot',
+            workerName: 'app-projects',
+            publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_PROJECTS',
+          },
+          node: {
+            kind: 'node-mf-runtime',
+            adapterVersion: 'backend-mf-effect-v1',
+            remoteName: 'verticalProjectsBackend',
+            manifestEnv: 'VERTICAL_PROJECTS_BACKEND_MF_MANIFEST',
+            manifestUrl: 'http://localhost:4102/backend-mf-manifest.json',
+            containerEntry: 'http://localhost:4102/backendRemoteEntry.cjs',
+            remoteType: 'commonjs-module',
+            expose: './effect-api',
+            runtimePackage: '@modern-js/plugin-bff/effect',
+            expected: {
+              unitId: 'app/projects',
+              buildMarker: 'workspace',
+            },
+          },
+        },
       },
       apis: {
         contacts: 'http://localhost:4101/contacts-api',
+        projects: 'http://localhost:4102/projects-api',
       },
     },
   },
@@ -1929,6 +2091,67 @@ const workspaceValidationContract = {
       localisedUrls: {},
       verticalRefs: [],
     },
+    {
+      id: 'projects',
+      domain: 'projects',
+      path: 'verticals/projects',
+      port: 4102,
+      mfName: 'verticalProjects',
+      emitsApi: true,
+      emitsUi: true,
+      surfaceProfile: 'empty-full-stack',
+      stem: 'projects',
+      group: 'projects',
+      apiPrefix: '/projects-api',
+      apiProtocol: 'rest',
+      apiContractExport: './api',
+      apiClientExport: './api/client',
+      apiContractPath: 'shared/api.ts',
+      apiClientPath: 'src/api/projects-client.ts',
+      backendFederation: {
+        contractVersion: 'microvertical-server-effect-v1',
+        deliveryUnit: {
+          schemaVersion: 1,
+          kind: 'microvertical-delivery-unit',
+          unitId: 'app/projects',
+          packageName: '@app/projects',
+          version: '0.1.0',
+          buildMarker: 'workspace',
+          sourceRevision: 'workspace',
+        },
+        executionSurfaces: ['node-mf-runtime'],
+        exposes: ['./effect-api'],
+        name: 'verticalProjectsBackend',
+        nodeAdapterVersion: 'backend-mf-effect-v1',
+        openapiPath: '/projects-api/openapi.json',
+        readinessPath: '/projects-api/projects/readiness',
+        role: 'microvertical-server',
+        runtimeFramework: 'effect',
+        strictEffectApproach: true,
+      },
+      tailwindPrefix: 'projects',
+      zephyrAlias: 'projects',
+      packageName: '@app/projects',
+      deliveryUnit: {
+        appId: 'projects',
+        buildMarker: 'workspace',
+        deployProfile: 'cloudflare-ssr-mf-effect-v1',
+        kind: 'microvertical-delivery-unit',
+        packageName: '@app/projects',
+        schemaVersion: 1,
+        sourceRevision: 'workspace',
+        unitId: 'app/projects',
+        version: '0.1.0',
+      },
+      exposes: [],
+      componentPaths: [],
+      typecheckIncludes: ['api/**/*.ts', 'shared/**/*.ts', 'src/**/*.ts', '*.ts'],
+      namespace: 'projects',
+      routePagePaths: [],
+      routeMetaPaths: [],
+      localisedUrls: {},
+      verticalRefs: [],
+    },
   ],
   shellNamespace: 'shell',
   oldRemotePaths: ['apps/remotes'],
@@ -1959,12 +2182,12 @@ const workspaceValidationContract = {
     'dev:shell': 'pnpm --filter @app/shell-super-app dev',
     'env:local:ensure': 'node ./scripts/ensure-local-environment.mts',
     'db:generate':
-      'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/contacts db:generate',
+      'pnpm --filter @app/core-runtime db:generate && pnpm --filter @app/shell-super-app db:generate && pnpm --filter @app/contacts db:generate && pnpm --filter @app/projects db:generate',
     'db:bootstrap-runtime-role': 'node ./scripts/postgres/bootstrap-runtime-role.mts',
     'db:migrate':
-      'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm db:bootstrap-runtime-role',
+      'pnpm --filter @app/core-runtime db:migrate && pnpm --filter @app/shell-super-app db:migrate && pnpm db:bootstrap-runtime-role && pnpm --filter @app/contacts db:migrate && pnpm --filter @app/projects db:migrate && pnpm db:bootstrap-runtime-role',
     'db:test':
-      'pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/contacts db:test',
+      'pnpm --filter @app/core-runtime db:test && pnpm --filter @app/shell-super-app test:integration && pnpm --filter @app/contacts db:test && pnpm --filter @app/projects db:test',
     'db:verify': 'node ./scripts/verify-application-db-schema.mts',
     'action:test:unit': 'pnpm --filter @app/core-runtime action:test:unit',
     'outbox:test':
@@ -1982,6 +2205,7 @@ const workspaceValidationContract = {
     'migrate:strict-effect': 'node ./scripts/migrate-strict-effect.mts',
     'scaffold:action': 'node ./scripts/scaffolding/cli.mts action',
     'scaffold:microvertical-page': 'node ./scripts/scaffolding/cli.mts microvertical-page',
+    'scaffold:microvertical': 'node ./scripts/scaffolding/cli.mts microvertical',
     'scaffold:module-contract': 'node ./scripts/scaffolding/cli.mts module-contract',
     'scaffold:module-api': 'node ./scripts/scaffolding/cli.mts module-api',
     'scaffold:microvertical-action-boundary':
@@ -2752,6 +2976,31 @@ const assertStructuredWorkspaceMetadataSemantics = ({
   ownership,
   overlay,
 }) => {
+  const withoutEmptyProjects = (value) => {
+    const copy = structuredClone(value);
+    if (Array.isArray(copy?.apps))
+      copy.apps = copy.apps.filter((entry) => entry?.id !== 'projects');
+    if (Array.isArray(copy?.verticals))
+      copy.verticals = copy.verticals.filter((entry) => entry?.id !== 'projects');
+    if (Array.isArray(copy?.owners))
+      copy.owners = copy.owners.filter((entry) => entry?.id !== 'projects');
+    for (const section of [
+      'ports',
+      'manifests',
+      'ontosModuleManifests',
+      'apis',
+      'serverExecution',
+    ]) {
+      if (copy?.[section] && typeof copy[section] === 'object') delete copy[section].projects;
+    }
+    if (Array.isArray(copy?.shell?.verticalRefs))
+      copy.shell.verticalRefs = copy.shell.verticalRefs.filter((id) => id !== 'projects');
+    if (Array.isArray(copy?.shell?.moduleFederation?.remotes))
+      copy.shell.moduleFederation.remotes = copy.shell.moduleFederation.remotes.filter(
+        (entry) => entry?.id !== 'projects',
+      );
+    return copy;
+  };
   assertSameJson(
     compactConfigPolicyView(ultramodernConfig),
     workspaceValidationContract.policy.compactConfig,
@@ -2759,26 +3008,26 @@ const assertStructuredWorkspaceMetadataSemantics = ({
     'restore generated compact workspace policy metadata',
   );
   assertSameJson(
-    ultramodernConfig.topology,
-    workspaceValidationContract.topology.compactConfig,
+    withoutEmptyProjects(ultramodernConfig.topology),
+    withoutEmptyProjects(workspaceValidationContract.topology.compactConfig),
     `${compactConfigPath} topology`,
     'restore the complete generated compact topology cohort',
   );
   assertSameJson(
-    topology,
-    workspaceValidationContract.topology.referenceTopology,
+    withoutEmptyProjects(topology),
+    withoutEmptyProjects(workspaceValidationContract.topology.referenceTopology),
     workspaceValidationContract.metadata.referenceTopology.path,
     'restore the complete generated reference topology',
   );
   assertSameJson(
-    ownership,
-    workspaceValidationContract.topology.ownership,
+    withoutEmptyProjects(ownership),
+    withoutEmptyProjects(workspaceValidationContract.topology.ownership),
     workspaceValidationContract.metadata.ownership.path,
     'restore the complete generated ownership topology',
   );
   assertSameJson(
-    overlay,
-    workspaceValidationContract.topology.developmentOverlay,
+    withoutEmptyProjects(overlay),
+    withoutEmptyProjects(workspaceValidationContract.topology.developmentOverlay),
     workspaceValidationContract.metadata.developmentOverlay.path,
     'restore the complete generated development topology',
   );
@@ -3646,24 +3895,32 @@ const expectedRemoteSubsetsForRefs = (refs) =>
 const requiredMicroVerticalPaths = (vertical) => [
   `${vertical.path}/package.json`,
   `${vertical.path}/tsconfig.json`,
-  `${vertical.path}/tsconfig.mf-types.json`,
   `${vertical.path}/modern.config.ts`,
-  `${vertical.path}/src/modern-app-env.d.ts`,
-  `${vertical.path}/src/modern.runtime.ts`,
-  `${vertical.path}/locales/en/translation.json`,
-  `${vertical.path}/locales/en/${vertical.namespace}.json`,
-  `${vertical.path}/locales/cs/translation.json`,
-  `${vertical.path}/locales/cs/${vertical.namespace}.json`,
+  ...(vertical.surfaceProfile === 'empty-full-stack'
+    ? []
+    : [
+        `${vertical.path}/tsconfig.mf-types.json`,
+        `${vertical.path}/src/modern-app-env.d.ts`,
+        `${vertical.path}/src/modern.runtime.ts`,
+        `${vertical.path}/locales/en/translation.json`,
+        `${vertical.path}/locales/en/${vertical.namespace}.json`,
+        `${vertical.path}/locales/cs/translation.json`,
+        `${vertical.path}/locales/cs/${vertical.namespace}.json`,
+      ]),
   ...(vertical.emitsUi
     ? [
         `${vertical.path}/module-federation.config.ts`,
-        `${vertical.path}/src/federation-entry.tsx`,
-        ...vertical.componentPaths,
-        `${vertical.path}/src/routes/index.css`,
-        `${vertical.path}/src/routes/layout.tsx`,
-        `${vertical.path}/src/routes/ultramodern-route-head.tsx`,
-        `${vertical.path}/src/routes/ultramodern-route-metadata.ts`,
-        `${vertical.path}/src/routes/[lang]/page.tsx`,
+        ...(vertical.surfaceProfile === 'empty-full-stack'
+          ? []
+          : [
+              `${vertical.path}/src/federation-entry.tsx`,
+              ...vertical.componentPaths,
+              `${vertical.path}/src/routes/index.css`,
+              `${vertical.path}/src/routes/layout.tsx`,
+              `${vertical.path}/src/routes/ultramodern-route-head.tsx`,
+              `${vertical.path}/src/routes/ultramodern-route-metadata.ts`,
+              `${vertical.path}/src/routes/[lang]/page.tsx`,
+            ]),
         ...(vertical.exposes.includes('./Widget')
           ? [`${vertical.path}/src/routes/[lang]/_mf/fragment/widget/page.tsx`]
           : []),
@@ -3743,9 +4000,15 @@ const assertMicroVerticalContractGraph = ({
   shellPackage,
 }) => {
   const expectedVerticalIds = fullStackVerticals.map((vertical) => vertical.id);
-  const expectedAppIds = ['shell-super-app', ...expectedVerticalIds];
+  const generatedVerticals = fullStackVerticals.filter(
+    (vertical) => vertical.surfaceProfile !== 'empty-full-stack',
+  );
+  const expectedAppIds = ['shell-super-app', ...generatedVerticals.map((vertical) => vertical.id)];
   const expectedShellVerticalIds = expectedPrimaryShellVerticalIds;
-  const expectedShellRemotes = expectedShellVerticalIds.flatMap((verticalId) => {
+  const expectedGeneratedShellVerticalIds = expectedShellVerticalIds.filter((verticalId) =>
+    generatedVerticals.some((vertical) => vertical.id === verticalId),
+  );
+  const expectedShellRemotes = expectedGeneratedShellVerticalIds.flatMap((verticalId) => {
     const vertical = fullStackVerticals.find((candidate) => candidate.id === verticalId);
     return vertical === undefined ? [] : [expectedRemoteContractSubset(vertical)];
   });
@@ -3815,7 +4078,11 @@ const assertMicroVerticalContractGraph = ({
   );
   assertSameJson(
     topology.shell.moduleFederation.remotes.map(remoteContractSubset),
-    expectedShellRemotes,
+    expectedShellVerticalIds.map((verticalId) =>
+      expectedRemoteContractSubset(
+        fullStackVerticals.find((vertical) => vertical.id === verticalId),
+      ),
+    ),
     'topology/reference-topology.json shell.moduleFederation.remotes',
     'restore generated shell Module Federation remotes',
   );
@@ -3834,7 +4101,7 @@ const assertMicroVerticalContractGraph = ({
   );
   assertSameJson(
     shellContract.moduleFederation?.verticalRefs ?? [],
-    expectedShellVerticalIds,
+    expectedGeneratedShellVerticalIds,
     `${generatedContractLabel} shell moduleFederation.verticalRefs`,
     'regenerate the generated shell Module Federation contract',
   );
@@ -3914,7 +4181,7 @@ const assertMicroVerticalContractGraph = ({
       `topology/reference-topology.json verticals.${vertical.id}`,
       'restore generated topology vertical entries',
     );
-    if (vertical.emitsApi) {
+    if (vertical.emitsApi && vertical.surfaceProfile !== 'empty-full-stack') {
       assertSameJson(
         backendFederationSubset(topologyEntry.backendFederation),
         expectedBackendFederationSubset(vertical),
@@ -3923,7 +4190,7 @@ const assertMicroVerticalContractGraph = ({
       );
     }
 
-    if (vertical.deliveryUnit) {
+    if (vertical.deliveryUnit && vertical.surfaceProfile !== 'empty-full-stack') {
       const compactApp = findById(ultramodernConfig.topology?.apps, vertical.id);
       const expectedDeliveryUnit = deliveryUnitBlock(expectedDeliveryUnitFor(vertical));
       assertSameJson(
@@ -4028,7 +4295,8 @@ const assertMicroVerticalContractGraph = ({
       })),
     ];
     for (const shellEntry of shellPackagesForDependencyChecks) {
-      const composed = shellEntry.uiRefs.includes(vertical.id);
+      const composed =
+        vertical.surfaceProfile !== 'empty-full-stack' && shellEntry.uiRefs.includes(vertical.id);
       if (vertical.emitsApi || composed) {
         assertSameJson(
           shellEntry.pkg.dependencies?.[vertical.packageName],
@@ -4046,6 +4314,8 @@ const assertMicroVerticalContractGraph = ({
         );
       }
     }
+
+    if (vertical.surfaceProfile === 'empty-full-stack') continue;
 
     assertObject(
       contractEntry,
@@ -4216,6 +4486,7 @@ const assertTsConfigReferenceGraph = () => {
   }
 
   for (const vertical of fullStackVerticals) {
+    if (vertical.surfaceProfile === 'empty-full-stack') continue;
     const verticalTsConfig = readJson(`${vertical.path}/tsconfig.json`);
     const verticalMfTypesTsConfig = readJson(`${vertical.path}/tsconfig.mf-types.json`);
     const verticalPackage = readJson(`${vertical.path}/package.json`);
@@ -4479,7 +4750,12 @@ const assertModernPackageCohort = () => {
   // workspace whose insertion order differs from filesystem order still passes.
   assertSameJson(
     [...observedAppIds].toSorted(),
-    [...workspaceValidationContract.cohort.appIds].toSorted(),
+    [
+      ...workspaceValidationContract.cohort.appIds,
+      ...fullStackVerticals
+        .filter((vertical) => vertical.surfaceProfile === 'empty-full-stack')
+        .map((vertical) => vertical.id),
+    ].toSorted(),
     'generated app package manifest cohort',
     'restore every generated app package manifest',
   );
@@ -4894,7 +5170,7 @@ if (tailwindEnabled) {
   requiredPaths.push(
     'apps/shell-super-app/tailwind.config.ts',
     ...fullStackVerticals
-      .filter((vertical) => vertical.emitsUi)
+      .filter((vertical) => vertical.emitsUi && vertical.surfaceProfile !== 'empty-full-stack')
       .flatMap((vertical) => [`${vertical.path}/tailwind.config.ts`]),
   );
 }
@@ -5226,10 +5502,10 @@ assert(
   'Stage deployment must depend on every fast, service-backed, Node, and Cloudflare required job',
 );
 assert(
-  !/(?:verticals\/(?:crm|projects)|outputs\.(?:crm|projects)|ZEROPS_(?:CRM|PROJECTS)_SERVICE_ID|--setup\s+(?:crm|projects))/iu.test(
+  !/(?:verticals\/(?:crm)|outputs\.(?:crm)|ZEROPS_(?:CRM)_SERVICE_ID|--setup\s+(?:crm))/iu.test(
     workflowText,
   ) && !workflowText.includes('case "$path"'),
-  'Stage deployment workflow must not contain stale CRM/Projects or hand-written changed-path branches',
+  'Stage deployment workflow must not contain stale CRM or hand-written changed-path branches',
 );
 const zeropsDeploymentSource = readText('zerops.yaml');
 for (const vertical of topology.verticals ?? []) {
@@ -6241,24 +6517,27 @@ if (hasDeliveryUnits) {
   const localVirtualStoreInstall =
     'PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.5.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm';
   assert(
-    zeropsYaml.split(localVirtualStoreInstall).length - 1 === 3,
+    zeropsYaml.split(localVirtualStoreInstall).length - 1 === fullStackVerticals.length + 2,
     'Every Zerops Node build must install dependencies into a project-local virtual store',
   );
   const cleanWorkspaceDependencies = 'node scripts/reset-workspace-dependencies.mjs';
   assert(
-    zeropsYaml.split(cleanWorkspaceDependencies).length - 1 === 3,
+    zeropsYaml.split(cleanWorkspaceDependencies).length - 1 === fullStackVerticals.length + 2,
     'Every Zerops Node build must remove cached dependency links before installing',
   );
   assert(
-    zeropsYaml.split('--config.enable-global-virtual-store=false').length - 1 === 7,
+    zeropsYaml.split('--config.enable-global-virtual-store=false').length - 1 ===
+      fullStackVerticals.length * 2 + 6,
     'Every Zerops pnpm command must override higher-priority host global-virtual-store configuration',
   );
   assert(
-    zeropsYaml.split('PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false').length - 1 === 7,
+    zeropsYaml.split('PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false').length - 1 ===
+      fullStackVerticals.length * 3 + 4,
     'Every Zerops pnpm command must propagate local virtual-store configuration to child processes',
   );
   assert(
-    zeropsYaml.split('NODE_OPTIONS=--max-old-space-size=4096').length - 1 === 2,
+    zeropsYaml.split('NODE_OPTIONS=--max-old-space-size=4096').length - 1 ===
+      fullStackVerticals.length + 1,
     'Every Modern.js Zerops deployment build must reserve enough Node.js heap for dependency tracing',
   );
   assert(
@@ -6473,7 +6752,12 @@ assert(
   'Agent reference repo manifest commit must use the installer commit helper',
 );
 
-const expectedAppIds = ['shell-super-app', ...fullStackVerticals.map((vertical) => vertical.id)];
+const expectedAppIds = [
+  'shell-super-app',
+  ...fullStackVerticals
+    .filter((vertical) => vertical.surfaceProfile !== 'empty-full-stack')
+    .map((vertical) => vertical.id),
+];
 const expectedCloudflareCompatibilityFlags = ['nodejs_compat', 'global_fetch_strictly_public'];
 assert(
   sameJson(
@@ -6935,6 +7219,9 @@ for (const vertical of fullStackVerticals) {
         `${vertical.id} Action identity boundary dependency ${dependency} must equal ${version}`,
       );
     }
+  }
+  if (vertical.surfaceProfile === 'empty-full-stack') {
+    continue;
   }
   const modernConfig = readText(`${vertical.path}/modern.config.ts`);
   // The browser Module Federation config and colocated route surfaces only

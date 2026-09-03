@@ -35,6 +35,7 @@ await migrate('apps/shell-super-app', 'drizzle.auth.config.ts');
 await runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
 await runAppScript('verticals/contacts/scripts/prepare-contacts-migration.mts');
 await migrate('verticals/contacts', 'drizzle.config.ts');
+await migrate('verticals/projects', 'drizzle.config.ts');
 await runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
 await runAppScript('scripts/verify-application-db-schema.mts');
 

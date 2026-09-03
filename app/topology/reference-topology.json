@@ -7,10 +7,16 @@
     "id": "shell-super-app",
     "kind": "shell",
     "package": "@app/shell-super-app",
-    "verticalRefs": ["contacts"],
+    "verticalRefs": [
+      "contacts",
+      "projects"
+    ],
     "authentication": {
       "kind": "shell-core-capability",
-      "owners": ["shell-super-app", "core-runtime"],
+      "owners": [
+        "shell-super-app",
+        "core-runtime"
+      ],
       "databaseSchema": "auth",
       "api": {
         "runtimeFramework": "effect",
@@ -34,6 +40,11 @@
           "id": "contacts",
           "name": "verticalContacts",
           "manifestUrl": "http://localhost:4101/mf-manifest.json"
+        },
+        {
+          "id": "projects",
+          "name": "verticalProjects",
+          "manifestUrl": "http://localhost:4102/mf-manifest.json"
         }
       ],
       "ssr": true,
@@ -44,7 +55,10 @@
       "workerName": "app-shell-super-app",
       "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP",
       "compatibilityDate": "2026-06-02",
-      "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+      "compatibilityFlags": [
+        "nodejs_compat",
+        "global_fetch_strictly_public"
+      ],
       "assetsBinding": "ASSETS",
       "routes": {
         "ssr": "/en",
@@ -61,15 +75,46 @@
         "contentSecurityPolicy": {
           "mode": "report-only",
           "directives": {
-            "base-uri": ["'self'"],
-            "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-            "default-src": ["'self'"],
-            "font-src": ["'self'", "data:", "https:", "http:"],
-            "form-action": ["'self'"],
-            "frame-ancestors": ["'self'"],
-            "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-            "manifest-src": ["'self'", "https:", "http:"],
-            "object-src": ["'none'"],
+            "base-uri": [
+              "'self'"
+            ],
+            "connect-src": [
+              "'self'",
+              "https:",
+              "http:",
+              "wss:",
+              "ws:"
+            ],
+            "default-src": [
+              "'self'"
+            ],
+            "font-src": [
+              "'self'",
+              "data:",
+              "https:",
+              "http:"
+            ],
+            "form-action": [
+              "'self'"
+            ],
+            "frame-ancestors": [
+              "'self'"
+            ],
+            "img-src": [
+              "'self'",
+              "data:",
+              "blob:",
+              "https:",
+              "http:"
+            ],
+            "manifest-src": [
+              "'self'",
+              "https:",
+              "http:"
+            ],
+            "object-src": [
+              "'none'"
+            ],
             "script-src": [
               "'self'",
               "'unsafe-inline'",
@@ -78,8 +123,16 @@
               "http:",
               "blob:"
             ],
-            "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-            "worker-src": ["'self'", "blob:"]
+            "style-src": [
+              "'self'",
+              "'unsafe-inline'",
+              "https:",
+              "http:"
+            ],
+            "worker-src": [
+              "'self'",
+              "blob:"
+            ]
           },
           "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
         },
@@ -161,7 +214,9 @@
         "role": "remote",
         "name": "verticalContacts",
         "manifestUrl": "http://localhost:4101/mf-manifest.json",
-        "exposes": ["./PageContacts"],
+        "exposes": [
+          "./PageContacts"
+        ],
         "ssr": true,
         "sharedContractVersion": "mf-ssr-contract-v1"
       },
@@ -292,7 +347,10 @@
         },
         "serverEntry": "verticals/contacts/api/index.ts",
         "basePath": "/contacts-api/contacts",
-        "consumedBy": ["shell-super-app", "contacts"],
+        "consumedBy": [
+          "shell-super-app",
+          "contacts"
+        ],
         "readiness": {
           "endpoint": "/contacts/readiness",
           "marker": {
@@ -300,7 +358,12 @@
             "api": "ultramodernApiMarker",
             "skew": "none"
           },
-          "checks": ["moduleFederation", "ssr", "translations", "api"]
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
         },
         "requestContext": {
           "propagatedHeaders": [
@@ -343,7 +406,10 @@
         "workerName": "app-contacts",
         "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CONTACTS",
         "compatibilityDate": "2026-06-02",
-        "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
         "assetsBinding": "ASSETS",
         "routes": {
           "ssr": "/en",
@@ -361,15 +427,46 @@
           "contentSecurityPolicy": {
             "mode": "report-only",
             "directives": {
-              "base-uri": ["'self'"],
-              "connect-src": ["'self'", "https:", "http:", "wss:", "ws:"],
-              "default-src": ["'self'"],
-              "font-src": ["'self'", "data:", "https:", "http:"],
-              "form-action": ["'self'"],
-              "frame-ancestors": ["'self'"],
-              "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
-              "manifest-src": ["'self'", "https:", "http:"],
-              "object-src": ["'none'"],
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
               "script-src": [
                 "'self'",
                 "'unsafe-inline'",
@@ -378,8 +475,16 @@
                 "http:",
                 "blob:"
               ],
-              "style-src": ["'self'", "'unsafe-inline'", "https:", "http:"],
-              "worker-src": ["'self'", "blob:"]
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
             },
             "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
           },
@@ -446,7 +551,124 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#contacts",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#contacts"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#contacts"
+          ]
+        }
+      }
+    },
+    {
+      "id": "projects",
+      "kind": "vertical",
+      "domain": "projects",
+      "package": "@app/projects",
+      "path": "verticals/projects",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalProjects",
+        "manifestUrl": "http://localhost:4102/mf-manifest.json",
+        "exposes": [],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalProjectsBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/projects",
+          "packageName": "@app/projects",
+          "version": "0.1.0",
+          "buildMarker": "workspace",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/projects/shared/api.ts",
+            "runtime": "verticals/projects/api/index.ts",
+            "client": "verticals/projects/src/api/projects-client.ts",
+            "openapi": "/projects-api/openapi.json",
+            "readiness": "/projects-api/projects/readiness"
+          }
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/projects",
+        "packageName": "@app/projects",
+        "version": "0.1.0",
+        "buildMarker": "workspace",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/projects-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/projects/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/projects/src/api/projects-client.ts"
+        },
+        "serverEntry": "verticals/projects/api/index.ts",
+        "basePath": "/projects-api/projects",
+        "consumedBy": [
+          "shell-super-app",
+          "projects"
+        ],
+        "readiness": {
+          "endpoint": "/projects/readiness",
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
+        }
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-projects",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROJECTS",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "apiReadiness": "/projects-api/projects/readiness"
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "projects-readiness-smoke",
+            "route": "/projects-api/projects/readiness",
+            "expect": {
+              "status": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/projects.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#projects",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#projects"
+          ]
         }
       }
     }

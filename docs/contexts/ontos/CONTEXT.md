@@ -6,7 +6,7 @@ context defines language only; it does not override accepted ADRs or current app
 ## Language guardrails
 
 **Customer** — Never a standalone canonical identity type or generic aggregate. Always qualify the
-meaning, for example Customer Configuration, Retail Customer, Counterparty Role `CUSTOMER`, CRM
+meaning, for example Customer Configuration, Retail Customer, Counterparty Role `CUSTOMER`,
 Engagement Profile, Commerce Retail Customer Profile, Commerce Counterparty Purchasing Profile, or
 Customer Archive. Avoid `customer`, `customer record`, `customer ID`, and `B2B Customer` when the
 intended subject is actually a Party, Counterparty, Principal, account, role, or contextual profile.

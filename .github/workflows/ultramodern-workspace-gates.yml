@@ -236,6 +236,7 @@ jobs:
         env:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid
+          ULTRAMODERN_PUBLIC_URL_PROJECTS: https://projects.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm cloudflare:build
@@ -251,6 +252,7 @@ jobs:
       ZEROPS_CONTACTS_SERVICE_ID: ${{ vars.ZEROPS_CONTACTS_SERVICE_ID }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ZEROPS_PROJECTS_SERVICE_ID: ${{ vars.ZEROPS_PROJECTS_SERVICE_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
       ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
     steps:

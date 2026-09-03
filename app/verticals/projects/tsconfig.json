@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__projects",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__projects.tsbuildinfo"
+  },
+  "include": [
+    "api/**/*.ts",
+    "shared/**/*.ts",
+    "src/**/*.ts",
+    "*.ts",
+    "vertical.manifest.ts",
+    "vertical.registration.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/core-runtime"
+    },
+    {
+      "path": "../../packages/shared-contracts"
+    }
+  ]
+}

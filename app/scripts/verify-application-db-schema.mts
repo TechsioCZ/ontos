@@ -2,11 +2,12 @@ import { Effect } from 'effect';
 import { Client } from 'pg';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 
-const EXPECTED_APPLICATION_SCHEMAS = ['auth', 'contacts', 'core'] as const;
+const EXPECTED_APPLICATION_SCHEMAS = ['auth', 'contacts', 'core', 'projects'] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_auth',
   '__drizzle_migrations_contacts',
   '__drizzle_migrations_core',
+  '__drizzle_migrations_projects',
 ] as const;
 
 const configuration = await Effect.runPromise(loadDatabaseConnectionPair());
