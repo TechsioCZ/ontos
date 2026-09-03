@@ -63,7 +63,7 @@ const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
     return (
       configuration.insecureLocal &&
       parsed.port.length > 0 &&
-      ['127.0.0.1', '::1', '[::1]', 'localhost'].includes(parsed.hostname)
+      ['127.0.0.1', '[::1]', 'localhost'].includes(parsed.hostname)
     );
   } catch {
     return false;
@@ -276,6 +276,11 @@ export const runCurrentActionAuthorizationProvisioning = (
     return { ...result, environment: target.environment };
   }).pipe(Effect.scoped);
 
+export const formatActionAuthorizationProvisioningFailure = (error: unknown): string =>
+  Schema.is(ActionAuthorizationProvisioningError)(error)
+    ? `${error.code}: ${error.reason}`
+    : 'action_authorization_service_unavailable: Unexpected Action authorization provisioning failure';
+
 const main = (): void => {
   const workspaceRoot = path.resolve(import.meta.dirname, '..');
   Effect.runPromise(runCurrentActionAuthorizationProvisioning(workspaceRoot, process.argv.slice(2)))
@@ -284,8 +289,8 @@ const main = (): void => {
         `Provisioned ${result.grantCount} explicit Action grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
       );
     })
-    .catch((error: ActionAuthorizationProvisioningError) => {
-      console.error(`${error.code}: ${error.reason}`);
+    .catch((error: unknown) => {
+      console.error(formatActionAuthorizationProvisioningFailure(error));
       process.exitCode = 1;
     });
 };

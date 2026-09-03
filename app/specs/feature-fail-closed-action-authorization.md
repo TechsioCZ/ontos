@@ -6,6 +6,14 @@ created: 2026-09-02
 
 # Feature: Fail-closed Action authorization with explicit environment grants
 
+> Historical implementation record. The follow-up
+> [protected-entrypoint specification](./feature-complete-protected-entrypoint-authorization.md)
+> narrows the provisioning rule below: every Action declares `action_execution` with either
+> `tenant_membership_default` or `explicit` provisioning. Only the former receives a fixed
+> tenant-member grant; the latter must already have its intended policy and never receives a
+> blanket membership grant. This is implemented in `provisionActionAuthorization` and covered by
+> the restricted-Action regression in `scripts/tests/provision-current-action-authorization.test.mts`.
+
 ## Feature Description
 
 Make every OntOS Action require an explicit SpiceDB executor relationship. An Action with no
@@ -35,7 +43,7 @@ So that missing authorization configuration cannot silently permit a state chang
 `packages/core-runtime/src/permissions/service.ts` currently performs an `action#is_restricted`
 self-check before checking `action#execute`. When the restriction marker is absent it returns the
 `unconfigured` decision, and `packages/core-runtime/src/actions/runtime.ts` rejects only `denied`.
-Therefore an Action with no SpiceDB relationships is allowed to reach its Policy and handler
+Therefore, an Action with no SpiceDB relationships is allowed to reach its Policy and handler
 boundaries. The current live integration test explicitly protects this compatibility behavior.
 
 Existing Contacts BFFs already map `ActionPermissionDenied` to the declared `ContactsForbiddenProblem` 403,
@@ -47,7 +55,7 @@ it cannot yet express “every authenticated active member of this specific Tena
 
 ## Solution Statement
 
-Change the canonical permission decision to a single fully-consistent `action#execute` check:
+Change the canonical permission decision to a single fully consistent `action#execute` check:
 `HAS_PERMISSION` is allowed, `NO_PERMISSION` is a definite denial, and conditional, malformed, or
 unavailable results remain the existing retryable `ActionPermissionCheckError`. Remove
 `unconfigured` from the decision vocabulary and let the existing Action runtime denial finalizer
@@ -167,7 +175,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 - [x] Extend `scripts/scaffolding/shared.mts` and `scripts/scaffolding/action/scaffold.mts` so `mise exec -- pnpm scaffold:action -- --scope core ...` atomically adds every future Core Action to its file, public export, and catalog in sorted order.
 - [x] Extend `scripts/scaffolding/tests/scaffold-generators.test.mts` for initial generation, sorted insertion, duplicate refusal, dry-run/atomicity, and preservation of developer-owned content.
 - [x] In the provisioning tool, combine Core catalog descriptors with each topology-owned vertical's safe public deployment contract from `deriveOntosModuleDeploymentContract`; reject duplicate keys, invalid contracts, failed owner discovery, or an empty/incomplete set rather than provisioning a partial baseline.
-- [x] Add a regression assertion that the present baseline contains exactly the eight `core.identity`/`core.modules` keys and eight `contacts.core` keys (16 unique Actions), while deriving future vertical Actions from their generated manifest/registration path instead of a second hand-written Contacts list.
+- [x] Add a regression assertion that the present baseline contains exactly the eight `core.identity`/`core.modules` keys and eight `contacts.core` keys (16 unique Actions), while deriving future vertical Actions from their generated manifest/registration path instead of a second handwritten Contacts list.
 
 ### 3. Expand the SpiceDB schema compatibly
 
@@ -177,7 +185,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 
 ### 4. Deny every missing Action executor rule
 
-- [x] Refactor `packages/core-runtime/src/permissions/service.ts` to issue one fully-consistent `execute` check, reduce `ActionPermissionDecision` to `allowed | denied`, classify `NO_PERMISSION` as `denied`, and preserve conditional, unspecified, malformed, timeout, credential, transport, and schema failures as sanitized `ActionPermissionCheckError` values.
+- [x] Refactor `packages/core-runtime/src/permissions/service.ts` to issue one fully consistent `execute` check, reduce `ActionPermissionDecision` to `allowed | denied`, classify `NO_PERMISSION` as `denied`, and preserve conditional, unspecified, malformed, timeout, credential, transport, and schema failures as sanitized `ActionPermissionCheckError` values.
 - [x] Update `packages/core-runtime/src/actions/runtime.ts` so every definite negative decision uses the existing `rejectPermissionDenied` transaction before Policy/service/handler resolution; do not change 403/503 typing, invocation idempotency, denial audit shape, or additional Tenant-role checks.
 - [x] Rewrite `packages/core-runtime/tests/unit/action-permission.test.ts` and `packages/core-runtime/tests/unit/action-runtime.test.ts` so a missing executor relation fails with `ActionPermissionDenied`, does not evaluate Policies or resolve services/handlers, and an indeterminate check remains retryable with an open `received` invocation.
 - [x] Extend `packages/core-runtime/tests/integration/action-permission.test.ts` to prove: no relationship produces one terminal denial and no business write; `executor@tenant:<tenant>#member` permits the member Principal; a Principal from another Tenant and a non-member are denied; an existing direct Principal executor remains allowed; concurrent denials produce one audit event; and unavailable SpiceDB remains `ActionPermissionCheckError` without terminal denial evidence.
@@ -213,7 +221,7 @@ IMPORTANT: Execute every step in order, top to bottom.
 ### 9. Prepare and execute the later stage promotion gate
 
 - [x] Update `docs/architecture/ACTIONS.md`, `docs/architecture/ERRORS.md`, `docs/architecture/DEPLOYMENT.md`, `DEVELOPMENT.md`, and the task-relevant README guidance to describe missing-rule denial, the explicit membership-set grant, the operator command, and the exact sandbox/stage ordering.
-- [x] Document and rehearse stage as expand/provision/verify/deploy: first ensure the fixed stage contexts and Tenant membership exist; run the same `authorization:provision-current-actions` command from the candidate migration artifact to publish the compatible schema and add 32 fixed stage grants; verify every current Action for both fixed stage Principals plus a denied non-member; only then deploy the fail-closed runtime and run representative allowed and missing-rule-denied smoke checks.
+- [x] Document and rehearse stage as expand/provision/verify/deploy: first ensure the fixed stage contexts and Tenant membership exist; run the same `authorization:provision-current-actions` command from the candidate application/release artifact to publish the compatible schema and add 32 fixed stage grants; verify every current Action for both fixed stage Principals plus a denied non-member; only then deploy the fail-closed runtime and run representative allowed and missing-rule-denied smoke checks.
 - [x] Keep stage provisioning operator-invoked, stage-gated, idempotent, conflict/failure detecting, and separate from PostgreSQL migrations and startup. Record rollback as leaving the additive schema/relationships in place while restoring the previous application artifact.
 - [x] Treat the stage application and verification evidence as a required promotion checkpoint; the sandbox implementation must not connect to or mutate stage.
 
@@ -249,7 +257,7 @@ sandbox, followed later by the operator-controlled stage pre-deploy grant and sm
 - The request is anonymous or has an invalid Shell assertion and must remain a 401 before Action authorization.
 - SpiceDB returns conditional/unspecified permission, malformed data, timeout, invalid credentials, unavailable transport, or schema failure.
 - Current Action discovery is empty, partial, duplicated, or cannot derive one topology owner's public contract.
-- A new Core Action is scaffolded or a new vertical Action appears after this baseline.
+- A new Core Action is scaffolded, or a new vertical Action appears after this baseline.
 - Provisioning is rerun after all, some, or none of the expected relationships already exist.
 - Provisioning is invoked in production, with a non-loopback development endpoint, or with a non-stage-private stage endpoint.
 - Two callers concurrently receive the same definite denial for one idempotency key.
