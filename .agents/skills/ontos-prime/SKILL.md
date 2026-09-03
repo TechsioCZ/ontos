@@ -42,7 +42,7 @@ or completed specifications.
   is behind, ahead of, or diverged from `main` in a way that affects the requested work.
 - Preserve the strict deployment seams between MicroVerticals and the generated Effect BFF seam inside each MicroVertical.
 - Note that every state change must use a typed Action and every expected failure must remain a declared typed Effect error.
-- Note the mandatory Codesmith generators from `README.md`. Generated output is the required starting point for supported business file types.
+- Note the mandatory Codesmith generation rules from `README.md`, and resolve current `scaffold:*` commands from `package.json`. Generated output is the required starting point for supported business file types.
 - Run pnpm commands from `app/` as `mise exec -- pnpm <command>`.
 - Keep the investigation focused. Read more source only to resolve an important architectural relationship or prepare for the supplied task.
 
