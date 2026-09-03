@@ -16,9 +16,15 @@ Work from the `app/` directory inside the OntOS repository. Treat `app/` as the 
 ```bash
 pwd
 git status --short
+git branch --show-current
+git rev-list --left-right --count main...HEAD
 ```
 
-Do not dump the full tracked file list into context. Inspect `package.json` and `pnpm-workspace.yaml` to understand workspace packages, scripts, and the repository-managed toolchain. Inspect additional directory listings only when they clarify the application structure.
+The first count is commits only on `main`; the second is commits only on `HEAD`. Nonzero counts on
+both sides mean the branch has diverged. Do not dump the full tracked file list into context.
+Inspect `package.json` and `pnpm-workspace.yaml` to understand workspace packages, scripts, and the
+repository-managed toolchain. Inspect additional directory listings only when they clarify the
+application structure.
 
 ## Read
 
