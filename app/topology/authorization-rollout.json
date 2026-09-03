@@ -3,7 +3,7 @@
   "baselineInventoryHash": "b529d6b394d276982917765cc8413a9d9da404ad63063fcdce4c0cf0b8f63e9c",
   "baselineSourceRevision": "e402b254ce9c08699f4e8ccea42b74f24d11f1db",
   "compatibilityEligibleEntrypoints": [],
-  "decisionReference": "https://github.com/TechsioCZ/ontos/issues/169",
+  "decisionReference": "https://github.com/TechsioCZ/ontos/issues/173",
   "expiresAt": "2026-09-30T23:59:59.000Z",
   "mode": "report_only",
   "schemaVersion": 1
