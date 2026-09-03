@@ -42,7 +42,14 @@ const ResolvedTarget = ({
     const load = () =>
       runEffectRequest(
         resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
-          settleModuleEntrypointLoad(client.load, (loaded) => Predicate.isFunction(loaded.default)),
+          settleModuleEntrypointLoad(
+            client.load,
+            (loaded) =>
+              Predicate.isObjectKeyword(loaded) &&
+              loaded !== null &&
+              'default' in loaded &&
+              Predicate.isFunction(loaded.default),
+          ),
         ),
       ).then((result) => {
         if (!current) {
