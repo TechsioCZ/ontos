@@ -1,4 +1,4 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import { boolean, index, integer, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 
 export const AUTH_SCHEMA_NAME = 'auth';
@@ -139,6 +139,7 @@ export const apikey = authSchema.table(
     index('auth_apikey_reference_id_idx').on(table.referenceId),
     index('auth_apikey_key_idx').on(table.key),
     index('auth_apikey_metadata_created_at_idx').on(table.metadata, table.createdAt),
+    index('auth_apikey_metadata_jsonb_idx').using('gin', sql`(${table.metadata}::jsonb)`),
   ],
 );
 
