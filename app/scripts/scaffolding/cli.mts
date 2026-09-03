@@ -9,7 +9,6 @@ import actionGenerator from './action/scaffold.mts';
 import actionServiceGenerator from './action-service/scaffold.mts';
 import externalHttpAdapterGenerator from './external-http-adapter/scaffold.mts';
 import actionBoundaryGenerator from './microvertical-action-boundary/scaffold.mts';
-import microverticalGenerator from './microvertical/scaffold.mts';
 import microverticalPageGenerator from './microvertical-page/scaffold.mts';
 import moduleContractGenerator from './module-contract/scaffold.mts';
 import outboxMessageGenerator from './outbox-message/scaffold.mts';
@@ -28,8 +27,6 @@ import type {
   ExternalHttpAdapterScaffoldResult,
   ModuleContractScaffoldConfig,
   ModuleContractScaffoldResult,
-  MicroverticalScaffoldConfig,
-  MicroverticalScaffoldResult,
   ActionBoundaryScaffoldConfig,
   ActionBoundaryScaffoldResult,
   OutboxScaffoldConfig,
@@ -49,7 +46,6 @@ export type ScaffoldCommand =
   | 'action-service'
   | 'external-http-adapter'
   | 'microvertical-action-boundary'
-  | 'microvertical'
   | 'microvertical-page'
   | 'module-contract'
   | 'module-api'
@@ -66,7 +62,6 @@ type GeneratorResult =
   | ActionServiceScaffoldResult
   | ExternalHttpAdapterScaffoldResult
   | ModuleContractScaffoldResult
-  | MicroverticalScaffoldResult
   | GovernedContributionScaffoldResult
   | OutboxScaffoldResult
   | OutboxWorkerScaffoldResult
@@ -79,7 +74,6 @@ type GeneratorConfig =
   | ActionServiceScaffoldConfig
   | ExternalHttpAdapterScaffoldConfig
   | ModuleContractScaffoldConfig
-  | MicroverticalScaffoldConfig
   | GovernedContributionScaffoldConfig
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
@@ -110,7 +104,6 @@ interface ParsedScaffoldFlags {
   readonly name: string | undefined;
   readonly operation: string | undefined;
   readonly page: string | undefined;
-  readonly port: string | undefined;
   readonly policy: string | undefined;
   readonly producer: string | undefined;
   readonly provider: string | undefined;
@@ -160,23 +153,6 @@ const isLegalEntityScope = (
 
 // eslint-disable-next-line sort-keys -- Preserve the established user-facing command order.
 const commandDefinitions = {
-  microvertical: {
-    flags: ['port', 'vertical'],
-    generator: microverticalGenerator,
-    help: `Usage: pnpm scaffold:microvertical -- --vertical <vertical> --port <port>
-
-Generate one empty, independently deployable UltraModern MicroVertical and all repository wiring.
-
-Required flags:
-  --vertical <vertical>  New deployment slug (lower-kebab-case)
-  --port <port>          Unique local TCP port (1024-65535)
-
-Options:
-  --help                 Show this help without writing
-`,
-    requiredFlags: ['port', 'vertical'],
-    toConfig: (flags) => ({ port: flags.port ?? '', vertical: flags.vertical ?? '' }),
-  },
   action: {
     flags: ['action', 'legal-entity-scope', 'module', 'scope', 'vertical'],
     generator: actionGenerator,
@@ -546,7 +522,6 @@ const parseFlags = (
     name: parsed.get('name'),
     operation: parsed.get('operation'),
     page: parsed.get('page'),
-    port: parsed.get('port'),
     policy: parsed.get('policy'),
     producer: parsed.get('producer'),
     provider: parsed.get('provider'),
@@ -599,9 +574,7 @@ export const runScaffold = async (
     workspaceRoot,
     definition.toConfig(flags),
   );
-  if ('afterGenerate' in definition) {
-    await definition.afterGenerate?.(result, options, workspaceRoot);
-  }
+  await definition.afterGenerate?.(result, options, workspaceRoot);
   return { kind: 'generated', result };
 };
 
