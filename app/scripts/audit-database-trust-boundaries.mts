@@ -7,6 +7,7 @@ import { Client } from 'pg';
 import type { ClientBase } from 'pg';
 import { Effect, Schema } from 'effect';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
+import type { DatabaseConfigValue } from '../packages/core-runtime/src/db/config.ts';
 
 interface DatabasePrivileges {
   readonly connect: boolean;
@@ -29,9 +30,9 @@ interface RoleMembership {
   readonly canSetRole: boolean;
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
-  readonly dmlSchemas: readonly string[];
   readonly ownedRelations: readonly string[];
   readonly ownedSchemas: readonly string[];
+  readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
 }
 
@@ -90,7 +91,8 @@ interface TrustedContextEvidence {
 }
 
 export interface DatabaseTargetIdentity {
-  readonly clusterSystemIdentifier: string;
+  readonly configuredHost: string;
+  readonly configuredPort: number;
   readonly database: string;
   readonly serverAddress: string | null;
   readonly serverPort: number | null;
@@ -164,9 +166,11 @@ export const assertSameDatabaseTarget = (
 ): void => {
   if (
     administrative.database !== runtime.database ||
-    administrative.clusterSystemIdentifier !== runtime.clusterSystemIdentifier ||
     administrative.serverAddress !== runtime.serverAddress ||
-    administrative.serverPort !== runtime.serverPort
+    administrative.serverPort !== runtime.serverPort ||
+    (administrative.serverAddress === null &&
+      (administrative.configuredHost !== runtime.configuredHost ||
+        administrative.configuredPort !== runtime.configuredPort))
   ) {
     throw new DatabaseTargetMismatchError(
       'DATABASE_ADMIN_URL and DATABASE_URL must target the same PostgreSQL server and database',
@@ -222,19 +226,26 @@ export const buildDatabaseTrustBoundaryReport = (
     ({ canSetRole, role }) => canSetRole && role !== snapshot.administrativeRole,
   );
   const privilegedMemberships = nonAdministrativeMemberships.filter(
-    ({ attributes, createSchemas, databaseCreate, dmlSchemas, ownedRelations, ownedSchemas }) =>
+    ({
+      attributes,
+      createSchemas,
+      databaseCreate,
+      ownedRelations,
+      ownedSchemas,
+      relationPrivilegeSchemas,
+    }) =>
       hasClusterPrivilege(attributes) ||
       databaseCreate ||
       createSchemas.length > 0 ||
-      dmlSchemas.length > 0 ||
       ownedRelations.length > 0 ||
-      ownedSchemas.length > 0,
+      ownedSchemas.length > 0 ||
+      relationPrivilegeSchemas.length > 0,
   );
   if (privilegedMemberships.length > 0) {
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can SET ROLE to a non-administrative identity with cluster or schema authority.',
+        'The runtime role can SET ROLE to a non-administrative identity with cluster, database, schema, or relation authority.',
       severity: 'critical',
     });
   }
@@ -323,17 +334,16 @@ interface MembershipRow {
   readonly can_login: boolean;
   readonly create_schemas: string[];
   readonly database_create: boolean;
-  readonly dml_schemas: string[];
   readonly inherit: boolean;
   readonly owned_relations: string[];
   readonly owned_schemas: string[];
+  readonly relation_privilege_schemas: string[];
   readonly replication: boolean;
   readonly role: string;
   readonly superuser: boolean;
 }
 
 interface DatabaseTargetRow {
-  readonly cluster_system_identifier: string;
   readonly database: string;
   readonly server_address: string | null;
   readonly server_port: number | null;
@@ -419,15 +429,15 @@ const probeSetting = async (
 const collectSnapshot = async (
   admin: Client,
   runtime: Client,
-  administrativeRole: string,
-  runtimeRole: string,
+  administrativeConfig: DatabaseConfigValue,
+  runtimeConfig: DatabaseConfigValue,
 ): Promise<DatabaseTrustBoundarySnapshot> => {
+  const administrativeRole = administrativeConfig.user;
+  const runtimeRole = runtimeConfig.user;
   const targetQuery = `select
     current_database() as database,
-    control.system_identifier::text as cluster_system_identifier,
     inet_server_addr()::text as server_address,
-    inet_server_port() as server_port
-    from pg_catalog.pg_control_system() as control`;
+    inet_server_port() as server_port`;
   const [administrativeTarget, runtimeTarget] = await Promise.all([
     admin.query<DatabaseTargetRow>(targetQuery),
     runtime.query<DatabaseTargetRow>(targetQuery),
@@ -439,13 +449,15 @@ const collectSnapshot = async (
   }
   assertSameDatabaseTarget(
     {
-      clusterSystemIdentifier: administrativeTargetRow.cluster_system_identifier,
+      configuredHost: administrativeConfig.host,
+      configuredPort: administrativeConfig.port,
       database: administrativeTargetRow.database,
       serverAddress: administrativeTargetRow.server_address,
       serverPort: administrativeTargetRow.server_port,
     },
     {
-      clusterSystemIdentifier: runtimeTargetRow.cluster_system_identifier,
+      configuredHost: runtimeConfig.host,
+      configuredPort: runtimeConfig.port,
       database: runtimeTargetRow.database,
       serverAddress: runtimeTargetRow.server_address,
       serverPort: runtimeTargetRow.server_port,
@@ -521,9 +533,13 @@ const collectSnapshot = async (
              or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
              or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
              or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+             or has_table_privilege(candidate.oid, relation.oid, 'TRUNCATE')
+             or has_table_privilege(candidate.oid, relation.oid, 'REFERENCES')
+             or has_any_column_privilege(candidate.oid, relation.oid, 'REFERENCES')
+             or has_table_privilege(candidate.oid, relation.oid, 'TRIGGER')
            )
          order by namespace.nspname
-       ) as dml_schemas
+       ) as relation_privilege_schemas
      from pg_catalog.pg_roles as candidate
      where candidate.rolname <> $1 and pg_has_role($1, candidate.oid, 'MEMBER')
      order by candidate.rolname`,
@@ -748,9 +764,9 @@ const collectSnapshot = async (
       canSetRole: membership.can_set_role,
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
-      dmlSchemas: membership.dml_schemas,
       ownedRelations: membership.owned_relations,
       ownedSchemas: membership.owned_schemas,
+      relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
     })),
     role: {
@@ -833,7 +849,7 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
           await runtime.connect();
           runtimeConnected = true;
           return buildDatabaseTrustBoundaryReport(
-            await collectSnapshot(admin, runtime, connections.admin.user, connections.runtime.user),
+            await collectSnapshot(admin, runtime, connections.admin, connections.runtime),
           );
         } finally {
           await Promise.allSettled([
