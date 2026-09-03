@@ -138,13 +138,13 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
-      - name: Apply and verify Core, Auth, and Contacts migrations
+      - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
         working-directory: app
         run: |
           mise exec -- pnpm db:migrate
           mise exec -- pnpm db:verify
 
-      - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests
+      - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
         working-directory: app
         run: mise exec -- pnpm test:integration
 
@@ -236,6 +236,7 @@ jobs:
         env:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid
+          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm cloudflare:build
@@ -250,6 +251,8 @@ jobs:
     env:
       ZEROPS_CONTACTS_SERVICE_ID: ${{ vars.ZEROPS_CONTACTS_SERVICE_ID }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
+      ZEROPS_PARTY_REGISTRY_SERVICE_ID: ${{ vars.ZEROPS_PARTY_REGISTRY_SERVICE_ID }}
+      ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID: ${{ vars.ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
       ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
@@ -393,9 +396,11 @@ jobs:
               echo "Deployment failed for planned provider unit $unit" >&2
               exit 1
             fi
-            zcli service enable-subdomain \
-              --project-id "$ZEROPS_PROJECT_ID" \
-              --service-id "$service_id" || true
+            if [[ "$unit" != *-worker ]]; then
+              zcli service enable-subdomain \
+                --project-id "$ZEROPS_PROJECT_ID" \
+                --service-id "$service_id" || true
+            fi
           done < <(jq -r '.[]' <<<"$PROVIDERS_JSON")
 
       - name: Deploy Shell after affected providers

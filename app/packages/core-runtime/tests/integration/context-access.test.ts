@@ -71,9 +71,16 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
   const relationships = [
     relationship('tenant', tenantId, 'member', 'principal', principalId),
     relationship('tenant', tenantId, 'identity_admin', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_manager', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_merger', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_reader', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_identity_reviewer', 'principal', principalId),
+    relationship('tenant', tenantId, 'party_relationship_manager', 'principal', principalId),
     relationship('tenant', tenantId, 'support', 'principal', principalId),
     relationship('legal_entity', legalObjectId, 'tenant', 'tenant', tenantId),
     relationship('legal_entity', legalObjectId, 'member', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'counterparty_manager', 'principal', principalId),
+    relationship('legal_entity', legalObjectId, 'counterparty_reader', 'principal', principalId),
     relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalObjectId),
     relationship('module_access', moduleObjectId, 'accessor', 'principal', principalId),
     relationship('resource', resourceObjectId, 'module', 'module_access', moduleObjectId),
@@ -94,7 +101,15 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
     const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
     try {
       const access = makeContextAccess(permissionClient);
-      for (const permission of ['manage_identity', 'impersonate'] as const) {
+      for (const permission of [
+        'impersonate',
+        'manage_identity',
+        'manage_party_identity',
+        'manage_party_relationships',
+        'merge_party_identity',
+        'read_party_identity',
+        'review_party_identity',
+      ] as const) {
         assert.deepEqual(
           await Effect.runPromise(
             access.tenants({
@@ -109,19 +124,22 @@ test('isolates live legal-entity, module, and resource batches by tenant and ent
           ],
         );
       }
-      assert.deepEqual(
-        await Effect.runPromise(
-          access.legalEntities({
-            legalEntityIds: [legalEntityId, otherLegalEntityId],
-            principalId,
-            tenantId,
-          }),
-        ),
-        [
-          { decision: 'allowed', key: legalEntityId },
-          { decision: 'denied', key: otherLegalEntityId },
-        ],
-      );
+      for (const permission of ['access', 'manage_counterparty', 'read_counterparty'] as const) {
+        assert.deepEqual(
+          await Effect.runPromise(
+            access.legalEntities({
+              legalEntityIds: [legalEntityId, otherLegalEntityId],
+              permission,
+              principalId,
+              tenantId,
+            }),
+          ),
+          [
+            { decision: 'allowed', key: legalEntityId },
+            { decision: 'denied', key: otherLegalEntityId },
+          ],
+        );
+      }
       assert.deepEqual(
         await Effect.runPromise(
           access.modules({ legalEntityId, moduleIds: [moduleId], principalId, tenantId }),

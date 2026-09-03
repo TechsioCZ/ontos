@@ -76,7 +76,11 @@ export interface ShellGovernedReadsService {
     input: ShellReadInvocation & { readonly entrypointKey?: string; readonly moduleId: string },
   ) => Effect.Effect<ResolvedModuleTarget, ReadCoreError>;
   readonly search: (
-    input: ShellReadInvocation & { readonly query: string },
+    input: ShellReadInvocation & {
+      readonly includeArchived?: boolean;
+      readonly query: string;
+      readonly role?: 'CUSTOMER' | 'SUPPLIER';
+    },
   ) => Effect.Effect<ShellSearchResponse, ReadCoreError>;
 }
 
@@ -208,24 +212,16 @@ const makeRegistrations = (
         policyKey: 'core.shell.search.evidence.v1',
       },
       inputSchema: ShellSearchPayloadSchema,
-      legalEntityScope: 'required',
+      legalEntityScope: 'optional',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'legal_entity',
+      permissionTarget: 'tenant',
       policies: [],
       readKey: 'core.shell.search',
       resultSchema: ShellSearchResponseSchema,
       schemaVersion: '1',
     },
-    ({ query }, context) => {
-      if (!hasLegalEntity(context.scope)) {
-        return Effect.fail(
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Shell search scope is unavailable',
-          }),
-        );
-      }
-      return context.services.search.search(context.scope, query).pipe(
+    (request, context) =>
+      context.services.search.search(context.scope, request).pipe(
         Effect.map((result) => ({
           evidence: { resultCount: result.results.length },
           result,
@@ -237,11 +233,10 @@ const makeRegistrations = (
               reason: 'Shell search is temporarily unavailable',
             }),
         ),
-      );
-    },
+      ),
     serviceFactory,
-    () => ({ kind: 'legal_entity' }),
-    (result) => result.results.map(({ ref }) => ref),
+    // Provider-specific Party tenant and Counterparty resource checks run inside the orchestrator.
+    () => ({ kind: 'tenant', permission: 'access' }),
   );
   const moduleTarget = defineRead(
     {
@@ -460,9 +455,9 @@ export const createShellGovernedReadsLayer = (
               targetResourceType: ref.resourceType,
             },
           }),
-        search: ({ correlationId, principal, query }) =>
+        search: ({ correlationId, principal, ...input }) =>
           runtime.runRead({
-            input: { query },
+            input,
             principal,
             registration: registrations.search,
             transport: { correlationId },

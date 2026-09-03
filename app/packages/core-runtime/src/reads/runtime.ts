@@ -13,10 +13,13 @@ import {
   ModuleEntrypointGatewayLive,
 } from '../modules/module-entrypoint-gateway.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
-import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
-import type { ContextAccessService } from '../permissions/context-access.ts';
+import {
+  ContextAccess,
+  ContextAccessLive,
+  LEGAL_ENTITY_PERMISSION_KEYS,
+} from '../permissions/context-access.ts';
 import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
-import type { OperationalScopeResolverService } from '../operations/context.ts';
+import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import { PolicyDenied } from '../actions/policy.ts';
 import { computeCanonicalValueHash } from '../actions/repository.ts';
@@ -27,7 +30,11 @@ import {
   getReadResultPermissionTargetResolver,
   getReadServiceFactory,
 } from './definition.ts';
-import type { ReadRegistration, ResolvedReadPermissionTarget } from './definition.ts';
+import type {
+  AtomicResolvedReadPermissionTarget,
+  ReadRegistration,
+  ResolvedReadPermissionTarget,
+} from './definition.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import { persistReadEvidence } from './repository.ts';
 import {
@@ -118,38 +125,166 @@ const unwrapCore = <Value>(exit: Exit.Exit<Value, ReadCoreError>): Value => {
 };
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
+type PermissionDecision = 'allowed' | 'denied' | 'unavailable';
+const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget): boolean => {
+  if (target.kind === 'tenant') {
+    return true;
+  }
+  if (target.kind === 'legal_entity') {
+    return (
+      target.permission === undefined ||
+      LEGAL_ENTITY_PERMISSION_KEYS.some((permission) => permission === target.permission)
+    );
+  }
+  if (target.kind === 'module') {
+    return stableTargetKey(target.moduleId);
+  }
+  return (
+    stableTargetKey(target.resource.moduleId) &&
+    stableTargetKey(target.resource.resourceId) &&
+    stableTargetKey(target.resource.resourceType)
+  );
+};
+
+const usesForbiddenAlternativeTenantPermission = (
+  target: AtomicResolvedReadPermissionTarget,
+): boolean =>
+  target.kind === 'tenant' &&
+  (target.permission === 'access' || target.permission === 'impersonate');
+
+const canonicalPermissionTarget = (
+  target: ResolvedReadPermissionTarget,
+): AtomicResolvedReadPermissionTarget => (target.kind === 'any_of' ? target.targets[0] : target);
+
 const targetIsValid = (
   declared: 'legal_entity' | 'module' | 'resource' | 'tenant',
   target: ResolvedReadPermissionTarget,
-): boolean =>
-  target.kind === declared &&
-  (target.kind === 'tenant' ||
-    target.kind === 'legal_entity' ||
-    (target.kind === 'module'
-      ? stableTargetKey(target.moduleId)
-      : stableTargetKey(target.resource.moduleId) &&
-        stableTargetKey(target.resource.resourceId) &&
-        stableTargetKey(target.resource.resourceType)));
+): boolean => {
+  const canonical = canonicalPermissionTarget(target);
+  if (canonical.kind !== declared || !atomicTargetIsValid(canonical)) {
+    return false;
+  }
+  if (target.kind !== 'any_of') {
+    return true;
+  }
+  return (
+    target.targets.length >= 2 &&
+    target.targets.length <= 5 &&
+    target.targets.every(
+      (candidate) =>
+        atomicTargetIsValid(candidate) && !usesForbiddenAlternativeTenantPermission(candidate),
+    )
+  );
+};
 
 const targetMetadata = (target: ResolvedReadPermissionTarget) => {
-  if (target.kind === 'legal_entity' || target.kind === 'tenant') {
+  const canonical = canonicalPermissionTarget(target);
+  if (canonical.kind === 'legal_entity' || canonical.kind === 'tenant') {
     return {};
   }
-  if (target.kind === 'module') {
-    return { targetModuleKey: target.moduleId };
+  if (canonical.kind === 'module') {
+    return { targetModuleKey: canonical.moduleId };
   }
   return {
-    targetModuleKey: target.resource.moduleId,
-    targetResourceId: target.resource.resourceId,
-    targetResourceType: target.resource.resourceType,
+    targetModuleKey: canonical.resource.moduleId,
+    targetResourceId: canonical.resource.resourceId,
+    targetResourceType: canonical.resource.resourceType,
   };
+};
+
+const decisionFor = (
+  decisions: readonly { readonly decision: PermissionDecision; readonly key: string }[],
+  expectedKey: string,
+): PermissionDecision => {
+  const [decision, ...unexpected] = decisions;
+  return unexpected.length === 0 && decision?.key === expectedKey
+    ? decision.decision
+    : 'unavailable';
+};
+
+const checkAtomicPermissionTarget = (
+  contextAccess: (typeof ContextAccess)['Service'],
+  scope: OperationalScope,
+  target: AtomicResolvedReadPermissionTarget,
+  allowMissingLegalEntity: boolean,
+): Effect.Effect<PermissionDecision> => {
+  if (target.kind === 'tenant') {
+    return contextAccess
+      .tenants({
+        permission: target.permission,
+        principalId: scope.principalId,
+        tenantIds: [scope.tenantId],
+      })
+      .pipe(Effect.map((decisions) => decisionFor(decisions, scope.tenantId)));
+  }
+  if (scope.legalEntityId === undefined) {
+    return Effect.succeed(allowMissingLegalEntity ? 'allowed' : 'unavailable');
+  }
+  const { legalEntityId } = scope;
+  if (target.kind === 'legal_entity') {
+    const decision =
+      target.permission === undefined
+        ? contextAccess.legalEntities({
+            legalEntityIds: [legalEntityId],
+            principalId: scope.principalId,
+            tenantId: scope.tenantId,
+          })
+        : contextAccess.legalEntities({
+            legalEntityIds: [legalEntityId],
+            permission: target.permission,
+            principalId: scope.principalId,
+            tenantId: scope.tenantId,
+          });
+    return decision.pipe(Effect.map((decisions) => decisionFor(decisions, legalEntityId)));
+  }
+  if (target.kind === 'module') {
+    return contextAccess
+      .modules({
+        legalEntityId,
+        moduleIds: [target.moduleId],
+        principalId: scope.principalId,
+        tenantId: scope.tenantId,
+      })
+      .pipe(Effect.map((decisions) => decisionFor(decisions, target.moduleId)));
+  }
+  const expectedKey = `${target.resource.moduleId}:${target.resource.resourceType}:${target.resource.resourceId}`;
+  return contextAccess
+    .resources({
+      legalEntityId,
+      principalId: scope.principalId,
+      resources: [target.resource],
+      tenantId: scope.tenantId,
+    })
+    .pipe(Effect.map((decisions) => decisionFor(decisions, expectedKey)));
+};
+
+const checkPermissionTarget = (
+  contextAccess: (typeof ContextAccess)['Service'],
+  scope: OperationalScope,
+  target: ResolvedReadPermissionTarget,
+  allowMissingLegalEntity: boolean,
+): Effect.Effect<PermissionDecision> => {
+  const targets = target.kind === 'any_of' ? target.targets : [target];
+  const mayAuthorizeWithoutLegalEntity = allowMissingLegalEntity && target.kind !== 'any_of';
+  return Effect.all(
+    targets.map((candidate) =>
+      checkAtomicPermissionTarget(contextAccess, scope, candidate, mayAuthorizeWithoutLegalEntity),
+    ),
+  ).pipe(
+    Effect.map((decisions) => {
+      if (decisions.includes('allowed')) {
+        return 'allowed';
+      }
+      return decisions.includes('unavailable') ? 'unavailable' : 'denied';
+    }),
+  );
 };
 
 export const makeReadRuntime = (
   database: (typeof CoreDatabase)['Service'],
   gateway: ModuleEntrypointGatewayService,
   scopeResolver: OperationalScopeResolverService,
-  contextAccess: ContextAccessService,
+  contextAccess: (typeof ContextAccess)['Service'],
   options: ReadRuntimeOptions = {},
 ) => {
   const stage = (value: ReadRuntimeStage): void => options.onStage?.(value);
@@ -282,7 +417,11 @@ export const makeReadRuntime = (
         });
       }
       const permissionTarget = permissionTargetExit.value;
-      if (!targetIsValid(input.registration.descriptor.permissionTarget, permissionTarget)) {
+      if (
+        !targetIsValid(input.registration.descriptor.permissionTarget, permissionTarget) ||
+        (getReadResultPermissionTargetResolver(input.registration) !== undefined &&
+          permissionTarget.kind === 'any_of')
+      ) {
         return yield* new ReadHandlerExecutionError({
           code: 'read_handler_execution_failed',
           reason: 'The declared read permission target is invalid',
@@ -295,48 +434,12 @@ export const makeReadRuntime = (
       yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
       stage('module_state_checked');
 
-      let permissionDecision: 'allowed' | 'denied' | 'unavailable' = 'unavailable';
-      if (permissionTarget.kind === 'tenant') {
-        permissionDecision =
-          (yield* contextAccess.tenants({
-            permission: permissionTarget.permission,
-            principalId: scope.principalId,
-            tenantIds: [scope.tenantId],
-          }))[0]?.decision ?? 'unavailable';
-      } else if (scope.legalEntityId !== undefined) {
-        if (permissionTarget.kind === 'legal_entity') {
-          permissionDecision =
-            (yield* contextAccess.legalEntities({
-              legalEntityIds: [scope.legalEntityId],
-              principalId: scope.principalId,
-              tenantId: scope.tenantId,
-            }))[0]?.decision ?? 'unavailable';
-        } else if (permissionTarget.kind === 'module') {
-          permissionDecision =
-            (yield* contextAccess.modules({
-              legalEntityId: scope.legalEntityId,
-              moduleIds: [permissionTarget.moduleId],
-              principalId: scope.principalId,
-              tenantId: scope.tenantId,
-            }))[0]?.decision ?? 'unavailable';
-        } else {
-          permissionDecision =
-            (yield* contextAccess.resources({
-              legalEntityId: scope.legalEntityId,
-              principalId: scope.principalId,
-              resources: [
-                {
-                  moduleId: permissionTarget.resource.moduleId,
-                  resourceId: permissionTarget.resource.resourceId,
-                  resourceType: permissionTarget.resource.resourceType,
-                },
-              ],
-              tenantId: scope.tenantId,
-            }))[0]?.decision ?? 'unavailable';
-        }
-      } else if (input.registration.descriptor.legalEntityScope === 'forbidden') {
-        permissionDecision = 'allowed';
-      }
+      const permissionDecision = yield* checkPermissionTarget(
+        contextAccess,
+        scope,
+        permissionTarget,
+        input.registration.descriptor.legalEntityScope === 'forbidden',
+      );
       stage('permission_checked');
       if (permissionDecision === 'denied') {
         yield* persistReadEvidence(
@@ -564,7 +667,6 @@ export const makeReadRuntime = (
                 );
               }
               if (
-                scope.legalEntityId === undefined ||
                 resultTargets.some(
                   (target) =>
                     !stableTargetKey(target.moduleId) ||
@@ -580,48 +682,96 @@ export const makeReadRuntime = (
                 );
               }
               if (resultTargets.length > 0) {
-                const resultPermissionExit = await Effect.runPromiseExit(
-                  contextAccess.resources({
-                    legalEntityId: scope.legalEntityId,
-                    principalId: scope.principalId,
-                    resources: resultTargets,
-                    tenantId: scope.tenantId,
-                  }),
-                );
-                if (Exit.isFailure(resultPermissionExit)) {
-                  throw new ReadRollback(
-                    new ReadPermissionUnavailable({
-                      code: 'read_permission_unavailable',
-                      reason: 'Read result authorization is temporarily unavailable',
+                if (permissionTarget.kind === 'tenant') {
+                  const resultPermissionExit = await Effect.runPromiseExit(
+                    contextAccess.tenants({
+                      permission: permissionTarget.permission,
+                      principalId: scope.principalId,
+                      tenantIds: [scope.tenantId],
                     }),
-                    resultPermissionExit.cause,
                   );
-                }
-                const decisions = resultPermissionExit.value;
-                const malformed =
-                  decisions.length !== resultTargets.length ||
-                  decisions.some(({ key }, index) => {
-                    const target = resultTargets[index];
-                    return (
-                      target === undefined ||
-                      key !== `${target.moduleId}:${target.resourceType}:${target.resourceId}`
+                  if (Exit.isFailure(resultPermissionExit)) {
+                    throw new ReadRollback(
+                      new ReadPermissionUnavailable({
+                        code: 'read_permission_unavailable',
+                        reason: 'Read result authorization is temporarily unavailable',
+                      }),
+                      resultPermissionExit.cause,
                     );
-                  });
-                if (malformed || decisions.some(({ decision }) => decision === 'unavailable')) {
-                  throw new ReadRollback(
-                    new ReadPermissionUnavailable({
-                      code: 'read_permission_unavailable',
-                      reason: 'Read result authorization is temporarily unavailable',
+                  }
+                  const [decision, ...unexpected] = resultPermissionExit.value;
+                  if (
+                    unexpected.length > 0 ||
+                    decision?.key !== scope.tenantId ||
+                    decision.decision === 'unavailable'
+                  ) {
+                    throw new ReadRollback(
+                      new ReadPermissionUnavailable({
+                        code: 'read_permission_unavailable',
+                        reason: 'Read result authorization is temporarily unavailable',
+                      }),
+                    );
+                  }
+                  if (decision.decision === 'denied') {
+                    throw new ReadRollback(
+                      new ReadPermissionDenied({
+                        code: 'read_permission_denied',
+                        reason: 'The read result contains a forbidden resource',
+                      }),
+                    );
+                  }
+                } else {
+                  if (scope.legalEntityId === undefined) {
+                    throw new ReadRollback(
+                      new ReadHandlerExecutionError({
+                        code: 'read_handler_execution_failed',
+                        reason: 'The read result permission targets are invalid',
+                      }),
+                    );
+                  }
+                  const resultPermissionExit = await Effect.runPromiseExit(
+                    contextAccess.resources({
+                      legalEntityId: scope.legalEntityId,
+                      principalId: scope.principalId,
+                      resources: resultTargets,
+                      tenantId: scope.tenantId,
                     }),
                   );
-                }
-                if (decisions.some(({ decision }) => decision === 'denied')) {
-                  throw new ReadRollback(
-                    new ReadPermissionDenied({
-                      code: 'read_permission_denied',
-                      reason: 'The read result contains a forbidden resource',
-                    }),
-                  );
+                  if (Exit.isFailure(resultPermissionExit)) {
+                    throw new ReadRollback(
+                      new ReadPermissionUnavailable({
+                        code: 'read_permission_unavailable',
+                        reason: 'Read result authorization is temporarily unavailable',
+                      }),
+                      resultPermissionExit.cause,
+                    );
+                  }
+                  const decisions = resultPermissionExit.value;
+                  const malformed =
+                    decisions.length !== resultTargets.length ||
+                    decisions.some(({ key }, index) => {
+                      const target = resultTargets[index];
+                      return (
+                        target === undefined ||
+                        key !== `${target.moduleId}:${target.resourceType}:${target.resourceId}`
+                      );
+                    });
+                  if (malformed || decisions.some(({ decision }) => decision === 'unavailable')) {
+                    throw new ReadRollback(
+                      new ReadPermissionUnavailable({
+                        code: 'read_permission_unavailable',
+                        reason: 'Read result authorization is temporarily unavailable',
+                      }),
+                    );
+                  }
+                  if (decisions.some(({ decision }) => decision === 'denied')) {
+                    throw new ReadRollback(
+                      new ReadPermissionDenied({
+                        code: 'read_permission_denied',
+                        reason: 'The read result contains a forbidden resource',
+                      }),
+                    );
+                  }
                 }
               }
             }

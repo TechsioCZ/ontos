@@ -6,6 +6,10 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { ContextAccess } from '../permissions/context-access.ts';
+import type {
+  LegalEntityPermissionKey,
+  TenantPermissionKey,
+} from '../permissions/context-access.ts';
 import {
   isTrustedSupportRecoveryPrincipalContext,
   isTrustedSystemPrincipalContext,
@@ -64,7 +68,7 @@ export interface OperationalScopeRepository {
 
 export interface LegalEntityScopeAccess {
   readonly tenants?: (input: {
-    readonly permission: 'access' | 'impersonate' | 'manage_identity';
+    readonly permission: TenantPermissionKey;
     readonly principalId: string;
     readonly tenantIds: readonly string[];
   }) => Effect.Effect<
@@ -72,6 +76,7 @@ export interface LegalEntityScopeAccess {
   >;
   readonly legalEntities: (input: {
     readonly legalEntityIds: readonly string[];
+    readonly permission?: LegalEntityPermissionKey;
     readonly principalId: string;
     readonly tenantId: string;
   }) => Effect.Effect<

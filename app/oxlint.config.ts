@@ -80,4 +80,14 @@ export default defineConfig({
     '**/routeTree.gen.*',
     'tools/oxlint/anti-slop/**',
   ],
+  overrides: [
+    {
+      // This guarded test-only entrypoint composes real services with boundary fakes.
+      // database-access:check rejects imports of it from production source.
+      files: ['packages/core-runtime/src/testing/**/*.ts'],
+      rules: {
+        'anti-slop-effect/no-service-constructor-imports': 'off',
+      },
+    },
+  ],
 });

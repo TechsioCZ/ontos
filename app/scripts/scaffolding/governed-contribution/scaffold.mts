@@ -29,6 +29,7 @@ import {
   ensureUniqueMutationPaths,
   insertSortedSlot,
   insertModuleFederationExposure,
+  isModuleManifestImport,
   pathExists,
   requireCanonicalSlug,
   resolveContainedPath,
@@ -191,7 +192,7 @@ export const ${type}InternalProblemSchema = Schema.TaggedStruct(
 );
 
 export const ${value} = HttpApi.make('${value}').add(
-  HttpApiGroup.make('reads').add(
+  HttpApiGroup.make('${toCamelCase(name)}').add(
     HttpApiEndpoint.post('execute', '/reads/${name}', {
       error: [
         ${type}InvalidProblemSchema,
@@ -203,7 +204,10 @@ export const ${value} = HttpApi.make('${value}').add(
         ${type}UnavailableProblemSchema,
         ${type}InternalProblemSchema,
       ],
+      headers: {},
+      params: {},
       payload: ${type}RequestSchema,
+      query: {},
       success: ${type}ResponseSchema,
     }),
   ),
@@ -249,7 +253,7 @@ export const ${toCamelCase(name)}Read = defineRead(
 `;
 };
 
-const renderApiClient = (name: string): string => {
+const renderApiClient = (vertical: OntosVerticalMetadata, name: string): string => {
   const type = toPascalCase(name);
   const value = `${toPascalCase(name)}Api`;
   return `${generatedHeader('module-api')}
@@ -260,20 +264,34 @@ import { ${value} } from '../../shared/apis/${name}.ts';
 import type { ${type}Request } from '../../shared/apis/${name}.ts';
 import { operationGateway } from './action-gateway.ts';
 
+export interface ${type}ClientOptions {
+  readonly baseUrl?: string | URL;
+}
+
 export const execute${type}WithAuthorization = (
   payload: ${type}Request,
   authorization: string,
   correlationId: string,
+  options: ${type}ClientOptions = {},
 ) =>
   makeEffectHttpApiClient(${value}, {
+      baseUrl: options.baseUrl ?? '/${vertical.appId}-api',
       transformClient: HttpClient.mapRequest(
         HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
       ),
-    }).pipe(Effect.flatMap((client) => client.reads.execute({ payload })));
+    }).pipe(
+      Effect.flatMap((client) =>
+        client.${toCamelCase(name)}.execute({ headers: {}, params: {}, payload, query: {} }),
+      ),
+    );
 
-export const execute${type} = (payload: ${type}Request, correlationId: string) =>
+export const execute${type} = (
+  payload: ${type}Request,
+  correlationId: string,
+  options: ${type}ClientOptions = {},
+) =>
   operationGateway.invoke((authorization) =>
-    execute${type}WithAuthorization(payload, authorization, correlationId),
+    execute${type}WithAuthorization(payload, authorization, correlationId, options),
   );
 `;
 };
@@ -340,6 +358,7 @@ ${kind === 'search-provider' ? '  (result) => result.map(({ ref }) => ref),\n' :
 
 const renderProviderClient = (
   kind: Extract<GovernedContributionKind, 'report' | 'search-provider'>,
+  vertical: OntosVerticalMetadata,
   name: string,
 ): string => {
   const type = toPascalCase(name);
@@ -352,20 +371,30 @@ import { ${apiValue} } from '../../shared/apis/${name}-${kind === 'report' ? 're
 import type { ${type}ProviderRequest } from '../../shared/apis/${name}-${kind === 'report' ? 'report' : 'search'}.ts';
 import { operationGateway } from './action-gateway.ts';
 
+export interface ${type}ClientOptions {
+  readonly baseUrl?: string | URL;
+}
+
 export const load${type}ClientWithAuthorization = (
   payload: ${type}ProviderRequest,
   authorization: string,
   correlationId: string,
+  options: ${type}ClientOptions = {},
 ) =>
   makeEffectHttpApiClient(${apiValue}, {
+      baseUrl: options.baseUrl ?? '/${vertical.appId}-api',
       transformClient: HttpClient.mapRequest(
         HttpClientRequest.setHeaders({ authorization, 'x-correlation-id': correlationId }),
       ),
     }).pipe(Effect.flatMap((client) => client.${group}.execute({ payload })));
 
-export const load${type}Client = (payload: ${type}ProviderRequest, correlationId: string) =>
+export const load${type}Client = (
+  payload: ${type}ProviderRequest,
+  correlationId: string,
+  options: ${type}ClientOptions = {},
+) =>
   operationGateway.invoke((authorization) =>
-    load${type}ClientWithAuthorization(payload, authorization, correlationId),
+    load${type}ClientWithAuthorization(payload, authorization, correlationId, options),
   );
 `;
 };
@@ -532,7 +561,7 @@ const renderGovernedServer = (
   const apiValue = isModuleApi
     ? `${type}Api`
     : `${type}${kind === 'report' ? 'Report' : 'Search'}Api`;
-  const group = isModuleApi ? 'reads' : kind === 'report' ? 'reports' : 'search';
+  const group = isModuleApi ? toCamelCase(name) : kind === 'report' ? 'reports' : 'search';
   const readValue = `${toCamelCase(name)}Read`;
   const readImport = isModuleApi
     ? `../src/api/${name}.read.ts`
@@ -885,7 +914,7 @@ export const planGovernedContributionScaffold = async (
     mutations.push(
       await createMutation(
         clientPath,
-        isApi ? renderApiClient(name) : renderProviderClient(kind, name),
+        isApi ? renderApiClient(vertical, name) : renderProviderClient(kind, vertical, name),
       ),
     );
     if (kind === 'report' || kind === 'search-provider') {
@@ -928,7 +957,7 @@ export const planGovernedContributionScaffold = async (
       MODULE_MANIFEST_IMPORT_SLOT_START,
       MODULE_MANIFEST_IMPORT_SLOT_END,
       [ownerImport],
-      (candidate) => /^import \{ [A-Za-z][A-Za-z0-9]* \} from '.+';$/u.test(candidate),
+      isModuleManifestImport,
     );
   }
   const slots = slotLine(kind, vertical, name, resource);

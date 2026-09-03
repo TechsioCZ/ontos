@@ -3,8 +3,6 @@ import { enableGovernedRls, tenantRlsPolicies } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import {
   check,
-  date,
-  foreignKey,
   index,
   pgSchema,
   text,
@@ -16,7 +14,10 @@ import {
 
 export const CONTACTS_SCHEMA_NAME = 'contacts';
 
-export const CONTACTS_TABLE_INVENTORY = ['contacts', 'customers'] as const;
+export const CONTACTS_TABLE_INVENTORY = [
+  'organization_engagement_profiles',
+  'person_engagement_profiles',
+] as const;
 
 export const contactsSchema = pgSchema(CONTACTS_SCHEMA_NAME);
 
@@ -24,93 +25,98 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultN
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
 const archivedAt = () => timestamp('archived_at', { withTimezone: true });
 
-export const customers = enableGovernedRls(
+export const organizationEngagementProfiles = enableGovernedRls(
   contactsSchema.table(
-    'customers',
+    'organization_engagement_profiles',
     {
-      customerId: uuid('customer_id').defaultRandom().primaryKey(),
+      engagementProfileId: uuid('engagement_profile_id').defaultRandom().primaryKey(),
       tenantId: uuid('tenant_id').notNull(),
-      name: text('name').notNull(),
-      ico: text('ico'),
-      dic: text('dic'),
-      legalFormCode: text('legal_form_code'),
-      establishedOn: date('established_on'),
-      dissolvedOn: date('dissolved_on'),
+      partyResourceId: text('party_resource_id').notNull(),
+      counterpartyResourceId: text('counterparty_resource_id'),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
       archivedAt: archivedAt(),
     },
     (table) => [
-      unique('contacts_customers_tenant_id_uk').on(table.tenantId, table.customerId),
-      index('contacts_customers_tenant_active_idx')
-        .on(table.tenantId, table.name)
+      unique('contacts_organization_engagement_profiles_tenant_id_uk').on(
+        table.tenantId,
+        table.engagementProfileId,
+      ),
+      uniqueIndex('contacts_organization_engagement_profiles_counterparty_uk').on(
+        table.tenantId,
+        table.counterpartyResourceId,
+      ),
+      uniqueIndex('contacts_organization_engagement_profiles_party_uk').on(
+        table.tenantId,
+        table.partyResourceId,
+      ),
+      index('contacts_organization_engagement_profiles_active_idx')
+        .on(table.tenantId, table.counterpartyResourceId)
         .where(sql`${table.archivedAt} is null`),
-      uniqueIndex('contacts_customers_tenant_ico_uk').on(table.tenantId, table.ico),
       check(
-        'contacts_customers_name_ck',
-        sql`${table.name} = btrim(${table.name}) and length(${table.name}) > 0`,
-      ),
-      check('contacts_customers_ico_ck', sql`${table.ico} is null or ${table.ico} ~ '^[0-9]{8}$'`),
-      check(
-        'contacts_customers_dic_ck',
-        sql`${table.dic} is null or (${table.dic} = btrim(${table.dic}) and length(${table.dic}) between 1 and 20)`,
+        'contacts_organization_engagement_profiles_party_resource_id_ck',
+        sql`${table.partyResourceId} = btrim(${table.partyResourceId}) and length(${table.partyResourceId}) > 0`,
       ),
       check(
-        'contacts_customers_legal_form_code_ck',
-        sql`${table.legalFormCode} is null or ${table.legalFormCode} ~ '^[0-9]{3}$'`,
+        'contacts_organization_engagement_profiles_counterparty_resource_id_ck',
+        sql`${table.counterpartyResourceId} = btrim(${table.counterpartyResourceId}) and length(${table.counterpartyResourceId}) > 0`,
       ),
-      check(
-        'contacts_customers_lifecycle_dates_ck',
-        sql`${table.dissolvedOn} is null or ${table.establishedOn} is null or ${table.dissolvedOn} >= ${table.establishedOn}`,
-      ),
-      ...tenantRlsPolicies('contacts_customers_tenant', table.tenantId),
+      ...tenantRlsPolicies('contacts_organization_engagement_profiles_tenant', table.tenantId),
     ],
   ),
 );
 
-export const contacts = enableGovernedRls(
+export const personEngagementProfiles = enableGovernedRls(
   contactsSchema.table(
-    'contacts',
+    'person_engagement_profiles',
     {
-      contactId: uuid('contact_id').defaultRandom().primaryKey(),
+      engagementProfileId: uuid('engagement_profile_id').defaultRandom().primaryKey(),
       tenantId: uuid('tenant_id').notNull(),
-      customerId: uuid('customer_id').notNull(),
-      name: text('name').notNull(),
-      email: text('email').notNull(),
-      phone: text('phone').notNull(),
+      partyResourceId: text('party_resource_id').notNull(),
+      counterpartyResourceId: text('counterparty_resource_id'),
       createdAt: createdAt(),
       updatedAt: updatedAt(),
       archivedAt: archivedAt(),
     },
     (table) => [
-      uniqueIndex('contacts_contacts_tenant_id_uk').on(table.tenantId, table.contactId),
-      index('contacts_contacts_tenant_customer_active_idx')
-        .on(table.tenantId, table.customerId, table.name)
-        .where(sql`${table.archivedAt} is null`),
-      foreignKey({
-        columns: [table.tenantId, table.customerId],
-        foreignColumns: [customers.tenantId, customers.customerId],
-        name: 'contacts_contacts_tenant_customer_fk',
-      }).onDelete('restrict'),
-      check(
-        'contacts_contacts_name_ck',
-        sql`${table.name} = btrim(${table.name}) and length(${table.name}) > 0`,
+      unique('contacts_person_engagement_profiles_tenant_id_uk').on(
+        table.tenantId,
+        table.engagementProfileId,
       ),
-      check('contacts_contacts_email_ck', sql`length(btrim(${table.email})) > 0`),
-      check('contacts_contacts_phone_ck', sql`length(btrim(${table.phone})) > 0`),
-      ...tenantRlsPolicies('contacts_contacts_tenant', table.tenantId),
+      uniqueIndex('contacts_person_engagement_profiles_party_counterparty_uk').on(
+        table.tenantId,
+        table.partyResourceId,
+        table.counterpartyResourceId,
+      ),
+      uniqueIndex('contacts_person_engagement_profiles_party_only_uk')
+        .on(table.tenantId, table.partyResourceId)
+        .where(sql`${table.counterpartyResourceId} is null`),
+      index('contacts_person_engagement_profiles_active_idx')
+        .on(table.tenantId, table.counterpartyResourceId, table.partyResourceId)
+        .where(sql`${table.archivedAt} is null`),
+      check(
+        'contacts_person_engagement_profiles_party_resource_id_ck',
+        sql`${table.partyResourceId} = btrim(${table.partyResourceId}) and length(${table.partyResourceId}) > 0`,
+      ),
+      check(
+        'contacts_person_engagement_profiles_counterparty_resource_id_ck',
+        sql`${table.counterpartyResourceId} = btrim(${table.counterpartyResourceId}) and length(${table.counterpartyResourceId}) > 0`,
+      ),
+      ...tenantRlsPolicies('contacts_person_engagement_profiles_tenant', table.tenantId),
     ],
   ),
 );
 
 export const contactsDatabaseSchema = {
-  contacts,
-  customers,
+  organizationEngagementProfiles,
+  personEngagementProfiles,
 } as const;
 
-export const CONTACTS_TABLES = [contacts, customers] as const;
+export const CONTACTS_TABLES = [organizationEngagementProfiles, personEngagementProfiles] as const;
 
-export type CustomerRecord = typeof customers.$inferSelect;
-export type NewCustomerRecord = typeof customers.$inferInsert;
-export type ContactRecord = typeof contacts.$inferSelect;
-export type NewContactRecord = typeof contacts.$inferInsert;
+export type OrganizationEngagementProfileRecord =
+  typeof organizationEngagementProfiles.$inferSelect;
+export type NewOrganizationEngagementProfileRecord =
+  typeof organizationEngagementProfiles.$inferInsert;
+export type PersonEngagementProfileRecord = typeof personEngagementProfiles.$inferSelect;
+export type NewPersonEngagementProfileRecord = typeof personEngagementProfiles.$inferInsert;

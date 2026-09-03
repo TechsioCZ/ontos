@@ -2,6 +2,7 @@ import { Schema, Predicate } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
+import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
@@ -102,7 +103,9 @@ export const OntosSearchDescriptorSchema = Schema.Struct({
   accessFiltering: Schema.Literals(['legal_entity_scope', 'resource_permission', 'tenant_scope']),
   key: OntosModuleIdSchema,
   owningModuleId: OntosModuleIdSchema,
+  requestFilters: Schema.optionalKey(Schema.Array(Schema.Literals(['includeArchived', 'role']))),
   resourceType: OntosModuleIdSchema,
+  tenantPermission: Schema.optionalKey(Schema.Literals(TENANT_PERMISSION_KEYS)),
 });
 
 export const OntosReportDescriptorSchema = Schema.Struct({
@@ -188,7 +191,7 @@ export interface OntosAuthoredPublicEvent<
 
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
-  readonly api: Readonly<Record<string, HttpApi.Top>>;
+  readonly api: Readonly<Record<string, HttpApi.Constraint>>;
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
   readonly reports: readonly OntosReportDescriptor[];
@@ -393,6 +396,20 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       throw new TypeError(
         `search descriptor references undeclared resource type ${descriptor.resourceType}`,
       );
+    }
+    if (
+      (descriptor.accessFiltering === 'tenant_scope') !==
+      (descriptor.tenantPermission !== undefined)
+    ) {
+      throw new TypeError(
+        'tenant-scoped search requires exactly one explicit Tenant permission declaration',
+      );
+    }
+    if (
+      descriptor.requestFilters !== undefined &&
+      new Set(descriptor.requestFilters).size !== descriptor.requestFilters.length
+    ) {
+      throw new TypeError('search request filter declarations must be unique');
     }
   }
 

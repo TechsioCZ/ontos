@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getTableName, isTable } from 'drizzle-orm';
-import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
+import { getTableName, is } from 'drizzle-orm';
+import { getTableConfig, PgDialect, PgTable } from 'drizzle-orm/pg-core';
 import * as schemaExports from '../../src/db/schema.ts';
 import {
   ACTION_INVOCATION_STATUSES,
@@ -21,8 +21,10 @@ const getColumn = (name: string) => {
   return column;
 };
 
-test('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
-  const exportedTables = Object.values(schemaExports).filter(isTable);
+test('exports exactly the declared Core table inventory in PostgreSQL schema core', () => {
+  const exportedTables: PgTable[] = Object.values(schemaExports).flatMap((value) =>
+    is(value, PgTable) ? [value] : [],
+  );
   const qualifiedNames = exportedTables
     .map((table) => {
       const config = getTableConfig(table);
@@ -34,7 +36,7 @@ test('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
   ).toSorted();
 
   assert.deepEqual(qualifiedNames, expectedQualifiedNames);
-  assert.equal(new Set(qualifiedNames).size, 18);
+  assert.equal(new Set(qualifiedNames).size, CORE_TABLE_INVENTORY.length);
   assert.equal(
     qualifiedNames.some((name) => name.startsWith('public.')),
     false,
@@ -98,7 +100,7 @@ test('preserves critical Action foreign keys and unique idempotency index', () =
   assert.equal(idempotencyIndex.config.unique, true);
   assert.ok(idempotencyIndex.config.where);
   assert.deepEqual(
-    idempotencyIndex.config.columns.map((column) => 'name' in column && column.name),
+    idempotencyIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
     ['tenant_id', 'action_key', 'principal_id', 'idempotency_key'],
   );
 });
@@ -120,7 +122,7 @@ test('allocates Domain Event order through a database-owned monotonic sequence',
   assert.ok(sequenceIndex);
   assert.equal(sequenceIndex.config.unique, true);
   assert.deepEqual(
-    sequenceIndex.config.columns.map((column) => 'name' in column && column.name),
+    sequenceIndex.config.columns.map((column) => ('name' in column ? column.name : false)),
     ['tenant_id', 'tenant_sequence_no'],
   );
 });

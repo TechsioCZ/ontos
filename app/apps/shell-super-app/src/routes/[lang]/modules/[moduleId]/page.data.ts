@@ -1,5 +1,6 @@
 /* eslint-disable promise/prefer-await-to-callbacks, promise/prefer-await-to-then -- The loader preserves the typed Effect error channel until the framework boundary. */
 import { Effect, Predicate } from 'effect';
+import type { Config } from 'effect';
 import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { resolveModuleTarget, runEffectRequest } from '../../../../api/auth-client.ts';
 import type { ShellTargetClientError } from '../../../../api/auth-client.ts';
@@ -61,7 +62,10 @@ export type ModuleTargetPageModel =
       readonly target: ResolvedModuleTarget;
     };
 
-const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleTargetPageModel => {
+const safeState = (
+  error: Config.ConfigError | ShellTargetClientError,
+  shell: HomePageModel,
+): ModuleTargetPageModel => {
   switch (error._tag) {
     case 'ShellAuthenticationRequiredProblem':
     case 'ShellSelectionRequiredProblem': {
@@ -74,7 +78,8 @@ const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleT
       return { shell, state: 'not_found' };
     }
     case 'ShellCapabilityUnavailableProblem':
-    case 'ShellInternalProblem': {
+    case 'ShellInternalProblem':
+    case 'ConfigError': {
       return { shell, state: 'unavailable' };
     }
     default: {
@@ -83,42 +88,43 @@ const safeState = (error: ShellTargetClientError, shell: HomePageModel): ModuleT
   }
 };
 
-export const loader = async ({
+export const loader = ({
   params,
   request,
   routeParams = {},
-}: ModuleTargetLoaderArguments) => {
-  const shell = await loadHomePageModel(request);
-  if (shell.state !== 'authenticated') {
-    return {
-      shell,
-      state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
-    } as const;
-  }
-  const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
-  return runEffectRequest(
-    shellAuthenticationClientOptionsFromRequest(request).pipe(
-      Effect.flatMap((options) =>
-        resolveModuleTarget(
-          withOptionalProperty(
-            {},
-            !(params.entrypointKey === undefined),
-            'entrypointKey',
-            params.entrypointKey,
-            {
-              moduleId: params.moduleId,
-            },
+}: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
+  runEffectRequest(
+    Effect.gen(function* loadModuleTargetPage() {
+      const shell = yield* Effect.promise(() => loadHomePageModel(request));
+      if (shell.state !== 'authenticated') {
+        return {
+          shell,
+          state: shell.state === 'unavailable' ? 'unavailable' : 'selection_required',
+        } as const;
+      }
+      const boundedRouteParams = selectRouteParams(routeParams, Object.keys(routeParams));
+      return yield* shellAuthenticationClientOptionsFromRequest(request).pipe(
+        Effect.flatMap((options) =>
+          resolveModuleTarget(
+            withOptionalProperty(
+              {},
+              !(params.entrypointKey === undefined),
+              'entrypointKey',
+              params.entrypointKey,
+              {
+                moduleId: params.moduleId,
+              },
+            ),
+            options,
           ),
-          options,
         ),
-      ),
-      Effect.map((target): ModuleTargetPageModel => ({
-        routeParams: boundedRouteParams,
-        shell,
-        state: 'resolved',
-        target,
-      })),
-      Effect.catch((error) => Effect.succeed(safeState(error, shell))),
-    ),
+        Effect.map((target): ModuleTargetPageModel => ({
+          routeParams: boundedRouteParams,
+          shell,
+          state: 'resolved',
+          target,
+        })),
+        Effect.catch((error) => Effect.succeed(safeState(error, shell))),
+      );
+    }),
   );
-};

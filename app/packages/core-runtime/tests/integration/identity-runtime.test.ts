@@ -39,7 +39,7 @@ import {
 } from '../../src/operations/context.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { openModuleStateGate } from '../support/open-module-state-gate.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -124,7 +124,7 @@ test('runs identity mutations and tenant-isolated administration through live Ac
   );
   const readRuntime = makeReadRuntime(
     { executor: runtimeDatabase },
-    openModuleStateGate,
+    openModuleEntrypointGateway,
     operationalScope,
     contextAccess,
   );

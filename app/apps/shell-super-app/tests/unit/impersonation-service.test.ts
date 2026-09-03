@@ -105,6 +105,7 @@ test('preserves definite requested-checkpoint errors for their declared HTTP map
     }),
     new ActionAlreadyCommitted({
       code: 'action_already_committed',
+      invocationId: 'invocation-id',
       reason: 'The requested checkpoint was already committed',
     }),
   ];

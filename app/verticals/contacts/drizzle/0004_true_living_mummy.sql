@@ -1,0 +1,3 @@
+ALTER TABLE "contacts"."organization_engagement_profiles" ALTER COLUMN "counterparty_resource_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "contacts"."person_engagement_profiles" ALTER COLUMN "counterparty_resource_id" DROP NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "contacts_person_engagement_profiles_party_only_uk" ON "contacts"."person_engagement_profiles" USING btree ("tenant_id","party_resource_id") WHERE "contacts"."person_engagement_profiles"."counterparty_resource_id" is null;

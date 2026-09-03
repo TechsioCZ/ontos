@@ -1,0 +1,54 @@
+diff --git a/dist/plugins/organization/routes/crud-members.d.mts b/dist/plugins/organization/routes/crud-members.d.mts
+index 635e7bf4b90ee8a9ce4ab2fce613309f02fbe131..24a7e3e9add69b2dd19b8b0fadc848c367d15fe0 100644
+--- a/dist/plugins/organization/routes/crud-members.d.mts
++++ b/dist/plugins/organization/routes/crud-members.d.mts
+@@ -889,48 +889,7 @@ declare const getActiveMemberRole: <O extends OrganizationOptions>(options: O) =
+     };
+   }>))[];
+ }, {
+-  role: (((O["teams"] extends {
+-    enabled: true;
+-  } ? {
+-    id: string;
+-    organizationId: string;
+-    role: InferOrganizationRolesFromOption<O>;
+-    createdAt: Date;
+-    userId: string;
+-    teamId?: string | undefined;
+-    user: {
+-      id: string;
+-      email: string;
+-      name: string;
+-      image?: string | undefined;
+-    };
+-  } : {
+-    id: string;
+-    organizationId: string;
+-    role: InferOrganizationRolesFromOption<O>;
+-    createdAt: Date;
+-    userId: string;
+-    user: {
+-      id: string;
+-      email: string;
+-      name: string;
+-      image?: string | undefined;
+-    };
+-  }) & (O["schema"] extends {
+-    member?: {
+-      additionalFields: infer Field extends Record<string, _better_auth_core_db0.DBFieldAttribute>;
+-    } | undefined;
+-  } ? FieldAttributeToObject<Field> : {}) extends infer T ? { [K in keyof T]: T[K] } : never) & {
+-    user: {
+-      id: string;
+-      createdAt: Date;
+-      updatedAt: Date;
+-      email: string;
+-      emailVerified: boolean;
+-      name: string;
+-      image?: string | null | undefined;
+-    };
+-  })["role"];
++  role: InferOrganizationRolesFromOption<O>;
+ }>;
+ //#endregion
+ export { addMember, getActiveMember, getActiveMemberRole, leaveOrganization, listMembers, removeMember, updateMemberRole };

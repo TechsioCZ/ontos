@@ -87,7 +87,27 @@
         "adrRef": "docs/super-app-rfc-adr/verticals.md#contacts",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#contacts"]
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#contacts"
+          ]
+        }
+      }
+    },
+    {
+      "id": "party-registry",
+      "package": "@app/party-registry",
+      "path": "verticals/party-registry",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/party-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#party-registry",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#party-registry"
+          ]
         }
       }
     }

@@ -1,4 +1,5 @@
 // @effect-diagnostics processEnv:off globalConsole:off strictEffectProvide:off
+/* eslint-disable complexity -- One verifier keeps the full fail-closed Core catalog gate visible and auditable. */
 import { sql } from 'drizzle-orm';
 import { Effect, Layer, Schema } from 'effect';
 import { CoreDatabase, CoreDatabaseLive } from '../src/db/client.ts';
@@ -21,6 +22,8 @@ import {
   principalAuthBindings,
   principals,
   searchIndexEntries,
+  searchProjectionGenerations,
+  searchProjectionRebuilds,
   tenantModuleStateChanges,
   tenantModuleStates,
   tenants,
@@ -72,6 +75,53 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     return yield* new DatabaseVerificationError({
       reason: 'The application runtime role must be non-superuser and must not bypass RLS',
     });
+  }
+
+  for (const [tableName, operations] of [
+    ['search_index_entries', ['delete', 'insert', 'select', 'update']],
+    ['search_projection_generations', ['insert', 'select', 'update']],
+    ['search_projection_rebuilds', ['insert', 'select', 'update']],
+  ] as const) {
+    const searchIsolation = yield* Effect.tryPromise({
+      catch: () =>
+        new DatabaseVerificationError({ reason: 'Unable to verify Core Search tenant isolation' }),
+      try: () =>
+        database.executor.execute<{
+          policy_names: string[];
+          relforcerowsecurity: boolean;
+          relrowsecurity: boolean;
+        }>(sql`
+        select
+          relation.relrowsecurity,
+          relation.relforcerowsecurity,
+          coalesce(array_agg(policy.policyname order by policy.policyname)
+            filter (where policy.policyname is not null), array[]::text[]) as policy_names
+        from pg_catalog.pg_class as relation
+        inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+        left join pg_catalog.pg_policies as policy
+          on policy.schemaname = namespace.nspname and policy.tablename = relation.relname
+        where namespace.nspname = ${CORE_SCHEMA_NAME}
+          and relation.relname = ${tableName}
+        group by relation.relrowsecurity, relation.relforcerowsecurity
+      `),
+    });
+    const [searchIsolationRow] = searchIsolation.rows;
+    const expectedSearchPolicies = operations.map(
+      (operation) => `core_${tableName}_tenant_${operation}`,
+    );
+    if (
+      searchIsolationRow === undefined ||
+      !searchIsolationRow.relrowsecurity ||
+      !searchIsolationRow.relforcerowsecurity ||
+      searchIsolationRow.policy_names.length !== expectedSearchPolicies.length ||
+      searchIsolationRow.policy_names.some(
+        (policy, index) => policy !== expectedSearchPolicies[index],
+      )
+    ) {
+      return yield* new DatabaseVerificationError({
+        reason: 'Core Search must enforce forced tenant RLS with complete owner-operation policies',
+      });
+    }
   }
 
   const requiredCompositeConstraints = [
@@ -172,6 +222,12 @@ const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
     ),
     verifyTypedQuery('search_index_entries', () =>
       database.executor.select().from(searchIndexEntries).limit(0),
+    ),
+    verifyTypedQuery('search_projection_generations', () =>
+      database.executor.select().from(searchProjectionGenerations).limit(0),
+    ),
+    verifyTypedQuery('search_projection_rebuilds', () =>
+      database.executor.select().from(searchProjectionRebuilds).limit(0),
     ),
     verifyTypedQuery('worker_checkpoints', () =>
       database.executor.select().from(workerCheckpoints).limit(0),

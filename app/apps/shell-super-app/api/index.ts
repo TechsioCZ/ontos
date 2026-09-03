@@ -986,15 +986,12 @@ const resourcesGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'resourc
         if (session.state === 'anonymous') {
           return yield* failShellProblem(shellAuthenticationRequiredProblem());
         }
-        if (session.state !== 'authenticated') {
-          return yield* failShellProblem(shellSelectionRequiredProblem());
-        }
         const governedReads = yield* ShellGovernedReads;
         return yield* governedReads
           .search({
             correlationId: request.headers['x-correlation-id'] ?? 'missing',
             principal: session.principal,
-            query: payload.query,
+            ...payload,
           })
           .pipe(Effect.catch((error) => failShellProblem(shellListReadProblem(error))));
       }).pipe(
@@ -1713,12 +1710,17 @@ export const makeShellAuthenticationApiRuntime = (
           principal: withOptionalProperty(
             withOptionalProperty(
               withOptionalProperty(
-                {
-                  authMethod: context.authMethod,
-                  legalEntityId: context.legalEntityId,
-                  principalId: context.principalId,
-                  tenantId: context.tenantId,
-                },
+                withOptionalProperty(
+                  {
+                    authMethod: context.authMethod,
+                    principalId: context.principalId,
+                    tenantId: context.tenantId,
+                  },
+                  context.legalEntityId !== undefined,
+                  'legalEntityId',
+                  context.legalEntityId,
+                  {},
+                ),
                 !(context.authBindingId === undefined),
                 'authBindingId',
                 context.authBindingId,

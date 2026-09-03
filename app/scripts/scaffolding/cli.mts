@@ -17,7 +17,10 @@ import policyGenerator from './policy/scaffold.mts';
 import publicComponentGenerator from './public-component/scaffold.mts';
 import moduleApiGenerator from './module-api/scaffold.mts';
 import reportGenerator from './report/scaffold.mts';
+import resourceGenerator from './resource/scaffold.mts';
+import retireContributionGenerator from './retire-contribution/scaffold.mts';
 import searchProviderGenerator from './search-provider/scaffold.mts';
+import searchProviderAccessGenerator from './search-provider-access/generator.mts';
 import type {
   ActionScaffoldConfig,
   ActionScaffoldResult,
@@ -37,8 +40,14 @@ import type {
   PageScaffoldResult,
   PolicyScaffoldConfig,
   PolicyScaffoldResult,
+  ResourceScaffoldConfig,
+  ResourceScaffoldResult,
+  RetireContributionScaffoldConfig,
+  RetireContributionScaffoldResult,
   GovernedContributionScaffoldConfig,
   GovernedContributionScaffoldResult,
+  SearchProviderAccessScaffoldConfig,
+  SearchProviderAccessScaffoldResult,
 } from './shared.mts';
 
 export type ScaffoldCommand =
@@ -54,6 +63,9 @@ export type ScaffoldCommand =
   | 'policy'
   | 'public-component'
   | 'report'
+  | 'resource'
+  | 'retire-contribution'
+  | 'search-provider-access'
   | 'search-provider';
 
 type GeneratorResult =
@@ -66,7 +78,10 @@ type GeneratorResult =
   | OutboxScaffoldResult
   | OutboxWorkerScaffoldResult
   | PageScaffoldResult
-  | PolicyScaffoldResult;
+  | PolicyScaffoldResult
+  | ResourceScaffoldResult
+  | RetireContributionScaffoldResult
+  | SearchProviderAccessScaffoldResult;
 
 type GeneratorConfig =
   | ActionBoundaryScaffoldConfig
@@ -78,7 +93,10 @@ type GeneratorConfig =
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
-  | PolicyScaffoldConfig;
+  | PolicyScaffoldConfig
+  | ResourceScaffoldConfig
+  | RetireContributionScaffoldConfig
+  | SearchProviderAccessScaffoldConfig;
 
 type LocalGenerator<Result extends GeneratorResult> = (
   context: GeneratorContext,
@@ -98,8 +116,10 @@ export interface RunScaffoldOptions {
 }
 
 interface ParsedScaffoldFlags {
+  readonly 'access-filtering': string | undefined;
   readonly action: string | undefined;
   readonly 'legal-entity-scope': string | undefined;
+  readonly kind: string | undefined;
   readonly module: string | undefined;
   readonly name: string | undefined;
   readonly operation: string | undefined;
@@ -108,9 +128,11 @@ interface ParsedScaffoldFlags {
   readonly producer: string | undefined;
   readonly provider: string | undefined;
   readonly resource: string | undefined;
+  readonly 'request-filters': string | undefined;
   readonly scope: string | undefined;
   readonly service: string | undefined;
   readonly topic: string | undefined;
+  readonly 'tenant-permission': string | undefined;
   readonly url: string | undefined;
   readonly vertical: string | undefined;
   readonly worker: string | undefined;
@@ -449,6 +471,50 @@ Options:
       vertical: flags['vertical'] ?? '',
     }),
   },
+  resource: {
+    flags: ['resource', 'vertical'],
+    generator: resourceGenerator,
+    help: `Usage: pnpm scaffold:resource -- --vertical <vertical> --resource <resource>
+
+Generate one public Effect Schema-backed ResourceRef and register its conservative descriptor.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --resource <resource>  Stable resource name (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['resource', 'vertical'],
+    toConfig: (flags) => ({
+      resource: flags['resource'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
+  },
+  'retire-contribution': {
+    flags: ['kind', 'name', 'vertical'],
+    generator: retireContributionGenerator,
+    help: `Usage: pnpm scaffold:retire-contribution -- --vertical <vertical> --kind <action|api|page> --name <name>
+
+Retire one exact generated Action, module API, or page contribution atomically.
+
+Required flags:
+  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --kind <action|api|page> Generated contribution category
+  --name <name>          Stable contribution name (lower-kebab-case)
+
+Options:
+  --help                 Show this help without writing
+`,
+    requiredFlags: ['kind', 'name', 'vertical'],
+    toConfig: (flags) => {
+      const { kind } = flags;
+      if (kind !== 'action' && kind !== 'api' && kind !== 'page') {
+        throw new Error('--kind must be action, api, or page');
+      }
+      return { kind, name: flags.name ?? '', vertical: flags.vertical ?? '' };
+    },
+  },
   'search-provider': {
     flags: ['name', 'resource', 'vertical'],
     generator: searchProviderGenerator,
@@ -470,6 +536,65 @@ Options:
       resource: flags['resource'] ?? '',
       vertical: flags['vertical'] ?? '',
     }),
+  },
+  'search-provider-access': {
+    flags: [
+      'access-filtering',
+      'legal-entity-scope',
+      'name',
+      'request-filters',
+      'tenant-permission',
+      'vertical',
+    ],
+    generator: searchProviderAccessGenerator,
+    help: `Usage: pnpm scaffold:search-provider-access -- --vertical <vertical> --name <name> --legal-entity-scope <required|optional> --access-filtering <resource_permission|tenant_scope> --request-filters <includeArchived[,role]> [--tenant-permission read_party_identity]
+
+Safely update only Codesmith-owned access metadata and request filters for an existing search provider.
+
+Required flags:
+  --vertical <vertical>          Existing generated vertical folder (lower-kebab-case)
+  --name <name>                  Existing generated provider name (lower-kebab-case)
+  --legal-entity-scope <scope>   required or optional
+  --access-filtering <mode>      resource_permission or tenant_scope
+  --request-filters <filters>    Comma-separated includeArchived and role allowlist
+
+Options:
+  --tenant-permission read_party_identity  Required exactly for tenant_scope
+  --help                                  Show this help without writing
+`,
+    requiredFlags: [
+      'access-filtering',
+      'legal-entity-scope',
+      'name',
+      'request-filters',
+      'vertical',
+    ],
+    toConfig: (flags) => {
+      const accessFiltering = flags['access-filtering'];
+      const legalEntityScope = flags['legal-entity-scope'];
+      const filters = (flags['request-filters'] ?? '').split(',').filter((value) => value !== '');
+      if (accessFiltering !== 'resource_permission' && accessFiltering !== 'tenant_scope') {
+        throw new Error('--access-filtering must be resource_permission or tenant_scope');
+      }
+      if (legalEntityScope !== 'required' && legalEntityScope !== 'optional') {
+        throw new Error('--legal-entity-scope must be required or optional');
+      }
+      if (filters.some((filter) => filter !== 'includeArchived' && filter !== 'role')) {
+        throw new Error('--request-filters may contain only includeArchived and role');
+      }
+      const tenantPermission = flags['tenant-permission'];
+      if (tenantPermission !== undefined && tenantPermission !== 'read_party_identity') {
+        throw new Error('--tenant-permission must be read_party_identity');
+      }
+      return {
+        accessFiltering,
+        legalEntityScope,
+        name: flags.name ?? '',
+        requestFilters: filters as readonly ('includeArchived' | 'role')[],
+        ...(tenantPermission === undefined ? {} : { tenantPermission }),
+        vertical: flags.vertical ?? '',
+      };
+    },
   },
 } satisfies Readonly<Record<ScaffoldCommand, CommandDefinition>>;
 
@@ -516,7 +641,9 @@ const parseFlags = (
     }
   }
   return {
+    'access-filtering': parsed.get('access-filtering'),
     action: parsed.get('action'),
+    kind: parsed.get('kind'),
     'legal-entity-scope': parsed.get('legal-entity-scope'),
     module: parsed.get('module'),
     name: parsed.get('name'),
@@ -526,9 +653,11 @@ const parseFlags = (
     producer: parsed.get('producer'),
     provider: parsed.get('provider'),
     resource: parsed.get('resource'),
+    'request-filters': parsed.get('request-filters'),
     scope: parsed.get('scope'),
     service: parsed.get('service'),
     topic: parsed.get('topic'),
+    'tenant-permission': parsed.get('tenant-permission'),
     url: parsed.get('url'),
     vertical: parsed.get('vertical'),
     worker: parsed.get('worker'),

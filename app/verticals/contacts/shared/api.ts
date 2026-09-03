@@ -1,4 +1,4 @@
-/* eslint-disable import/no-duplicates, no-duplicate-imports -- The semantic API seam guard requires one exact API-only import per generated contract. */
+/* eslint-disable import/no-duplicates, no-duplicate-imports, oxc/no-barrel-file -- This is the public contract aggregate; the semantic API seam guard requires one exact API-only import per generated contract. */
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -6,44 +6,20 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/plugin-bff/effect-client';
-import { ContactDetailApi } from './apis/contact-detail.ts';
+import { OrganizationEngagementProfileApi } from './apis/organization-engagement-profile.ts';
+import { PersonEngagementProfileApi } from './apis/person-engagement-profile.ts';
 import {
-  ContactLifecyclePayloadSchema,
-  ContactSchema,
-  CreateContactPayloadSchema,
-  EditContactPayloadSchema,
-} from './apis/contact-detail.ts';
-import { ContactListApi } from './apis/contact-list.ts';
-import { CustomerAresLookupApi } from './apis/customer-ares-lookup.ts';
-import { CustomerDetailApi } from './apis/customer-detail.ts';
-import {
-  CreateCustomerPayloadSchema,
-  CustomerLifecyclePayloadSchema,
-  CustomerSchema,
-  EditCustomerPayloadSchema,
-} from './apis/customer-detail.ts';
-import { CustomerListApi } from './apis/customer-list.ts';
+  AttachOrganizationEngagementPayloadSchema,
+  AttachPersonEngagementPayloadSchema,
+  OrganizationEngagementLifecyclePayloadSchema,
+  OrganizationEngagementProfileSchema,
+  PersonEngagementLifecyclePayloadSchema,
+  PersonEngagementProfileSchema,
+} from './domain/engagement-profile.ts';
 
-export type {
-  Contact,
-  ContactLifecyclePayload,
-  CreateContactPayload,
-  EditContactPayload,
-} from './apis/contact-detail.ts';
-export type {
-  CreateCustomerPayload,
-  Customer,
-  CustomerLifecyclePayload,
-  EditCustomerPayload,
-} from './apis/customer-detail.ts';
-export type { ContactDetailRequest, ContactDetailResponse } from './apis/contact-detail.ts';
-export type { ContactListRequest, ContactListResponse } from './apis/contact-list.ts';
-export type {
-  CustomerAresLookupRequest,
-  CustomerAresLookupResponse,
-} from './apis/customer-ares-lookup.ts';
-export type { CustomerDetailRequest, CustomerDetailResponse } from './apis/customer-detail.ts';
-export type { CustomerListRequest, CustomerListResponse } from './apis/customer-list.ts';
+export * from './domain/engagement-profile.ts';
+export * from './apis/organization-engagement-profile.ts';
+export * from './apis/person-engagement-profile.ts';
 
 export interface ContactsMarker {
   readonly appId: string;
@@ -115,17 +91,11 @@ const problemFields = {
 const asProblemDetails = HttpApiSchema.asJson({ contentType: 'application/problem+json' });
 export const ContactsInvalidRequestProblemSchema = Schema.TaggedStruct(
   'ContactsInvalidRequestProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(400),
-  },
+  { ...problemFields, status: Schema.Literal(400) },
 ).pipe(asProblemDetails, HttpApiSchema.status(400));
 export const ContactsAuthenticationProblemSchema = Schema.TaggedStruct(
   'ContactsAuthenticationProblem',
-  {
-    ...problemFields,
-    status: Schema.Literal(401),
-  },
+  { ...problemFields, status: Schema.Literal(401) },
 ).pipe(asProblemDetails, HttpApiSchema.status(401));
 export const ContactsForbiddenProblemSchema = Schema.TaggedStruct('ContactsForbiddenProblem', {
   ...problemFields,
@@ -137,7 +107,15 @@ export const ContactsNotFoundProblemSchema = Schema.TaggedStruct('ContactsNotFou
 }).pipe(asProblemDetails, HttpApiSchema.status(404));
 export const ContactsConflictProblemSchema = Schema.TaggedStruct('ContactsConflictProblem', {
   ...problemFields,
-  code: Schema.Literals(['contacts_conflict', 'contacts_customer_ico_conflict']),
+  code: Schema.Literals([
+    'contacts_counterparty_customer_role_required',
+    'contacts_engagement_profile_already_exists',
+    'contacts_engagement_profile_lifecycle_conflict',
+    'contacts_party_counterparty_mismatch',
+    'contacts_party_alias_requires_canonical_reference',
+    'contacts_party_archived',
+    'contacts_party_type_mismatch',
+  ]),
   status: Schema.Literal(409),
 }).pipe(asProblemDetails, HttpApiSchema.status(409));
 export const ContactsPreconditionRequiredProblemSchema = Schema.TaggedStruct(
@@ -173,8 +151,7 @@ const mutationErrors = [
   ContactsUnavailableProblemSchema,
   ContactsInternalProblemSchema,
 ] as const;
-
-const addressedMutationErrors = [...mutationErrors, ContactsNotFoundProblemSchema] as const;
+const lifecycleErrors = [...mutationErrors, ContactsNotFoundProblemSchema] as const;
 
 export const contactsFoundationApi = HttpApi.make('ContactsFoundationApi').add(
   HttpApiGroup.make('foundation').add(
@@ -184,87 +161,70 @@ export const contactsFoundationApi = HttpApi.make('ContactsFoundationApi').add(
   ),
 );
 
-export const contactsCustomerMutationApi = HttpApi.make('ContactsCustomerMutationApi').add(
-  HttpApiGroup.make('customerMutations')
+export const organizationEngagementMutationApi = HttpApi.make(
+  'OrganizationEngagementMutationApi',
+).add(
+  HttpApiGroup.make('organizationEngagementMutations')
     .add(
-      HttpApiEndpoint.post('createCustomer', '/contacts/customers/create', {
+      HttpApiEndpoint.post('attach', '/contacts/engagement/organizations/attach', {
         error: mutationErrors,
         headers: ContactsMutationHeadersSchema,
-        payload: CreateCustomerPayloadSchema,
-        success: CustomerSchema,
+        payload: AttachOrganizationEngagementPayloadSchema,
+        success: OrganizationEngagementProfileSchema,
       }),
     )
     .add(
-      HttpApiEndpoint.post('editCustomer', '/contacts/customers/edit', {
-        error: addressedMutationErrors,
+      HttpApiEndpoint.post('archive', '/contacts/engagement/organizations/archive', {
+        error: lifecycleErrors,
         headers: ContactsMutationHeadersSchema,
-        payload: EditCustomerPayloadSchema,
-        success: CustomerSchema,
+        payload: OrganizationEngagementLifecyclePayloadSchema,
+        success: OrganizationEngagementProfileSchema,
       }),
     )
     .add(
-      HttpApiEndpoint.post('archiveCustomer', '/contacts/customers/archive', {
-        error: addressedMutationErrors,
+      HttpApiEndpoint.post('unarchive', '/contacts/engagement/organizations/unarchive', {
+        error: lifecycleErrors,
         headers: ContactsMutationHeadersSchema,
-        payload: CustomerLifecyclePayloadSchema,
-        success: CustomerSchema,
-      }),
-    )
-    .add(
-      HttpApiEndpoint.post('unarchiveCustomer', '/contacts/customers/unarchive', {
-        error: addressedMutationErrors,
-        headers: ContactsMutationHeadersSchema,
-        payload: CustomerLifecyclePayloadSchema,
-        success: CustomerSchema,
+        payload: OrganizationEngagementLifecyclePayloadSchema,
+        success: OrganizationEngagementProfileSchema,
       }),
     ),
 );
 
-export const contactsContactMutationApi = HttpApi.make('ContactsContactMutationApi').add(
-  HttpApiGroup.make('contactMutations')
+export const personEngagementMutationApi = HttpApi.make('PersonEngagementMutationApi').add(
+  HttpApiGroup.make('personEngagementMutations')
     .add(
-      HttpApiEndpoint.post('createContact', '/contacts/contacts/create', {
-        error: addressedMutationErrors,
+      HttpApiEndpoint.post('attach', '/contacts/engagement/people/attach', {
+        error: mutationErrors,
         headers: ContactsMutationHeadersSchema,
-        payload: CreateContactPayloadSchema,
-        success: ContactSchema,
+        payload: AttachPersonEngagementPayloadSchema,
+        success: PersonEngagementProfileSchema,
       }),
     )
     .add(
-      HttpApiEndpoint.post('editContact', '/contacts/contacts/edit', {
-        error: addressedMutationErrors,
+      HttpApiEndpoint.post('archive', '/contacts/engagement/people/archive', {
+        error: lifecycleErrors,
         headers: ContactsMutationHeadersSchema,
-        payload: EditContactPayloadSchema,
-        success: ContactSchema,
+        payload: PersonEngagementLifecyclePayloadSchema,
+        success: PersonEngagementProfileSchema,
       }),
     )
     .add(
-      HttpApiEndpoint.post('archiveContact', '/contacts/contacts/archive', {
-        error: addressedMutationErrors,
+      HttpApiEndpoint.post('unarchive', '/contacts/engagement/people/unarchive', {
+        error: lifecycleErrors,
         headers: ContactsMutationHeadersSchema,
-        payload: ContactLifecyclePayloadSchema,
-        success: ContactSchema,
-      }),
-    )
-    .add(
-      HttpApiEndpoint.post('unarchiveContact', '/contacts/contacts/unarchive', {
-        error: addressedMutationErrors,
-        headers: ContactsMutationHeadersSchema,
-        payload: ContactLifecyclePayloadSchema,
-        success: ContactSchema,
+        payload: PersonEngagementLifecyclePayloadSchema,
+        success: PersonEngagementProfileSchema,
       }),
     ),
 );
 
 export const contactsApi = HttpApi.make('ContactsApi')
   .addHttpApi(contactsFoundationApi)
-  .addHttpApi(contactsCustomerMutationApi)
-  .addHttpApi(contactsContactMutationApi)
-  .addHttpApi(CustomerAresLookupApi)
-  .addHttpApi(CustomerDetailApi)
-  .addHttpApi(CustomerListApi)
-  .addHttpApi(ContactDetailApi)
-  .addHttpApi(ContactListApi);
+  .addHttpApi(organizationEngagementMutationApi)
+  .addHttpApi(personEngagementMutationApi)
+  .addHttpApi(OrganizationEngagementProfileApi)
+  .addHttpApi(PersonEngagementProfileApi);
 
 const operation = (method: string, routePath: string): OperationContext => ({
   method,
@@ -274,20 +234,18 @@ const operation = (method: string, routePath: string): OperationContext => ({
 });
 
 export const contactsOperationContexts = {
-  archiveContact: operation('POST', '/contacts/contacts/archive'),
-  archiveCustomer: operation('POST', '/contacts/customers/archive'),
-  createContact: operation('POST', '/contacts/contacts/create'),
-  createCustomer: operation('POST', '/contacts/customers/create'),
-  editContact: operation('POST', '/contacts/contacts/edit'),
-  editCustomer: operation('POST', '/contacts/customers/edit'),
-  getContact: operation('POST', '/contacts/contacts/detail'),
-  getContactList: operation('POST', '/contacts/contacts/list'),
-  getCustomerDetail: operation('POST', '/contacts/customers/detail'),
-  getCustomerList: operation('POST', '/contacts/customers/list'),
-  lookupCustomerAres: operation('POST', '/contacts/customers/ares-lookup'),
+  archiveOrganizationEngagement: operation('POST', '/contacts/engagement/organizations/archive'),
+  archivePersonEngagement: operation('POST', '/contacts/engagement/people/archive'),
+  attachOrganizationEngagement: operation('POST', '/contacts/engagement/organizations/attach'),
+  attachPersonEngagement: operation('POST', '/contacts/engagement/people/attach'),
+  organizationEngagementProfile: operation('POST', '/reads/organization-engagement-profile'),
+  personEngagementProfile: operation('POST', '/reads/person-engagement-profile'),
   readiness: operation('GET', '/contacts/readiness'),
-  unarchiveContact: operation('POST', '/contacts/contacts/unarchive'),
-  unarchiveCustomer: operation('POST', '/contacts/customers/unarchive'),
+  unarchiveOrganizationEngagement: operation(
+    'POST',
+    '/contacts/engagement/organizations/unarchive',
+  ),
+  unarchivePersonEngagement: operation('POST', '/contacts/engagement/people/unarchive'),
 } satisfies Record<string, OperationContext>;
 
 export const contactsApiContract = {

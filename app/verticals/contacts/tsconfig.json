@@ -7,7 +7,6 @@
     "emitDeclarationOnly": true,
     "incremental": true,
     "noEmit": false,
-    "skipLibCheck": true,
     "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__contacts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__contacts.tsbuildinfo"
   },
@@ -33,6 +32,9 @@
     },
     {
       "path": "../../packages/shared-design-tokens"
+    },
+    {
+      "path": "../party-registry"
     }
   ]
 }

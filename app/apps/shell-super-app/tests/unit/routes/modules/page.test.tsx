@@ -127,6 +127,14 @@ test('invokes the exact private page loader only after a resolved authenticated 
   expect(await screen.findByText('contacts.core.page-customers:customer-1')).toBeTruthy();
 });
 
+test('maps remote loading failure to an unavailable state after target approval', async () => {
+  useLoaderDataMock.mockReturnValue(resolvedModel);
+  loadRemotePageMock.mockRejectedValueOnce(new Error('Remote unavailable'));
+  render(<ModuleTargetPage />);
+  expect(await screen.findByText('shell.moduleTarget.unavailable')).toBeTruthy();
+  expect(remotePropsMock).not.toHaveBeenCalled();
+});
+
 test('passes an empty route-parameter record to a resolved static page', async () => {
   useLoaderDataMock.mockReturnValue({ ...resolvedModel, routeParams: {} });
   render(<ModuleTargetPage />);

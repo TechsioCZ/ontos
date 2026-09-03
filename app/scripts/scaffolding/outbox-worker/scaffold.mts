@@ -145,19 +145,17 @@ const renderWorkerHostMain = (
 ): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import {
-  extractVerticalRuntimeSafeDescriptors,
+  extractOutboxWorkerSubscriptions,
   startOutboxWorkerProcess,
 } from '@app/core-runtime';
 import { outboxWorkerLayer } from './layer.ts';
 import { outboxWorkers } from '../workers/index.ts';
-import { ${toCamelCase(consumer.slug)}Registration } from '../../vertical.registration.ts';
 
-const { outboxSubscriptions } = extractVerticalRuntimeSafeDescriptors(
-  ${toCamelCase(consumer.slug)}Registration,
-);
+const outboxSubscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
 
 startOutboxWorkerProcess({
   claimOwnerPrefix: '${consumer.moduleId}-outbox-worker',
+  health: true,
   layer: outboxWorkerLayer,
   registrations: outboxWorkers,
   subscriptions: outboxSubscriptions,
@@ -199,6 +197,9 @@ const patchConsumerPackage = (
     ['@app/core-runtime', 'workspace:*'],
     [producer.packageName, 'workspace:*'],
   ] as const) {
+    if (name === consumer.packageName) {
+      continue;
+    }
     const current = dependencies[name];
     if (current !== undefined && current !== version) {
       throw new Error(`vertical ${consumer.slug} has an incompatible ${name} dependency`);
@@ -254,6 +255,12 @@ const patchConsumerTsconfig = (
   );
   const producerReference = `../${producer.slug}`;
   const matching = references.filter((reference) => reference['path'] === producerReference);
+  if (consumer.slug === producer.slug) {
+    if (matching.length > 0) {
+      throw new Error(`vertical ${consumer.slug} has a circular self project reference`);
+    }
+    return content;
+  }
   if (matching.length > 1) {
     throw new Error(`vertical ${consumer.slug} has duplicate ${producerReference} references`);
   }
@@ -414,6 +421,9 @@ export const planOutboxWorkerScaffold = async (
       [registrationImport],
       (candidate) =>
         /^import \{ [a-z][A-Za-z0-9]*Worker \} from '\.\/src\/workers\/[a-z][a-z0-9-]*\.worker\.ts';$/u.test(
+          candidate,
+        ) ||
+        /^import \{ [a-z][A-Za-z0-9]*Action \} from '\.\/src\/actions\/[a-z][a-z0-9-]*\.action\.ts';$/u.test(
           candidate,
         ),
     ),

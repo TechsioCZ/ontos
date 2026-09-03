@@ -124,6 +124,35 @@ test('does not request composition for an anonymous session', async () => {
   expect(availableTenantsMock).not.toHaveBeenCalled();
 });
 
+test('does not invent a selected legal entity while a tenant session requires selection', async () => {
+  const tenantIdentity = {
+    displayName: identity.displayName,
+    email: identity.email,
+    principalId: identity.principalId,
+    tenantId: identity.tenantId,
+  };
+  currentSessionMock.mockReturnValueOnce(
+    Effect.succeed({
+      availableLegalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+      identity: tenantIdentity,
+      state: 'selection_required' as const,
+    }),
+  );
+  const model = await loader({ request: request() });
+  expect(model).toMatchObject({
+    contextState: 'selection_required',
+    identity: tenantIdentity,
+    legalEntities: {
+      items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+      state: 'available',
+    },
+    state: 'authenticated',
+  });
+  expect(model).not.toHaveProperty('selectedLegalEntityId');
+  expect(shellCompositionMock).not.toHaveBeenCalled();
+  expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+});
+
 test('uses the configured HTTPS origin for the server-side session request', async () => {
   currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' as const }));
 

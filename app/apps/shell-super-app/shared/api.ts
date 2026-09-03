@@ -130,15 +130,44 @@ export interface ResourceRef {
   readonly moduleId: string;
   readonly resourceId: string;
   readonly resourceType: string;
+  readonly tenantId?: string;
 }
 
-export interface ShellSearchResult {
-  readonly ref: ResourceRef;
-  readonly title: string;
-}
+export type ShellSearchResult =
+  | {
+      readonly kind: 'resource';
+      readonly ref: ResourceRef;
+      readonly title: string;
+    }
+  | {
+      readonly archived: boolean;
+      readonly kind: 'party';
+      readonly matchedViaAlias: boolean;
+      readonly ref: ResourceRef;
+      readonly title: string;
+    }
+  | {
+      readonly collision?: {
+        readonly counterpartyRefs: readonly ResourceRef[];
+        readonly kind: 'CANONICAL_PARTY_COUNTERPARTY_COLLISION';
+      };
+      readonly currentRoles: readonly ('CUSTOMER' | 'SUPPLIER')[];
+      readonly kind: 'counterparty';
+      readonly legalEntity: { readonly legalEntityId: string; readonly tenantId: string };
+      readonly party: {
+        readonly archived: boolean;
+        readonly matchedViaAlias: boolean;
+        readonly ref: ResourceRef;
+        readonly title: string;
+      };
+      readonly ref: ResourceRef;
+      readonly title: string;
+    };
 
 export interface ShellSearchPayload {
+  readonly includeArchived?: boolean;
   readonly query: string;
+  readonly role?: 'CUSTOMER' | 'SUPPLIER';
 }
 
 export interface ShellSearchResponse {
@@ -602,15 +631,47 @@ export const ResourceRefSchema: Schema.Codec<ResourceRef> = Schema.Struct({
   moduleId: Schema.String.check(Schema.isMinLength(3)),
   resourceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
   resourceType: Schema.String.check(Schema.isMinLength(3)),
+  tenantId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
 });
 
-const ShellSearchResultSchema: Schema.Codec<ShellSearchResult> = Schema.Struct({
-  ref: ResourceRefSchema,
-  title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-});
+const searchTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+const ShellSearchResultSchema: Schema.Codec<ShellSearchResult> = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal('resource'), ref: ResourceRefSchema, title: searchTitle }),
+  Schema.Struct({
+    archived: Schema.Boolean,
+    kind: Schema.Literal('party'),
+    matchedViaAlias: Schema.Boolean,
+    ref: ResourceRefSchema,
+    title: searchTitle,
+  }),
+  Schema.Struct({
+    collision: Schema.optionalKey(
+      Schema.Struct({
+        counterpartyRefs: Schema.Array(ResourceRefSchema),
+        kind: Schema.Literal('CANONICAL_PARTY_COUNTERPARTY_COLLISION'),
+      }),
+    ),
+    currentRoles: Schema.Array(Schema.Literals(['CUSTOMER', 'SUPPLIER'])),
+    kind: Schema.Literal('counterparty'),
+    legalEntity: Schema.Struct({
+      legalEntityId: Schema.String.check(Schema.isUUID()),
+      tenantId: Schema.String.check(Schema.isUUID()),
+    }),
+    party: Schema.Struct({
+      archived: Schema.Boolean,
+      matchedViaAlias: Schema.Boolean,
+      ref: ResourceRefSchema,
+      title: searchTitle,
+    }),
+    ref: ResourceRefSchema,
+    title: searchTitle,
+  }),
+]);
 
 export const ShellSearchPayloadSchema: Schema.Codec<ShellSearchPayload> = Schema.Struct({
+  includeArchived: Schema.optionalKey(Schema.Boolean),
   query: Schema.String.check(Schema.isMaxLength(300)),
+  role: Schema.optionalKey(Schema.Literals(['CUSTOMER', 'SUPPLIER'])),
 });
 
 export const ShellSearchResponseSchema: Schema.Codec<ShellSearchResponse> = Schema.Struct({

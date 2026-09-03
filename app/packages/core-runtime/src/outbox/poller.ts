@@ -6,6 +6,7 @@ import type {
   OutboxWorkerSubscription,
 } from './definition.ts';
 import { OutboxPollerConfigError } from './errors.ts';
+import type { OutboxWorkerHealth } from './health.ts';
 import { runOutboxCycle } from './runtime.ts';
 import type {
   OutboxCycleError,
@@ -34,6 +35,7 @@ export interface RunOutboxPollingLoopInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
   readonly config: OutboxPollingConfig;
+  readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
@@ -143,6 +145,7 @@ export function runOutboxPollingLoop<
     OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>
   > = runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
   const tick = cycle.pipe(
+    Effect.tap(() => input.health?.cycleSucceeded ?? Effect.void),
     Effect.tap((result) =>
       hasActivity(result)
         ? Effect.annotateLogs(Effect.logInfo('Outbox polling cycle completed'), {
@@ -157,9 +160,12 @@ export function runOutboxPollingLoop<
         : Effect.void,
     ),
     Effect.catch((error) =>
-      Effect.annotateLogs(Effect.logError('Outbox polling cycle failed'), {
-        errorTag: error._tag,
-      }),
+      Effect.all([
+        input.health?.cycleFailed ?? Effect.void,
+        Effect.annotateLogs(Effect.logError('Outbox polling cycle failed'), {
+          errorTag: error._tag,
+        }),
+      ]),
     ),
   );
 

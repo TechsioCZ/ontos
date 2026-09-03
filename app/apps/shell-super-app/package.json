@@ -27,6 +27,7 @@
   "dependencies": {
     "@app/core-runtime": "workspace:*",
     "@app/contacts": "workspace:*",
+    "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
@@ -53,6 +54,7 @@
     "react-router": "7.18.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260810.1",
     "@effect/tsgo": "0.19.0",
     "@modern-js/adapter-rstest": "npm:@bleedingdev/modern-js-adapter-rstest@3.8.2-ultramodern.12",
     "@modern-js/app-tools": "npm:@bleedingdev/modern-js-app-tools@3.8.2-ultramodern.12",
@@ -62,11 +64,12 @@
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",
-    "@types/node": "^20",
+    "@types/node": "^26.2.0",
     "@types/pg": "8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "auth": "1.6.23",
+    "bun-types": "1.4.0",
     "drizzle-kit": "0.31.10",
     "happy-dom": "20.8.3",
     "tailwindcss": "^4.3.2",

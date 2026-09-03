@@ -144,6 +144,11 @@ The Direct Provider Adapter must:
 A cache changes transport cost, not fact authority. Cached evidence remains external evidence with
 its original `observedAt` and must pass the same Party policy as a fresh response.
 
+The implemented adapter uses a three-second timeout covering response headers and body decoding,
+at most two bounded exponential retries, a five-minute successful-result cache capped at 256
+entries, same-IČO request coalescing, and four concurrent provider requests. These implementation
+settings do not change the dated external research above.
+
 ## Canonical apply boundary
 
 The supported flow is:
@@ -171,6 +176,13 @@ Examples:
 V1 may prefill an explicit user-confirmed Party flow. Unattended bulk apply, automatic correction,
 automatic merge, and whole-response overwrite remain excluded until their fact-specific policies and
 behavioral conflict tests exist.
+
+The implemented coordinator refreshes governed canonical state before applying selected facts.
+Each accepted fact records bounded observation and decision evidence separately from the trusted
+accepting Principal. Independent stable Action idempotency keys support explicit partial outcomes
+and recovery: a retry skips already-satisfied facts and continues missing facts rather than
+overwriting current assertions. There is no ARES-specific mutation Action or cross-module shared
+transaction.
 
 ## Optional provider research
 

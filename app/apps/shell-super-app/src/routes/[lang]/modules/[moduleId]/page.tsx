@@ -31,23 +31,26 @@ const ResolvedTarget = ({
       return;
     }
     let current = true;
-    const load = async () => {
-      try {
-        const { default: Component } = await runEffectRequest(
-          resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
-            Effect.tryPromise(() => client.load()),
-          ),
-        );
-        if (current) {
-          setRemote({ Component, state: 'ready' });
-        }
-      } catch {
-        if (current) {
-          setRemote({ state: 'unavailable' });
-        }
-      }
-    };
-    void load();
+    void runEffectRequest(
+      resolveThenLoadModuleTarget(Effect.succeed(model.target), () =>
+        Effect.tryPromise(() => client.load()),
+      ).pipe(
+        Effect.match({
+          onFailure: (): RemoteState => ({ state: 'unavailable' }),
+          onSuccess: ({ default: Component }): RemoteState => ({ Component, state: 'ready' }),
+        }),
+        Effect.catchCause((cause) =>
+          Effect.logError(cause).pipe(Effect.as<RemoteState>({ state: 'unavailable' })),
+        ),
+        Effect.tap((state) =>
+          Effect.sync(() => {
+            if (current) {
+              setRemote(state);
+            }
+          }),
+        ),
+      ),
+    );
     return () => {
       current = false;
     };

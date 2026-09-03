@@ -64,6 +64,27 @@
       "when": 1788258392927,
       "tag": "0008_rename-crm-module-identity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788454799433,
+      "tag": "0009_fancy_hedge_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788457601602,
+      "tag": "0010_calm_tenebrous",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788457941521,
+      "tag": "0011_hard_menace",
+      "breakpoints": true
     }
   ]
 }

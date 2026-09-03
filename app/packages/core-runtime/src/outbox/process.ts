@@ -1,5 +1,5 @@
 /* eslint-disable promise/prefer-await-to-then -- Promises are used only at the Node process edge. */
-import { Effect, Layer, ManagedRuntime, Random } from 'effect';
+import { Config, Effect, Layer, ManagedRuntime, Option, Random } from 'effect';
 import { DatabaseConfigLive } from '../db/config.ts';
 import { CoreDatabaseLive } from '../db/client.ts';
 import type {
@@ -8,6 +8,8 @@ import type {
   OutboxWorkerSubscription,
 } from './definition.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
+import type { RunOutboxPollingLoopInput } from './poller.ts';
+import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './health.ts';
 import { OutboxRuntimeLive } from './runtime.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
@@ -19,6 +21,7 @@ export interface RunOutboxWorkerProcessInput<
   readonly claimOwnerPrefix: string;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
+  readonly health?: boolean;
 }
 
 export interface StartOutboxWorkerProcessInput<
@@ -45,6 +48,8 @@ const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
   });
 });
 
+const healthPortConfig = Config.option(Config.port('OUTBOX_WORKER_HEALTH_PORT'));
+
 export const OutboxWorkerInfrastructureLive = OutboxRuntimeLive.pipe(
   Layer.provide(CoreDatabaseLive),
   Layer.provide(DatabaseConfigLive),
@@ -53,29 +58,47 @@ export const OutboxWorkerInfrastructureLive = OutboxRuntimeLive.pipe(
 export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration>(
   input: RunOutboxWorkerProcessInput<Registration>,
 ) =>
-  Effect.gen(function* runOutboxWorkerProcessEffect() {
-    const processNonce = yield* Random.nextInt;
-    const config = yield* parseOutboxPollingConfig({
-      defaultClaimOwner: `${input.claimOwnerPrefix}:${process.pid}:${processNonce}`,
-    });
-    yield* Effect.annotateLogs(Effect.logInfo('Outbox Worker process started'), {
-      claimOwner: config.claimOwner,
-      maxDeliveries: config.maxDeliveries,
-      pollIntervalMs: config.pollIntervalMs,
-      registrations: input.registrations.length,
-    });
+  Effect.scoped(
+    Effect.gen(function* runOutboxWorkerProcessEffect() {
+      const processNonce = yield* Random.nextInt;
+      const config = yield* parseOutboxPollingConfig({
+        defaultClaimOwner: `${input.claimOwnerPrefix}:${process.pid}:${processNonce}`,
+      });
+      const health =
+        input.health === true
+          ? yield* createOutboxWorkerHealth({
+              staleAfterMs: Math.max(5000, config.pollIntervalMs * 3),
+            })
+          : undefined;
+      if (health !== undefined) {
+        const configuredHealthPort = yield* healthPortConfig;
+        if (Option.isSome(configuredHealthPort)) {
+          yield* serveOutboxWorkerHealth(health, { port: configuredHealthPort.value });
+        }
+      }
+      yield* Effect.annotateLogs(Effect.logInfo('Outbox Worker process started'), {
+        claimOwner: config.claimOwner,
+        maxDeliveries: config.maxDeliveries,
+        pollIntervalMs: config.pollIntervalMs,
+        registrations: input.registrations.length,
+      });
 
-    const signal = yield* waitForShutdownSignal.pipe(
-      Effect.raceFirst(
-        runOutboxPollingLoop({
-          config,
-          registrations: input.registrations,
-          subscriptions: input.subscriptions,
-        }).pipe(Effect.as<ShutdownSignal>('SIGTERM')),
-      ),
-    );
-    yield* Effect.logInfo(`Outbox Worker process received ${signal}; shutting down`);
-  });
+      let pollingInput: RunOutboxPollingLoopInput<Registration> = {
+        config,
+        registrations: input.registrations,
+        subscriptions: input.subscriptions,
+      };
+      if (health !== undefined) {
+        pollingInput = { ...pollingInput, health };
+      }
+      const signal = yield* waitForShutdownSignal.pipe(
+        Effect.raceFirst(
+          runOutboxPollingLoop(pollingInput).pipe(Effect.as<ShutdownSignal>('SIGTERM')),
+        ),
+      );
+      yield* Effect.logInfo(`Outbox Worker process received ${signal}; shutting down`);
+    }),
+  );
 
 export const startOutboxWorkerProcess = <
   Registration extends AnyOutboxWorkerRegistration,
@@ -83,15 +106,17 @@ export const startOutboxWorkerProcess = <
 >(
   input: StartOutboxWorkerProcessInput<Registration, LayerError>,
 ): void => {
+  let processInput: RunOutboxWorkerProcessInput<Registration> = {
+    claimOwnerPrefix: input.claimOwnerPrefix,
+    registrations: input.registrations,
+    subscriptions: input.subscriptions,
+  };
+  if (input.health !== undefined) {
+    processInput = { ...processInput, health: input.health };
+  }
   const runtime = ManagedRuntime.make(input.layer);
   void runtime
-    .runPromise(
-      runOutboxWorkerProcess({
-        claimOwnerPrefix: input.claimOwnerPrefix,
-        registrations: input.registrations,
-        subscriptions: input.subscriptions,
-      }),
-    )
+    .runPromise(runOutboxWorkerProcess(processInput))
     .then(
       () => {
         process.exitCode = 0;

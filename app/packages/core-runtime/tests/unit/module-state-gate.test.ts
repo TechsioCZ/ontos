@@ -436,10 +436,9 @@ test('gates every future entrypoint category before its fake implementation load
         authorizationCalls += 1;
       }),
       entrypoint,
-      load: () =>
-        Effect.sync(() => {
-          loadCalls += 1;
-        }),
+      load: Effect.sync(() => {
+        loadCalls += 1;
+      }),
       snapshot,
     });
   await Promise.all(allowed.map((entrypoint) => Effect.runPromise(run(entrypoint))));
@@ -478,11 +477,10 @@ test('the gateway never evaluates authorization or lazy implementation on denial
           authorizationCalls += 1;
         }),
         entrypoint: descriptor,
-        load: () =>
-          Effect.sync(() => {
-            loadCalls += 1;
-            return 'loaded';
-          }),
+        load: Effect.sync(() => {
+          loadCalls += 1;
+          return 'loaded';
+        }),
         snapshot,
       }),
     ),

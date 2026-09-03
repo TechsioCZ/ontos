@@ -53,7 +53,8 @@ export const hasCompleteGeneratedModuleApiSeam = (
     (candidate) =>
       candidate.startsWith(contractPrefix) &&
       candidate.endsWith('.ts') &&
-      !candidate.slice(contractPrefix.length).includes('/'),
+      !candidate.slice(contractPrefix.length).includes('/') &&
+      sources.get(candidate)?.startsWith(GENERATED_HEADER) === true,
   );
   if (contracts.length === 0) return false;
 
@@ -89,7 +90,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
           'u',
         ),
       ) &&
-      readSource.includes("access: 'read'") &&
+      (readSource.includes("access: 'read'") || readSource.includes("access: 'historical_read'")) &&
       readSource.includes("role: 'api'") &&
       matches(
         readSource,
@@ -124,7 +125,7 @@ export const hasCompleteGeneratedModuleApiSeam = (
       matches(
         registration,
         new RegExp(
-          `'${escapedStem}': \\(\\) => import\\('./src/api/${escapedStem}-client\\.ts'\\),`,
+          `'${escapedStem}'\\s*:\\s*\\(\\s*\\)\\s*=>\\s*import\\(\\s*'./src/api/${escapedStem}-client\\.ts'\\s*\\)\\s*,`,
           'u',
         ),
       )

@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off globalDateInEffect:off
 import { and, eq, isNull } from 'drizzle-orm';
-import { Effect, Predicate } from 'effect';
+import { DateTime, Effect, Predicate } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { principalAuthBindings, principals } from '../db/schema.ts';
 import type { BindingStatus, PrincipalKind, PrincipalStatus } from '../db/schema.ts';
@@ -167,12 +167,13 @@ export const principalManagementRepositoryFromTransaction = (
       )
       .limit(2),
   updateApiKeyBindingStatus: async (input) => {
+    const updatedAt = DateTime.toDateUtc(DateTime.nowUnsafe());
     const [updated] = await transaction
       .update(principalAuthBindings)
       .set({
-        revokedAt: input.newStatus === 'revoked' ? new Date() : null,
+        revokedAt: input.newStatus === 'revoked' ? updatedAt : null,
         status: input.newStatus,
-        updatedAt: new Date(),
+        updatedAt,
       })
       .where(
         and(
@@ -187,7 +188,8 @@ export const principalManagementRepositoryFromTransaction = (
     const [updated] = await transaction
       .update(principals)
       .set({
-        disabledAt: input.newStatus === 'disabled' ? new Date() : null,
+        disabledAt:
+          input.newStatus === 'disabled' ? DateTime.toDateUtc(DateTime.nowUnsafe()) : null,
         status: input.newStatus,
       })
       .where(

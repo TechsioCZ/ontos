@@ -2,10 +2,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 type DeploymentPhaseKind = 'infrastructure' | 'provider' | 'shell';
 
-type TopologyUnit = {
+interface TopologyUnit {
   readonly dependencies: readonly string[];
   readonly id: string;
   readonly kind: 'provider' | 'shell';
@@ -13,16 +14,16 @@ type TopologyUnit = {
   readonly path: string;
   readonly serviceIdEnv: string;
   readonly stageSetup: string;
-};
+}
 
-type DeploymentPhase = {
+interface DeploymentPhase {
   readonly id: string;
   readonly kind: DeploymentPhaseKind;
   readonly serviceIdEnv: string;
   readonly stageSetup: string;
-};
+}
 
-type ReferenceTopology = {
+interface ReferenceTopology {
   readonly shell?: {
     readonly id?: string;
     readonly package?: string;
@@ -42,17 +43,17 @@ type ReferenceTopology = {
       readonly verticalRefs?: readonly string[];
     };
   }[];
-};
+}
 
-type Ownership = {
+interface Ownership {
   readonly owners?: readonly {
     readonly id?: string;
     readonly package?: string;
     readonly path?: string;
   }[];
-};
+}
 
-export type DeploymentImpactPlan = {
+export interface DeploymentImpactPlan {
   readonly any: boolean;
   readonly changedPaths: readonly string[];
   readonly comparison: {
@@ -69,14 +70,14 @@ export type DeploymentImpactPlan = {
     readonly shell: boolean;
     readonly spicedb: boolean;
   };
-};
+}
 
-export type PlanDeploymentImpactOptions = {
+export interface PlanDeploymentImpactOptions {
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
   readonly rootDirectory?: string;
-};
+}
 
 const INFRASTRUCTURE_PHASES = {
   migrator: {
@@ -375,7 +376,10 @@ const isConservativeFullDeployChange = (changedPath: string): boolean =>
   changedPath === 'pnpm-lock.yaml' ||
   changedPath === 'pnpm-workspace.yaml' ||
   changedPath === 'scripts/install-zerops-node.sh' ||
+  changedPath === 'scripts/generate-outbox-worker-deployment.mjs' ||
+  changedPath === 'scripts/materialize-outbox-worker.mjs' ||
   changedPath === 'scripts/materialize-zerops-runtime.mjs' ||
+  changedPath === 'scripts/outbox-worker-delivery.mjs' ||
   changedPath === 'zerops.yaml' ||
   changedPath.startsWith('topology/');
 
@@ -398,6 +402,16 @@ export const planDeploymentImpact = (
     fs.readFileSync(path.join(rootDirectory, 'zerops.yaml'), 'utf-8'),
   );
   const orderedUnits = orderUnits(buildTopologyUnits(topology, ownership, stageSetups));
+  const workers = (topology.verticals ?? []).flatMap((vertical) => {
+    const delivery = outboxWorkerDelivery(rootDirectory, vertical);
+    if (!delivery) {
+      return [];
+    }
+    if (!stageSetups.has(delivery.stageSetup)) {
+      fail(`Missing generated worker setup ${delivery.stageSetup}`);
+    }
+    return [delivery];
+  });
   const unitsById = new Map(orderedUnits.map((unit) => [unit.id, unit]));
   const shell = orderedUnits.find((unit) => unit.kind === 'shell');
   if (!shell) {
@@ -495,7 +509,17 @@ export const planDeploymentImpact = (
   if (spicedb) {
     phases.push(INFRASTRUCTURE_PHASES.spicedb);
   }
-  phases.push(...selectedUnits.filter((unit) => unit.kind === 'provider').map(toPhase));
+  phases.push(
+    ...selectedUnits.filter((unit) => unit.kind === 'provider').map(toPhase),
+    ...workers
+      .filter((worker) => impacted.has(worker.ownerId))
+      .map((worker) => ({
+        id: worker.id,
+        kind: 'provider' as const,
+        serviceIdEnv: worker.serviceIdEnv,
+        stageSetup: worker.stageSetup,
+      })),
+  );
   phases.push(...selectedUnits.filter((unit) => unit.kind === 'shell').map(toPhase));
 
   return {
@@ -511,7 +535,7 @@ export const planDeploymentImpact = (
     schemaVersion: 1,
     units: {
       migrator,
-      providers: selectedUnits.filter((unit) => unit.kind === 'provider').map((unit) => unit.id),
+      providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
       shell: impacted.has(shell.id),
       spicedb,
     },
@@ -567,7 +591,7 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string): voi
 
 const isDirectExecution =
   process.argv[1] !== undefined &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+  path.resolve(process.argv[1]) === path.resolve(import.meta.filename);
 
 if (isDirectExecution) {
   const plan = planDeploymentImpact(parseArguments(process.argv.slice(2)));

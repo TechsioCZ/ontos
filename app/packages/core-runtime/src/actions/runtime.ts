@@ -16,9 +16,15 @@ import {
   decodeActionPayload,
   decodeActionResult,
   getActionHandler,
+  getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
 } from './definition.ts';
-import type { ActionRegistration } from './definition.ts';
+import type {
+  ActionLegalEntityPermission,
+  ActionRegistration,
+  ActionResourcePermissionTarget,
+  ActionTenantPermission,
+} from './definition.ts';
 import {
   ActionAlreadyCommitted,
   ActionCollectorError,
@@ -70,7 +76,7 @@ import { ModuleStateGate, ModuleStateGateLive } from '../modules/module-state-ga
 import type { ModuleStateGateService } from '../modules/module-state-gate.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { OperationalScopeResolver, OperationalScopeResolverLive } from '../operations/context.ts';
-import type { OperationalScopeResolverService } from '../operations/context.ts';
+import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
 import { ContextAccess, ContextAccessLive } from '../permissions/context-access.ts';
 
 const withOptionalProperty = <
@@ -274,9 +280,10 @@ const transactionFailure = () =>
     reason: 'The Action transaction failed and was rolled back',
   });
 
-const alreadyCommitted = () =>
+const alreadyCommitted = (invocationId: string) =>
   new ActionAlreadyCommitted({
     code: 'action_already_committed',
+    invocationId,
     reason: 'This idempotency key already committed successfully',
   });
 
@@ -289,40 +296,187 @@ const requestHashConflict = () =>
 const checkTenantActionPermission = (
   contextAccess: (typeof ContextAccess)['Service'] | undefined,
   principal: TrustedPrincipalContext,
-  requiredPermission: (() => 'impersonate' | 'manage_identity' | undefined) | undefined,
-): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> =>
+  permission: ActionTenantPermission | undefined,
+): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
+  if (permission === undefined) {
+    return Effect.succeed('allowed');
+  }
+  if (contextAccess === undefined) {
+    return Effect.fail(
+      new ActionPermissionCheckError({
+        code: 'action_permission_check_failed',
+        reason: 'The authorization service could not determine permission safely',
+      }),
+    );
+  }
+  return contextAccess
+    .tenants({
+      permission,
+      principalId: principal.principalId,
+      tenantIds: [principal.tenantId],
+    })
+    .pipe(
+      Effect.flatMap(([decision]) =>
+        decision?.key === principal.tenantId &&
+        (decision.decision === 'allowed' || decision.decision === 'denied')
+          ? Effect.succeed(decision.decision)
+          : Effect.fail(
+              new ActionPermissionCheckError({
+                code: 'action_permission_check_failed',
+                reason: 'The authorization service could not determine permission safely',
+              }),
+            ),
+      ),
+    );
+};
+
+const resolveActionTenantPermission = <Payload>(
+  payload: Payload,
+  resolver: ((payload: Payload) => ActionTenantPermission | undefined) | undefined,
+): Effect.Effect<ActionTenantPermission | undefined, ActionPermissionCheckError> =>
+  Effect.try({
+    catch: () =>
+      new ActionPermissionCheckError({
+        code: 'action_permission_check_failed',
+        reason: 'The declared tenant permission could not be resolved safely',
+      }),
+    try: () => resolver?.(payload),
+  });
+
+const checkActionLegalEntityPermission = (
+  contextAccess: (typeof ContextAccess)['Service'] | undefined,
+  scope: OperationalScope,
+  permission: ActionLegalEntityPermission | undefined,
+): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
+  if (permission === undefined) {
+    return Effect.succeed('allowed');
+  }
+  if (contextAccess === undefined || scope.legalEntityId === undefined) {
+    return Effect.fail(
+      new ActionPermissionCheckError({
+        code: 'action_permission_check_failed',
+        reason: 'The authorization service could not determine permission safely',
+      }),
+    );
+  }
+  return contextAccess
+    .legalEntities({
+      legalEntityIds: [scope.legalEntityId],
+      permission,
+      principalId: scope.principalId,
+      tenantId: scope.tenantId,
+    })
+    .pipe(
+      Effect.flatMap(([decision]) =>
+        decision !== undefined &&
+        decision.key === scope.legalEntityId &&
+        (decision.decision === 'allowed' || decision.decision === 'denied')
+          ? Effect.succeed(decision.decision)
+          : Effect.fail(
+              new ActionPermissionCheckError({
+                code: 'action_permission_check_failed',
+                reason: 'The authorization service could not determine permission safely',
+              }),
+            ),
+      ),
+    );
+};
+
+const isBoundedTargetPart = (value: string): boolean =>
+  Predicate.isString(value) && value.length > 0 && value.length <= 300;
+
+const isResourcePermissionTarget = (
+  target: ActionResourcePermissionTarget,
+): target is ActionResourcePermissionTarget =>
+  Predicate.isObjectKeyword(target) &&
+  target !== null &&
+  'permission' in target &&
+  (target.permission === 'read' || target.permission === 'write') &&
+  'resource' in target &&
+  Predicate.isObjectKeyword(target.resource) &&
+  target.resource !== null &&
+  'moduleId' in target.resource &&
+  isBoundedTargetPart(target.resource.moduleId) &&
+  'resourceId' in target.resource &&
+  isBoundedTargetPart(target.resource.resourceId) &&
+  'resourceType' in target.resource &&
+  isBoundedTargetPart(target.resource.resourceType);
+
+const resolveActionResourcePermissionTarget = <Payload>(
+  payload: Payload,
+  scope: OperationalScope,
+  resolver:
+    | ((payload: Payload, scope: OperationalScope) => ActionResourcePermissionTarget)
+    | undefined,
+): Effect.Effect<ActionResourcePermissionTarget | undefined, ActionPermissionCheckError> =>
   Effect.suspend(() => {
-    const permission = requiredPermission?.();
-    if (permission === undefined) {
-      return Effect.succeed('allowed' as const);
+    if (resolver === undefined) {
+      return Effect.sync((): ActionResourcePermissionTarget | undefined => undefined);
     }
-    if (contextAccess === undefined) {
-      return Effect.fail(
+    return Effect.try({
+      catch: () =>
         new ActionPermissionCheckError({
           code: 'action_permission_check_failed',
-          reason: 'The authorization service could not determine permission safely',
+          reason: 'The declared Action permission target could not be resolved safely',
         }),
-      );
-    }
-    return contextAccess
-      .tenants({
-        permission,
-        principalId: principal.principalId,
-        tenantIds: [principal.tenantId],
-      })
-      .pipe(
-        Effect.flatMap(([decision]) =>
-          decision?.decision === 'allowed' || decision?.decision === 'denied'
-            ? Effect.succeed(decision.decision)
-            : Effect.fail(
-                new ActionPermissionCheckError({
-                  code: 'action_permission_check_failed',
-                  reason: 'The authorization service could not determine permission safely',
-                }),
-              ),
-        ),
-      );
+      try: () => resolver(payload, scope),
+    }).pipe(
+      Effect.filterOrFail(
+        isResourcePermissionTarget,
+        () =>
+          new ActionPermissionCheckError({
+            code: 'action_permission_check_failed',
+            reason: 'The declared Action permission target is invalid',
+          }),
+      ),
+      Effect.map((target) =>
+        Object.freeze({
+          permission: target.permission,
+          resource: Object.freeze({ ...target.resource }),
+        }),
+      ),
+    );
   });
+
+const checkActionResourcePermission = (
+  contextAccess: (typeof ContextAccess)['Service'] | undefined,
+  scope: OperationalScope,
+  target: ActionResourcePermissionTarget | undefined,
+): Effect.Effect<'allowed' | 'denied', ActionPermissionCheckError> => {
+  if (target === undefined) {
+    return Effect.succeed('allowed');
+  }
+  if (contextAccess === undefined || scope.legalEntityId === undefined) {
+    return Effect.fail(
+      new ActionPermissionCheckError({
+        code: 'action_permission_check_failed',
+        reason: 'The authorization service could not determine permission safely',
+      }),
+    );
+  }
+  return contextAccess
+    .resources({
+      legalEntityId: scope.legalEntityId,
+      permission: target.permission,
+      principalId: scope.principalId,
+      resources: [target.resource],
+      tenantId: scope.tenantId,
+    })
+    .pipe(
+      Effect.flatMap(([decision]) =>
+        decision?.key ===
+          `${target.resource.moduleId}:${target.resource.resourceType}:${target.resource.resourceId}` &&
+        (decision.decision === 'allowed' || decision.decision === 'denied')
+          ? Effect.succeed(decision.decision)
+          : Effect.fail(
+              new ActionPermissionCheckError({
+                code: 'action_permission_check_failed',
+                reason: 'The authorization service could not determine permission safely',
+              }),
+            ),
+      ),
+    );
+};
 
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
@@ -338,7 +492,7 @@ const verifyInvocation = (
     return Effect.fail(requestHashConflict());
   }
   if (invocation.status === 'succeeded') {
-    return Effect.fail(alreadyCommitted());
+    return Effect.fail(alreadyCommitted(invocation.actionInvocationId));
   }
   if (invocation.status === 'indeterminate') {
     return Effect.fail(
@@ -522,6 +676,91 @@ export const makeActionRuntime = (
         });
       }
 
+      const tenantPermission = isTrustedSupportRecoveryPrincipalContext(
+        principal,
+        input.registration,
+      )
+        ? undefined
+        : yield* resolveActionTenantPermission(
+            payload,
+            input.registration.descriptor.tenantPermission,
+          );
+      const { legalEntityPermission } = input.registration.descriptor;
+      const hasCanonicalScopeTarget =
+        tenantPermission !== undefined || legalEntityPermission !== undefined;
+
+      const resourcePermissionTarget = yield* resolveActionResourcePermissionTarget(
+        payload,
+        scope,
+        getActionResourcePermissionTargetResolver(input.registration),
+      );
+      let actionTarget: Pick<
+        ActionTransportMetadata,
+        'targetModuleKey' | 'targetResourceId' | 'targetResourceType'
+      >;
+      let governedTransport: ActionTransportMetadata;
+      if (resourcePermissionTarget !== undefined) {
+        actionTarget = {
+          targetModuleKey: resourcePermissionTarget.resource.moduleId,
+          targetResourceId: resourcePermissionTarget.resource.resourceId,
+          targetResourceType: resourcePermissionTarget.resource.resourceType,
+        };
+        governedTransport = withOptionalProperty(
+          withOptionalProperty(
+            {
+              correlationId: transport.correlationId,
+              targetModuleKey: resourcePermissionTarget.resource.moduleId,
+              targetResourceId: resourcePermissionTarget.resource.resourceId,
+              targetResourceType: resourcePermissionTarget.resource.resourceType,
+            },
+            !(transport.idempotencyKey === undefined),
+            'idempotencyKey',
+            transport.idempotencyKey,
+            {},
+          ),
+          !(transport.traceId === undefined),
+          'traceId',
+          transport.traceId,
+          {},
+        );
+      } else if (hasCanonicalScopeTarget) {
+        actionTarget = {};
+        governedTransport = withOptionalProperty(
+          withOptionalProperty(
+            { correlationId: transport.correlationId },
+            !(transport.idempotencyKey === undefined),
+            'idempotencyKey',
+            transport.idempotencyKey,
+            {},
+          ),
+          !(transport.traceId === undefined),
+          'traceId',
+          transport.traceId,
+          {},
+        );
+      } else {
+        actionTarget = withOptionalProperty(
+          withOptionalProperty(
+            withOptionalProperty(
+              {},
+              !(transport.targetModuleKey === undefined),
+              'targetModuleKey',
+              transport.targetModuleKey,
+              {},
+            ),
+            !(transport.targetResourceId === undefined),
+            'targetResourceId',
+            transport.targetResourceId,
+            {},
+          ),
+          !(transport.targetResourceType === undefined),
+          'targetResourceType',
+          transport.targetResourceType,
+          {},
+        );
+        governedTransport = transport;
+      }
+
       const requestHash = yield* Effect.try({
         catch: () =>
           new ActionPayloadValidationError({
@@ -535,25 +774,7 @@ export const makeActionRuntime = (
             owningModuleKey: input.registration.descriptor.owningModuleKey,
             principal,
             schemaVersion: input.registration.descriptor.schemaVersion,
-            target: withOptionalProperty(
-              withOptionalProperty(
-                withOptionalProperty(
-                  {},
-                  !(transport.targetModuleKey === undefined),
-                  'targetModuleKey',
-                  transport.targetModuleKey,
-                  {},
-                ),
-                !(transport.targetResourceId === undefined),
-                'targetResourceId',
-                transport.targetResourceId,
-                {},
-              ),
-              !(transport.targetResourceType === undefined),
-              'targetResourceType',
-              transport.targetResourceType,
-              {},
-            ),
+            target: actionTarget,
           }),
       });
 
@@ -563,7 +784,7 @@ export const makeActionRuntime = (
           idempotencyKey: transport.idempotencyKey,
           principal,
           requestHash,
-          transport,
+          transport: governedTransport,
         })
         .pipe(
           Effect.tapError((error) =>
@@ -586,7 +807,7 @@ export const makeActionRuntime = (
             actionKey: input.registration.descriptor.actionKey,
             auditProfile: input.registration.descriptor.auditProfile,
             principal,
-            transport,
+            transport: governedTransport,
           })
           .pipe(
             Effect.tapError((error) => {
@@ -634,25 +855,30 @@ export const makeActionRuntime = (
             }),
           ),
         );
-      notifyStage('permission_checked');
-
-      if (permissionDecision === 'denied') {
-        return yield* rejectPermission();
-      }
-
-      const tenantPermissionDecision = isTrustedSupportRecoveryPrincipalContext(
+      const tenantPermissionDecision = yield* checkTenantActionPermission(
+        options.contextAccess,
         principal,
-        input.registration,
-      )
-        ? 'allowed'
-        : yield* checkTenantActionPermission(
-            options.contextAccess,
-            principal,
-            input.registration.descriptor.tenantPermission === undefined
-              ? undefined
-              : () => input.registration.descriptor.tenantPermission?.(payload),
-          );
-      if (tenantPermissionDecision === 'denied') {
+        tenantPermission,
+      );
+
+      const legalEntityPermissionDecision = yield* checkActionLegalEntityPermission(
+        options.contextAccess,
+        scope,
+        legalEntityPermission,
+      );
+
+      const resourcePermissionDecision = yield* checkActionResourcePermission(
+        options.contextAccess,
+        scope,
+        resourcePermissionTarget,
+      );
+      notifyStage('permission_checked');
+      if (
+        permissionDecision === 'denied' ||
+        tenantPermissionDecision === 'denied' ||
+        legalEntityPermissionDecision === 'denied' ||
+        resourcePermissionDecision === 'denied'
+      ) {
         return yield* rejectPermission();
       }
 
@@ -666,27 +892,7 @@ export const makeActionRuntime = (
         }),
         payload,
         principal: Object.freeze({ ...principal }),
-        target: Object.freeze(
-          withOptionalProperty(
-            withOptionalProperty(
-              withOptionalProperty(
-                {},
-                !(transport.targetModuleKey === undefined),
-                'targetModuleKey',
-                transport.targetModuleKey,
-                {},
-              ),
-              !(transport.targetResourceId === undefined),
-              'targetResourceId',
-              transport.targetResourceId,
-              {},
-            ),
-            !(transport.targetResourceType === undefined),
-            'targetResourceType',
-            transport.targetResourceType,
-            {},
-          ),
-        ),
+        target: Object.freeze({ ...actionTarget }),
         transport: Object.freeze(
           withOptionalProperty(
             {
@@ -723,7 +929,7 @@ export const makeActionRuntime = (
               policy: policyEvidence(policy),
               principal,
               reasonCode: denial.reasonCode,
-              transport,
+              transport: governedTransport,
             })
             .pipe(
               Effect.tapError((error) =>
@@ -891,7 +1097,7 @@ export const makeActionRuntime = (
                 evidence: collector.snapshot(),
                 principal,
                 resultHash,
-                transport,
+                transport: governedTransport,
               }),
             );
             exitValueOrRollback(persistenceExit, rollbackToken);
@@ -982,7 +1188,7 @@ export const makeActionRuntime = (
         );
 
       if (invocation.status === 'succeeded') {
-        return yield* alreadyCommitted();
+        return yield* alreadyCommitted(invocation.actionInvocationId);
       }
       if (
         (invocation.status === 'received' ||

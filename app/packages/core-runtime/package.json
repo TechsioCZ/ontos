@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./actions/principal-context": "./src/actions/principal-context.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./testing/actions": "./src/testing/actions.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "scripts": {
@@ -24,6 +25,7 @@
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
+    "@effect/platform-node": "4.0.0-beta.107",
     "drizzle-orm": "0.45.2",
     "dotenv": "17.4.2",
     "effect": "4.0.0-beta.107",

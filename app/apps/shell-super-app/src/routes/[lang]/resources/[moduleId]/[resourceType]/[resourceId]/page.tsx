@@ -3,6 +3,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { Effect } from 'effect';
 import { useState } from 'react';
 import { attachResourceMedia, runEffectRequest } from '../../../../../../api/auth-client.ts';
 import { AuthenticatedDashboardLayout } from '../../../../../shell-frame.tsx';
@@ -17,17 +18,21 @@ const ResourcePage = () => {
   const controls = useShellControls(
     model.shell.state === 'authenticated' ? model.shell : undefined,
   );
-  const handleMediaAttachment = async () => {
+  const handleMediaAttachment = () => {
     if (model.state !== 'ready') {
       return;
     }
     setMediaState('pending');
-    try {
-      await runEffectRequest(attachResourceMedia(model.resource.ref));
-      setMediaState('success');
-    } catch {
-      setMediaState('failed');
-    }
+    return runEffectRequest(
+      attachResourceMedia(model.resource.ref).pipe(
+        Effect.match({
+          onFailure: () => 'failed' as const,
+          onSuccess: () => 'success' as const,
+        }),
+        Effect.catchCause((cause) => Effect.logError(cause).pipe(Effect.as('failed' as const))),
+        Effect.tap((state) => Effect.sync(() => setMediaState(state))),
+      ),
+    );
   };
   if (model.shell.state !== 'authenticated') {
     return (

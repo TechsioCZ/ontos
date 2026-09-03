@@ -179,7 +179,7 @@ PartyCreate(candidate)
       attach every compatible unclaimed strong claim to that Party
         uniqueness is protected by the already-held claim-key locks
       insert accepted compatible assertions on that Party
-      persist MATCHED PartyMatchDecision
+      persist MATCHED PartyMatchDecision with operation CREATE and committedCreateOutcome MATCHED_EXISTING
       return MATCHED_EXISTING(partyRef, decisionRef)
 
     if no strong claim exists
@@ -237,8 +237,11 @@ transaction begins.
 ### Commit, publication, and recovery
 
 `PartyMatchDecision` is the durable result reference for Party Create. It records the Action
-Invocation, Candidate fingerprint, Match Rule version, outcome, and exactly one of `partyRef` or
-`caseRef`. The decision commits in the same transaction as the resulting Party or Duplicate
+Invocation, Candidate fingerprint, Match Rule version, operation, matching outcome, and exact
+`committedCreateOutcome` for CREATE/REVIEW_CREATE. CREATE records CREATED, MATCHED_EXISTING or
+AMBIGUOUS independently of matching's MATCHED vocabulary. Create has exactly one of `partyRef` or
+`caseRef`; matching-only NO_MATCH has neither. REVIEW_MATCH retains MATCHED. Legacy rows are
+explicitly LEGACY: do not infer whether an old MATCHED row came from Create or matching. The decision commits in the same transaction as the resulting Party or Duplicate
 Candidate case.
 
 No search descriptor, projection update, consumer notification, or external publication occurs
@@ -299,6 +302,25 @@ UNRESOLVED
 UNRESOLVED means one evidenced real-world subject whose person-versus-organization type is unknown.
 It is not an import staging row, anonymous Principal, missing-name placeholder, or Duplicate
 Candidate case.
+
+Subject eligibility (`party-concrete-subject.v1`) and type support (`party-subject-type.v1`)
+are independent versioned decisions. Every Create and Matching Candidate, type enrichment and type
+Correction must include bounded typed subject evidence. The supported V1 manual boundary is an
+explicit ACTOR_ATTESTATION made through an authorized owner Action: DIRECT_INTERACTION or
+REVIEWED_DOCUMENT, a subject key, evidence reference, statement, and observed subject meaning.
+The accepting Action supplies the authenticated Principal and invocation; caller provenance labels
+never establish a registry authority. A reference only locates supporting material; arbitrary reference
+spelling is allowed. Document/registry records without such an attestation remain unsupported as
+standalone subject proof until their owner provides an authorized resolver. No Evidence Artifact
+service is assumed. ARES prefill itself supplies no manual attestation or authoritative type evidence.
+
+Eligibility requires evidence of exactly one concrete subject. Technical records and managed Legal
+Entities are rejected. PERSON requires an observation of a human, ORGANIZATION of an external
+organization; contradictory observations are rejected. CONCRETE_SUBJECT supports UNRESOLVED only.
+Neither display-name length nor an official identifier establishes existence or type. Evidence
+meaning and both rule versions participate in the Candidate fingerprint and durable evaluation;
+accepted assertions retain the evaluation with the trusted actor. Reviewer selection cannot waive
+these thresholds. Historical cases lacking this evidence require material new evidence.
 
 Allowed transitions:
 
@@ -571,6 +593,20 @@ approved Symmy Connector and an explicit Integration Route.
 The read side returns bounded normalized evidence with source and observed time. It does not mutate
 Party state. Applying evidence invokes Party Registry Actions fact by fact.
 
+September V1 keeps six ARES decisions: PREFILL_ONLY, APPLY_ENRICHMENT, NO_CHANGE,
+NEEDS_CONFIRMATION, CORRECTION_CANDIDATE, IDENTITY_AMBIGUITY. Enrichment requires explicit user
+confirmation. A policy decision is not a committed receipt; each successful standard Action has its
+own receipt and failed multi-fact application stops with the completed subset.
+
+Canonical ARES application excludes Create. Candidate prefill returns proposed data for a separate
+explicit Matching/Create call, without manufacturing subject attestation. For historical-error
+suspicion, a governed current assertion may carry prior ARES provenance for the same ICO and same
+non-null provider revision, observed at or before the assertion's validFrom. A conflicting fresh
+observation on that unchanged revision can nominate the exact assertion for Correction review.
+A newer provider revision or a difference alone cannot. This bounded suspicion never proves error
+or executes Correction: a reviewer must establish the historical error through the existing
+Correction Action. Unsupported historical address correction stays review-only.
+
 Initial delivery may support read-only ARES lookup for ICO. Automatic conflict correction, merge, or
 bulk field overwrite is excluded.
 
@@ -626,3 +662,5 @@ The initial implementation is not complete until these behaviors pass:
 
 Run the smallest affected dependency cone for each implementation increment. File presence, a
 manifest declaration, or a generated marker is not evidence that these behaviors work.
+
+ARES dispatch preserves the original confirmed observation and uses its `servedAt` as the logical as-of `decidedAt` in the command provenance envelope. This keeps the command payload and idempotency hash stable across delivery attempts; it is not the execution timestamp. Assertion `recordedAt` and Core invocation/audit time record actual acceptance. Both the original confirmation and refreshed observation must remain fresh; a new refresh cannot revive an expired confirmation. Failed or indeterminate receipts require standard commit resolution before retry.

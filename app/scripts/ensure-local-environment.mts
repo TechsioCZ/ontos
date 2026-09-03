@@ -1,26 +1,39 @@
 #!/usr/bin/env node
 /* eslint-disable node/no-process-env -- This command materializes explicit local-only defaults. */
 import { readFile, rename, writeFile } from 'node:fs/promises';
+import { Schema } from 'effect';
 
 import { APP_ENV_PATH } from '../packages/core-runtime/src/environment/workspace-environment.ts';
-import { localSpiceDbValues } from './local-environment-values.mts';
+import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
 
 const original = await readFile(APP_ENV_PATH, 'utf-8');
-const lines = original.replace(/\r\n/gu, '\n').split('\n');
+const lines = original.replaceAll('\r\n', '\n').split('\n');
+const topology = JSON.parse(
+  await readFile(new URL('../topology/reference-topology.json', import.meta.url), 'utf-8'),
+);
+const overlay = JSON.parse(
+  await readFile(new URL('../topology/local-overlays/development.json', import.meta.url), 'utf-8'),
+);
+const publicClientTopology = Schema.decodeUnknownSync(
+  Schema.Struct({
+    partyRegistryApiBaseUrl: Schema.String,
+    shellId: Schema.String,
+    shellPort: Schema.Number,
+  }),
+)({
+  partyRegistryApiBaseUrl: overlay.apis?.['party-registry'],
+  shellId: topology.shell?.id,
+  shellPort: overlay.ports?.[topology.shell?.id],
+});
 const remaining = new Map(
-  Object.entries(
-    localSpiceDbValues(lines, {
-      ...(process.env['LOCAL_SPICEDB_GRPC_PORT']?.trim()
-        ? { grpcPort: process.env['LOCAL_SPICEDB_GRPC_PORT']?.trim() }
-        : {}),
-      ...(process.env['LOCAL_SPICEDB_HTTP_PORT']?.trim()
-        ? { httpPort: process.env['LOCAL_SPICEDB_HTTP_PORT']?.trim() }
-        : {}),
-      ...(process.env['LOCAL_SPICEDB_PRESHARED_KEY']?.trim()
-        ? { preSharedKey: process.env['LOCAL_SPICEDB_PRESHARED_KEY']?.trim() }
-        : {}),
+  Object.entries({
+    ...localPublicClientValues(lines, publicClientTopology),
+    ...localSpiceDbValues(lines, {
+      grpcPort: process.env['LOCAL_SPICEDB_GRPC_PORT']?.trim() || undefined,
+      httpPort: process.env['LOCAL_SPICEDB_HTTP_PORT']?.trim() || undefined,
+      preSharedKey: process.env['LOCAL_SPICEDB_PRESHARED_KEY']?.trim() || undefined,
     }),
-  ),
+  }),
 );
 const updated = lines.map((line) => {
   const match = /^(?<key>[A-Z][A-Z0-9_]*)=/u.exec(line);
@@ -37,7 +50,7 @@ while (updated.at(-1) === '') {
   updated.pop();
 }
 if (remaining.size > 0) {
-  updated.push('', '# Development-only local SpiceDB values.');
+  updated.push('', '# Development-only local service values.');
   for (const [key, value] of remaining) {
     updated.push(`${key}=${value}`);
   }

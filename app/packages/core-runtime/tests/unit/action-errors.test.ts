@@ -53,6 +53,7 @@ test('publishes the exhaustive stable Core Action error tags', () => {
     }),
     new ActionAlreadyCommitted({
       code: 'action_already_committed',
+      invocationId: 'invocation-id',
       reason: 'Already committed',
     }),
     new ActionRequestHashConflict({

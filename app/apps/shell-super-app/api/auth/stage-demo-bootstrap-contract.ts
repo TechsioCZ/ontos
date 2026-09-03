@@ -86,7 +86,7 @@ export const parseStageDemoBootstrapConfig = (
 ): Effect.Effect<StageDemoBootstrapConfig, StageDemoBootstrapError> =>
   Effect.try({
     catch: (cause) =>
-      cause instanceof StageDemoBootstrapError
+      Schema.is(StageDemoBootstrapError)(cause)
         ? cause
         : configurationFailure('The stage demo configuration is invalid'),
     try: () => {

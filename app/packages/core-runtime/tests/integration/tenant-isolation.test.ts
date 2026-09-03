@@ -32,7 +32,7 @@ import {
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import { openModuleStateGate } from '../support/open-module-state-gate.ts';
+import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 test('declares the composite same-tenant parent keys used by isolation foreign keys', () => {
   const names = [legalEntities, principals, principalAuthBindings, actionInvocations].flatMap(
@@ -285,7 +285,7 @@ test('an unscoped owner repository remains isolated inside a governed read trans
     };
     const runtime = makeReadRuntime(
       { executor: runtimeDatabase },
-      openModuleStateGate,
+      openModuleEntrypointGateway,
       makeOperationalScopeResolver(
         makeOperationalScopeRepository({ executor: runtimeDatabase }),
         contextAccess,

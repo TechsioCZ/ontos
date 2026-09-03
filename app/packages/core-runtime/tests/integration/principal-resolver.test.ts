@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { and, eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { Pool } from 'pg';
 import { makePrincipalResolver } from '../../src/auth/principal-resolver.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
@@ -123,7 +123,7 @@ test('lists and selects multiple tenant-scoped principals and fails closed after
 
     await database
       .update(principalAuthBindings)
-      .set({ revokedAt: new Date(), status: 'revoked' })
+      .set({ revokedAt: DateTime.toDateUtc(DateTime.nowUnsafe()), status: 'revoked' })
       .where(eq(principalAuthBindings.tenantId, tenantOne));
     assert.deepEqual(await Effect.runPromise(resolver.listAvailableTenants(subject)), [
       { name: 'Resolver tenant two', tenantId: tenantTwo },

@@ -6,6 +6,7 @@ import {
   decodeActionPayload,
   decodeActionResult,
   defineAction,
+  defineActionResourcePermission,
   validateActionDescriptorInput,
 } from '../../src/actions/definition.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy } from '../../src/actions/policy.ts';
@@ -51,6 +52,51 @@ test('defines an immutable typed descriptor and decodes typed payloads and resul
   assert.equal(Object.isFrozen(registration), true);
   assert.equal(Object.isFrozen(registration.descriptor), true);
   assert.equal(Object.isFrozen(registration.descriptor.policies), true);
+});
+
+test('keeps the Resource permission resolver private behind an immutable declaration', () => {
+  const permission = defineActionResourcePermission<{ readonly counterpartyId: string }>(
+    ({ counterpartyId }) => ({
+      permission: 'write',
+      resource: {
+        moduleId: 'party.registry',
+        resourceId: counterpartyId,
+        resourceType: 'counterparty',
+      },
+    }),
+  );
+
+  assert.equal(Object.isFrozen(permission), true);
+  assert.deepEqual(Object.keys(permission), ['kind']);
+  assert.equal(permission.kind, 'resource');
+  assert.equal('resolver' in permission, false);
+});
+
+test('requires trusted Legal Entity scope for a Counterparty permission declaration', () => {
+  const entrypoint = defineTenantModuleEntrypoint({
+    access: 'write',
+    entrypointKey: 'party.registry.create-counterparty',
+    moduleKey: 'party.registry',
+    role: 'action',
+  });
+  assert.throws(() =>
+    validateActionDescriptorInput({
+      entrypoint,
+      legalEntityPermission: 'manage_counterparty',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'party.registry',
+      policies: [],
+    }),
+  );
+  assert.doesNotThrow(() =>
+    validateActionDescriptorInput({
+      entrypoint,
+      legalEntityPermission: 'manage_counterparty',
+      legalEntityScope: 'required',
+      owningModuleKey: 'party.registry',
+      policies: [],
+    }),
+  );
 });
 
 test('uses Schema.Void for a no-payload Action', async () => {

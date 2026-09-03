@@ -26,52 +26,55 @@ import type {
   EffectBffRuntime,
   EffectRuntimeLayer,
 } from '@modern-js/plugin-bff/effect-edge';
+import { Config, ConfigProvider } from 'effect';
 import type { Schema } from 'effect';
-import { Config } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { contactsApi, contactsOperationContexts } from '../shared/api.ts';
 import type { ContactsProblem, OperationContext } from '../shared/api.ts';
+import type {
+  EngagementProfileConflict,
+  EngagementProfileNotFound,
+  EngagementProfilePersistenceUnavailable,
+  PartyRegistryReferenceUnavailable,
+} from '../shared/domain/engagement-profile.ts';
 import {
   contactsCorsAllowedHeaders,
   contactsCorsAllowedMethods,
   contactsCorsAllowedOrigins,
   resolveContactsShellOrigin,
 } from '../shared/cors.ts';
-import type { ContactsContactNotFound } from '../shared/apis/contact-detail.ts';
-import type {
-  ContactsCustomerIcoConflict,
-  ContactsCustomerNotFound,
-  ContactsLifecycleConflict,
-  ContactsPersistenceUnavailable,
-} from '../shared/apis/customer-detail.ts';
-import { archiveContactAction } from '../src/actions/archive-contact.action.ts';
-import { archiveCustomerAction } from '../src/actions/archive-customer.action.ts';
-import { createContactAction } from '../src/actions/create-contact.action.ts';
-import { createCustomerAction } from '../src/actions/create-customer.action.ts';
-import { editContactAction } from '../src/actions/edit-contact.action.ts';
-import { editCustomerAction } from '../src/actions/edit-customer.action.ts';
-import { AresSubjectServiceLive } from '../src/integrations/ares/ares-subject.service.ts';
-import type { AresSubjectService } from '../src/integrations/ares/ares-subject.service.ts';
-import { unarchiveContactAction } from '../src/actions/unarchive-contact.action.ts';
-import { unarchiveCustomerAction } from '../src/actions/unarchive-customer.action.ts';
-import { contactDetailReadApiLive } from './contact-detail-read-server.ts';
-import { contactListReadApiLive } from './contact-list-read-server.ts';
-import { customerAresLookupReadApiLive } from './customer-ares-lookup-read-server.ts';
-import { customerDetailReadApiLive } from './customer-detail-read-server.ts';
-import { customerListReadApiLive } from './customer-list-read-server.ts';
+import { archiveOrganizationEngagementAction } from '../src/actions/archive-organization-engagement.action.ts';
+import { archivePersonEngagementAction } from '../src/actions/archive-person-engagement.action.ts';
+import { attachOrganizationEngagementAction } from '../src/actions/attach-organization-engagement.action.ts';
+import { attachPersonEngagementAction } from '../src/actions/attach-person-engagement.action.ts';
+import { unarchiveOrganizationEngagementAction } from '../src/actions/unarchive-organization-engagement.action.ts';
+import { unarchivePersonEngagementAction } from '../src/actions/unarchive-person-engagement.action.ts';
+import { PartyRegistryReferenceValidationLive } from '../src/integrations/party-registry/reference-validation.gateway.ts';
+import { PartyRegistryReferenceRequest } from '../src/integrations/party-registry/reference-validation-request.ts';
+import type { PartyRegistryReferenceRequestOptions } from '../src/integrations/party-registry/reference-validation-request.ts';
+import { organizationEngagementProfileReadApiLive } from './organization-engagement-profile-read-server.ts';
+import { personEngagementProfileReadApiLive } from './person-engagement-profile-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
 
+interface OperationSpanAttributes extends Readonly<Record<string, string | undefined>> {
+  'modernjs.operation.id': string;
+  'modernjs.operation.method': string;
+  'modernjs.operation.route': string;
+  'modernjs.operation.source': string;
+  'modernjs.trace.id'?: string;
+}
+
 const operationAttributes = (operationContext: OperationContext) => {
-  const attributes = {
+  const attributes: OperationSpanAttributes = {
     'modernjs.operation.id': operationContext.operationId,
     'modernjs.operation.method': operationContext.method,
     'modernjs.operation.route': operationContext.routePath,
     'modernjs.operation.source': operationContext.source,
   };
-  return operationContext.traceId === undefined
-    ? attributes
-    : { ...attributes, 'modernjs.trace.id': operationContext.traceId };
+  if (operationContext.traceId !== undefined) {
+    attributes['modernjs.trace.id'] = operationContext.traceId;
+  }
+  return attributes;
 };
 
 const problem = {
@@ -82,21 +85,15 @@ const problem = {
     title: 'Authentication required',
     type: 'https://ontos.dev/problems/operation-authentication-required',
   }),
-  conflict: (): ContactsProblem => ({
+  conflict: (
+    code: Extract<ContactsProblem, { readonly _tag: 'ContactsConflictProblem' }>['code'],
+  ): ContactsProblem => ({
     _tag: 'ContactsConflictProblem',
-    code: 'contacts_conflict',
-    detail: 'The Contacts operation conflicts with the current state.',
+    code,
+    detail: 'The engagement profile operation conflicts with the current state.',
     status: 409,
-    title: 'Contacts operation conflict',
-    type: 'https://ontos.dev/problems/contacts-conflict',
-  }),
-  customerIcoConflict: (): ContactsProblem => ({
-    _tag: 'ContactsConflictProblem',
-    code: 'contacts_customer_ico_conflict',
-    detail: 'A Customer with this IČO already exists.',
-    status: 409,
-    title: 'Customer IČO conflict',
-    type: 'https://ontos.dev/problems/contacts-customer-ico-conflict',
+    title: 'Engagement profile conflict',
+    type: 'https://ontos.dev/problems/contacts-engagement-conflict',
   }),
   forbidden: (): ContactsProblem => ({
     _tag: 'ContactsForbiddenProblem',
@@ -121,10 +118,10 @@ const problem = {
   }),
   notFound: (): ContactsProblem => ({
     _tag: 'ContactsNotFoundProblem',
-    detail: 'The requested Contacts record was not found.',
+    detail: 'The requested engagement profile was not found.',
     status: 404,
-    title: 'Contacts record not found',
-    type: 'https://ontos.dev/problems/contacts-not-found',
+    title: 'Engagement profile not found',
+    type: 'https://ontos.dev/problems/contacts-engagement-not-found',
   }),
   precondition: (): ContactsProblem => ({
     _tag: 'ContactsPreconditionRequiredProblem',
@@ -153,15 +150,11 @@ const failProblem = (mapped: ContactsProblem) =>
 
 type ContactsActionError =
   | ActionCoreError
-  | ContactsContactNotFound
-  | ContactsCustomerIcoConflict
-  | ContactsCustomerNotFound
-  | ContactsLifecycleConflict
-  | ContactsPersistenceUnavailable;
-type ContactsCreateCustomerProblem = Exclude<
-  ContactsProblem,
-  { readonly _tag: 'ContactsNotFoundProblem' }
->;
+  | EngagementProfileConflict
+  | EngagementProfileNotFound
+  | EngagementProfilePersistenceUnavailable
+  | PartyRegistryReferenceUnavailable;
+type ContactsAttachProblem = Exclude<ContactsProblem, { readonly _tag: 'ContactsNotFoundProblem' }>;
 
 interface ContactsActionTransport {
   readonly correlationId: string;
@@ -173,7 +166,7 @@ const isContactsProblem = (
   error: ContactsActionError | ContactsProblem,
 ): error is ContactsProblem => error._tag.startsWith('Contacts') && error._tag.endsWith('Problem');
 
-const actionProblem = (error: ContactsActionError, supportsNotFound: boolean): ContactsProblem => {
+const actionProblem = (error: ContactsActionError): ContactsProblem => {
   switch (error._tag) {
     case 'ActionPayloadValidationError':
       return problem.invalid();
@@ -188,32 +181,28 @@ const actionProblem = (error: ContactsActionError, supportsNotFound: boolean): C
     case 'OperationContextInvalid':
       return problem.forbidden();
     case 'ActionInvocationNotFound':
-      return supportsNotFound ? problem.notFound() : problem.internal();
-    case 'ContactsContactNotFound':
-    case 'ContactsCustomerNotFound':
+    case 'EngagementProfileNotFound':
       return problem.notFound();
     case 'ActionAlreadyCommitted':
     case 'ActionInvocationStateError':
     case 'ActionRequestHashConflict':
-    case 'ContactsLifecycleConflict':
-      return problem.conflict();
-    case 'ContactsCustomerIcoConflict':
-      return problem.customerIcoConflict();
+      return problem.conflict('contacts_engagement_profile_lifecycle_conflict');
+    case 'EngagementProfileConflict':
+      return problem.conflict(error.code);
     case 'ActionCommitIndeterminate':
     case 'ActionInvocationPersistenceError':
     case 'ActionPermissionCheckError':
     case 'ActionPolicyEvaluationError':
     case 'ActionTransactionError':
-    case 'ContactsPersistenceUnavailable':
+    case 'EngagementProfilePersistenceUnavailable':
+    case 'PartyRegistryReferenceUnavailable':
     case 'ModuleStateCheckUnavailableError':
     case 'OperationContextUnavailable':
       return problem.unavailable();
     case 'ActionCollectorError':
     case 'ActionHandlerExecutionError':
     case 'ActionResultValidationError':
-      return problem.internal();
     case 'ActionPolicyDenied':
-      // Every Contacts Action currently declares policies: []; a denial is an internal invariant breach.
       return problem.internal();
     default: {
       const exhaustive: never = error;
@@ -280,16 +269,13 @@ const runContactsAction = <
     }
     return yield* runtime.runAction({ payload, principal, registration, transport });
   }).pipe(
-    Effect.catch((error: ContactsActionError | ContactsProblem) =>
-      isContactsProblem(error)
-        ? Effect.fail(error)
-        : failProblem(
-            actionProblem(
-              error,
-              registration.descriptor.actionKey !== 'contacts.core.create-customer',
-            ),
-          ),
-    ),
+    Effect.catch((error: ContactsActionError | ContactsProblem) => {
+      if (isContactsProblem(error)) {
+        return Effect.fail(error);
+      }
+      const mapped = actionProblem(error);
+      return failProblem(mapped);
+    }),
     Effect.catchDefect((defect) =>
       Effect.annotateLogs(Effect.logError('Unexpected Contacts Action BFF defect', defect), {
         actionKey: registration.descriptor.actionKey,
@@ -297,6 +283,17 @@ const runContactsAction = <
       }).pipe(Effect.andThen(Effect.fail(problem.internal()))),
     ),
   );
+
+const referenceValidationForRequest = (
+  requestHeaders: Readonly<Record<string, string | undefined>>,
+) => {
+  const correlationId = requestHeaders['x-correlation-id'] ?? '';
+  const gatewayOptions: PartyRegistryReferenceRequestOptions =
+    requestHeaders['cookie'] === undefined
+      ? { correlationId }
+      : { cookie: requestHeaders['cookie'], correlationId };
+  return gatewayOptions;
+};
 
 const foundationLive = HttpApiBuilder.group(contactsApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -319,40 +316,57 @@ const foundationLive = HttpApiBuilder.group(contactsApi, 'foundation', (handlers
   ),
 );
 
-const customerMutationsLive = HttpApiBuilder.group(contactsApi, 'customerMutations', (handlers) =>
-  handlers
-    .handle('createCustomer', ({ headers, payload, request }) =>
-      runContactsAction(createCustomerAction, payload, headers, request.headers).pipe(
-        Effect.mapError((error): ContactsCreateCustomerProblem =>
-          error._tag === 'ContactsNotFoundProblem' ? problem.internal() : error,
+const organizationEngagementMutationsLive = HttpApiBuilder.group(
+  contactsApi,
+  'organizationEngagementMutations',
+  (handlers) =>
+    handlers
+      .handle('attach', ({ headers, payload, request }) =>
+        runContactsAction(
+          attachOrganizationEngagementAction,
+          payload,
+          headers,
+          request.headers,
+        ).pipe(
+          Effect.provideService(
+            PartyRegistryReferenceRequest,
+            referenceValidationForRequest(request.headers),
+          ),
+          Effect.mapError((error): ContactsAttachProblem =>
+            error._tag === 'ContactsNotFoundProblem' ? problem.internal() : error,
+          ),
         ),
+      )
+      .handle('archive', ({ headers, payload, request }) =>
+        runContactsAction(archiveOrganizationEngagementAction, payload, headers, request.headers),
+      )
+      .handle('unarchive', ({ headers, payload, request }) =>
+        runContactsAction(unarchiveOrganizationEngagementAction, payload, headers, request.headers),
       ),
-    )
-    .handle('editCustomer', ({ headers, payload, request }) =>
-      runContactsAction(editCustomerAction, payload, headers, request.headers),
-    )
-    .handle('archiveCustomer', ({ headers, payload, request }) =>
-      runContactsAction(archiveCustomerAction, payload, headers, request.headers),
-    )
-    .handle('unarchiveCustomer', ({ headers, payload, request }) =>
-      runContactsAction(unarchiveCustomerAction, payload, headers, request.headers),
-    ),
 );
 
-const contactMutationsLive = HttpApiBuilder.group(contactsApi, 'contactMutations', (handlers) =>
-  handlers
-    .handle('createContact', ({ headers, payload, request }) =>
-      runContactsAction(createContactAction, payload, headers, request.headers),
-    )
-    .handle('editContact', ({ headers, payload, request }) =>
-      runContactsAction(editContactAction, payload, headers, request.headers),
-    )
-    .handle('archiveContact', ({ headers, payload, request }) =>
-      runContactsAction(archiveContactAction, payload, headers, request.headers),
-    )
-    .handle('unarchiveContact', ({ headers, payload, request }) =>
-      runContactsAction(unarchiveContactAction, payload, headers, request.headers),
-    ),
+const personEngagementMutationsLive = HttpApiBuilder.group(
+  contactsApi,
+  'personEngagementMutations',
+  (handlers) =>
+    handlers
+      .handle('attach', ({ headers, payload, request }) =>
+        runContactsAction(attachPersonEngagementAction, payload, headers, request.headers).pipe(
+          Effect.provideService(
+            PartyRegistryReferenceRequest,
+            referenceValidationForRequest(request.headers),
+          ),
+          Effect.mapError((error): ContactsAttachProblem =>
+            error._tag === 'ContactsNotFoundProblem' ? problem.internal() : error,
+          ),
+        ),
+      )
+      .handle('archive', ({ headers, payload, request }) =>
+        runContactsAction(archivePersonEngagementAction, payload, headers, request.headers),
+      )
+      .handle('unarchive', ({ headers, payload, request }) =>
+        runContactsAction(unarchivePersonEngagementAction, payload, headers, request.headers),
+      ),
 );
 
 const actionRuntimeLive = ActionRuntimeLive.pipe(Layer.provide(CorePersistenceLive), Layer.orDie);
@@ -360,7 +374,6 @@ const readRuntimeLive = makeReadRuntimeLive(ContextAccessLive).pipe(
   Layer.provide(CorePersistenceLive),
   Layer.orDie,
 );
-const aresSubjectServiceLive = AresSubjectServiceLive.pipe(Layer.provide(FetchHttpClient.layer));
 const readShellOrigin = (): string => {
   let configuredOrigin: string | undefined;
   try {
@@ -375,22 +388,22 @@ const shellOrigin = readShellOrigin();
 export const makeContactsApiRuntime = (
   actionRuntime: Layer.Layer<ActionRuntime>,
   readRuntime: Layer.Layer<ReadRuntime>,
-  aresSubjectService: Layer.Layer<AresSubjectService> = aresSubjectServiceLive,
+  configuration: Layer.Layer<never> = ConfigProvider.layer(ConfigProvider.fromEnv()),
 ): EffectBffDefinition<typeof contactsApi, EffectRuntimeLayer> &
   EffectBffRuntime<typeof contactsApi, EffectRuntimeLayer> => {
   const apiHandlersLive = Layer.mergeAll(
     foundationLive,
-    customerMutationsLive.pipe(Layer.provide(actionRuntime)),
-    contactMutationsLive.pipe(Layer.provide(actionRuntime)),
-    customerAresLookupReadApiLive.pipe(
-      Layer.provide(readRuntime),
-      Layer.provide(aresSubjectService),
+    organizationEngagementMutationsLive.pipe(
+      Layer.provide(actionRuntime),
+      Layer.provide(PartyRegistryReferenceValidationLive),
     ),
-    customerDetailReadApiLive.pipe(Layer.provide(readRuntime)),
-    customerListReadApiLive.pipe(Layer.provide(readRuntime)),
-    contactDetailReadApiLive.pipe(Layer.provide(readRuntime)),
-    contactListReadApiLive.pipe(Layer.provide(readRuntime)),
-  );
+    personEngagementMutationsLive.pipe(
+      Layer.provide(actionRuntime),
+      Layer.provide(PartyRegistryReferenceValidationLive),
+    ),
+    organizationEngagementProfileReadApiLive.pipe(Layer.provide(readRuntime)),
+    personEngagementProfileReadApiLive.pipe(Layer.provide(readRuntime)),
+  ).pipe(Layer.provide(configuration));
   const layer = HttpApiBuilder.layer(contactsApi).pipe(
     Layer.provide(apiHandlersLive),
     Layer.merge(
@@ -405,6 +418,4 @@ export const makeContactsApiRuntime = (
   return defineEffectBff({ api: contactsApi, layer });
 };
 
-const apiRuntime = makeContactsApiRuntime(actionRuntimeLive, readRuntimeLive);
-
-export default apiRuntime;
+export default makeContactsApiRuntime(actionRuntimeLive, readRuntimeLive);

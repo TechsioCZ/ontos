@@ -28,14 +28,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
       tsConfigPath: './tsconfig.mf-types.json',
     },
     exposes: {
-      './PageContactCreate': './src/federation/page-contact-create.tsx',
-      './PageContactDetail': './src/federation/page-contact-detail.tsx',
-      './PageContactEdit': './src/federation/page-contact-edit.tsx',
       './PageContacts': './src/federation-entry.tsx',
-      './PageCustomerCreate': './src/federation/page-customer-create.tsx',
-      './PageCustomerDetail': './src/federation/page-customer-detail.tsx',
-      './PageCustomerEdit': './src/federation/page-customer-edit.tsx',
-      './PageCustomersList': './src/federation/page-customers-list.tsx',
     },
     filename: 'remoteEntry.js',
     manifest: {

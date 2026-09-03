@@ -222,6 +222,13 @@ export default defineConfig(
               prefix: '/contacts-api',
               service: envValue('VERTICAL_CONTACTS_WORKER_NAME') ?? 'app-contacts',
             },
+            {
+              binding:
+                envValue('VERTICAL_PARTY_REGISTRY_WORKER_BINDING') ??
+                'VERTICAL_PARTY_REGISTRY_WORKER',
+              prefix: '/party-registry-api',
+              service: envValue('VERTICAL_PARTY_REGISTRY_WORKER_NAME') ?? 'app-party-registry',
+            },
           ],
           ssr: true,
         },
