@@ -25,25 +25,27 @@ ignored because it describes the database being inspected. It includes role name
 privileges, direct/`PUBLIC`/inherited/assumable default ACL sources, ownership, RLS flags, and
 finding codes, but no URL, password, secret, tenant ID, or legal-entity ID. The command rejects an
 admin/runtime pair that resolves to different PostgreSQL servers or databases. Its pure report
-uses `null` schema for a global default ACL. Its pure report builder and target validator are covered by
-`scripts/tests/audit-database-trust-boundaries.test.mts`.
+uses `null` schema for a global default ACL. It evaluates PostgreSQL's built-in global defaults even
+when `pg_default_acl` has no stored row, includes column-level DML, and classifies tables,
+partitioned tables, views, materialized views, and foreign tables. Its pure report builder and target
+validator are covered by `scripts/tests/audit-database-trust-boundaries.test.mts`.
 
 ## Reproduced local baseline
 
 **VERIFIED:** Against a freshly migrated local database from the issue branch's `origin/main`
 baseline, the audit reported:
 
-| Surface          | Effective `ontos_runtime` authority                                                                                                     |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Cluster role     | Login; no superuser, `BYPASSRLS`, database creation, role creation, replication, inheritance, or role memberships                       |
-| Database         | `CONNECT` and temporary objects; no database `CREATE`                                                                                   |
-| Schemas          | `USAGE` on `core`, `auth`, `contacts`, and `public`; neither `USAGE` nor `CREATE` on `drizzle`; no `CREATE` on any non-system schema    |
-| Tables           | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals                         |
-| Sequences        | `USAGE` and `SELECT` on the one application sequence; no privilege on the three `drizzle` sequences and no `UPDATE` anywhere            |
-| Future objects   | Default table DML and sequence `USAGE`/`SELECT` in all three schemas                                                                    |
-| Ownership        | All three logical owner schemas and their relations are physically owned by `ontos_admin`                                               |
-| RLS              | Two of 27 current tables have enabled and forced RLS                                                                                    |
-| Trusted settings | The runtime role can set and read both `ontos.tenant_id` and `ontos.legal_entity_id`; transaction-local values disappear after rollback |
+| Surface          | Effective `ontos_runtime` authority                                                                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cluster role     | Login; no superuser, `BYPASSRLS`, database creation, role creation, replication, inheritance, or role memberships                                                                      |
+| Database         | `CONNECT` and temporary objects; no database `CREATE`                                                                                                                                  |
+| Schemas          | `USAGE` on `core`, `auth`, `contacts`, and `public`; neither `USAGE` nor `CREATE` on `drizzle`; no `CREATE` on any non-system schema                                                   |
+| Tables           | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals                                                                        |
+| Sequences        | `USAGE` and `SELECT` on the one application sequence; no privilege on the three `drizzle` sequences and no `UPDATE` anywhere                                                           |
+| Future objects   | 22 effective default privileges: owner-local table DML and sequence `USAGE`/`SELECT`, plus global `PUBLIC EXECUTE` on functions and `PUBLIC USAGE` on types for relevant creator roles |
+| Ownership        | All three logical owner schemas and their relations are physically owned by `ontos_admin`                                                                                              |
+| RLS              | Two of 27 current tables have enabled and forced RLS                                                                                                                                   |
+| Trusted settings | The runtime role can set and read both `ontos.tenant_id` and `ontos.legal_entity_id`; transaction-local values disappear after rollback                                                |
 
 The exact counts are local-baseline evidence, not a claim about production. Re-run the command
 against any target environment before relying on them.
@@ -101,15 +103,15 @@ unforgeable trust boundary.
 
 ## Existing negative evidence and gaps
 
-| Threat                                          | Existing evidence                                                                                                                                                                     | Remaining gap                                                                                                                                                     |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Superuser or `BYPASSRLS` runtime                | Bootstrap verifies both are false; the audit reads effective role attributes.                                                                                                         | Production must be audited rather than inferred from bootstrap source.                                                                                            |
-| Admin/runtime identity collapse                 | Config tests reject identical URLs/users and a `postgres` runtime login.                                                                                                              | Deployed secret injection is outside repository evidence.                                                                                                         |
-| Missing, malformed, or leaked transaction scope | Core tenant-isolation integration tests verify no match and no scope leakage; the audit probes rollback retention.                                                                    | The runtime role can deliberately install a different valid value.                                                                                                |
-| Cross-tenant rows and references                | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.                                                                      | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                |
-| Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                       | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
-| DDL and role escalation                         | Audit checks database-level `CREATE`, every non-system schema, and cluster/database/schema/table authority for every assumable role; the baseline has no DDL authority or membership. | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
-| Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                                                                                            | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
+| Threat                                          | Existing evidence                                                                                                                                                                                                    | Remaining gap                                                                                                                                                     |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Superuser or `BYPASSRLS` runtime                | Bootstrap verifies both are false; the audit reads effective role attributes.                                                                                                                                        | Production must be audited rather than inferred from bootstrap source.                                                                                            |
+| Admin/runtime identity collapse                 | Config tests reject identical URLs/users and a `postgres` runtime login.                                                                                                                                             | Deployed secret injection is outside repository evidence.                                                                                                         |
+| Missing, malformed, or leaked transaction scope | Core tenant-isolation integration tests verify no match and no scope leakage; the audit probes rollback retention.                                                                                                   | The runtime role can deliberately install a different valid value.                                                                                                |
+| Cross-tenant rows and references                | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.                                                                                                     | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                |
+| Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                                                      | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
+| DDL and role escalation                         | Audit checks database-level `CREATE`, every non-system schema, audited-relation ownership, and cluster/database/schema/relation authority for every assumable role; the baseline has no DDL authority or membership. | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
+| Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                                                                                                                           | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
 
 ## Bounded pilot options
 

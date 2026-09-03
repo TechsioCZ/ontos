@@ -67,6 +67,7 @@ const snapshot = {
   ],
   tables: [
     {
+      kind: 'table',
       owner: 'ontos_admin',
       privileges: {
         delete: true,
@@ -83,6 +84,7 @@ const snapshot = {
       table: 'customers',
     },
     {
+      kind: 'table',
       owner: 'ontos_admin',
       privileges: {
         delete: true,
@@ -99,6 +101,7 @@ const snapshot = {
       table: 'user',
     },
     {
+      kind: 'table',
       owner: 'ontos_admin',
       privileges: {
         delete: true,
@@ -169,6 +172,7 @@ test('reports privilege escalation paths without embedding credentials or contex
         createSchemas: [],
         databaseCreate: false,
         dmlSchemas: [],
+        ownedRelations: [],
         ownedSchemas: [],
         role: 'ontos_admin',
       },
@@ -211,6 +215,40 @@ test('flags database-level CREATE even when no existing schema is writable', () 
   );
 });
 
+test('flags ownership of an audited relation as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    sequences: [],
+    tables: [
+      {
+        ...snapshot.tables[0],
+        kind: 'materialized-view',
+        owner: snapshot.runtimeRole,
+        privileges: {
+          delete: false,
+          insert: false,
+          references: false,
+          select: false,
+          trigger: false,
+          truncate: false,
+          update: false,
+        },
+      },
+    ],
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.equal(report.tables[0]?.kind, 'materialized-view');
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+});
+
 test('classifies every assumable role and escalates schema or cluster authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -218,10 +256,11 @@ test('classifies every assumable role and escalates schema or cluster authority'
       {
         attributes: ordinaryRole,
         canSetRole: true,
-        createSchemas: ['private'],
+        createSchemas: [],
         databaseCreate: false,
-        dmlSchemas: ['private'],
-        ownedSchemas: ['private'],
+        dmlSchemas: [],
+        ownedRelations: ['private.identifier_sequence'],
+        ownedSchemas: [],
         role: 'schema_owner',
       },
       {
@@ -230,6 +269,7 @@ test('classifies every assumable role and escalates schema or cluster authority'
         createSchemas: [],
         databaseCreate: false,
         dmlSchemas: [],
+        ownedRelations: [],
         ownedSchemas: [],
         role: 'report_reader',
       },

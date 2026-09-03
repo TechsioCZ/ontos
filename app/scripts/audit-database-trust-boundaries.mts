@@ -30,6 +30,7 @@ interface RoleMembership {
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
   readonly dmlSchemas: readonly string[];
+  readonly ownedRelations: readonly string[];
   readonly ownedSchemas: readonly string[];
   readonly role: string;
 }
@@ -63,6 +64,7 @@ interface SequencePrivilege {
 }
 
 interface TablePrivilege {
+  readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly privileges: {
     readonly delete: boolean;
@@ -218,11 +220,12 @@ export const buildDatabaseTrustBoundaryReport = (
     ({ canSetRole, role }) => canSetRole && role !== snapshot.administrativeRole,
   );
   const privilegedMemberships = nonAdministrativeMemberships.filter(
-    ({ attributes, createSchemas, databaseCreate, dmlSchemas, ownedSchemas }) =>
+    ({ attributes, createSchemas, databaseCreate, dmlSchemas, ownedRelations, ownedSchemas }) =>
       hasClusterPrivilege(attributes) ||
       databaseCreate ||
       createSchemas.length > 0 ||
       dmlSchemas.length > 0 ||
+      ownedRelations.length > 0 ||
       ownedSchemas.length > 0,
   );
   if (privilegedMemberships.length > 0) {
@@ -240,11 +243,13 @@ export const buildDatabaseTrustBoundaryReport = (
       severity: 'high',
     });
   }
-  if (snapshot.databasePrivileges.create || schemas.some(({ create }) => create)) {
+  const ownsRelation =
+    tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
+    sequences.some(({ owner }) => owner === snapshot.runtimeRole);
+  if (snapshot.databasePrivileges.create || schemas.some(({ create }) => create) || ownsRelation) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
-      evidence:
-        'The runtime role has database-level CREATE or CREATE on an audited non-system schema.',
+      evidence: 'The runtime role has database/schema CREATE or owns an audited relation.',
       severity: 'high',
     });
   }
@@ -318,6 +323,7 @@ interface MembershipRow {
   readonly database_create: boolean;
   readonly dml_schemas: string[];
   readonly inherit: boolean;
+  readonly owned_relations: string[];
   readonly owned_schemas: string[];
   readonly replication: boolean;
   readonly role: string;
@@ -347,6 +353,7 @@ interface SchemaPrivilegeRow {
 interface TablePrivilegeRow {
   readonly delete: boolean;
   readonly insert: boolean;
+  readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly references: boolean;
   readonly rls_enabled: boolean;
@@ -483,16 +490,29 @@ const collectSnapshot = async (
          order by namespace.nspname
        ) as create_schemas,
        array(
+         select format('%I.%I', namespace.nspname, relation.relname)
+         from pg_catalog.pg_class as relation
+         join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+         where namespace.nspname !~ '^pg_'
+           and namespace.nspname <> 'information_schema'
+           and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+           and relation.relowner = candidate.oid
+         order by namespace.nspname, relation.relname
+       ) as owned_relations,
+       array(
          select distinct namespace.nspname
          from pg_catalog.pg_class as relation
          join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
          where namespace.nspname !~ '^pg_'
            and namespace.nspname <> 'information_schema'
-           and relation.relkind in ('r', 'p')
+           and relation.relkind in ('r', 'p', 'v', 'm', 'f')
            and (
              has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+             or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
              or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+             or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
              or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+             or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
              or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
            )
          order by namespace.nspname
@@ -531,12 +551,28 @@ const collectSnapshot = async (
     `select
        namespace.nspname as schema,
        relation.relname as table,
+       case relation.relkind
+         when 'r' then 'table'
+         when 'p' then 'partitioned-table'
+         when 'v' then 'view'
+         when 'm' then 'materialized-view'
+         when 'f' then 'foreign-table'
+       end as kind,
        owner.rolname as owner,
        relation.relrowsecurity as rls_enabled,
        relation.relforcerowsecurity as rls_forced,
-       has_table_privilege($1, relation.oid, 'SELECT') as select,
-       has_table_privilege($1, relation.oid, 'INSERT') as insert,
-       has_table_privilege($1, relation.oid, 'UPDATE') as update,
+       (
+         has_table_privilege($1, relation.oid, 'SELECT')
+         or has_any_column_privilege($1, relation.oid, 'SELECT')
+       ) as select,
+       (
+         has_table_privilege($1, relation.oid, 'INSERT')
+         or has_any_column_privilege($1, relation.oid, 'INSERT')
+       ) as insert,
+       (
+         has_table_privilege($1, relation.oid, 'UPDATE')
+         or has_any_column_privilege($1, relation.oid, 'UPDATE')
+       ) as update,
        has_table_privilege($1, relation.oid, 'DELETE') as delete,
        has_table_privilege($1, relation.oid, 'TRUNCATE') as truncate,
        has_table_privilege($1, relation.oid, 'REFERENCES') as references,
@@ -544,7 +580,8 @@ const collectSnapshot = async (
      from pg_catalog.pg_class as relation
      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
      join pg_catalog.pg_roles as owner on owner.oid = relation.relowner
-     where relation.relkind in ('r', 'p') and namespace.nspname = any($2::text[])
+     where relation.relkind in ('r', 'p', 'v', 'm', 'f')
+       and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
     [runtimeRole, schemaNames],
   );
@@ -564,39 +601,104 @@ const collectSnapshot = async (
     [runtimeRole, schemaNames],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
-    `select
-       namespace.nspname as schema,
-       owner.rolname as owner,
-       case defaults.defaclobjtype
-         when 'r' then 'table'
-         when 'S' then 'sequence'
-         when 'f' then 'function'
-         when 'T' then 'type'
-         else defaults.defaclobjtype::text
-       end as object_type,
+    `with audit_owners as (
+       select candidate.oid, candidate.rolname
+       from pg_catalog.pg_roles as candidate
+       where candidate.rolname = $3
+          or exists (
+            select 1
+            from pg_catalog.pg_namespace as namespace
+            where namespace.nspname = any($2::text[])
+              and (
+                namespace.nspowner = candidate.oid
+                or has_schema_privilege(candidate.oid, namespace.oid, 'CREATE')
+              )
+          )
+          or exists (
+            select 1
+            from pg_catalog.pg_default_acl as defaults
+            left join pg_catalog.pg_namespace as namespace
+              on namespace.oid = defaults.defaclnamespace
+            where defaults.defaclrole = candidate.oid
+              and (
+                defaults.defaclnamespace = 0
+                or namespace.nspname = any($2::text[])
+              )
+          )
+     ),
+     object_types(code, object_type) as (
+       values
+         ('r'::"char", 'table'::text),
+         ('S'::"char", 'sequence'::text),
+         ('f'::"char", 'function'::text),
+         ('T'::"char", 'type'::text)
+     ),
+     global_acl as (
+       select
+         null::text as schema,
+         owner.rolname as owner,
+         object_types.object_type,
+         coalesce(defaults.defaclacl, acldefault(object_types.code, owner.oid)) as acl
+       from audit_owners as owner
+       cross join object_types
+       left join pg_catalog.pg_default_acl as defaults
+         on defaults.defaclrole = owner.oid
+        and defaults.defaclnamespace = 0
+        and defaults.defaclobjtype = object_types.code
+     ),
+     schema_acl as (
+       select
+         namespace.nspname as schema,
+         owner.rolname as owner,
+         case defaults.defaclobjtype
+           when 'r' then 'table'
+           when 'S' then 'sequence'
+           when 'f' then 'function'
+           when 'T' then 'type'
+           else defaults.defaclobjtype::text
+         end as object_type,
+         defaults.defaclacl as acl
+       from pg_catalog.pg_default_acl as defaults
+       join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+       join pg_catalog.pg_roles as owner on owner.oid = defaults.defaclrole
+       where namespace.nspname = any($2::text[])
+     ),
+     expanded as (
+       select
+         scopes.schema,
+         scopes.owner,
+         scopes.object_type,
+         acl.grantee,
+         acl.privilege_type,
+         acl.is_grantable
+       from (
+         select * from global_acl
+         union all
+         select * from schema_acl
+       ) as scopes
+       cross join lateral aclexplode(scopes.acl) as acl
+     )
+     select
+       expanded.schema,
+       expanded.owner,
+       expanded.object_type,
        coalesce(grantee.rolname, 'PUBLIC') as grantee,
        case
-         when acl.grantee = 0 then 'public'
+         when expanded.grantee = 0 then 'public'
          when grantee.rolname = $1 then 'direct'
          when pg_has_role($1, grantee.oid, 'USAGE') then 'inherited'
          else 'assumable'
        end as source,
-       acl.privilege_type as privilege,
-       acl.is_grantable as grantable
-     from pg_catalog.pg_default_acl as defaults
-     left join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
-     join pg_catalog.pg_roles as owner on owner.oid = defaults.defaclrole
-     cross join lateral aclexplode(defaults.defaclacl) as acl
-     left join pg_catalog.pg_roles as grantee on grantee.oid = acl.grantee
-     where (defaults.defaclnamespace = 0 or namespace.nspname = any($2::text[]))
-       and (
-         acl.grantee = 0
+       expanded.privilege_type as privilege,
+       expanded.is_grantable as grantable
+     from expanded
+     left join pg_catalog.pg_roles as grantee on grantee.oid = expanded.grantee
+     where expanded.grantee = 0
          or grantee.rolname = $1
          or pg_has_role($1, grantee.oid, 'USAGE')
          or pg_has_role($1, grantee.oid, 'SET')
-       )
-     order by namespace.nspname, object_type, grantee, privilege`,
-    [runtimeRole, schemaNames],
+     order by expanded.schema nulls first, object_type, grantee, privilege`,
+    [runtimeRole, schemaNames, administrativeRole],
   );
   const tenant = await probeSetting(
     runtime,
@@ -640,6 +742,7 @@ const collectSnapshot = async (
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
       dmlSchemas: membership.dml_schemas,
+      ownedRelations: membership.owned_relations,
       ownedSchemas: membership.owned_schemas,
       role: membership.role,
     })),
@@ -665,6 +768,7 @@ const collectSnapshot = async (
       sequence: sequence.sequence,
     })),
     tables: tables.rows.map((table) => ({
+      kind: table.kind,
       owner: table.owner,
       privileges: {
         delete: table.delete,
