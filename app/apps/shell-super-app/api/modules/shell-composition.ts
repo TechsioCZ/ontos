@@ -2,7 +2,6 @@
 /* eslint-disable max-classes-per-file, prefer-destructuring -- Shell composition owns one closed safe-failure vocabulary and keeps correlation access explicit. */
 import type {
   ContextAccessService,
-  InstalledDeploymentFailureReason,
   InstalledModuleCatalog,
   ModuleEntrypointAccess,
   OntosShellContributions,
@@ -11,6 +10,7 @@ import type {
 } from '@app/core-runtime';
 import { decideModuleStateAccess } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
+import type { ShellComposition, ShellNavigationItem } from '../../shared/api.ts';
 
 const withOptionalProperty = <
   Base extends object,
@@ -38,34 +38,7 @@ export interface ShellCompositionContext {
   readonly tenantId: string;
 }
 
-export interface ShellNavigationItem {
-  readonly appId: string;
-  readonly enabled: boolean;
-  readonly groupKey: string;
-  readonly href?: string;
-  readonly label: string;
-  readonly moduleId: string;
-  readonly order: number;
-  readonly state: Extract<TenantModuleState, 'active' | 'deprecated' | 'read_only'>;
-  readonly unavailable: boolean;
-  readonly writable: boolean;
-}
-
-export type ShellUnavailableDeployment =
-  | { readonly appId: string; readonly status: 'disabled' | 'revoked' }
-  | {
-      readonly appId: string;
-      readonly reason: InstalledDeploymentFailureReason;
-      readonly status: 'unavailable';
-    };
-
-export type ShellCompositionModel =
-  | { readonly navigation: readonly []; readonly state: 'selection_required' }
-  | {
-      readonly navigation: readonly ShellNavigationItem[];
-      readonly state: 'available';
-      readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
-    };
+export type ShellCompositionModel = Exclude<ShellComposition, { readonly state: 'access_blocked' }>;
 
 export type ShellTargetResolution =
   | { readonly outcome: 'selection_required' }

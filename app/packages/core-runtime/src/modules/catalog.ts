@@ -42,6 +42,11 @@ export type InstalledDeploymentStatus =
       readonly status: 'disabled' | 'revoked';
     };
 
+type AuthoritativeInstalledDeploymentStatus = Extract<
+  InstalledDeploymentStatus,
+  { readonly status: 'disabled' | 'revoked' }
+>;
+
 export type InstalledDeploymentResolutionInput =
   | ({ readonly outcome: 'fetched' } & InstalledDeploymentContractInput)
   | {
@@ -172,6 +177,23 @@ const assembleInstalledModuleCatalog = (
   });
 };
 
+const collectAuthoritativeDeploymentStatuses = (
+  inputs: readonly InstalledDeploymentResolutionInput[],
+): ReadonlyMap<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus> => {
+  const statuses = new Map<OntosDeploymentAppId, AuthoritativeInstalledDeploymentStatus>();
+  for (const input of inputs) {
+    if (input.outcome === 'revoked') {
+      statuses.set(input.expectedAppId, { appId: input.expectedAppId, status: 'revoked' });
+    } else if (
+      input.outcome === 'disabled' &&
+      statuses.get(input.expectedAppId)?.status !== 'revoked'
+    ) {
+      statuses.set(input.expectedAppId, { appId: input.expectedAppId, status: 'disabled' });
+    }
+  }
+  return statuses;
+};
+
 /** Pure, all-or-nothing aggregation of already fetched deployment documents. */
 export const buildInstalledModuleCatalog = (
   inputs: readonly InstalledDeploymentContractInput[],
@@ -219,10 +241,26 @@ export const buildInstalledModuleCatalog = (
 export const resolveInstalledModuleCatalog = (
   inputs: readonly InstalledDeploymentResolutionInput[],
 ): InstalledModuleCatalog => {
+  const authoritativeStatuses = collectAuthoritativeDeploymentStatuses(inputs);
   const statuses = new Map<OntosDeploymentAppId, InstalledDeploymentStatus>();
   const candidates: OntosModuleDeploymentContract[] = [];
   for (const input of inputs) {
-    if (input.outcome !== 'fetched') {
+    const authoritative = authoritativeStatuses.get(input.expectedAppId);
+    if (authoritative !== undefined) {
+      statuses.set(input.expectedAppId, authoritative);
+    } else if (input.outcome === 'fetched') {
+      try {
+        const contract = decodeContract(input);
+        validateOwnedOutboxSubscriptions(contract);
+        candidates.push(contract);
+      } catch {
+        statuses.set(input.expectedAppId, {
+          appId: input.expectedAppId,
+          reason: 'incompatible',
+          status: 'unavailable',
+        });
+      }
+    } else {
       statuses.set(
         input.expectedAppId,
         input.outcome === 'failed'
@@ -233,18 +271,6 @@ export const resolveInstalledModuleCatalog = (
             }
           : { appId: input.expectedAppId, status: input.outcome },
       );
-      continue;
-    }
-    try {
-      const contract = decodeContract(input);
-      validateOwnedOutboxSubscriptions(contract);
-      candidates.push(contract);
-    } catch {
-      statuses.set(input.expectedAppId, {
-        appId: input.expectedAppId,
-        reason: 'incompatible',
-        status: 'unavailable',
-      });
     }
   }
 

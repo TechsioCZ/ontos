@@ -13,6 +13,16 @@ export type SettledModuleEntrypointLoad<Value> =
   | { readonly reason: InstalledDeploymentFailureReason; readonly state: 'unavailable' }
   | { readonly state: 'ready'; readonly value: Value };
 
+export interface ModuleEntrypointLoadRequest<Identity, Value> {
+  readonly identity: Identity;
+  readonly isCompatible: (value: Value) => boolean;
+  readonly load: () => Promise<Value>;
+  readonly timeoutMs?: number;
+}
+
+export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> =
+  SettledModuleEntrypointLoad<Value> & { readonly identity: Identity };
+
 /** Settles one browser entrypoint independently with a bounded, audience-safe result. */
 export const settleModuleEntrypointLoad = <Value>(
   load: () => Promise<Value>,
@@ -32,6 +42,19 @@ export const settleModuleEntrypointLoad = <Value>(
         state: 'unavailable',
       }),
     ),
+  );
+
+/** Settles a set of browser entrypoints concurrently without widening one failure to the set. */
+export const settleModuleEntrypointLoads = <Identity, Value>(
+  loads: readonly ModuleEntrypointLoadRequest<Identity, Value>[],
+): Effect.Effect<readonly IdentifiedSettledModuleEntrypointLoad<Identity, Value>[]> =>
+  Effect.all(
+    loads.map(({ identity, isCompatible, load, timeoutMs }) =>
+      settleModuleEntrypointLoad(load, isCompatible, timeoutMs).pipe(
+        Effect.map((result) => ({ identity, ...result })),
+      ),
+    ),
+    { concurrency: 'unbounded' },
   );
 
 export type LazyModuleEntrypointLoad<Value, AuthorizationError, LoadError, Requirements> = Omit<
