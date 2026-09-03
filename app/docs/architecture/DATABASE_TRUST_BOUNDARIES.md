@@ -28,9 +28,11 @@ admin/runtime pair that resolves to a different observed server endpoint or data
 connections use Unix sockets and the observed network address and port are null, it compares the
 configured socket host and port instead. This check requires no monitoring-role privilege. Its pure
 report uses `null` schema for a global default ACL. It evaluates PostgreSQL's built-in global
-defaults even when `pg_default_acl` has no stored row, includes column-level DML, and classifies
-tables, partitioned tables, views, materialized views, and foreign tables. Its pure report builder
-and target validator are covered by `scripts/tests/audit-database-trust-boundaries.test.mts`.
+defaults even when `pg_default_acl` has no stored row, including defaults for future schemas. It
+includes column-level DML and `REFERENCES`; classifies tables, partitioned tables, views,
+materialized views, foreign tables, and sequences; and inventories executable `SECURITY DEFINER`
+routines. Its pure report builder and target validator are covered by
+`scripts/tests/audit-database-trust-boundaries.test.mts`.
 
 ## Reproduced local baseline
 
@@ -44,6 +46,7 @@ baseline, the audit reported:
 | Schemas          | `USAGE` on `core`, `auth`, `contacts`, and `public`; neither `USAGE` nor `CREATE` on `drizzle`; no `CREATE` on any non-system schema                                                   |
 | Tables           | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals                                                                        |
 | Sequences        | `USAGE` and `SELECT` on the one application sequence; no privilege on the three `drizzle` sequences and no `UPDATE` anywhere                                                           |
+| Routines         | No routines exist in the audited non-system schemas; therefore no executable `SECURITY DEFINER` routine                                                                                |
 | Future objects   | 22 effective default privileges: owner-local table DML and sequence `USAGE`/`SELECT`, plus global `PUBLIC EXECUTE` on functions and `PUBLIC USAGE` on types for relevant creator roles |
 | Ownership        | All three logical owner schemas and their relations are physically owned by `ontos_admin`                                                                                              |
 | RLS              | Two of 27 current tables have enabled and forced RLS                                                                                                                                   |
@@ -112,6 +115,7 @@ unforgeable trust boundary.
 | Missing, malformed, or leaked transaction scope | Core tenant-isolation integration tests verify no match and no scope leakage; the audit probes rollback retention.                                                                                                   | The runtime role can deliberately install a different valid value.                                                                                                |
 | Cross-tenant rows and references                | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.                                                                                                     | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                |
 | Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                                                      | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
+| Privileged routines                             | Audit inventories routines in every non-system schema and flags effective execution of `SECURITY DEFINER` routines for the runtime and assumable roles; the baseline has none.                                       | Every future privileged routine needs a narrow contract and hardening review; production must be audited rather than inferred.                                    |
 | DDL and role escalation                         | Audit checks database-level `CREATE`, every non-system schema, audited-relation ownership, and cluster/database/schema/relation authority for every assumable role; the baseline has no DDL authority or membership. | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
 | Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                                                                                                                           | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
 
