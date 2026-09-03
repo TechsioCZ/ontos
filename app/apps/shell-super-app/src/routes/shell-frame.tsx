@@ -34,6 +34,14 @@ interface DashboardLegalEntityItem {
   readonly legalName: string;
 }
 
+type DashboardUnavailableDeployment =
+  | { readonly appId: string; readonly status: 'disabled' | 'revoked' }
+  | {
+      readonly appId: string;
+      readonly reason: 'incompatible' | 'timeout' | 'unavailable';
+      readonly status: 'unavailable';
+    };
+
 export interface AuthenticatedDashboardLayoutProps {
   readonly children: ReactNode;
   readonly currentLegalEntityId?: string;
@@ -56,6 +64,7 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantSwitchFailed: boolean;
   readonly tenantSwitchPending: boolean;
   readonly title?: string;
+  readonly unavailableDeployments: readonly DashboardUnavailableDeployment[];
 }
 
 export const AuthenticatedDashboardLayout = ({
@@ -80,6 +89,7 @@ export const AuthenticatedDashboardLayout = ({
   tenantSwitchFailed,
   tenantSwitchPending,
   title,
+  unavailableDeployments,
 }: AuthenticatedDashboardLayoutProps) => {
   const { t } = useModernI18n();
   const [searchValue, setSearchValue] = useState('');
@@ -296,6 +306,21 @@ export const AuthenticatedDashboardLayout = ({
                     {t('shell.modules.unavailable')}
                   </StatusText>
                 ) : null}
+              </li>
+            ))}
+            {unavailableDeployments.map((deployment) => (
+              <li
+                className="shell:flex shell:flex-wrap shell:items-center shell:gap-2"
+                key={deployment.appId}
+              >
+                <span>{deployment.appId}</span>
+                <StatusText showIcon size="sm" status="warning">
+                  {t(
+                    `shell.modules.discovery.${
+                      deployment.status === 'unavailable' ? deployment.reason : deployment.status
+                    }`,
+                  )}
+                </StatusText>
               </li>
             ))}
           </ul>

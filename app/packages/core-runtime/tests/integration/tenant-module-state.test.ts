@@ -92,6 +92,7 @@ const noInstalledContracts: readonly OntosModuleDeploymentContract[] = Object.fr
 const installedCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: noInstalledContracts,
   deploymentAppIds: Object.freeze([]),
+  deploymentStatuses: Object.freeze([]),
   getByDeploymentAppId: (appId: string) =>
     noInstalledContracts.find(({ deployment }) => deployment.appId === appId),
   getByModuleId: (moduleId: string) => installedContract(moduleId),
@@ -106,6 +107,13 @@ const catalogFrom = (
   return Object.freeze({
     contracts: Object.freeze([...contracts]),
     deploymentAppIds: Object.freeze(contracts.map(({ deployment }) => deployment.appId)),
+    deploymentStatuses: Object.freeze(
+      contracts.map((contract) => ({
+        appId: contract.deployment.appId,
+        moduleId: contract.manifest.module.id,
+        status: 'available' as const,
+      })),
+    ),
     getByDeploymentAppId: (appId: string) =>
       contracts.find(({ deployment }) => deployment.appId === appId),
     getByModuleId: (moduleId: string) => byModuleId.get(moduleId),

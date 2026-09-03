@@ -134,6 +134,9 @@ const inventoryStockContract: OntosModuleDeploymentContract = {
 const inventoryInstalledCatalog: InstalledModuleCatalog = Object.freeze({
   contracts: Object.freeze([inventoryStockContract]),
   deploymentAppIds: Object.freeze(['inventory-stock']),
+  deploymentStatuses: Object.freeze([
+    { appId: 'inventory-stock', moduleId: 'inventory.stock', status: 'available' as const },
+  ]),
   getByDeploymentAppId: (appId: string) =>
     appId === 'inventory-stock' ? inventoryStockContract : undefined,
   getByModuleId: (moduleId: string) =>

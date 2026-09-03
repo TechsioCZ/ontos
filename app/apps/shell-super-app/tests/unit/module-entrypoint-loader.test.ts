@@ -1,6 +1,6 @@
 // @effect-diagnostics lazyEffect:off
 import { expect, test } from '@rstest/core';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import {
   ModuleStateCheckUnavailableError,
   ModuleStateDeniedError,
@@ -17,6 +17,7 @@ import type {
 import {
   loadModuleEntrypointComposition,
   resolveThenLoadModuleTarget,
+  settleModuleEntrypointLoad,
 } from '../../src/routes/module-entrypoint-loader.ts';
 
 const trustedContext: TrustedPrincipalContext = {
@@ -109,6 +110,9 @@ const component = defineTenantModuleEntrypoint({
   moduleKey: 'inventory.stock',
   role: 'public_component',
 });
+
+const compatibleRemoteModule = (value: { readonly default: unknown }) =>
+  Predicate.isFunction(value.default);
 
 test('prepares one complete trusted composition and invokes allowed lazy loaders', async () => {
   let batches = 0;
@@ -210,6 +214,40 @@ test('preserves typed gate and remote-load failures for exhaustive UI mapping', 
   );
   expect(remoteFailure).toEqual({ _tag: 'RemoteLoadUnavailable' });
   expect(mapFakeUnavailableUiState(remoteFailure)).toBe('unavailable');
+});
+
+test('settles browser entrypoint success, rejection, incompatibility, and timeout independently', async () => {
+  const pending = Promise.withResolvers<{ readonly default: () => null }>();
+
+  const [ready, unavailable, incompatible, timedOut] = await Promise.all([
+    Effect.runPromise(
+      settleModuleEntrypointLoad(async () => ({ default: () => null }), compatibleRemoteModule, 50),
+    ),
+    Effect.runPromise(
+      settleModuleEntrypointLoad(
+        async () => {
+          throw new Error('remote unavailable');
+        },
+        compatibleRemoteModule,
+        50,
+      ),
+    ),
+    Effect.runPromise(
+      settleModuleEntrypointLoad(
+        async () => ({ default: 'not a component' }),
+        compatibleRemoteModule,
+        50,
+      ),
+    ),
+    Effect.runPromise(
+      settleModuleEntrypointLoad(async () => await pending.promise, compatibleRemoteModule, 1),
+    ),
+  ]);
+
+  expect(ready.state).toBe('ready');
+  expect(unavailable).toEqual({ reason: 'unavailable', state: 'unavailable' });
+  expect(incompatible).toEqual({ reason: 'incompatible', state: 'unavailable' });
+  expect(timedOut).toEqual({ reason: 'timeout', state: 'unavailable' });
 });
 
 test.each(['selection_required', 'not_found', 'forbidden', 'unavailable'] as const)(
