@@ -171,9 +171,9 @@ test('reports privilege escalation paths without embedding credentials or contex
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
-        dmlSchemas: [],
         ownedRelations: [],
         ownedSchemas: [],
+        relationPrivilegeSchemas: [],
         role: 'ontos_admin',
       },
     ],
@@ -249,7 +249,7 @@ test('flags ownership of an audited relation as DDL authority', () => {
   );
 });
 
-test('classifies every assumable role and escalates schema or cluster authority', () => {
+test('classifies every assumable role and escalates relation authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     memberships: [
@@ -258,19 +258,19 @@ test('classifies every assumable role and escalates schema or cluster authority'
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
-        dmlSchemas: [],
-        ownedRelations: ['private.identifier_sequence'],
+        ownedRelations: [],
         ownedSchemas: [],
-        role: 'schema_owner',
+        relationPrivilegeSchemas: ['private'],
+        role: 'table_truncator',
       },
       {
         attributes: ordinaryRole,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
-        dmlSchemas: [],
         ownedRelations: [],
         ownedSchemas: [],
+        relationPrivilegeSchemas: [],
         role: 'report_reader',
       },
     ],
@@ -289,7 +289,8 @@ test('classifies every assumable role and escalates schema or cluster authority'
 
 test('rejects evidence collected from different servers or databases', () => {
   const target = {
-    clusterSystemIdentifier: '7612345678901234567',
+    configuredHost: 'database.internal',
+    configuredPort: 5432,
     database: 'ontos',
     serverAddress: '10.0.0.1',
     serverPort: 5432,
@@ -307,10 +308,15 @@ test('rejects evidence collected from different servers or databases', () => {
   assert.throws(
     () =>
       assertSameDatabaseTarget(
-        { ...target, serverAddress: null, serverPort: null },
         {
           ...target,
-          clusterSystemIdentifier: '7699999999999999999',
+          configuredHost: '/var/run/postgresql-a',
+          serverAddress: null,
+          serverPort: null,
+        },
+        {
+          ...target,
+          configuredHost: '/var/run/postgresql-b',
           serverAddress: null,
           serverPort: null,
         },
