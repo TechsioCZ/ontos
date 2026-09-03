@@ -8,6 +8,7 @@ import test from 'node:test';
 import { v1 } from '@authzed/authzed-node';
 import {
   ContextAccess,
+  GatewayAssertionRedemptionService,
   ReadRuntime,
   TenantModuleStateService,
   buildInstalledModuleCatalog,
@@ -16,6 +17,7 @@ import {
 } from '@app/core-runtime';
 import type {
   ContextAccessService,
+  GatewayAssertionRedemption,
   InstalledModuleCatalog,
   OntosModuleDeploymentContract,
   OperationalScopeResolverService,
@@ -90,6 +92,10 @@ const TEST_SPICEDB = {
   preSharedKey: process.env['SPICEDB_PRESHARED_KEY'] ?? 'ontos-local-development-key',
 } as const;
 
+const testGatewayAssertionRedemption: GatewayAssertionRedemption = {
+  consume: () => Effect.void,
+};
+
 interface OwnerHttpHandler {
   readonly dispose: () => Promise<void>;
   readonly handler: (request: Request) => Promise<Response>;
@@ -134,7 +140,10 @@ interface GeneratedOwnerModules {
   };
   readonly verifyOperationPrincipal: (
     authorization: string | undefined,
-    options: { readonly environment: Readonly<Record<string, string>> },
+    options: {
+      readonly environment: Readonly<Record<string, string>>;
+      readonly redemption: GatewayAssertionRedemption;
+    },
   ) => Effect.Effect<TrustedPrincipalContext, unknown>;
 }
 
@@ -169,6 +178,9 @@ const makeOwnerHandler = (
     api,
     layer: HttpApiBuilder.layer(api).pipe(
       Layer.provide(group),
+      Layer.provide(
+        Layer.succeed(GatewayAssertionRedemptionService, testGatewayAssertionRedemption),
+      ),
       Layer.provide(Layer.succeed(ReadRuntime, loggedRuntime)),
       Layer.provide(loggerLayer),
     ),
@@ -1020,7 +1032,10 @@ test('generated owner enforces tenant and legal-entity isolation through Shell, 
     ) => {
       const authorization = await issueAuthorization(trustedPrincipal);
       const verified = await Effect.runPromise(
-        generated.verifyOperationPrincipal(authorization, { environment: verifierEnvironment }),
+        generated.verifyOperationPrincipal(authorization, {
+          environment: verifierEnvironment,
+          redemption: testGatewayAssertionRedemption,
+        }),
       );
       return Effect.runPromise(
         actionRuntime
