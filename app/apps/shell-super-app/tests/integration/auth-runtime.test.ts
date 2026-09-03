@@ -848,6 +848,7 @@ test('creates, resolves, persists, revokes, and signs out a Better Auth session'
             ],
           }),
         },
+        redemption: { consume: () => Effect.void },
       }),
     );
     assert.equal(generatedPrincipal.authBindingId, fixtureAuthBindingId);
