@@ -3,6 +3,37 @@
 Use these terms consistently across product, architecture, and implementation discussions. This
 context defines language only; it does not override accepted ADRs or current application guidance.
 
+## Language guardrails
+
+**Customer** — Never a standalone canonical identity type or generic aggregate. Always qualify the
+meaning, for example Customer Configuration, Retail Customer, Counterparty Role `CUSTOMER`, CRM
+Engagement Profile, Commerce Retail Customer Profile, Commerce Counterparty Purchasing Profile, or
+Customer Archive. Avoid `customer`, `customer record`, `customer ID`, and `B2B Customer` when the
+intended subject is actually a Party, Counterparty, Principal, account, role, or contextual profile.
+
+**Actor** — Narrative name for the Principal performing or attempting one concrete operation. Actor
+is not a separate identity object and must not be used as a synonym for Party, person, account, or
+permission holder without resolving the Principal.
+
+**Permission** — Explicit authorization allowing one Principal to perform one declared Action or
+governed read against a resource and scope. A Party Relationship, Counterparty Role, selected
+context, profile membership, account session, or business-policy result is not a Permission.
+
+**Business Policy** — Module-owned condition or decision evaluated from trusted context and business
+facts after authentication and authorization boundaries. It may allow, deny, require approval, or
+select a typed business outcome; it never creates identity, authentication, or Permission.
+
+**Current** — Valid from authoritative facts, Permissions, Business Policies, and effective periods
+at the trusted operation time. A value retained by a client, cache, Cart, or previous evaluation is
+not current merely because it still exists.
+
+**Effective Period** — Explicit interval during which a fact or assignment is valid. Unless an owning
+capability states otherwise, `effective_from` is inclusive and `effective_to` is exclusive.
+
+**Accepted Fact** — Business value definitively used by a successful committed transition. Later
+changes to current source facts do not rewrite an accepted fact; the owning historical Resource
+retains the evidence required to explain it.
+
 ## Product and composition
 
 **OntOS** — The encompassing modular business product. Core and Shell provide shared runtime
@@ -108,8 +139,8 @@ by default.
 **Legal Entity** — Managed accounting or operating company inside a Tenant. External organizations
 remain Parties unless the Tenant manages them as part of its own structure.
 
-**Principal** — Actor used for authentication resolution, authorization, invocation, and audit. It
-may represent a person, integration, service, agent, or system job.
+**Principal** — Canonical Actor used for authentication resolution, authorization, invocation, and
+audit. It may represent a person, integration, service, agent, or system job.
 
 **Principal Auth Binding** — Core-owned non-secret mapping from a stable external authentication
 subject to one tenant-scoped Principal. The authentication provider continues to own credentials
