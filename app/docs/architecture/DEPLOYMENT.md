@@ -169,7 +169,8 @@ deployment mechanism.
 
 The fail-closed Action authorization rollout uses an explicit expand/provision/verify/deploy gate:
 
-1. deploy or run the candidate migration artifact while the previous runtime remains active;
+1. prepare the candidate application/release artifact for the operator command while the previous
+   runtime remains active; this is separate from the PostgreSQL migration artifact;
 2. ensure the two fixed stage contexts and their Tenant membership relationships already exist;
 3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact to
    publish the compatible schema and `TOUCH` 32 membership-set executor grants for the 16 current
@@ -183,6 +184,21 @@ The command is operator-invoked, idempotent, accepts no scope arguments, and mus
 PostgreSQL migrations, SpiceDB startup, application startup, or automatic deployment. A failure or
 catalog mismatch blocks promotion. Rollback restores the previous application artifact while
 leaving the additive schema and relationships in place.
+
+Provisioning is additive, not stale-grant reconciliation. Before narrowing an Action from
+`tenant_membership_default` to `explicit`, the operator must prepare its intended narrow grants,
+remove the obsolete `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relation for each
+affected fixed Tenant, and verify both the intended allowed Principal and a Tenant member who must
+now be denied. Removed Actions and revoked role/workload assignments likewise require an explicit,
+reviewed removal of their obsolete executor relations. Derive Action object IDs with
+`toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke
+access. Record and verify this policy-data transition before promotion. An application rollback
+must not silently restore a revoked grant; any policy restoration needs its own reviewed decision.
+The fixed environment's provisioning input records at least one allowed and one denied Principal
+assertion for every `explicit` Action. Promotion verifies every fixed context plus the representative
+non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action
+assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit
+assertion sets fail before schema or relationship writes.
 
 ### Stage/demo bootstrap
 

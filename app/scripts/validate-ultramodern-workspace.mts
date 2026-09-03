@@ -6156,6 +6156,9 @@ assert(
   rootPackage.scripts?.['local:initialize'] === 'node ./scripts/initialize-local-development.mts' &&
     !readText('scripts/initialize-local-development.mts').includes(
       'provision-current-action-authorization',
+    ) &&
+    !readText('scripts/initialize-local-development.mts').includes(
+      'authorization:provision-current-actions',
     ),
   'Ordinary local initialization must not provision Action authorization',
 );
@@ -6165,7 +6168,8 @@ for (const startupPath of [
   'scripts/run-zerops-spicedb.sh',
 ]) {
   assert(
-    !readText(startupPath).includes('provision-current-action-authorization'),
+    !readText(startupPath).includes('provision-current-action-authorization') &&
+      !readText(startupPath).includes('authorization:provision-current-actions'),
     `${startupPath} must not provision Action authorization automatically`,
   );
 }

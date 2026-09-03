@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
 import { v1 } from '@authzed/authzed-node';
 import { Effect } from 'effect';
 import {
@@ -21,6 +22,7 @@ import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-modu
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
   discoverCurrentActionKeys,
+  formatActionAuthorizationProvisioningFailure,
   runCurrentActionAuthorizationProvisioning,
   selectActionAuthorizationProvisioningTarget,
 } from '../provision-current-action-authorization.mts';
@@ -88,15 +90,116 @@ test('selects only exact source-controlled development and stage targets', async
   assert.equal(stage.environment, 'stage');
   assert.equal(stage.contexts.length, 2);
 
+  const { deploymentEnvironment: _environment, ...withoutEnvironment } = developmentConfiguration;
+  const implicitDevelopment = await Effect.runPromise(
+    selectActionAuthorizationProvisioningTarget(withoutEnvironment),
+  );
+  assert.deepEqual(implicitDevelopment.contexts, development.contexts);
+  assert.equal(implicitDevelopment.environment, 'development');
+
+  const ipv6Development = await Effect.runPromise(
+    selectActionAuthorizationProvisioningTarget({
+      ...withoutEnvironment,
+      endpoint: '[::1]:50051',
+    }),
+  );
+  assert.equal(ipv6Development.environment, 'development');
+
   for (const configuration of [
     { ...developmentConfiguration, deploymentEnvironment: 'production' },
     { ...developmentConfiguration, endpoint: 'spicedb.example.com:50051', insecureLocal: false },
+    { ...withoutEnvironment, endpoint: 'spicedb.example.com:50051' },
+    { ...withoutEnvironment, endpoint: 'spicedb:50051' },
     { ...stageConfiguration, endpoint: 'localhost:50051' },
     { ...stageConfiguration, insecureLocal: false },
   ]) {
     const error = await failureOf(selectActionAuthorizationProvisioningTarget(configuration));
     assert.equal(error.code, 'action_authorization_configuration_invalid');
     assert.doesNotMatch(error.reason, /not-a-real-secret/);
+  }
+});
+
+test('reports expected provisioning failures and sanitizes unexpected Promise rejections', async () => {
+  const expected = new ActionAuthorizationProvisioningError({
+    code: 'action_authorization_configuration_invalid',
+    reason: 'The SpiceDB provisioning configuration is invalid',
+  });
+  await assert.rejects(Effect.runPromise(Effect.fail(expected)), (error: unknown) => {
+    assert.equal(
+      formatActionAuthorizationProvisioningFailure(error),
+      `${expected.code}: ${expected.reason}`,
+    );
+    return true;
+  });
+
+  const unexpectedMessage =
+    'action_authorization_service_unavailable: Unexpected Action authorization provisioning failure';
+  for (const error of [undefined, null, 'not-a-real-secret', new Error('not-a-real-secret'), {}]) {
+    assert.equal(formatActionAuthorizationProvisioningFailure(error), unexpectedMessage);
+  }
+  await assert.rejects(
+    Effect.runPromise(
+      Effect.acquireUseRelease(
+        Effect.void,
+        () => Effect.void,
+        () => Effect.die(new Error('client.close failed with not-a-real-secret')),
+      ),
+    ),
+    (error: unknown) => {
+      assert.equal(formatActionAuthorizationProvisioningFailure(error), unexpectedMessage);
+      return true;
+    },
+  );
+});
+
+test('workspace validation rejects both provisioning spellings in every automatic startup path', async () => {
+  const source = await readFile(
+    new URL('../validate-ultramodern-workspace.mts', import.meta.url),
+    'utf-8',
+  );
+  // Execute the actual validator block with controlled inputs, without loading the full workspace.
+  const start = source.indexOf('const actionAuthorizationProvisioningCommand =');
+  const end = source.indexOf('if (hasBackendSurfaces)', start);
+  assert.ok(start >= 0 && end > start);
+  const block = source.slice(start, end);
+  const scripts = {
+    'authorization:provision-current-actions':
+      'node ./scripts/provision-current-action-authorization.mts',
+    'local:initialize': 'node ./scripts/initialize-local-development.mts',
+  };
+  const validate = (sources: Readonly<Record<string, string>>, overrides = {}) =>
+    runInNewContext(block, {
+      assert,
+      readText: (file: string) => sources[file] ?? '',
+      rootPackage: { scripts: { ...scripts, ...overrides } },
+    });
+
+  validate({});
+  for (const command of [
+    'node ./scripts/provision-current-action-authorization.mts',
+    'pnpm authorization:provision-current-actions',
+  ]) {
+    for (const file of [
+      'scripts/initialize-local-development.mts',
+      'scripts/locki-feature.sh',
+      'docker-compose.yml',
+      'scripts/run-zerops-spicedb.sh',
+    ]) {
+      assert.throws(
+        () => validate({ [file]: command }),
+        /must not provision Action authorization/u,
+      );
+    }
+    for (const automaticScript of ['dev', 'build', 'cloudflare:build', 'cloudflare:deploy']) {
+      assert.throws(
+        () => validate({}, { [automaticScript]: command }),
+        /must not invoke Action authorization provisioning/u,
+      );
+    }
+    assert.throws(
+      () => validate({}, { 'local:initialize': `${scripts['local:initialize']} && ${command}` }),
+      /must not provision Action authorization/u,
+    );
   }
 });
 
@@ -185,10 +288,13 @@ const makeProvisioningClient = (
               : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
           );
         }
-        const tenantId = principalTenants.get(request.subject?.object?.objectId ?? '');
-        const grant = `${request.resource?.objectId ?? ''}:${tenantId ?? ''}`;
+        const principalId = request.subject?.object?.objectId ?? '';
+        const tenantId = principalTenants.get(principalId);
+        const tenantGrant = `${request.resource?.objectId ?? ''}:${tenantId ?? ''}`;
+        const principalGrant = `${request.resource?.objectId ?? ''}:${principalId}`;
         return response(
-          tenantId !== undefined && state.grants.has(grant)
+          state.grants.has(principalGrant) ||
+            (tenantId !== undefined && state.grants.has(tenantGrant))
             ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
             : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
         );
@@ -237,14 +343,19 @@ test('provisions with TOUCH, verifies both outcomes, and is safe to rerun', asyn
   );
 });
 
-test('never grants explicit Actions through Tenant membership and verifies their existing policy', async () => {
+test('never grants explicit Actions through Tenant membership and verifies recorded policy outcomes', async () => {
   const target = await Effect.runPromise(
     selectActionAuthorizationProvisioningTarget(developmentConfiguration),
   );
-  const { client, state } = makeProvisioningClient(target.contexts);
   const [context] = target.contexts;
   assert.ok(context !== undefined);
-  state.grants.add(`${toSpiceDbActionObjectId('core.identity.restricted')}:${context.tenantId}`);
+  const deniedContext = {
+    principalId: '00000000-0000-4000-8000-000000000020',
+    tenantId: '00000000-0000-4000-8000-000000000021',
+  };
+  const contexts = [...target.contexts, deniedContext];
+  const { client, state } = makeProvisioningClient(contexts);
+  state.grants.add(`${toSpiceDbActionObjectId('core.identity.restricted')}:${context.principalId}`);
 
   const result = await Effect.runPromise(
     provisionActionAuthorization(client, {
@@ -255,16 +366,93 @@ test('never grants explicit Actions through Tenant membership and verifies their
         },
         { actionKey: 'core.identity.restricted', provisioning: 'explicit' },
       ],
-      contexts: target.contexts,
+      contexts,
+      explicitActionAssertions: [
+        {
+          actionKey: 'core.identity.restricted',
+          assertions: [
+            { expected: 'allowed', principalId: context.principalId },
+            { expected: 'denied', principalId: deniedContext.principalId },
+          ],
+        },
+      ],
     }),
   );
 
-  assert.deepEqual(result, { actionCount: 2, grantCount: 1, tenantCount: 1 });
-  assert.equal(state.updates.length, 1);
+  assert.deepEqual(result, { actionCount: 2, grantCount: 2, tenantCount: 2 });
+  assert.equal(state.updates.length, 2);
   assert.equal(
     state.updates[0]?.relationship?.resource?.objectId,
     toSpiceDbActionObjectId('contacts.core.create-customer'),
   );
+});
+
+test('rejects missing or mismatched explicit Action verification assertions', async () => {
+  const target = await Effect.runPromise(
+    selectActionAuthorizationProvisioningTarget(developmentConfiguration),
+  );
+  for (const explicitActionAssertions of [
+    undefined,
+    [],
+    [
+      {
+        actionKey: 'core.identity.restricted',
+        assertions: [
+          { expected: 'allowed' as const, principalId: target.contexts[0]?.principalId ?? '' },
+        ],
+      },
+    ],
+    [
+      {
+        actionKey: 'core.identity.unknown',
+        assertions: [
+          { expected: 'allowed' as const, principalId: target.contexts[0]?.principalId ?? '' },
+          { expected: 'denied' as const, principalId: ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID },
+        ],
+      },
+    ],
+  ]) {
+    const { client, state } = makeProvisioningClient(target.contexts);
+    const error = await failureOf(
+      provisionActionAuthorization(client, {
+        actions: [{ actionKey: 'core.identity.restricted', provisioning: 'explicit' }],
+        contexts: target.contexts,
+        explicitActionAssertions,
+      }),
+    );
+    assert.equal(error.code, 'action_authorization_input_invalid');
+    assert.equal(state.schemaWriteCount, 0);
+    assert.equal(state.relationshipWriteCount, 0);
+  }
+});
+
+test('fails promotion when an explicit Action policy contradicts a recorded assertion', async () => {
+  const target = await Effect.runPromise(
+    selectActionAuthorizationProvisioningTarget(developmentConfiguration),
+  );
+  const [context] = target.contexts;
+  assert.ok(context !== undefined);
+  const deniedPrincipalId = ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID;
+  const assertions = [
+    { expected: 'allowed' as const, principalId: context.principalId },
+    { expected: 'denied' as const, principalId: deniedPrincipalId },
+  ];
+
+  for (const actualAllowedPrincipalIds of [[], [context.principalId, deniedPrincipalId]]) {
+    const { client, state } = makeProvisioningClient(target.contexts);
+    for (const principalId of actualAllowedPrincipalIds) {
+      state.grants.add(`${toSpiceDbActionObjectId('core.identity.restricted')}:${principalId}`);
+    }
+    const error = await failureOf(
+      provisionActionAuthorization(client, {
+        actions: [{ actionKey: 'core.identity.restricted', provisioning: 'explicit' }],
+        contexts: target.contexts,
+        explicitActionAssertions: [{ actionKey: 'core.identity.restricted', assertions }],
+      }),
+    );
+    assert.equal(error.code, 'action_authorization_verification_failed');
+    assert.equal(state.updates.length, 0);
+  }
 });
 
 test('rejects invalid input and missing membership before writing grants', async () => {

@@ -1713,6 +1713,8 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
       "export { accountChangeAction } from './modules/actions/account-change.action.ts';";
     const zExport =
       "export { zLastChangeAction } from './modules/actions/z-last-change.action.ts';";
+    assert.ok(coreIndex.includes(accountExport));
+    assert.ok(coreIndex.includes(zExport));
     assert.ok(coreIndex.indexOf(accountExport) < coreIndex.indexOf(zExport));
     assert.match(coreIndex, /export const existingCoreSurface = true/u);
 
@@ -1722,6 +1724,10 @@ test('generates Core-owned Actions only through the Core owner slot with atomic 
     );
     const accountImport = "import { accountChangeAction } from './account-change.action.ts';";
     const zImport = "import { zLastChangeAction } from './z-last-change.action.ts';";
+    assert.ok(coreCatalog.includes(accountImport));
+    assert.ok(coreCatalog.includes(zImport));
+    assert.ok(coreCatalog.includes('accountChangeAction.descriptor,'));
+    assert.ok(coreCatalog.includes('zLastChangeAction.descriptor,'));
     assert.ok(coreCatalog.indexOf(accountImport) < coreCatalog.indexOf(zImport));
     assert.ok(
       coreCatalog.indexOf('accountChangeAction.descriptor,') <
