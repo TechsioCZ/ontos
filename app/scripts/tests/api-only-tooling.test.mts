@@ -21,6 +21,177 @@ const generatorRoot = await realpath(
 );
 const require = createRequire(import.meta.url);
 
+const releaseFrameworkRoot = path.join(
+  workspaceRoot,
+  'verticals/party-registry/node_modules/@modern-js/app-tools/dist',
+);
+const releaseFramework = await import(
+  pathToFileURL(
+    path.join(releaseFrameworkRoot, 'esm-node/ultramodern-release-envelope/framework-output.mjs'),
+  ).href
+);
+
+const releaseFixture = async (context: TestContext) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'ontos-empty-producer-'));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const artifact = JSON.parse(
+    await readFile(
+      path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
+      'utf8',
+    ),
+  );
+  for (const identity of [artifact.deliveryUnit, artifact.surfaces.ui, artifact.surfaces.api]) {
+    identity.sourceRevision = 'a'.repeat(40);
+  }
+  const manifest = {
+    exposes: [],
+    remotes: [],
+    metaData: {
+      publicPath: 'https://assets.example.test/app/',
+      remoteEntry: { name: '', path: '', type: 'global' },
+    },
+  };
+  const put = async (logicalPath: string, value: unknown) => {
+    await mkdir(path.dirname(path.join(root, logicalPath)), { recursive: true });
+    await writeFile(
+      path.join(root, logicalPath),
+      typeof value === 'string' ? value : JSON.stringify(value),
+    );
+  };
+  await put('ultramodern-build.json', artifact);
+  await put('backend-mf-manifest.json', {
+    backendFederation: {
+      deliveryUnit: artifact.deliveryUnit,
+      versionBoundary: { deliveryUnit: artifact.deliveryUnit },
+    },
+  });
+  await put('mf-manifest.json', manifest);
+  await put('routes-manifest.json', {
+    routeAssets: { index: { assets: ['https://assets.example.test/app/static/js/index.js'] } },
+  });
+  await put('route.json', { routes: [{ bundle: 'bundles/index.js' }] });
+  await put('package.json', { type: 'module' });
+  for (const file of [
+    'static/js/index.js',
+    'bundles/index.js',
+    'api/index.js',
+    'index.js',
+    'backendRemoteEntry.cjs',
+  ]) {
+    await put(file, 'console.log("compiled fixture");');
+  }
+  const emit = () =>
+    releaseFramework.emitFrameworkMicroVerticalReleaseEnvelope({
+      apiOnly: false,
+      distDirectory: root,
+      target: 'node',
+    });
+  return { root, put, emit, manifest, artifact };
+};
+
+test('empty MF producers retain complete build and Node staged release evidence in every framework format', async (context) => {
+  const fixture = await releaseFixture(context);
+  for (const format of ['cjs', 'esm', 'esm-node']) {
+    const extension = format === 'cjs' ? 'js' : 'mjs';
+    const framework = await import(
+      pathToFileURL(
+        path.join(
+          releaseFrameworkRoot,
+          format,
+          `ultramodern-release-envelope/framework-output.${extension}`,
+        ),
+      ).href
+    );
+    const envelope = await framework.emitFrameworkMicroVerticalReleaseEnvelope({
+      apiOnly: false,
+      distDirectory: fixture.root,
+      target: 'node',
+    });
+    assert.ok(envelope.surfaces.uiClient.includes('static/js/index.js'));
+    assert.deepEqual(envelope.surfaces.ssr, ['bundles/index.js']);
+    assert.deepEqual(envelope.surfaces.apiBackend, ['api/index.js']);
+    await framework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node');
+    const staged = await framework.emitNodeStagedReleaseEnvelope({
+      distDirectory: fixture.root,
+      outputDirectory: fixture.root,
+    });
+    assert.ok(staged.surfaces.uiClient.includes('static/js/index.js'));
+    await framework.verifyNodeReleaseEnvelopeStaging({ outputDirectory: fixture.root });
+  }
+  await fixture.put('static/js/index.js', 'console.log("tampered");');
+  await assert.rejects(
+    () => releaseFramework.verifyBuildOutputReleaseEnvelope(fixture.root, 'node'),
+    /digest|hash|size/iu,
+  );
+});
+
+test('empty-producer fallback rejects undeclared, foreign, traversing, missing, and nonbrowser assets', async (context) => {
+  const fixture = await releaseFixture(context);
+  for (const reference of [
+    'https://foreign.example.test/app/static/js/index.js',
+    'https://assets.example.test/app/../app/static/js/index.js',
+    'https://assets.example.test/app/%2e%2e/app/static/js/index.js',
+    'https://assets.example.test/app/static\\js/index.js',
+    'https://assets.example.test/app/static%5cjs/index.js',
+    'https://assets.example.test/app/static/js/missing.js',
+    'https://assets.example.test/app/api/index.js',
+    'https://assets.example.test/app/bundles/index.js',
+    'https://assets.example.test/app/static/js/index.js?forged=true',
+  ]) {
+    await fixture.put('routes-manifest.json', { routeAssets: { index: { assets: [reference] } } });
+    await assert.rejects(
+      fixture.emit,
+      /UI\/client manifest references no compiled execution module/u,
+      reference,
+    );
+  }
+  await fixture.put('routes-manifest.json', {
+    routeAssets: { index: { assets: ['https://assets.example.test/app/static/js/index.js'] } },
+  });
+  for (const manifest of [
+    { ...fixture.manifest, exposes: [{ name: './Page' }] },
+    { ...fixture.manifest, remotes: [{ name: 'shell' }] },
+    { ...fixture.manifest, exposes: undefined },
+    { ...fixture.manifest, remotes: undefined },
+    {
+      ...fixture.manifest,
+      metaData: { ...fixture.manifest.metaData, remoteEntry: { name: '', path: '' } },
+    },
+  ]) {
+    await fixture.put('mf-manifest.json', manifest);
+    await assert.rejects(
+      fixture.emit,
+      /UI\/client manifest references no compiled execution module/u,
+    );
+  }
+  await fixture.put('mf-manifest.json', fixture.manifest);
+  await rm(path.join(fixture.root, 'routes-manifest.json'));
+  await assert.rejects(fixture.emit, /ENOENT/u);
+});
+
+test('empty MF producers cannot bypass backend, SSR, revision, or identity proof', async (context) => {
+  for (const file of ['api/index.js', 'bundles/index.js', 'backendRemoteEntry.cjs']) {
+    const fixture = await releaseFixture(context);
+    await rm(path.join(fixture.root, file));
+    await assert.rejects(fixture.emit, /compiled Node Effect API|SSR artifacts|emitted together/u);
+  }
+  const fixture = await releaseFixture(context);
+  await fixture.put('backend-mf-manifest.json', {
+    backendFederation: {
+      deliveryUnit: { ...fixture.artifact.deliveryUnit, sourceRevision: 'b'.repeat(40) },
+    },
+  });
+  await assert.rejects(fixture.emit, /must match/u);
+  for (const identity of [
+    fixture.artifact.deliveryUnit,
+    fixture.artifact.surfaces.ui,
+    fixture.artifact.surfaces.api,
+  ])
+    identity.sourceRevision = 'workspace';
+  await fixture.put('ultramodern-build.json', fixture.artifact);
+  await assert.rejects(fixture.emit, /workspace/u);
+});
+
 const evaluatePartyBuildGlobalVars = async (shellOrigin: string) => {
   const source = await readFile(
     path.join(workspaceRoot, 'verticals/party-registry/modern.config.ts'),
