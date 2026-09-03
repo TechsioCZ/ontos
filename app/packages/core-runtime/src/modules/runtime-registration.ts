@@ -168,6 +168,7 @@ export const extractVerticalRuntimeSafeDescriptors = (
           Object.freeze({
             actionKey: descriptor.actionKey,
             auditProfile: descriptor.auditProfile,
+            entrypoint: descriptor.entrypoint,
             idempotency: descriptor.idempotency,
             legalEntityScope: descriptor.legalEntityScope,
             owningModuleId: descriptor.owningModuleKey,
@@ -182,7 +183,10 @@ export const extractVerticalRuntimeSafeDescriptors = (
         .map(({ descriptor }) =>
           Object.freeze({
             consumerModuleKey: descriptor.consumerModuleKey,
-            entrypoint: descriptor.entrypoint,
+            entrypoint: Object.freeze({
+              ...descriptor.entrypoint,
+              authorization: Object.freeze({ kind: 'owner_local_background' as const }),
+            }),
             producerModuleKey: descriptor.producerModuleKey,
             topic: descriptor.topic,
             workerKey: descriptor.workerKey,

@@ -133,6 +133,7 @@ const registration = (items: readonly string[] = []) =>
       accessKind: 'list',
       entrypoint: defineSystemModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: 'core.shell.items',
         moduleKey: 'core.shell',
         role: 'api',

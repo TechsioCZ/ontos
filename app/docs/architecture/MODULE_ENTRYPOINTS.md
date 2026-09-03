@@ -135,3 +135,17 @@ approved generator can patch registration atomically and an approved gateway ada
 Extend Codesmith first with disposable compile, overwrite, traversal, and no-partial-write tests.
 Repository checks reject missing/mismatched registration, raw remote loads, private cross-vertical
 imports, direct private handler access, and public exports of private implementations.
+
+## Authorization classification and inventory
+
+Every descriptor must declare exactly one authorization classification. `public` is an intentional
+authorization result, not the route-discovery `public` or `indexable` flag. Protected descriptors
+use `authenticated_principal`, `context_permission` with a stable permission, `action_execution`
+with a provisioning intent, `owner_local_background`, or API-only `capability_issuance` with its
+credential kind. Role-incompatible and excess fields fail decoding and generation.
+
+`pnpm authorization:inventory:check` is the single repository derivation pass. It reconciles
+generated route metadata with runtime descriptors, current Action registrations, Outbox workers,
+and both Shell gateway issuers, then writes the non-secret deterministic artifact at
+`.codex/reports/authorization/protected-entrypoints.json`. Duplicate, missing, stale, ambiguous,
+or unclassified entries fail the check.

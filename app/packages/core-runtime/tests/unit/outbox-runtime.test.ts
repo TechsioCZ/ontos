@@ -56,6 +56,7 @@ const worker = <HandlerError, HandlerRequirements = never>(
       consumerModuleKey: 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: 'consumer.logger',
         moduleKey: 'consumer',
         role: 'worker',
@@ -198,6 +199,7 @@ test('rejects deployed owner descriptors without a matching local worker registr
             ...registration.descriptor,
             entrypoint: defineTenantModuleEntrypoint({
               access: 'background',
+              authorization: { kind: 'owner_local_background' },
               entrypointKey: 'consumer.second-worker',
               moduleKey: registration.descriptor.consumerModuleKey,
               role: 'worker',
@@ -255,6 +257,7 @@ test('runs a worker with Effect services provided by its owning MicroVertical ho
       consumerModuleKey: 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: 'consumer.layered-logger',
         moduleKey: 'consumer',
         role: 'worker',

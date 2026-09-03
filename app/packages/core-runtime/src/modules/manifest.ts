@@ -2,6 +2,7 @@ import { Schema, Predicate } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
+import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
 
@@ -58,6 +59,7 @@ export const OntosModuleActivationSchema = Schema.Struct({
 export const OntosActionContractSchema = Schema.Struct({
   actionKey: OntosModuleIdSchema,
   auditProfile: Schema.Literals(['minimal', 'sensitive', 'standard']),
+  entrypoint: ModuleEntrypointSchema,
   idempotency: Schema.Literals(['optional', 'required']),
   legalEntityScope: Schema.Literals(['forbidden', 'optional', 'required']),
   owningModuleId: OntosModuleIdSchema,
@@ -118,6 +120,7 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
   consumerModuleKey: OntosModuleIdSchema,
   entrypoint: Schema.Struct({
     access: Schema.Literal('background'),
+    authorization: Schema.Struct({ kind: Schema.Literal('owner_local_background') }),
     entrypointKey: OntosModuleIdSchema,
     moduleKey: OntosModuleIdSchema,
     role: Schema.Literal('worker'),

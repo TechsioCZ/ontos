@@ -4,6 +4,7 @@ import {
   ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
+  GatewayAssertionRedemptionService,
   makeReadRuntimeLive,
 } from '@app/core-runtime';
 import type {
@@ -61,6 +62,7 @@ import { customerAresLookupReadApiLive } from './customer-ares-lookup-read-serve
 import { customerDetailReadApiLive } from './customer-detail-read-server.ts';
 import { customerListReadApiLive } from './customer-list-read-server.ts';
 import { verifyOperationPrincipal } from './auth/action-principal.ts';
+import { GatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -228,7 +230,16 @@ const verifyPrincipal = (authorization: string | undefined) =>
     ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
   }).pipe(
     Effect.mapError(() => problem.unavailable()),
-    Effect.flatMap((environment) => verifyOperationPrincipal(authorization, { environment })),
+    Effect.flatMap((environment) =>
+      GatewayAssertionRedemptionService.pipe(
+        Effect.flatMap((redemption) =>
+          verifyOperationPrincipal(authorization, {
+            environment,
+            redemption,
+          }),
+        ),
+      ),
+    ),
     Effect.catch((error) => {
       if ('_tag' in error && error._tag === 'ContactsUnavailableProblem') {
         return Effect.fail(error);
@@ -392,7 +403,7 @@ export const makeContactsApiRuntime = (
     contactListReadApiLive.pipe(Layer.provide(readRuntime)),
   );
   const layer = HttpApiBuilder.layer(contactsApi).pipe(
-    Layer.provide(apiHandlersLive),
+    Layer.provide(apiHandlersLive.pipe(Layer.provide(GatewayAssertionRedemptionLive))),
     Layer.merge(
       HttpRouter.cors({
         allowedHeaders: [...contactsCorsAllowedHeaders],

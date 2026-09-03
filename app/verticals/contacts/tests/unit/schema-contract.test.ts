@@ -82,7 +82,7 @@ const indexColumnNames = (config: typeof customerConfig | typeof contactConfig, 
   return tableIndex.config.columns.map((column) => ('name' in column ? column.name : false));
 };
 
-test('owns exactly Customer and Contact tables in the Contacts schema', () => {
+test('owns Customer, Contact, and gateway assertion redemption tables in the Contacts schema', () => {
   const exportedTables = Object.values(schemaExports).filter((value): value is PgTable =>
     isTable(value),
   );
@@ -94,8 +94,16 @@ test('owns exactly Customer and Contact tables in the Contacts schema', () => {
     .toSorted();
 
   assert.equal(CONTACTS_SCHEMA_NAME, 'contacts');
-  assert.deepEqual(CONTACTS_TABLE_INVENTORY, ['contacts', 'customers']);
-  assert.deepEqual(qualifiedNames, ['contacts.contacts', 'contacts.customers']);
+  assert.deepEqual(CONTACTS_TABLE_INVENTORY, [
+    'contacts',
+    'customers',
+    'gateway_assertion_redemptions',
+  ]);
+  assert.deepEqual(qualifiedNames, [
+    'contacts.contacts',
+    'contacts.customers',
+    'contacts.gateway_assertion_redemptions',
+  ]);
 });
 
 test('keeps Customer business identity tenant-owned, nullable, constrained, and archivable', () => {
@@ -271,7 +279,7 @@ test('keeps immutable CRM provenance and the data-preserving Contacts rename mig
   const migrationDirectory = new URL('../../drizzle/', import.meta.url);
   const directoryEntries = await readdir(migrationDirectory);
   const migrationFiles = directoryEntries.filter((name) => name.endsWith('.sql')).toSorted();
-  assert.equal(migrationFiles.length, 3);
+  assert.equal(migrationFiles.length, 4);
   const migrations = await Promise.all(
     migrationFiles.map((name) => readFile(new URL(name, migrationDirectory), 'utf-8')),
   );
@@ -290,6 +298,7 @@ test('keeps immutable CRM provenance and the data-preserving Contacts rename mig
 
   const [, customerBusinessFieldsMigration, identityMigration] = migrations;
   assert.ok(customerBusinessFieldsMigration);
+  assert.match(migrations[3] ?? '', /UNIQUE\("issuer","audience","jti"\)/u);
   assert.doesNotMatch(customerBusinessFieldsMigration, /CREATE (?:SCHEMA|TABLE)/u);
   assert.doesNotMatch(customerBusinessFieldsMigration, /"crm"\."contacts"/u);
   assert.equal(

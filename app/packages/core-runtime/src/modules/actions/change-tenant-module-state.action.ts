@@ -145,6 +145,7 @@ export const changeTenantModuleStateAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.modules.change-tenant-module-state',
       moduleKey: 'core.modules',
       role: 'action',

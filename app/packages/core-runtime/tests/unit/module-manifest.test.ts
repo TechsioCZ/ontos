@@ -30,6 +30,7 @@ const createAction = (owner = 'property.registry') =>
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: `${owner}.create-unit`,
         moduleKey: owner,
         role: 'action',
@@ -189,6 +190,17 @@ test('accepts populated typed surfaces and keeps executable values out of safe d
       {
         actionKey: 'property.registry.create-unit',
         auditProfile: 'standard',
+        entrypoint: {
+          access: 'write',
+          authorization: {
+            kind: 'action_execution',
+            provisioning: 'tenant_membership_default',
+          },
+          entrypointKey: 'property.registry.create-unit',
+          moduleKey: 'property.registry',
+          role: 'action',
+          scope: 'tenant',
+        },
         idempotency: 'required',
         legalEntityScope: 'optional',
         owningModuleId: 'property.registry',

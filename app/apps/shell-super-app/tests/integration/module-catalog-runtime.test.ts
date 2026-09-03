@@ -101,6 +101,7 @@ const PropertyAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'property.registry.rename-unit',
       moduleKey: 'property.registry',
       role: 'action',
@@ -121,6 +122,7 @@ const PropertyOutboxWorker = defineOutboxWorker(
     consumerModuleKey: 'property.registry',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'property.registry.index-document',
       moduleKey: 'property.registry',
       role: 'worker',

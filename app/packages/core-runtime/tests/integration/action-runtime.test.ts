@@ -322,6 +322,7 @@ const makeRegistration = ({
       domainEvents: TestDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',
@@ -438,6 +439,7 @@ test('rechecks business module state under the tenant lock and retries after Cor
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: 'inventory.stock.concurrent-gate',
           moduleKey: 'inventory.stock',
           role: 'action',
@@ -723,6 +725,10 @@ test('atomically rejects denied global and same-owner MicroVertical Policies wit
             },
             entrypoint: defineTenantModuleEntrypoint({
               access: 'write',
+              authorization: {
+                kind: 'action_execution',
+                provisioning: 'tenant_membership_default',
+              },
               entrypointKey: this.actionKey,
               moduleKey: 'inventory.stock',
               role: 'action',
@@ -1622,6 +1628,7 @@ test('persists no invocation or evidence for every non-writable business module 
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: 'inventory.state-matrix.write',
           moduleKey,
           role: 'action',

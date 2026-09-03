@@ -2,6 +2,15 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
+import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
+import { validateAuthorizationRolloutContract } from './authorization/rollout-contract.mts';
+import type {
+  AuthorizationNegativeSmokeEvidence,
+  AuthorizationReadinessEvidence,
+} from './check-authorization-readiness.mts';
+import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
+import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
 type DeploymentPhaseKind = 'infrastructure' | 'provider' | 'shell';
 
@@ -53,6 +62,11 @@ type Ownership = {
 };
 
 export type DeploymentImpactPlan = {
+  readonly authorization?: {
+    readonly environment: 'development' | 'production' | 'stage';
+    readonly mode: 'enforced' | 'report_only';
+    readonly status: 'observing' | 'ready';
+  };
   readonly any: boolean;
   readonly changedPaths: readonly string[];
   readonly comparison: {
@@ -72,10 +86,67 @@ export type DeploymentImpactPlan = {
 };
 
 export type PlanDeploymentImpactOptions = {
+  readonly authorizationPromotion?: AuthorizationPromotionGateInput;
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
   readonly rootDirectory?: string;
+};
+
+export interface AuthorizationPromotionGateInput {
+  readonly environment: 'development' | 'production' | 'stage';
+  readonly impact?: AuthorizationImpactReport;
+  readonly inventory: ProtectedEntrypointInventory;
+  readonly negativeSmoke?: AuthorizationNegativeSmokeEvidence;
+  readonly nowEpochMs: number;
+  readonly readiness?: AuthorizationReadinessEvidence;
+  readonly rollout: AuthorizationRolloutContract;
+}
+
+export const validateAuthorizationPromotionGate = (
+  input: AuthorizationPromotionGateInput,
+): NonNullable<DeploymentImpactPlan['authorization']> => {
+  const { inventory, rollout } = input;
+  validateAuthorizationRolloutContract(rollout, {
+    entrypointKeys: new Set(inventory.entries.map(({ entrypointKey }) => entrypointKey)),
+    inventoryHash: inventory.inventoryHash,
+    nowEpochMs: input.nowEpochMs,
+  });
+  if (rollout.mode === 'report_only') {
+    if (input.environment === 'production') {
+      fail('production authorization promotion rejects report-only configuration');
+    }
+    return { environment: input.environment, mode: rollout.mode, status: 'observing' };
+  }
+  const { impact, negativeSmoke, readiness } = input;
+  if (impact === undefined || negativeSmoke === undefined || readiness === undefined) {
+    fail(
+      'enforced authorization promotion requires impact, readiness, and negative-smoke evidence',
+    );
+  }
+  const impactHash = hashAuthorizationEvidence(impact);
+  const negativeSmokeHash = hashAuthorizationEvidence(negativeSmoke);
+  if (
+    impact.schemaVersion !== 1 ||
+    impact.sourceRevision !== inventory.sourceRevision ||
+    impact.inventoryHash !== inventory.inventoryHash ||
+    impact.totalWouldDeny !== 0 ||
+    negativeSmoke.schemaVersion !== 1 ||
+    negativeSmoke.sourceRevision !== inventory.sourceRevision ||
+    negativeSmoke.inventoryHash !== inventory.inventoryHash ||
+    negativeSmoke.environment !== input.environment ||
+    readiness.schemaVersion !== 1 ||
+    readiness.status !== 'ready' ||
+    readiness.environment !== input.environment ||
+    readiness.sourceRevision !== inventory.sourceRevision ||
+    readiness.inventoryHash !== inventory.inventoryHash ||
+    readiness.impactReportHash !== impactHash ||
+    readiness.negativeSmokeHash !== negativeSmokeHash ||
+    readiness.approvalReference !== rollout.decisionReference
+  ) {
+    fail('authorization promotion evidence is missing, stale, mismatched, or unresolved');
+  }
+  return { environment: input.environment, mode: rollout.mode, status: 'ready' };
 };
 
 const INFRASTRUCTURE_PHASES = {
@@ -369,6 +440,16 @@ const isSpiceDbChange = (changedPath: string): boolean =>
   changedPath === 'scripts/postgres/spicedb-database-config.mts' ||
   changedPath === 'scripts/run-zerops-spicedb.sh';
 
+const isAuthorizationRolloutChange = (changedPath: string): boolean =>
+  changedPath.startsWith('packages/core-runtime/src/authorization/') ||
+  changedPath.startsWith('packages/core-runtime/src/auth/gateway-assertion-redemption') ||
+  changedPath.startsWith('scripts/authorization/') ||
+  changedPath === 'scripts/check-authorization-readiness.mts' ||
+  changedPath === 'scripts/check-module-entrypoint-boundaries.mts' ||
+  changedPath === 'scripts/provision-current-action-authorization.mts' ||
+  changedPath === 'scripts/report-fail-closed-authorization-impact.mts' ||
+  changedPath === 'topology/authorization-rollout.json';
+
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
   changedPath === '.mise.toml' ||
   changedPath === 'package.json' ||
@@ -389,6 +470,10 @@ const toPhase = (unit: TopologyUnit): DeploymentPhase => ({
 export const planDeploymentImpact = (
   options: PlanDeploymentImpactOptions = {},
 ): DeploymentImpactPlan => {
+  const authorization =
+    options.authorizationPromotion === undefined
+      ? undefined
+      : validateAuthorizationPromotionGate(options.authorizationPromotion);
   const rootDirectory = options.rootDirectory ?? process.cwd();
   const topology = readJson<ReferenceTopology>(
     path.join(rootDirectory, 'topology/reference-topology.json'),
@@ -479,6 +564,11 @@ export const planDeploymentImpact = (
         spicedb = true;
         addAllUnits();
       }
+      if (isAuthorizationRolloutChange(changedPath)) {
+        migrator = true;
+        spicedb = true;
+        addAllUnits();
+      }
       if (isConservativeFullDeployChange(changedPath)) {
         migrator = true;
         spicedb = true;
@@ -500,6 +590,7 @@ export const planDeploymentImpact = (
 
   return {
     any: phases.length > 0,
+    ...(authorization === undefined ? {} : { authorization }),
     changedPaths,
     comparison: {
       ...(options.baseRevision ? { baseRevision: options.baseRevision } : {}),
@@ -518,7 +609,14 @@ export const planDeploymentImpact = (
   };
 };
 
-const parseArguments = (argumentsList: readonly string[]): PlanDeploymentImpactOptions => {
+type DeploymentImpactCliOptions = PlanDeploymentImpactOptions & {
+  readonly authorizationEnvironment?: 'development' | 'production' | 'stage';
+  readonly authorizationNowEpochMs?: number;
+};
+
+const parseArguments = (argumentsList: readonly string[]): DeploymentImpactCliOptions => {
+  let authorizationEnvironment: DeploymentImpactCliOptions['authorizationEnvironment'];
+  let authorizationNowEpochMs: number | undefined;
   let baseRevision: string | undefined;
   const changedPaths: string[] = [];
   let headRevision: string | undefined;
@@ -526,6 +624,22 @@ const parseArguments = (argumentsList: readonly string[]): PlanDeploymentImpactO
     const argument = argumentsList[index];
     const value = argumentsList[index + 1];
     if (argument === '--') {
+      continue;
+    }
+    if (
+      argument === '--authorization-environment' &&
+      (value === 'development' || value === 'production' || value === 'stage')
+    ) {
+      authorizationEnvironment = value;
+      index += 1;
+      continue;
+    }
+    if (argument === '--authorization-now' && value) {
+      authorizationNowEpochMs = Date.parse(value);
+      if (!Number.isFinite(authorizationNowEpochMs)) {
+        fail('authorization promotion time must be an ISO timestamp');
+      }
+      index += 1;
       continue;
     }
     if (argument === '--base' && value) {
@@ -542,9 +656,43 @@ const parseArguments = (argumentsList: readonly string[]): PlanDeploymentImpactO
     }
   }
   return {
+    ...(authorizationEnvironment ? { authorizationEnvironment } : {}),
+    ...(authorizationNowEpochMs === undefined ? {} : { authorizationNowEpochMs }),
     baseRevision,
     ...(changedPaths.length > 0 ? { changedPaths } : {}),
     headRevision,
+  };
+};
+
+const loadAuthorizationPromotionGate = (
+  rootDirectory: string,
+  environment: NonNullable<DeploymentImpactCliOptions['authorizationEnvironment']>,
+  nowEpochMs: number,
+): AuthorizationPromotionGateInput => {
+  const reportDirectory = path.join(rootDirectory, '.codex/reports/authorization');
+  const rollout = readJson<AuthorizationRolloutContract>(
+    path.join(rootDirectory, 'topology/authorization-rollout.json'),
+  );
+  const inventory = readJson<ProtectedEntrypointInventory>(
+    path.join(reportDirectory, 'protected-entrypoints.json'),
+  );
+  if (rollout.mode === 'report_only') {
+    return { environment, inventory, nowEpochMs, rollout };
+  }
+  return {
+    environment,
+    impact: readJson<AuthorizationImpactReport>(
+      path.join(reportDirectory, 'fail-closed-impact.json'),
+    ),
+    inventory,
+    negativeSmoke: readJson<AuthorizationNegativeSmokeEvidence>(
+      path.join(reportDirectory, `negative-smoke.${environment}.json`),
+    ),
+    nowEpochMs,
+    readiness: readJson<AuthorizationReadinessEvidence>(
+      path.join(reportDirectory, 'readiness.json'),
+    ),
+    rollout,
   };
 };
 
@@ -570,7 +718,22 @@ const isDirectExecution =
   path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (isDirectExecution) {
-  const plan = planDeploymentImpact(parseArguments(process.argv.slice(2)));
+  const parsed = parseArguments(process.argv.slice(2));
+  const rootDirectory = process.cwd();
+  const { authorizationEnvironment, authorizationNowEpochMs, ...options } = parsed;
+  const authorizationPromotion =
+    authorizationEnvironment === undefined
+      ? undefined
+      : loadAuthorizationPromotionGate(
+          rootDirectory,
+          authorizationEnvironment,
+          authorizationNowEpochMs ?? Date.now(),
+        );
+  const plan = planDeploymentImpact({
+    ...options,
+    ...(authorizationPromotion === undefined ? {} : { authorizationPromotion }),
+    rootDirectory,
+  });
   const planJson = JSON.stringify(plan);
   process.stdout.write(`${planJson}\n`);
   if (process.env.GITHUB_OUTPUT) {

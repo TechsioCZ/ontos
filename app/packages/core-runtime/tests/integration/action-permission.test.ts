@@ -397,6 +397,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       domainEvents: NoDomainEvents,
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: actionKey,
         moduleKey: 'core.shell',
         role: 'action',

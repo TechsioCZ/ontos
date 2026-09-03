@@ -225,6 +225,7 @@ test('an unscoped owner repository remains isolated inside a governed read trans
   const predicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   const entrypoint = defineSystemModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'core.shell.governed-isolation-fixture',
     moduleKey: 'core.shell',
     role: 'api',

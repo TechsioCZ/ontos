@@ -62,6 +62,7 @@ export const bindManagedApiKeyAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.identity.bind-managed-api-key',
       moduleKey: 'core.identity',
       role: 'action',

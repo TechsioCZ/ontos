@@ -60,6 +60,7 @@ const deployment = (appId: string, moduleId: string, displayName: string, order:
             contributionKey: `${moduleId}.navigation.home`,
             entrypoint: {
               access: 'read',
+              authorization: { kind: 'context_permission', permission: 'module_access' },
               entrypointKey: `${moduleId}.page.home`,
               moduleKey: moduleId,
               role: 'page',
@@ -76,6 +77,7 @@ const deployment = (appId: string, moduleId: string, displayName: string, order:
             contributionKey: `${moduleId}.page.home`,
             entrypoint: {
               access: 'read',
+              authorization: { kind: 'context_permission', permission: 'module_access' },
               entrypointKey: `${moduleId}.page.home`,
               moduleKey: moduleId,
               role: 'page',
@@ -151,6 +153,7 @@ const catalogWithSecondPropertyPage = (): InstalledModuleCatalog => {
     contributionKey: 'property.registry.page.customers',
     entrypoint: {
       access: 'read',
+      authorization: { kind: 'context_permission', permission: 'module_access' },
       entrypointKey: 'property.registry.page.customers',
       moduleKey: 'property.registry',
       role: 'page',

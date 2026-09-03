@@ -57,12 +57,12 @@ Run generators from this directory through the repository-managed toolchain:
 
 ```bash
 mise exec -- pnpm scaffold:module-contract -- --vertical <vertical> --module <dotted.module-id>
-mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action>
-mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --action <action>
+mise exec -- pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
+mise exec -- pnpm scaffold:action -- --scope core --module <core.module> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
 mise exec -- pnpm scaffold:action-service -- --vertical <vertical> --service <service>
-mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page>
+mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
 mise exec -- pnpm scaffold:outbox-message -- --vertical <vertical> --action <action> --topic <topic>
-mise exec -- pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic>
+mise exec -- pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic> --authorization owner_local_background
 mise exec -- pnpm scaffold:policy -- --scope <global|microvertical> --policy <policy>
 mise exec -- pnpm scaffold:external-http-adapter -- --vertical <vertical> --provider <provider> --operation <operation>
 ```
@@ -119,13 +119,13 @@ Codesmith governs every Shell-visible artifact and patches safe descriptors plus
 runtime registration atomically:
 
 ```bash
-pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> [--url <url>]
-pnpm scaffold:public-component -- --vertical <vertical> --component <component>
-pnpm scaffold:module-api -- --vertical <vertical> --api <api>
-pnpm scaffold:search-provider -- --vertical <vertical> --provider <provider>
-pnpm scaffold:report -- --vertical <vertical> --report <report>
-pnpm check:module-contracts
-pnpm module-entrypoints:check
+mise exec -- pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>]
+mise exec -- pnpm scaffold:public-component -- --vertical <vertical> --name <component> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
+mise exec -- pnpm scaffold:module-api -- --vertical <vertical> --name <api> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
+mise exec -- pnpm scaffold:search-provider -- --vertical <vertical> --name <provider> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
+mise exec -- pnpm scaffold:report -- --vertical <vertical> --name <report> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
+mise exec -- pnpm check:module-contracts
+mise exec -- pnpm module-entrypoints:check
 ```
 
 `scaffold:microvertical-page` keeps the lower-kebab `--page` value as the stable component,
@@ -409,3 +409,23 @@ migration work; fix the owning API files instead of adding compatibility shims.
 | Cloudflare credentials         | Confirm Wrangler credentials before `pnpm cloudflare:deploy`; local checks do not prove live Worker access.                                                       | Deployment operator                         |
 | Asset or CSS 404               | Rebuild with `pnpm build` or `pnpm cloudflare:deploy` and inspect emitted Modern/Rspack asset paths instead of hardcoding CSS URLs.                               | Framework/runtime asset pipeline            |
 | Federation manifest failure    | Run the shell and vertical build scripts, then check each deployed `/mf-manifest.json` URL used by the shell.                                                     | Module Federation owner                     |
+
+## Authorization rollout evidence
+
+Use these operator commands for the protected-entrypoint rollout:
+
+```bash
+pnpm authorization:inventory:check
+pnpm authorization:impact:report -- .codex/reports/authorization/would-deny.json
+pnpm authorization:readiness:check -- stage
+pnpm deployment-impact:plan -- --authorization-environment stage
+pnpm test:scripts
+```
+
+The readiness command accepts a fixed environment name, never an arbitrary context path. It loads
+the source-controlled context from `topology/authorization-contexts/` and the fixed inventory,
+impact, observation, and negative-smoke filenames under `.codex/reports/authorization/`. These are
+reproducible, non-secret operator evidence bound to one source revision and inventory hash; they
+are not runtime policy. Production promotion remains
+blocked until the fixed production context and governance approval tracked by issues #169 and #173
+exist. The current implementation continues PR #315 without treating that approval as complete.

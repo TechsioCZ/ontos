@@ -99,13 +99,16 @@ export interface RunScaffoldOptions {
 
 interface ParsedScaffoldFlags {
   readonly action: string | undefined;
+  readonly authorization: string | undefined;
   readonly 'legal-entity-scope': string | undefined;
   readonly module: string | undefined;
   readonly name: string | undefined;
   readonly operation: string | undefined;
   readonly page: string | undefined;
+  readonly permission: string | undefined;
   readonly policy: string | undefined;
   readonly producer: string | undefined;
+  readonly provisioning: string | undefined;
   readonly provider: string | undefined;
   readonly resource: string | undefined;
   readonly scope: string | undefined;
@@ -151,14 +154,47 @@ const isLegalEntityScope = (
 ): value is ActionScaffoldConfig['legalEntityScope'] =>
   value === 'required' || value === 'optional' || value === 'forbidden';
 
+const isReadAuthorization = (
+  value: string | undefined,
+): value is 'authenticated_principal' | 'context_permission' | 'public' =>
+  value === 'authenticated_principal' || value === 'context_permission' || value === 'public';
+
+const requireReadAuthorization = (
+  flags: ParsedScaffoldFlags,
+): Pick<GovernedContributionScaffoldConfig, 'authorization' | 'permission'> => {
+  if (!isReadAuthorization(flags.authorization)) {
+    throw new Error(
+      '--authorization must be public, authenticated_principal, or context_permission',
+    );
+  }
+  if (flags.authorization === 'context_permission') {
+    if (flags.permission === undefined) {
+      throw new Error('--permission is required for context_permission authorization');
+    }
+    return { authorization: flags.authorization, permission: flags.permission };
+  }
+  if (flags.permission !== undefined) {
+    throw new Error('--permission is valid only for context_permission authorization');
+  }
+  return { authorization: flags.authorization };
+};
+
 // eslint-disable-next-line sort-keys -- Preserve the established user-facing command order.
 const commandDefinitions = {
   action: {
-    flags: ['action', 'legal-entity-scope', 'module', 'scope', 'vertical'],
+    flags: [
+      'action',
+      'authorization',
+      'legal-entity-scope',
+      'module',
+      'provisioning',
+      'scope',
+      'vertical',
+    ],
     generator: actionGenerator,
     help: `Usage:
-  pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden>
-  pnpm scaffold:action -- --scope core --module <core.module> --action <action> --legal-entity-scope <required|optional|forbidden>
+  pnpm scaffold:action -- --vertical <vertical> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
+  pnpm scaffold:action -- --scope core --module <core.module> --action <action> --legal-entity-scope <required|optional|forbidden> --authorization action_execution --provisioning <tenant_membership_default|explicit>
 
 Generate one typed, fail-closed Action registration with a governed write entrypoint.
 MicroVertical Actions are tenant-scoped; Core Actions are explicitly system-scoped.
@@ -169,16 +205,24 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder; exclusive with Core ownership
   --scope core           Required only for Core ownership; forbidden with --vertical
   --module <core.module> Stable core.* module key; required only with --scope core
+  --authorization       Must be action_execution
+  --provisioning        tenant_membership_default or explicit
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['action', 'legal-entity-scope'],
+    requiredFlags: ['action', 'authorization', 'legal-entity-scope', 'provisioning'],
     toConfig: (flags) => {
       const action = flags['action'] ?? '';
       const legalEntityScope = flags['legal-entity-scope'];
       if (!isLegalEntityScope(legalEntityScope)) {
         throw new Error('--legal-entity-scope must be required, optional, or forbidden');
+      }
+      if (flags.authorization !== 'action_execution') {
+        throw new Error('--authorization must be action_execution for Actions');
+      }
+      if (flags.provisioning !== 'tenant_membership_default' && flags.provisioning !== 'explicit') {
+        throw new Error('--provisioning must be tenant_membership_default or explicit');
       }
       const { module, scope, vertical } = flags;
       if (vertical !== undefined) {
@@ -187,7 +231,9 @@ Options:
         }
         return {
           action,
+          authorization: 'action_execution',
           legalEntityScope,
+          provisioning: flags.provisioning,
           vertical,
         };
       }
@@ -199,8 +245,10 @@ Options:
       }
       return {
         action,
+        authorization: 'action_execution',
         legalEntityScope,
         module,
+        provisioning: flags.provisioning,
         scope,
       };
     },
@@ -255,7 +303,7 @@ Example:
     generator: actionBoundaryGenerator,
     help: `Usage: pnpm scaffold:microvertical-action-boundary -- --vertical <vertical>
 
-Generate one Shell-user Action identity boundary in an existing MicroVertical.
+Generate one Shell-user Action identity boundary and fail-closed assertion-redemption seam.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
@@ -275,29 +323,34 @@ Options:
       await refresh({ appId: result.appId, workspaceRoot });
       await refresh({ appId: 'shell-super-app', workspaceRoot });
     },
-    flags: ['page', 'url', 'vertical'],
+    flags: ['authorization', 'page', 'permission', 'url', 'vertical'],
     generator: microverticalPageGenerator,
-    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> [--url <url>]
+    help: `Usage: pnpm scaffold:microvertical-page -- --vertical <vertical> --page <page> --authorization <public|authenticated_principal|context_permission> [--permission <permission>] [--url <url>]
 
 Generate one localized, private-first page with a governed tenant page/read entrypoint.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --page <page>          Stable page name (lower-kebab-case)
+  --authorization       Explicit route authorization classification
 
 Options:
   --url <url>            Root-relative canonical template of lowercase kebab segments and unique named :parameters; defaults to /<vertical>/<page>
+  --permission <value>   Required only with context_permission
   --help                 Show this help without writing
 
 Example:
   mise exec -- pnpm scaffold:microvertical-page -- --vertical contacts --page customer-edit --url /contacts/customers/:id/edit
 `,
-    requiredFlags: ['page', 'vertical'],
+    requiredFlags: ['authorization', 'page', 'vertical'],
     toConfig: (flags) => {
       const page = flags['page'] ?? '';
       const vertical = flags['vertical'] ?? '';
       const { url } = flags;
-      return url === undefined ? { page, vertical } : { page, url, vertical };
+      const authorization = requireReadAuthorization(flags);
+      return url === undefined
+        ? { ...authorization, page, vertical }
+        : { ...authorization, page, url, vertical };
     },
   },
   'module-contract': {
@@ -321,21 +374,27 @@ Options:
     }),
   },
   'module-api': {
-    flags: ['name', 'vertical'],
+    flags: ['authorization', 'name', 'permission', 'vertical'],
     generator: moduleApiGenerator,
-    help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name>
+    help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
 
 Generate one typed owner-local module API contract and generated Effect client adapter.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --name <name>          API name (lower-kebab-case)
+  --authorization       Explicit API authorization classification
+  --permission <value>  Required only with context_permission
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['name', 'vertical'],
-    toConfig: (flags) => ({ name: flags['name'] ?? '', vertical: flags['vertical'] ?? '' }),
+    requiredFlags: ['authorization', 'name', 'vertical'],
+    toConfig: (flags) => ({
+      ...requireReadAuthorization(flags),
+      name: flags['name'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
   },
   'outbox-message': {
     flags: ['action', 'topic', 'vertical'],
@@ -360,9 +419,9 @@ Options:
     }),
   },
   'outbox-worker': {
-    flags: ['producer', 'topic', 'vertical', 'worker'],
+    flags: ['authorization', 'producer', 'topic', 'vertical', 'worker'],
     generator: outboxWorkerGenerator,
-    help: `Usage: pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic>
+    help: `Usage: pnpm scaffold:outbox-worker -- --vertical <vertical> --worker <worker> --producer <producer> --topic <topic> --authorization owner_local_background
 
 Generate one typed, owner-local Outbox Worker with a governed tenant worker/background entrypoint.
 
@@ -371,17 +430,24 @@ Required flags:
   --worker <worker>      Worker name (lower-kebab-case)
   --producer <producer>  Existing producer vertical folder (lower-kebab-case)
   --topic <topic>        Exact published lowercase dot-separated topic
+  --authorization       Must be owner_local_background
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['producer', 'topic', 'vertical', 'worker'],
-    toConfig: (flags) => ({
-      producer: flags['producer'] ?? '',
-      topic: flags['topic'] ?? '',
-      vertical: flags['vertical'] ?? '',
-      worker: flags['worker'] ?? '',
-    }),
+    requiredFlags: ['authorization', 'producer', 'topic', 'vertical', 'worker'],
+    toConfig: (flags) => {
+      if (flags.authorization !== 'owner_local_background') {
+        throw new Error('--authorization must be owner_local_background for Outbox Workers');
+      }
+      return {
+        authorization: 'owner_local_background',
+        producer: flags['producer'] ?? '',
+        topic: flags['topic'] ?? '',
+        vertical: flags['vertical'] ?? '',
+        worker: flags['worker'] ?? '',
+      };
+    },
   },
   policy: {
     flags: ['policy', 'scope', 'vertical'],
@@ -411,26 +477,32 @@ Options:
     },
   },
   'public-component': {
-    flags: ['name', 'vertical'],
+    flags: ['authorization', 'name', 'permission', 'vertical'],
     generator: publicComponentGenerator,
-    help: `Usage: pnpm scaffold:public-component -- --vertical <vertical> --name <name>
+    help: `Usage: pnpm scaffold:public-component -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
 
 Generate one owner-local public component with safe Shell contribution and lazy registration.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --name <name>          Component name (lower-kebab-case)
+  --authorization       Explicit authorization classification
+  --permission <value>  Required only with context_permission
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['name', 'vertical'],
-    toConfig: (flags) => ({ name: flags['name'] ?? '', vertical: flags['vertical'] ?? '' }),
+    requiredFlags: ['authorization', 'name', 'vertical'],
+    toConfig: (flags) => ({
+      ...requireReadAuthorization(flags),
+      name: flags['name'] ?? '',
+      vertical: flags['vertical'] ?? '',
+    }),
   },
   report: {
-    flags: ['name', 'resource', 'vertical'],
+    flags: ['authorization', 'name', 'permission', 'resource', 'vertical'],
     generator: reportGenerator,
-    help: `Usage: pnpm scaffold:report -- --vertical <vertical> --name <name> --resource <resource>
+    help: `Usage: pnpm scaffold:report -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
 
 Generate one owner-local report provider with a generated Effect adapter and safe Shell binding.
 
@@ -438,21 +510,24 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --name <name>          Report name (lower-kebab-case)
   --resource <resource>  Existing owner-local resource key (lower-kebab-case)
+  --authorization       Explicit authorization classification
+  --permission <value>  Required only with context_permission
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['name', 'resource', 'vertical'],
+    requiredFlags: ['authorization', 'name', 'resource', 'vertical'],
     toConfig: (flags) => ({
+      ...requireReadAuthorization(flags),
       name: flags['name'] ?? '',
       resource: flags['resource'] ?? '',
       vertical: flags['vertical'] ?? '',
     }),
   },
   'search-provider': {
-    flags: ['name', 'resource', 'vertical'],
+    flags: ['authorization', 'name', 'permission', 'resource', 'vertical'],
     generator: searchProviderGenerator,
-    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource>
+    help: `Usage: pnpm scaffold:search-provider -- --vertical <vertical> --name <name> --resource <resource> --authorization <authenticated_principal|context_permission> [--permission <permission>]
 
 Generate one owner-local search provider with a generated Effect adapter and safe Shell binding.
 
@@ -460,12 +535,15 @@ Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
   --name <name>          Provider name (lower-kebab-case)
   --resource <resource>  Existing owner-local resource key (lower-kebab-case)
+  --authorization       Explicit authorization classification
+  --permission <value>  Required only with context_permission
 
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['name', 'resource', 'vertical'],
+    requiredFlags: ['authorization', 'name', 'resource', 'vertical'],
     toConfig: (flags) => ({
+      ...requireReadAuthorization(flags),
       name: flags['name'] ?? '',
       resource: flags['resource'] ?? '',
       vertical: flags['vertical'] ?? '',
@@ -517,13 +595,16 @@ const parseFlags = (
   }
   return {
     action: parsed.get('action'),
+    authorization: parsed.get('authorization'),
     'legal-entity-scope': parsed.get('legal-entity-scope'),
     module: parsed.get('module'),
     name: parsed.get('name'),
     operation: parsed.get('operation'),
     page: parsed.get('page'),
+    permission: parsed.get('permission'),
     policy: parsed.get('policy'),
     producer: parsed.get('producer'),
+    provisioning: parsed.get('provisioning'),
     provider: parsed.get('provider'),
     resource: parsed.get('resource'),
     scope: parsed.get('scope'),

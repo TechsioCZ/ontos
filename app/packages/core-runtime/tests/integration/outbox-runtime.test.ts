@@ -37,6 +37,7 @@ const makeWorker = (
       consumerModuleKey: options.consumerModuleKey ?? 'consumer',
       entrypoint: defineTenantModuleEntrypoint({
         access: 'background',
+        authorization: { kind: 'owner_local_background' },
         entrypointKey: workerKey,
         moduleKey: options.consumerModuleKey ?? 'consumer',
         role: 'worker',

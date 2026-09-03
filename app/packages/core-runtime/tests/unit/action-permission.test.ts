@@ -13,6 +13,7 @@ import {
   SPICEDB_CHECK_TIMEOUT_MS,
   SPICEDB_EXECUTE_PERMISSION,
   SPICEDB_PRINCIPAL_OBJECT_TYPE,
+  SPICEDB_RESTRICTION_PERMISSION,
   acquirePermissionClientResource,
   makeActionPermissionLive,
   makeActionPermissionService,
@@ -214,6 +215,45 @@ test('classifies fully consistent execute permission as allowed or denied with o
   assert.equal(await Effect.runPromise(allowed.checkActionPermission(input)), 'allowed');
   assert.equal(await Effect.runPromise(denied.checkActionPermission(input)), 'denied');
   assert.equal(deniedRequests.length, 1);
+});
+
+test('report-only compatibility distinguishes missing policy from an explicit restriction', async () => {
+  const nowEpochMs = Date.parse('2026-09-10T00:00:00.000Z');
+  const events: unknown[] = [];
+  const rollout = {
+    activatedAtEpochMs: nowEpochMs - 1000,
+    compatibilityEntrypoints: new Set([input.actionKey]),
+    expiresAtEpochMs: nowEpochMs + 1000,
+    inventoryHash: 'inventory',
+    mode: 'report_only' as const,
+    sourceRevision: 'revision',
+  };
+  const missingRequests: v1.CheckPermissionRequest[] = [];
+  const missing = makeActionPermissionService(
+    makeClient(
+      [
+        response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+        response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+      ],
+      missingRequests,
+    ),
+    { emit: (event) => events.push(event), nowEpochMs: () => nowEpochMs, rollout },
+  );
+  assert.equal(await Effect.runPromise(missing.checkActionPermission(input)), 'allowed');
+  assert.deepEqual(
+    missingRequests.map(({ permission }) => permission),
+    [SPICEDB_EXECUTE_PERMISSION, SPICEDB_RESTRICTION_PERMISSION],
+  );
+  assert.equal(events.length, 1);
+
+  const restricted = makeActionPermissionService(
+    makeClient([
+      response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
+      response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+    ]),
+    { emit: () => assert.fail(), nowEpochMs: () => nowEpochMs, rollout },
+  );
+  assert.equal(await Effect.runPromise(restricted.checkActionPermission(input)), 'denied');
 });
 
 test('fails closed for conditional, unspecified, malformed, and client failures', async () => {

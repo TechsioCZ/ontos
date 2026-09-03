@@ -1,0 +1,473 @@
+{
+  "id": "9c6a58c6-58f2-4331-909a-ceb3025a9035",
+  "prevId": "be1c0ee1-9454-484c-904e-7e785692b043",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "contacts.contacts": {
+      "name": "contacts",
+      "schema": "contacts",
+      "columns": {
+        "contact_id": {
+          "name": "contact_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "contacts_contacts_tenant_id_uk": {
+          "name": "contacts_contacts_tenant_id_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "contact_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contacts_contacts_tenant_customer_active_idx": {
+          "name": "contacts_contacts_tenant_customer_active_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"contacts\".\"contacts\".\"archived_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "contacts_contacts_tenant_customer_fk": {
+          "name": "contacts_contacts_tenant_customer_fk",
+          "tableFrom": "contacts",
+          "tableTo": "customers",
+          "schemaTo": "contacts",
+          "columnsFrom": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "customer_id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {
+        "contacts_contacts_tenant_select": {
+          "name": "contacts_contacts_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "contacts_contacts_tenant_insert": {
+          "name": "contacts_contacts_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "contacts_contacts_tenant_update": {
+          "name": "contacts_contacts_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "contacts_contacts_tenant_delete": {
+          "name": "contacts_contacts_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"contacts\".\"contacts\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "contacts_contacts_name_ck": {
+          "name": "contacts_contacts_name_ck",
+          "value": "\"contacts\".\"contacts\".\"name\" = btrim(\"contacts\".\"contacts\".\"name\") and length(\"contacts\".\"contacts\".\"name\") > 0"
+        },
+        "contacts_contacts_email_ck": {
+          "name": "contacts_contacts_email_ck",
+          "value": "length(btrim(\"contacts\".\"contacts\".\"email\")) > 0"
+        },
+        "contacts_contacts_phone_ck": {
+          "name": "contacts_contacts_phone_ck",
+          "value": "length(btrim(\"contacts\".\"contacts\".\"phone\")) > 0"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "contacts.customers": {
+      "name": "customers",
+      "schema": "contacts",
+      "columns": {
+        "customer_id": {
+          "name": "customer_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ico": {
+          "name": "ico",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dic": {
+          "name": "dic",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "legal_form_code": {
+          "name": "legal_form_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "established_on": {
+          "name": "established_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dissolved_on": {
+          "name": "dissolved_on",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "archived_at": {
+          "name": "archived_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "contacts_customers_tenant_active_idx": {
+          "name": "contacts_customers_tenant_active_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"contacts\".\"customers\".\"archived_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contacts_customers_tenant_ico_uk": {
+          "name": "contacts_customers_tenant_ico_uk",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ico",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "contacts_customers_tenant_id_uk": {
+          "name": "contacts_customers_tenant_id_uk",
+          "nullsNotDistinct": false,
+          "columns": [
+            "tenant_id",
+            "customer_id"
+          ]
+        }
+      },
+      "policies": {
+        "contacts_customers_tenant_select": {
+          "name": "contacts_customers_tenant_select",
+          "as": "PERMISSIVE",
+          "for": "SELECT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "contacts_customers_tenant_insert": {
+          "name": "contacts_customers_tenant_insert",
+          "as": "PERMISSIVE",
+          "for": "INSERT",
+          "to": [
+            "ontos_runtime"
+          ],
+          "withCheck": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "contacts_customers_tenant_update": {
+          "name": "contacts_customers_tenant_update",
+          "as": "PERMISSIVE",
+          "for": "UPDATE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+          "withCheck": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        },
+        "contacts_customers_tenant_delete": {
+          "name": "contacts_customers_tenant_delete",
+          "as": "PERMISSIVE",
+          "for": "DELETE",
+          "to": [
+            "ontos_runtime"
+          ],
+          "using": "\"contacts\".\"customers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid"
+        }
+      },
+      "checkConstraints": {
+        "contacts_customers_name_ck": {
+          "name": "contacts_customers_name_ck",
+          "value": "\"contacts\".\"customers\".\"name\" = btrim(\"contacts\".\"customers\".\"name\") and length(\"contacts\".\"customers\".\"name\") > 0"
+        },
+        "contacts_customers_ico_ck": {
+          "name": "contacts_customers_ico_ck",
+          "value": "\"contacts\".\"customers\".\"ico\" is null or \"contacts\".\"customers\".\"ico\" ~ '^[0-9]{8}$'"
+        },
+        "contacts_customers_dic_ck": {
+          "name": "contacts_customers_dic_ck",
+          "value": "\"contacts\".\"customers\".\"dic\" is null or (\"contacts\".\"customers\".\"dic\" = btrim(\"contacts\".\"customers\".\"dic\") and length(\"contacts\".\"customers\".\"dic\") between 1 and 20)"
+        },
+        "contacts_customers_legal_form_code_ck": {
+          "name": "contacts_customers_legal_form_code_ck",
+          "value": "\"contacts\".\"customers\".\"legal_form_code\" is null or \"contacts\".\"customers\".\"legal_form_code\" ~ '^[0-9]{3}$'"
+        },
+        "contacts_customers_lifecycle_dates_ck": {
+          "name": "contacts_customers_lifecycle_dates_ck",
+          "value": "\"contacts\".\"customers\".\"dissolved_on\" is null or \"contacts\".\"customers\".\"established_on\" is null or \"contacts\".\"customers\".\"dissolved_on\" >= \"contacts\".\"customers\".\"established_on\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "contacts.gateway_assertion_redemptions": {
+      "name": "gateway_assertion_redemptions",
+      "schema": "contacts",
+      "columns": {
+        "audience": {
+          "name": "audience",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "issuer": {
+          "name": "issuer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "jti": {
+          "name": "jti",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "redeemed_at": {
+          "name": "redeemed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "contacts_gateway_assertion_redemptions_expiry_idx": {
+          "name": "contacts_gateway_assertion_redemptions_expiry_idx",
+          "columns": [
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "contacts_gateway_assertion_redemptions_identity_uk": {
+          "name": "contacts_gateway_assertion_redemptions_identity_uk",
+          "nullsNotDistinct": false,
+          "columns": [
+            "issuer",
+            "audience",
+            "jti"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "contacts": "contacts"
+  },
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

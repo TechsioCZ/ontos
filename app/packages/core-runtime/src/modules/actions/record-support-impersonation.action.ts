@@ -116,6 +116,7 @@ export const recordSupportImpersonationAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.identity.record-support-impersonation',
       moduleKey: 'core.identity',
       role: 'action',

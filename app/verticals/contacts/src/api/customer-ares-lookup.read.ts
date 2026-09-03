@@ -22,6 +22,7 @@ import type {
 
 export const customerAresLookupEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
+  authorization: { kind: 'context_permission', permission: 'module.access' },
   entrypointKey: 'contacts.core.api.customer-ares-lookup',
   moduleKey: 'contacts.core',
   role: 'api',

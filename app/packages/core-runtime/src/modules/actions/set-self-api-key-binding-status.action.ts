@@ -77,6 +77,7 @@ export const setSelfApiKeyBindingStatusAction = defineAction(
     domainEvents: {},
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'core.identity.set-self-api-key-binding-status',
       moduleKey: 'core.identity',
       role: 'action',

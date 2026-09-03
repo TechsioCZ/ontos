@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { Effect } from 'effect';
+import {
+  GatewayAssertionRedemptionUnavailableError,
+  GatewayAssertionReplayError,
+} from '@app/core-runtime';
+import type { GatewayAssertionRedemption } from '@app/core-runtime';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { ACTION_GATEWAY_AUDIENCE, verifyActionPrincipal } from '../../api/auth/action-principal.ts';
 import { makeActionGateway } from '../../src/api/action-gateway.ts';
@@ -17,9 +22,26 @@ const principal = {
   tenantId: 'a3000000-0000-4000-8000-000000000001',
 };
 
+const consumed = new Set<string>();
+const redemption: GatewayAssertionRedemption = {
+  consume: ({ audience, issuer: assertionIssuer, jti }) =>
+    Effect.gen(function* consumeTestAssertion() {
+      const key = `${assertionIssuer}\0${audience}\0${jti}`;
+      if (consumed.has(key)) {
+        return yield* new GatewayAssertionReplayError({ reason: 'unusable' });
+      }
+      consumed.add(key);
+    }),
+};
+
 const makeAssertion = async (
   audience: string = ACTION_GATEWAY_AUDIENCE,
   includePrivateKeyMaterial = false,
+  claims: {
+    readonly expiresAt?: number | false;
+    readonly includeJti?: boolean;
+    readonly issuedAt?: number;
+  } = {},
 ) => {
   const { privateKey, publicKey } = await generateKeyPair('Ed25519');
   const publicJwk = {
@@ -35,15 +57,19 @@ const makeAssertion = async (
   if (includePrivateKeyMaterial) {
     Object.assign(publicJwk, { d: 'private-key-material-must-not-cross-the-boundary' });
   }
-  const token = await new SignJWT({ principal, ver: 1 })
+  let signer = new SignJWT({ principal, ver: 1 })
     .setProtectedHeader({ alg: 'EdDSA', kid: 'contacts-test', typ: 'JWT' })
     .setIssuer(issuer)
     .setAudience(audience)
     .setSubject(principal.principalId)
-    .setIssuedAt(now)
-    .setExpirationTime(now + 300)
-    .setJti(randomUUID())
-    .sign(privateKey);
+    .setIssuedAt(claims.issuedAt ?? now);
+  if (claims.expiresAt !== false) {
+    signer = signer.setExpirationTime(claims.expiresAt ?? now + 300);
+  }
+  if (claims.includeJti !== false) {
+    signer = signer.setJti(randomUUID());
+  }
+  const token = await signer.sign(privateKey);
   return {
     environment: {
       ONTOS_GATEWAY_ISSUER: issuer,
@@ -60,6 +86,7 @@ test('verifies a signed Contacts-audience assertion into trusted principal conte
       verifyActionPrincipal(`Bearer ${assertion.token}`, {
         currentTimeSeconds: Effect.succeed(now + 1),
         environment: assertion.environment,
+        redemption,
       }),
     ),
     principal,
@@ -73,6 +100,7 @@ test('accepts public JWK metadata while rejecting private key material', async (
       verifyActionPrincipal(`Bearer ${publicAssertion.token}`, {
         currentTimeSeconds: Effect.succeed(now + 1),
         environment: publicAssertion.environment,
+        redemption,
       }),
     ),
     principal,
@@ -84,6 +112,7 @@ test('accepts public JWK metadata while rejecting private key material', async (
       verifyActionPrincipal(`Bearer ${privateAssertion.token}`, {
         currentTimeSeconds: Effect.succeed(now + 1),
         environment: privateAssertion.environment,
+        redemption,
       }),
     ),
   );
@@ -98,6 +127,7 @@ test('sanitizes missing, wrong-audience, and malformed assertion failures', asyn
         verifyActionPrincipal(undefined, {
           currentTimeSeconds: Effect.succeed(now + 1),
           environment: assertion.environment,
+          redemption,
         }),
       ),
     ),
@@ -106,6 +136,7 @@ test('sanitizes missing, wrong-audience, and malformed assertion failures', asyn
         verifyActionPrincipal(`Bearer ${assertion.token}`, {
           currentTimeSeconds: Effect.succeed(now + 1),
           environment: assertion.environment,
+          redemption,
         }),
       ),
     ),
@@ -114,6 +145,7 @@ test('sanitizes missing, wrong-audience, and malformed assertion failures', asyn
         verifyActionPrincipal('Bearer not-a-jwt', {
           currentTimeSeconds: Effect.succeed(now + 1),
           environment: assertion.environment,
+          redemption,
         }),
       ),
     ),
@@ -123,6 +155,77 @@ test('sanitizes missing, wrong-audience, and malformed assertion failures', asyn
     ['ActionPrincipalMissingError', 'ActionPrincipalScopeError', 'ActionPrincipalInvalidError'],
   );
   assert.equal(JSON.stringify(failures).includes(assertion.token), false);
+});
+
+test('rejects sequential and concurrent replay while allowing exactly one redemption', async () => {
+  const assertion = await makeAssertion();
+  const options = {
+    currentTimeSeconds: Effect.succeed(now + 1),
+    environment: assertion.environment,
+    redemption,
+  };
+  const outcomes = await Promise.allSettled([
+    Effect.runPromise(verifyActionPrincipal(`Bearer ${assertion.token}`, options)),
+    Effect.runPromise(verifyActionPrincipal(`Bearer ${assertion.token}`, options)),
+  ]);
+  assert.deepEqual(outcomes.map(({ status }) => status).toSorted(), ['fulfilled', 'rejected']);
+  const replay = await Effect.runPromise(
+    Effect.flip(verifyActionPrincipal(`Bearer ${assertion.token}`, options)),
+  );
+  assert.equal(replay._tag, 'ActionPrincipalInvalidError');
+});
+
+test('redemption storage failure is a typed fail-closed unavailable response', async () => {
+  const assertion = await makeAssertion();
+  const failure = await Effect.runPromise(
+    Effect.flip(
+      verifyActionPrincipal(`Bearer ${assertion.token}`, {
+        currentTimeSeconds: Effect.succeed(now + 1),
+        environment: assertion.environment,
+        redemption: {
+          consume: () =>
+            Effect.fail(
+              new GatewayAssertionRedemptionUnavailableError({ reason: 'database unavailable' }),
+            ),
+        },
+      }),
+    ),
+  );
+  assert.equal(failure._tag, 'ActionPrincipalUnavailableError');
+  assert.doesNotMatch(failure.reason, /database/u);
+});
+
+test('missing, expired, and incomplete replay claims fail before redemption storage', async () => {
+  const assertions = await Promise.all([
+    makeAssertion(ACTION_GATEWAY_AUDIENCE, false, { includeJti: false }),
+    makeAssertion(ACTION_GATEWAY_AUDIENCE, false, { expiresAt: now - 31, issuedAt: now - 331 }),
+    makeAssertion(ACTION_GATEWAY_AUDIENCE, false, { expiresAt: false }),
+  ]);
+  let redemptionAttempts = 0;
+  const countingRedemption: GatewayAssertionRedemption = {
+    consume: () =>
+      Effect.sync(() => {
+        redemptionAttempts += 1;
+      }),
+  };
+  const failures = await Promise.all(
+    assertions.map((assertion) =>
+      Effect.runPromise(
+        Effect.flip(
+          verifyActionPrincipal(`Bearer ${assertion.token}`, {
+            currentTimeSeconds: Effect.succeed(now + 1),
+            environment: assertion.environment,
+            redemption: countingRedemption,
+          }),
+        ),
+      ),
+    ),
+  );
+  assert.deepEqual(
+    failures.map(({ _tag }) => _tag),
+    ['ActionPrincipalInvalidError', 'ActionPrincipalExpiredError', 'ActionPrincipalInvalidError'],
+  );
+  assert.equal(redemptionAttempts, 0);
 });
 
 test('acquires a fresh Contacts assertion for every gateway invocation', async () => {

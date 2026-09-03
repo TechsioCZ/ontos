@@ -98,12 +98,14 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
       );
       const read = defineTenantModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: `${moduleKey}.page`,
         moduleKey,
         role: 'page',
       });
       const write = defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: `${moduleKey}.write`,
         moduleKey,
         role: 'action',
@@ -118,6 +120,7 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
       const persistedStateDescriptors = TENANT_MODULE_STATES.map((state) =>
         defineTenantModuleEntrypoint({
           access: 'read',
+          authorization: { kind: 'context_permission', permission: 'module.access' },
           entrypointKey: `${stateModuleKey(state)}.page`,
           moduleKey: stateModuleKey(state),
           role: 'page',
@@ -155,6 +158,7 @@ test('batches tenant-isolated states once, rejects malformed/unavailable reads, 
 
       const missingDescriptor = defineTenantModuleEntrypoint({
         access: 'read',
+        authorization: { kind: 'context_permission', permission: 'module.access' },
         entrypointKey: `${moduleKey}.missing`,
         moduleKey: `${moduleKey}.missing-module`,
         role: 'page',

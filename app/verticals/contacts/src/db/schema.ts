@@ -16,7 +16,11 @@ import {
 
 export const CONTACTS_SCHEMA_NAME = 'contacts';
 
-export const CONTACTS_TABLE_INVENTORY = ['contacts', 'customers'] as const;
+export const CONTACTS_TABLE_INVENTORY = [
+  'contacts',
+  'customers',
+  'gateway_assertion_redemptions',
+] as const;
 
 export const contactsSchema = pgSchema(CONTACTS_SCHEMA_NAME);
 
@@ -103,12 +107,32 @@ export const contacts = enableGovernedRls(
   ),
 );
 
+export const gatewayAssertionRedemptions = contactsSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: uuid('jti').notNull(),
+    redeemedAt: timestamp('redeemed_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('contacts_gateway_assertion_redemptions_identity_uk').on(
+      table.issuer,
+      table.audience,
+      table.jti,
+    ),
+    index('contacts_gateway_assertion_redemptions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
 export const contactsDatabaseSchema = {
   contacts,
   customers,
+  gatewayAssertionRedemptions,
 } as const;
 
-export const CONTACTS_TABLES = [contacts, customers] as const;
+export const CONTACTS_TABLES = [contacts, customers, gatewayAssertionRedemptions] as const;
 
 export type CustomerRecord = typeof customers.$inferSelect;
 export type NewCustomerRecord = typeof customers.$inferInsert;

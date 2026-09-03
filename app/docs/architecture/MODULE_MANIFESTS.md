@@ -118,11 +118,11 @@ registration.
 Use the category generator before authoring each supported public artifact:
 
 ```bash
-mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview [--url /custom/path]
-mise exec -- pnpm scaffold:public-component -- --vertical property-registry --component unit-card
-mise exec -- pnpm scaffold:module-api -- --vertical property-registry --api resource-api
-mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --provider unit-search
-mise exec -- pnpm scaffold:report -- --vertical property-registry --report unit-inventory
+mise exec -- pnpm scaffold:microvertical-page -- --vertical property-registry --page overview --authorization context_permission --permission module.access [--url /custom/path]
+mise exec -- pnpm scaffold:public-component -- --vertical property-registry --name unit-card --authorization context_permission --permission module.access
+mise exec -- pnpm scaffold:module-api -- --vertical property-registry --name resource-api --authorization context_permission --permission module.access
+mise exec -- pnpm scaffold:search-provider -- --vertical property-registry --name unit-search --resource unit --authorization context_permission --permission resource.read
+mise exec -- pnpm scaffold:report -- --vertical property-registry --name unit-inventory --resource unit --authorization context_permission --permission resource.read
 ```
 
 The page name is a stable lower-kebab identity, while `--url` is an optional complete

@@ -280,6 +280,12 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm install --frozen-lockfile
 
+      - name: Derive exact-build authorization inventory
+        working-directory: app
+        env:
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: mise exec -- pnpm authorization:inventory:check
+
       - name: Generate topology-driven deployment impact plan
         id: impact
         working-directory: app
@@ -287,6 +293,7 @@ jobs:
           BEFORE_SHA: ${{ github.event.before }}
         run: >-
           mise exec -- pnpm deployment-impact:plan --
+          --authorization-environment stage
           --base "$BEFORE_SHA"
           --head "$GITHUB_SHA"
 

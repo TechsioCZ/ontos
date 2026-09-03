@@ -14,6 +14,7 @@ const registration = defineOutboxWorker(
     consumerModuleKey: 'consumer',
     entrypoint: defineTenantModuleEntrypoint({
       access: 'background',
+      authorization: { kind: 'owner_local_background' },
       entrypointKey: 'consumer.logger',
       moduleKey: 'consumer',
       role: 'worker',

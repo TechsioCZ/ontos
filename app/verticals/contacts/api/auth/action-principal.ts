@@ -10,6 +10,7 @@ import {
 } from '@app/shared-contracts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
+import type { GatewayAssertionRedemption } from '@app/core-runtime';
 import { Clock, DateTime, Effect, Option, Schema } from 'effect';
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import type { JSONWebKeySet } from 'jose';
@@ -64,6 +65,7 @@ const ActionPrincipalErrorSchema = Schema.Union([
 export interface ActionPrincipalVerificationOptions {
   readonly currentTimeSeconds?: Effect.Effect<number>;
   readonly environment?: Readonly<Record<string, string | undefined>>;
+  readonly redemption: GatewayAssertionRedemption;
 }
 
 interface VerificationConfiguration {
@@ -198,7 +200,7 @@ const readBearer = (
 
 export const verifyActionPrincipal = (
   authorization: string | undefined,
-  options: ActionPrincipalVerificationOptions = {},
+  options: ActionPrincipalVerificationOptions,
 ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError> =>
   Effect.gen(function* verifyActionPrincipalEffect() {
     const token = yield* readBearer(authorization);
@@ -244,9 +246,26 @@ export const verifyActionPrincipal = (
     ) {
       return yield* invalidError();
     }
-    return yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
+    const principal = yield* Schema.decodeUnknownEffect(TrustedPrincipalContextSchema, {
       onExcessProperty: 'error',
     })(claims.principal).pipe(Effect.mapError(invalidError));
+    yield* options.redemption
+      .consume({
+        audience: ACTION_GATEWAY_AUDIENCE,
+        expiresAtEpochSeconds: claims.exp,
+        issuer: claims.iss,
+        jti: claims.jti,
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === 'GatewayAssertionReplayError'
+            ? invalidError()
+            : new ActionPrincipalUnavailableError({
+                reason: 'Action identity verification is unavailable',
+              }),
+        ),
+      );
+    return principal;
   });
 
 /** Shared trusted-identity acquisition for generated Actions and governed reads. */

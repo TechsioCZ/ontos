@@ -5,6 +5,7 @@ const routeMeta = {
   descriptionKey: 'contacts.pages.contactCreate.description',
   entrypoint: defineTenantModuleEntrypoint({
     access: 'read',
+    authorization: { kind: 'context_permission', permission: 'module.access' },
     entrypointKey: 'contacts.core.page.contact-create',
     moduleKey: 'contacts.core',
     role: 'page',

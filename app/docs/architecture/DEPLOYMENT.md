@@ -372,3 +372,30 @@ These commits are retained as examples of the failure classes this playbook prev
 
 When changing deployment behavior, convert the relevant historical failure into a permanent
 automated contract test rather than relying on this list as institutional memory.
+
+## Fail-closed authorization promotion
+
+Authorization changes deploy schema and data expansion first: the Contacts assertion-redemption
+migration and SpiceDB policy precede every provider and the Shell. Run the inventory check, collect
+sanitized report-only evidence for one source revision and inventory hash, reduce it with
+`pnpm authorization:impact:report`, and validate fixed-context evidence with
+`pnpm authorization:readiness:check -- stage`. The command accepts only a fixed environment name;
+it loads `topology/authorization-contexts/<environment>.json` and the fixed inventory, impact,
+observation, and negative-smoke report names. The resulting artifact binds the environment, source
+revision, inventory and context hashes, schema/data versions, replay migration, impact report,
+smoke evidence, observation bounds, and approval reference.
+
+Pass `--authorization-environment <environment>` to `pnpm deployment-impact:plan --` for a
+promotion plan. `report_only` is valid only before its declared expiry and never in production.
+`enforced` requires matching zero-impact, readiness, and negative-smoke artifacts from the exact
+build. Abort on an expired window, mixed build evidence, unresolved impact, missing
+policy/module/worker/issuer/replay data, or a failed negative smoke.
+
+Production remains blocked while no approved source-controlled production context exists; the
+development/stage provisioner must continue rejecting production and arbitrary tenant or Action
+arguments. Issue #169 is still the governance record and issue #173 is the rollout tracker; the
+implementation override does not record Petr/Jiří acceptance or permit production enforcement.
+The checked-in stage context deliberately remains `pending`; approval requires the recorded
+governance decision and observed evidence, not a code-only override.
+Rollback restores the prior application mode only after preserving the exact evidence and must not
+remove the expanded schema or durable redemption rows while old/new consumers overlap.

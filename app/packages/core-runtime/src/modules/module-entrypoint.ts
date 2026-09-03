@@ -1,4 +1,9 @@
 import { Schema } from 'effect';
+import {
+  EntrypointAuthorizationSchema,
+  decodeEntrypointAuthorization,
+} from '../authorization/entrypoint-classification.ts';
+import type { EntrypointAuthorization } from '../authorization/entrypoint-classification.ts';
 
 export const MODULE_ENTRYPOINT_ROLES = [
   'action',
@@ -32,6 +37,7 @@ const stableKeySchema = Schema.String.check(
 
 export const ModuleEntrypointSchema = Schema.Struct({
   access: ModuleEntrypointAccessSchema,
+  authorization: EntrypointAuthorizationSchema,
   entrypointKey: stableKeySchema,
   moduleKey: stableKeySchema,
   role: ModuleEntrypointRoleSchema,
@@ -53,6 +59,7 @@ export interface ModuleEntrypointDescriptor<
   Scope extends ModuleEntrypointScope = ModuleEntrypointScope,
 > {
   readonly access: Access;
+  readonly authorization: EntrypointAuthorization;
   readonly entrypointKey: string;
   readonly moduleKey: ModuleKey;
   readonly role: Role;
@@ -94,6 +101,25 @@ const roleAllowsAccess = (role: ModuleEntrypointRole, access: ModuleEntrypointAc
   }
 };
 
+const roleAllowsAuthorization = (
+  role: ModuleEntrypointRole,
+  authorization: EntrypointAuthorization,
+): boolean => {
+  if (role === 'action') {
+    return authorization.kind === 'action_execution';
+  }
+  if (role === 'worker') {
+    return authorization.kind === 'owner_local_background';
+  }
+  if (
+    authorization.kind === 'action_execution' ||
+    authorization.kind === 'owner_local_background'
+  ) {
+    return false;
+  }
+  return authorization.kind !== 'capability_issuance' || role === 'api';
+};
+
 const defineEntrypoint = <
   const Role extends ModuleEntrypointRole,
   const Access extends EntrypointAccessForRole<Role>,
@@ -105,15 +131,19 @@ const defineEntrypoint = <
 ): ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> => {
   const descriptor: ModuleEntrypointDescriptor<Role, Access, ModuleKey, Scope> = {
     ...input,
+    authorization: decodeEntrypointAuthorization(input.authorization),
     scope,
   };
   try {
-    Schema.decodeUnknownSync(ModuleEntrypointSchema)(descriptor);
+    Schema.decodeUnknownSync(ModuleEntrypointSchema, { onExcessProperty: 'error' })(descriptor);
   } catch {
     throw new TypeError('Module entrypoint identity is invalid');
   }
   if (!roleAllowsAccess(descriptor.role, descriptor.access)) {
     throw new TypeError('Module entrypoint role and access are inconsistent');
+  }
+  if (!roleAllowsAuthorization(descriptor.role, descriptor.authorization)) {
+    throw new TypeError('Module entrypoint role and authorization are inconsistent');
   }
   return Object.freeze(descriptor);
 };
@@ -121,18 +151,23 @@ const defineEntrypoint = <
 export const decodeTenantModuleEntrypoint = <Input>(input: Input): TenantModuleEntrypoint => {
   let descriptor: Schema.Schema.Type<typeof ModuleEntrypointSchema>;
   try {
-    descriptor = Schema.decodeUnknownSync(ModuleEntrypointSchema)({
+    descriptor = Schema.decodeUnknownSync(ModuleEntrypointSchema, { onExcessProperty: 'error' })({
       ...input,
       scope: 'tenant',
     });
   } catch {
     throw new TypeError('Module entrypoint identity is invalid');
   }
-  if (descriptor.scope !== 'tenant' || !roleAllowsAccess(descriptor.role, descriptor.access)) {
+  if (
+    descriptor.scope !== 'tenant' ||
+    !roleAllowsAccess(descriptor.role, descriptor.access) ||
+    !roleAllowsAuthorization(descriptor.role, descriptor.authorization)
+  ) {
     throw new TypeError('Module entrypoint role and access are inconsistent');
   }
   return Object.freeze({
     access: descriptor.access,
+    authorization: Object.freeze(descriptor.authorization),
     entrypointKey: descriptor.entrypointKey,
     moduleKey: descriptor.moduleKey,
     role: descriptor.role,

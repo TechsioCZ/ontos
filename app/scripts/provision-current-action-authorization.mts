@@ -11,6 +11,7 @@ import {
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationContext,
+  ActionAuthorizationProvisioningAction,
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
@@ -125,6 +126,14 @@ export const discoverCurrentActionKeys = async (
   workspaceRoot: string,
   deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
 ): Promise<readonly string[]> => {
+  const actions = await discoverCurrentActions(workspaceRoot, deriveContract);
+  return actions.map(({ actionKey }) => actionKey);
+};
+
+export const discoverCurrentActions = async (
+  workspaceRoot: string,
+  deriveContract: DeriveContract = deriveOntosModuleDeploymentContract,
+): Promise<readonly ActionAuthorizationProvisioningAction[]> => {
   try {
     const { ownership, topology } = await decodeRepositoryInventory(workspaceRoot);
     if (topology.verticals.length === 0 || coreActionCatalog.length === 0) {
@@ -161,16 +170,27 @@ export const discoverCurrentActionKeys = async (
       ) {
         throw new Error('A derived MicroVertical contract is incomplete');
       }
-      return contract.manifest.publicSurface.actions.map(({ actionKey }) => actionKey);
+      return contract.manifest.publicSurface.actions.map(({ actionKey, entrypoint }) => {
+        if (entrypoint.authorization.kind !== 'action_execution') {
+          throw new Error('A discovered Action has an incompatible authorization classification');
+        }
+        return { actionKey, provisioning: entrypoint.authorization.provisioning };
+      });
     });
-    const actionKeys = [
-      ...coreActionCatalog.map(({ actionKey }) => actionKey),
+    const actions = [
+      ...coreActionCatalog.map(({ actionKey, entrypoint }) => {
+        if (entrypoint.authorization.kind !== 'action_execution') {
+          throw new Error('A discovered Core Action has an incompatible classification');
+        }
+        return { actionKey, provisioning: entrypoint.authorization.provisioning };
+      }),
       ...verticalActionKeys,
-    ].toSorted((left, right) => left.localeCompare(right));
+    ].toSorted((left, right) => left.actionKey.localeCompare(right.actionKey));
+    const actionKeys = actions.map(({ actionKey }) => actionKey);
     if (actionKeys.length === 0 || new Set(actionKeys).size !== actionKeys.length) {
       throw new Error('Current Action discovery is empty or duplicated');
     }
-    return actionKeys;
+    return actions;
   } catch (error) {
     if (error instanceof ActionAuthorizationProvisioningError) {
       throw error;
@@ -238,7 +258,7 @@ export const runCurrentActionAuthorizationProvisioning = (
       ),
     );
     const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
-    const actionKeys = yield* Effect.tryPromise({
+    const actions = yield* Effect.tryPromise({
       catch: (error) =>
         error instanceof ActionAuthorizationProvisioningError
           ? error
@@ -246,11 +266,11 @@ export const runCurrentActionAuthorizationProvisioning = (
               'action_authorization_discovery_failed',
               'The complete current Action set could not be derived safely',
             ),
-      try: () => discoverCurrentActionKeys(workspaceRoot),
+      try: () => discoverCurrentActions(workspaceRoot),
     });
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
-      actionKeys,
+      actions,
       contexts: target.contexts,
     });
     return { ...result, environment: target.environment };

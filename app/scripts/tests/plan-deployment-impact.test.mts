@@ -4,7 +4,12 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { planDeploymentImpact } from '../plan-deployment-impact.mts';
+import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
+import {
+  planDeploymentImpact,
+  validateAuthorizationPromotionGate,
+} from '../plan-deployment-impact.mts';
+import type { AuthorizationPromotionGateInput } from '../plan-deployment-impact.mts';
 
 type FixtureOptions = {
   readonly includeContactOwner?: boolean;
@@ -115,6 +120,19 @@ test('plans current Contacts owner-local changes without a hard-coded owner regi
     assert.deepEqual(
       plan.phases.map((phase) => phase.id),
       ['contacts'],
+    );
+  });
+});
+
+test('orders authorization schema and replay migration before every affected consumer', async () => {
+  await withFixture((root) => {
+    const plan = planDeploymentImpact({
+      changedPaths: ['app/scripts/authorization/rollout-contract.mts'],
+      rootDirectory: root,
+    });
+    assert.deepEqual(
+      plan.phases.map(({ id }) => id),
+      ['migrator', 'spicedb', 'contacts', 'shell-super-app'],
     );
   });
 });
@@ -397,5 +415,137 @@ test('changing a topology identity changes the plan without editing planner sour
       assert.equal(plan.phases[0]?.serviceIdEnv, 'ZEROPS_RELATIONSHIPS_SERVICE_ID');
     },
     { verticalId: 'relationships' },
+  );
+});
+
+const promotionFixture = (): AuthorizationPromotionGateInput => {
+  const inventory = {
+    entries: [
+      {
+        authorization: { kind: 'public' as const },
+        deployment: 'contacts',
+        entrypointKey: 'contacts.route.home',
+        owner: 'contacts.core',
+        surface: 'route' as const,
+      },
+    ],
+    inventoryHash: 'a'.repeat(64),
+    schemaVersion: 1 as const,
+    sourceRevision: 'revision',
+  };
+  const impact = {
+    aggregates: [],
+    inventoryHash: inventory.inventoryHash,
+    observation: {
+      endedAt: '2026-09-10T00:00:00.000Z',
+      startedAt: '2026-09-02T00:00:00.000Z',
+    },
+    schemaVersion: 1 as const,
+    sourceRevision: inventory.sourceRevision,
+    totalWouldDeny: 0,
+  };
+  const negativeSmoke = {
+    environment: 'stage' as const,
+    inventoryHash: inventory.inventoryHash,
+    scenarios: [],
+    schemaVersion: 1 as const,
+    sourceRevision: inventory.sourceRevision,
+  };
+  return {
+    environment: 'stage',
+    impact,
+    inventory,
+    negativeSmoke,
+    nowEpochMs: Date.parse('2026-10-02T00:00:00.000Z'),
+    readiness: {
+      approvalReference: 'https://github.com/TechsioCZ/ontos/issues/169',
+      environment: 'stage',
+      fixedContextHash: 'b'.repeat(64),
+      impactReportHash: hashAuthorizationEvidence(impact),
+      inventoryHash: inventory.inventoryHash,
+      moduleStateVersion: 'module-state-v1',
+      negativeSmokeHash: hashAuthorizationEvidence(negativeSmoke),
+      observation: { ...impact.observation },
+      policyDataVersion: 'policy-v1',
+      replayMigrationHash: 'c'.repeat(64),
+      schemaVersion: 1,
+      sourceRevision: inventory.sourceRevision,
+      spiceDbSchemaHash: 'd'.repeat(64),
+      status: 'ready',
+      workerOwnershipVersion: 'worker-v1',
+    },
+    rollout: {
+      activatedAt: '2026-09-01T00:00:00.000Z',
+      baselineInventoryHash: inventory.inventoryHash,
+      baselineSourceRevision: inventory.sourceRevision,
+      compatibilityEligibleEntrypoints: [],
+      decisionReference: 'https://github.com/TechsioCZ/ontos/issues/169',
+      expiresAt: '2026-09-30T00:00:00.000Z',
+      mode: 'enforced',
+      schemaVersion: 1,
+    },
+  };
+};
+
+test('requires exact impact, readiness, and negative-smoke evidence for enforced promotion', () => {
+  assert.deepEqual(validateAuthorizationPromotionGate(promotionFixture()), {
+    environment: 'stage',
+    mode: 'enforced',
+    status: 'ready',
+  });
+  for (const changed of [
+    { impact: undefined },
+    { negativeSmoke: undefined },
+    { readiness: undefined },
+  ]) {
+    assert.throws(
+      () => validateAuthorizationPromotionGate({ ...promotionFixture(), ...changed }),
+      /requires impact/u,
+    );
+  }
+  const stale = promotionFixture();
+  assert.throws(
+    () =>
+      validateAuthorizationPromotionGate({
+        ...stale,
+        readiness: { ...stale.readiness!, inventoryHash: 'f'.repeat(64) },
+      }),
+    /stale, mismatched/u,
+  );
+});
+
+test('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
+  const enforced = promotionFixture();
+  const reportOnly = {
+    ...enforced,
+    impact: undefined,
+    negativeSmoke: undefined,
+    nowEpochMs: Date.parse('2026-09-10T00:00:00.000Z'),
+    readiness: undefined,
+    rollout: { ...enforced.rollout, mode: 'report_only' as const },
+  };
+  assert.equal(validateAuthorizationPromotionGate(reportOnly).status, 'observing');
+  assert.throws(
+    () => validateAuthorizationPromotionGate({ ...reportOnly, environment: 'production' }),
+    /production.*report-only/u,
+  );
+  assert.throws(
+    () =>
+      validateAuthorizationPromotionGate({
+        ...reportOnly,
+        nowEpochMs: Date.parse(reportOnly.rollout.expiresAt),
+      }),
+    /inactive or expired/u,
+  );
+  assert.throws(
+    () =>
+      validateAuthorizationPromotionGate({
+        ...reportOnly,
+        rollout: {
+          ...reportOnly.rollout,
+          compatibilityEligibleEntrypoints: ['contacts.route.new'],
+        },
+      }),
+    /unknown entrypoint/u,
   );
 });

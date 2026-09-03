@@ -78,6 +78,7 @@ test('registers the exact generated Contacts write contracts', async () => {
     assert.deepEqual(descriptor.domainEvents, {});
     assert.deepEqual(descriptor.entrypoint, {
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: descriptor.actionKey,
       moduleKey: 'contacts.core',
       role: 'action',

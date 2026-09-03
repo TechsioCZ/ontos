@@ -368,6 +368,7 @@ const registration = () =>
       },
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.change',
         moduleKey: 'core.shell',
         role: 'action',
@@ -565,6 +566,7 @@ test('fails business Actions closed before invocation, permission, Policy, or ha
         domainEvents: {},
         entrypoint: defineTenantModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: `inventory.stock.reserve-state-${index}`,
           moduleKey: 'inventory.stock',
           role: 'action',
@@ -628,6 +630,7 @@ test('distinguishes unavailable early checks and rolls back a denied locked rech
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve-locked',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -711,6 +714,7 @@ test('requires a declared tenant role independently from the Action executor rel
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'core.identity.tenant-authorized',
         moduleKey: 'core.identity',
         role: 'action',
@@ -778,6 +782,7 @@ test('persists a definite permission denial before returning it and never evalua
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.denied',
         moduleKey: 'core.shell',
         role: 'action',
@@ -938,6 +943,7 @@ test('evaluates Policies in order before running and hands allowed checkpoints t
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.policy-allowed',
         moduleKey: 'inventory.stock',
         role: 'action',
@@ -1013,6 +1019,7 @@ test('short-circuits the first Policy denial, finalizes it, and never starts exe
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.policy-denied',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1093,6 +1100,7 @@ test('sanitizes Policy defects and interrupts without finalizing', async () => {
         domainEvents: {},
         entrypoint: defineSystemModuleEntrypoint({
           access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
           entrypointKey: `shell.counter.policy-failure-${index}`,
           moduleKey: 'core.shell',
           role: 'action',
@@ -1150,6 +1158,7 @@ test('returns persistence failure when denial evidence cannot be finalized', asy
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.policy-persistence-failure',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1228,6 +1237,7 @@ test('evaluates Policies afresh for separate invocations', async () => {
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.fresh-policy',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1343,6 +1353,7 @@ test('preserves declared domain rejections and rolls back collected evidence', a
       },
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.reject',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1397,6 +1408,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.defect',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1432,6 +1444,7 @@ test('sanitizes unexpected defects and rejects invalid typed results', async () 
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.invalid-result',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1489,6 +1502,7 @@ test('sanitizes undeclared handler failures instead of widening the domain error
       domainEvents: {},
       entrypoint: defineSystemModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'shell.counter.undeclared-error',
         moduleKey: 'core.shell',
         role: 'action',
@@ -1712,6 +1726,7 @@ test('uses one runtime contract for Shell/Core and MicroVertical-shaped registra
       domainEvents: {},
       entrypoint: defineTenantModuleEntrypoint({
         access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
         entrypointKey: 'inventory.stock.reserve',
         moduleKey: 'inventory.stock',
         role: 'action',

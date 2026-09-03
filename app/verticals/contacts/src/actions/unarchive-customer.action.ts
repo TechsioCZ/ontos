@@ -82,6 +82,7 @@ export const unarchiveCustomerAction = defineAction(
     domainEvents: {},
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
       entrypointKey: 'contacts.core.unarchive-customer',
       moduleKey: 'contacts.core',
       role: 'action',
