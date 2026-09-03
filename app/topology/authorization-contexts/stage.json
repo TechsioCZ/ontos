@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "environment": "stage",
-  "approvalReference": "https://github.com/TechsioCZ/ontos/issues/169",
+  "approvalReference": "https://github.com/TechsioCZ/ontos/issues/173",
   "approvalStatus": "pending",
   "gatewayAudiences": ["contacts"],
   "minimumObservationSeconds": 604800,
