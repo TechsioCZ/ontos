@@ -2,7 +2,7 @@
 
 This document is the authoritative app-local implementation boundary for OntOS Commerce application surfaces. It applies with [MicroVertical Architecture](./MICROVERTICALS.md), [OntOS Module Manifests](./MODULE_MANIFESTS.md), [Module Entrypoints](./MODULE_ENTRYPOINTS.md), [Action Execution](./ACTIONS.md), [Outbox Workers](./OUTBOX_WORKERS.md), and [Deployment](./DEPLOYMENT.md).
 
-The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-application-boundaries.md).
+The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-application-boundaries.md). Canonical vocabulary is defined in [`docs/contexts/ontos/CONTEXT.md`](../../../docs/contexts/ontos/CONTEXT.md) and [`docs/contexts/commerce/CONTEXT.md`](../../../docs/contexts/commerce/CONTEXT.md).
 
 ## Application inventory
 
@@ -10,11 +10,11 @@ The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-appl
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Storefront Application**     | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts.  |
 | **Storefront-local BFF/proxy** | Deployed with one storefront. Holds its Storefront Client credential server-side, provides a same-origin browser edge, and performs presentation-oriented request shaping/aggregation. |
-| **Commerce Storefront API**    | Thin OntOS channel edge over public Commerce module contracts. Authenticates, authorizes, translates, aggregates bounded reads, and invokes governed Actions.                          |
+| **Commerce Storefront API**    | Thin OntOS channel edge over public Commerce module contracts. Authenticates, resolves trusted Commerce Purchasing Context, authorizes, translates, aggregates bounded reads, and invokes governed Actions. |
 | **Commerce Operations**        | Purpose-built staff application over published MicroVertical clients and governed entrypoints. Uses staff authentication; owns no canonical commerce facts.                            |
 | **Agentic Shopping Adapter**   | Future peer channel adapter over native Commerce contracts, for example MCP or UCP. It is not implemented by this decision.                                                            |
 
-Shell/Core remains business-neutral. Do not add commerce orchestration, portal account lifecycle, Storefront rendering, provider mapping, or Commerce Operations workflows to Shell/Core merely because several modules or channels need them.
+Shell/Core remains business-neutral. Do not add commerce orchestration, Commerce Portal Account lifecycle, Storefront rendering, provider mapping, or Commerce Operations workflows to Shell/Core merely because several modules or channels need them.
 
 ## Storefront request boundary
 
@@ -22,16 +22,16 @@ Every Storefront Application receives a distinct tenant-bound Storefront Client 
 
 The Commerce Storefront API independently validates:
 
-1. the Storefront Client and its Tenant/channel permissions; and
-2. either a Commerce Portal Account session/token for a retail or B2B Principal, or a bounded anonymous guest/cart context.
+1. the Storefront Client and its Tenant/Channel Permissions; and
+2. either a Commerce Portal Account session/token resolving to the required Retail Portal Principal or B2B Principal, or a bounded Guest Purchase Context.
 
-A Tenant, Storefront Client, Portal Account, Party Relationship, or Counterparty reference alone is not authorization. B2B requests require explicit Principal-to-Counterparty access. Anonymous context cannot read durable portal history or Counterparty-specific commercial facts.
+A Tenant, Storefront Client, Commerce Portal Account, Party Relationship, selected context, Commerce Customer Profile, or Counterparty ResourceRef alone is not authorization. B2B requests require the exact current Principal-to-Counterparty Commerce Access Permission. Guest Purchase Context cannot read durable portal history or Counterparty-specific commercial facts.
 
 The Commerce Storefront API may:
 
-- resolve trusted tenant, application, customer/guest, channel, locale, market, and correlation context;
-- authorize each requested read or Action;
-- translate a public channel contract;
+- resolve trusted Tenant, application, Commerce Purchasing Context or Guest Purchase Context, Channel, locale, market, and correlation context;
+- authorize each requested governed read or Action against its exact Principal, subject, Permission, and scope;
+- translate a public Channel contract;
 - aggregate bounded public reads while retaining provenance and typed partial degradation; and
 - invoke Actions only through the same generated/gateway path used by other callers.
 
@@ -40,7 +40,8 @@ It must not:
 - own canonical commerce tables or a duplicate read/write model presented as truth;
 - import owner registrations, repositories, handlers, migrations, private services, or private schemas;
 - execute shared cross-module database transactions or synchronous dual writes;
-- own durable workflow, retry, reconciliation, or provider state; or
+- own durable workflow, retry, reconciliation, or provider state;
+- infer customer identity or Permission from Contact Points, Party Relationships, selected context, or account state; or
 - become a universal BFF for staff, integrations, or future agents.
 
 ## Native contracts and Medusa compatibility
@@ -62,15 +63,17 @@ The facade cannot introduce a Medusa runtime, database schema, workflow engine, 
 
 Shell owns the staff BetterAuth realm described in [MicroVertical Architecture](./MICROVERTICALS.md): staff accounts, cookies, sessions, Tenant/Legal Entity selection, staff API keys, gateway assertions, and support impersonation.
 
-Commerce owns a separate BetterAuth realm for Portal Account registration and authentication. It has separate configuration, schema/migrations, cookies, session namespace, signing/secrets, origin, rate limits, account verification/recovery, and lifecycle. Portal accounts never enter the staff Auth schema or receive staff session semantics.
+Commerce owns a separate BetterAuth realm for Commerce Portal Account registration and authentication. It has separate configuration, schema/migrations, cookies, session namespace, signing/secrets, origin, rate limits, account verification/recovery, and lifecycle. Commerce Portal Accounts never enter the staff Auth schema or receive staff session semantics.
 
-Commerce maps a Portal Account through its owner-local binding/profile to a tenant-scoped Principal and stable Party/Counterparty ResourceRefs. Party Registry remains the shared identity owner; Commerce owns portal enrollment and commerce profiles. Publish non-secret lifecycle facts for authorized Contacts, support/ticketing, and analytics projections. Never emit credentials, tokens, cookies, password material, or unrestricted identity payloads.
+Commerce maps a Commerce Portal Account through owner-local bindings to a tenant-scoped Principal and stable Party/Counterparty ResourceRefs. Retail persistent capabilities additionally require an explicit Retail Portal Profile Binding; B2B capabilities require explicit Principal-to-Counterparty Commerce Access. Party Registry remains the shared identity owner; Commerce owns portal enrollment and contextual Commerce profiles. Publish only non-secret lifecycle facts for authorized Contacts, support/ticketing, and analytics projections. Never emit credentials, tokens, cookies, password material, claim secrets, or unrestricted identity payloads.
+
+Registration, matching Contact Points, Party correction/merge, account ownership, or selected context must never silently create a Retail Portal Profile Binding, claim a guest Order, or grant Counterparty Commerce Permission.
 
 ## Commerce Operations
 
-Commerce Operations is separate from Shell navigation/layout and from external Storefront Applications, but it uses the staff authentication boundary. It composes focused order, approval, fulfillment, claim, reconciliation, recovery, and Assisted Support workflows through published typed clients and governed entrypoints.
+Commerce Operations is separate from Shell navigation/layout and from external Storefront Applications, but it uses the staff authentication boundary. It composes focused Order, Purchasing Approval, Fulfillment, Claim, reconciliation, recovery, and Assisted Support workflows through published typed clients and governed entrypoints.
 
-It must preserve owner-local validation, permission, policy, Action, audit, evidence, and failure semantics. It cannot directly edit module tables, import private implementation, bypass module state/dependency closure, silently impersonate a Portal Account, or become a second orchestration/fact owner.
+It must preserve owner-local validation, Permission, Business Policy, Action, audit, evidence, and failure semantics. It cannot directly edit module tables, import private implementation, bypass module state/dependency closure, silently impersonate a Commerce Portal Account or customer Principal, or become a second orchestration/fact owner.
 
 ## Customer Configuration and implementations
 
@@ -84,11 +87,11 @@ Two implementations may share `moduleId` only while public semantics and compati
 
 This identity/selection model is accepted target architecture. The current generated manifest and Installed Module Catalog do not yet implement `implementationId`; they support one implicit `standard` implementation per `moduleId`. Do not hand-author fields or customer branches as a substitute. Extend Codesmith, Effect Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution, and tests as one change before adding an alternative.
 
-Prefer shared behavior plus policy. Add an implementation alternative only when an ordinary reusable capability cannot express the required behavior without distorting its contract. Never patch an implementation per customer under the same identity, and never move the exception into Shell/Core.
+Prefer shared behavior plus Business Policy. Add an implementation alternative only when an ordinary reusable capability cannot express the required behavior without distorting its contract. Never patch an implementation per customer under the same identity, and never move the exception into Shell/Core.
 
 ## Delivery and external systems
 
-Customers do not pin whole-product release lines. OntOS controls continuous mainline promotion of immutable artifacts. Contract compatibility, expand/deploy/contract sequencing, tenant/client canaries, exact revision evidence, and rollback remain mandatory.
+Customers do not pin whole-product release lines. OntOS controls continuous mainline promotion of immutable artifacts. Contract compatibility, expand/deploy/contract sequencing, Tenant/client canaries, exact revision evidence, and rollback remain mandatory.
 
 For each External Business System and fact family, configure exactly one Integration Route: One-time Migration, Symmy Route, or Direct Provider Route. Symmy is preferred where it supplies the required business-system integration; owner-local Direct Provider Adapters cover provider families outside Symmy or missing routes. Module-owned workers retain durable delivery, mapping, retry, reconciliation, and evidence. No route becomes a universal gateway or fact owner.
 
@@ -96,13 +99,17 @@ For each External Business System and fact family, configure exactly one Integra
 
 Before production activation, prove:
 
-- Storefront Client credentials are server-held, rotatable, tenant-bound, and isolated per frontend;
-- application identity and portal/guest identity are independently validated and audited;
-- staff and portal realms cannot share accounts, cookies, sessions, origins, or bindings accidentally;
-- anonymous, B2C, B2B buyer/approver/admin, and Assisted Support permissions fail closed;
+- Storefront Client credentials are server-held, rotatable, Tenant-bound, and isolated per frontend;
+- application identity and Commerce Portal Account/Guest identity are independently validated and audited;
+- staff and Commerce Portal Account realms cannot share accounts, cookies, sessions, origins, or bindings accidentally;
+- Retail Portal Profile Binding and Principal-to-Counterparty Commerce Access cannot be inferred from registration, Contact Points, Party Relationships, or selected context;
+- Guest Order visibility cannot be claimed automatically by registration or identity similarity;
+- Guest, B2C, Counterparty Buyer/Approver/Access Administrator, narrower Counterparty Permissions, and Assisted Support checks fail closed;
+- Purchase Approval Requests require both current Counterparty Approver Permission and current Approval Route eligibility;
+- approved Purchase Proposal Revisions cannot bypass Approval Revalidation or Order Commitment Gate;
 - the Medusa facade matches its declared subset and native clients do not depend on it accidentally;
 - dependency failures produce typed partial degradation without unrelated outage;
 - Customer Configuration resolves one permitted, healthy implementation for every selected contract;
 - contract/build skew is rejected and canary/rollback identifies exact artifacts;
-- Party/Counterparty linking and lifecycle events contain no credentials or cross-tenant leakage; and
+- Party/Counterparty linking and lifecycle events contain no credentials or cross-Tenant leakage; and
 - every Integration Route demonstrates idempotency, retry, reconciliation, observability, and recovery.
