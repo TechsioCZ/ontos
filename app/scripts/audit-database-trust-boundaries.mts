@@ -90,6 +90,7 @@ interface TrustedContextEvidence {
 }
 
 export interface DatabaseTargetIdentity {
+  readonly clusterSystemIdentifier: string;
   readonly database: string;
   readonly serverAddress: string | null;
   readonly serverPort: number | null;
@@ -163,6 +164,7 @@ export const assertSameDatabaseTarget = (
 ): void => {
   if (
     administrative.database !== runtime.database ||
+    administrative.clusterSystemIdentifier !== runtime.clusterSystemIdentifier ||
     administrative.serverAddress !== runtime.serverAddress ||
     administrative.serverPort !== runtime.serverPort
   ) {
@@ -331,6 +333,7 @@ interface MembershipRow {
 }
 
 interface DatabaseTargetRow {
+  readonly cluster_system_identifier: string;
   readonly database: string;
   readonly server_address: string | null;
   readonly server_port: number | null;
@@ -421,8 +424,10 @@ const collectSnapshot = async (
 ): Promise<DatabaseTrustBoundarySnapshot> => {
   const targetQuery = `select
     current_database() as database,
+    control.system_identifier::text as cluster_system_identifier,
     inet_server_addr()::text as server_address,
-    inet_server_port() as server_port`;
+    inet_server_port() as server_port
+    from pg_catalog.pg_control_system() as control`;
   const [administrativeTarget, runtimeTarget] = await Promise.all([
     admin.query<DatabaseTargetRow>(targetQuery),
     runtime.query<DatabaseTargetRow>(targetQuery),
@@ -434,11 +439,13 @@ const collectSnapshot = async (
   }
   assertSameDatabaseTarget(
     {
+      clusterSystemIdentifier: administrativeTargetRow.cluster_system_identifier,
       database: administrativeTargetRow.database,
       serverAddress: administrativeTargetRow.server_address,
       serverPort: administrativeTargetRow.server_port,
     },
     {
+      clusterSystemIdentifier: runtimeTargetRow.cluster_system_identifier,
       database: runtimeTargetRow.database,
       serverAddress: runtimeTargetRow.server_address,
       serverPort: runtimeTargetRow.server_port,

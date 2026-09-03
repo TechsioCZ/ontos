@@ -288,7 +288,12 @@ test('classifies every assumable role and escalates schema or cluster authority'
 });
 
 test('rejects evidence collected from different servers or databases', () => {
-  const target = { database: 'ontos', serverAddress: '10.0.0.1', serverPort: 5432 };
+  const target = {
+    clusterSystemIdentifier: '7612345678901234567',
+    database: 'ontos',
+    serverAddress: '10.0.0.1',
+    serverPort: 5432,
+  };
 
   assert.doesNotThrow(() => assertSameDatabaseTarget(target, { ...target }));
   assert.throws(
@@ -297,6 +302,19 @@ test('rejects evidence collected from different servers or databases', () => {
   );
   assert.throws(
     () => assertSameDatabaseTarget(target, { ...target, serverAddress: '10.0.0.2' }),
+    /same PostgreSQL server and database/u,
+  );
+  assert.throws(
+    () =>
+      assertSameDatabaseTarget(
+        { ...target, serverAddress: null, serverPort: null },
+        {
+          ...target,
+          clusterSystemIdentifier: '7699999999999999999',
+          serverAddress: null,
+          serverPort: null,
+        },
+      ),
     /same PostgreSQL server and database/u,
   );
 });

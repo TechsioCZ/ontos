@@ -24,11 +24,13 @@ It writes `.codex/reports/database/database-trust-boundary.json`. The report is 
 ignored because it describes the database being inspected. It includes role names, effective
 privileges, direct/`PUBLIC`/inherited/assumable default ACL sources, ownership, RLS flags, and
 finding codes, but no URL, password, secret, tenant ID, or legal-entity ID. The command rejects an
-admin/runtime pair that resolves to different PostgreSQL servers or databases. Its pure report
-uses `null` schema for a global default ACL. It evaluates PostgreSQL's built-in global defaults even
-when `pg_default_acl` has no stored row, includes column-level DML, and classifies tables,
-partitioned tables, views, materialized views, and foreign tables. Its pure report builder and target
-validator are covered by `scripts/tests/audit-database-trust-boundaries.test.mts`.
+admin/runtime pair that resolves to a different PostgreSQL cluster system identifier, server
+endpoint, or database. The cluster identifier also disambiguates Unix-socket connections, whose
+network address and port are both null. Its pure report uses `null` schema for a global default ACL.
+It evaluates PostgreSQL's built-in global defaults even when `pg_default_acl` has no stored row,
+includes column-level DML, and classifies tables, partitioned tables, views, materialized views, and
+foreign tables. Its pure report builder and target validator are covered by
+`scripts/tests/audit-database-trust-boundaries.test.mts`.
 
 ## Reproduced local baseline
 
