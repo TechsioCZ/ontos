@@ -191,6 +191,7 @@ jobs:
       - name: Build Node deployment artifacts
         working-directory: app
         env:
+          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm build
@@ -199,6 +200,7 @@ jobs:
         working-directory: app
         env:
           DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof
+          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm node:proof
@@ -234,6 +236,7 @@ jobs:
       - name: Build and prove Cloudflare/workerd artifacts
         working-directory: app
         env:
+          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_CONTACTS: https://contacts.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
