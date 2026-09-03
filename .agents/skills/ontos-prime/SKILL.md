@@ -1,59 +1,59 @@
 ---
 name: ontos-prime
-description: Prime Codex for focused OntOS work by loading repository instructions, source-owned workspace facts, only the product contexts and implementation guides triggered by the task, and current Git state. Use for onboarding or before planning or implementation when context is not fresh.
+description: Prime Codex for work in the OntOS application by reading repository instructions, the project overview, required architecture guidance, toolchain sources, and worktree state, then summarizing the codebase. Use when the user asks to prime, onboard, or understand OntOS, or before OntOS planning or implementation when project context is not fresh.
 ---
 
-# Prime OntOS
+# Prime
 
-Prime without modifying the repository, installing dependencies, starting services, running
-builds or tests, or performing Git hosting operations.
+> Execute the following sections to understand the codebase, then summarize your understanding.
 
-## 1. Establish the checkout
+## Project Root
 
-Work from `app/` and run:
+Work from the `app/` directory inside the OntOS repository. Treat `app/` as the application root even though the Git repository root is its parent.
 
-```sh
+## Run
+
+```bash
 pwd
 git status --short
-git branch --show-current
-git log --oneline --decorate -n 8
-git rev-parse --verify main
 ```
 
-Treat `main` as the canonical comparison and pull-request base. Report material divergence and
-preserve pre-existing changes.
+Do not dump the full tracked file list into context. Inspect `package.json` and `pnpm-workspace.yaml` to understand workspace packages, scripts, and the repository-managed toolchain. Inspect additional directory listings only when they clarify the application structure.
 
-## 2. Read the fixed entrypoints
+## Read
 
-Read:
+Read these files:
 
 - `../AGENTS.md`
 - `AGENTS.md`
 - `README.md`
 - `DEVELOPMENT.md`
-- `package.json`
-- `pnpm-workspace.yaml`
 
-These files route the rest of the investigation and own scripts, workspace layout, and toolchain
-pointers. Do not dump `git ls-files` into context.
+Use the routing table in `README.md` to read only the implementation document relevant to the
+upcoming task. Use `../CONTEXT-MAP.md` to select only the product contexts materially relevant to the
+upcoming task; this is usually one context, but cross-domain work may require several. Open an ADR
+only when the task or current guidance points to that decision. Do not bulk-read `../docs/`, `docs/`,
+or completed specifications.
 
-## 3. Follow only matching branches
+## Instructions
 
-- Read a specification only when the task or GitHub issue names it.
-- Use `../CONTEXT-MAP.md`; open every context row whose trigger materially matches the task, which
-  may be more than one for a cross-domain decision.
-- Use the routing table in `README.md`; open only implementation guides that govern the intended
-  files or behavior.
-- Inspect source, tests, topology, generated contracts, or dependency manifests only to resolve a
-  concrete relationship needed for the task.
-- Do not bulk-read `../docs/`, `docs/`, `specs/`, completed plans, or historical evidence.
+- Identify the shell application, MicroVerticals, shared packages, topology, generators, tests, and validation commands.
+- Treat `main` as the canonical development and pull-request base. Report when the current branch
+  is behind, ahead of, or diverged from `main` in a way that affects the requested work.
+- Preserve the strict deployment seams between MicroVerticals and the generated Effect BFF seam inside each MicroVertical.
+- Note that every state change must use a typed Action and every expected failure must remain a declared typed Effect error.
+- Note the mandatory Codesmith generators from `README.md`. Generated output is the required starting point for supported business file types.
+- Run pnpm commands from `app/` as `mise exec -- pnpm <command>`.
+- Keep the investigation focused. Read more source only to resolve an important architectural relationship or prepare for the supplied task.
 
-## 4. Report
+## Report
 
 Summarize:
 
-- application shape and boundaries relevant to the task;
-- source-owned commands, validation, and generator entrypoints;
-- non-negotiable rules from the selected authorities;
-- branch and worktree state, including pre-existing changes;
-- unresolved facts that could change planning or implementation.
+- the application shape and important boundaries;
+- the development, testing, and validation commands;
+- the non-negotiable architecture and generator rules;
+- the current worktree state, including pre-existing changes;
+- uncertainties that could affect subsequent planning or implementation.
+
+Do not modify files, install dependencies, start services, run builds or tests, or perform Git hosting operations while priming.
