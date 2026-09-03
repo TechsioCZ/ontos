@@ -1,9 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assertSameDatabaseTarget,
   buildDatabaseTrustBoundaryReport,
   type DatabaseTrustBoundarySnapshot,
 } from '../audit-database-trust-boundaries.mts';
+
+const ordinaryRole = {
+  bypassRls: false,
+  canCreateDatabases: false,
+  canCreateRoles: false,
+  canLogin: true,
+  inherit: false,
+  replication: false,
+  superuser: false,
+};
 
 const snapshot = {
   administrativeRole: 'ontos_admin',
@@ -11,30 +22,26 @@ const snapshot = {
   databasePrivileges: { connect: true, create: false, temporary: true },
   defaultPrivileges: [
     {
+      grantee: 'ontos_runtime',
       grantable: false,
       objectType: 'sequence',
       owner: 'ontos_admin',
       privilege: 'USAGE',
       schema: 'contacts',
+      source: 'direct',
     },
     {
+      grantee: 'PUBLIC',
       grantable: false,
       objectType: 'table',
       owner: 'ontos_admin',
       privilege: 'SELECT',
       schema: 'auth',
+      source: 'public',
     },
   ],
   memberships: [],
-  role: {
-    bypassRls: false,
-    canCreateDatabases: false,
-    canCreateRoles: false,
-    canLogin: true,
-    inherit: false,
-    replication: false,
-    superuser: false,
-  },
+  role: ordinaryRole,
   runtimeRole: 'ontos_runtime',
   schemas: [
     { create: false, owner: 'ontos_admin', schema: 'contacts', usage: true },
@@ -124,6 +131,10 @@ test('builds deterministic current-state evidence and identifies the material tr
     ['auth.user', 'contacts.customers', 'core.tenants'],
   );
   assert.deepEqual(
+    report.defaultPrivileges.map(({ grantee, schema, source }) => `${source}:${grantee}:${schema}`),
+    ['public:PUBLIC:auth', 'direct:ontos_runtime:contacts'],
+  );
+  assert.deepEqual(
     report.findings.map(({ code, severity }) => `${severity}:${code}`),
     ['high:runtime_role_can_forge_trusted_context', 'high:runtime_role_has_cross_owner_dml'],
   );
@@ -142,11 +153,22 @@ test('builds deterministic current-state evidence and identifies the material tr
 test('reports privilege escalation paths without embedding credentials or context values', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
-    memberships: [{ canSetRole: true, role: 'ontos_admin' }],
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        dmlSchemas: [],
+        ownedSchemas: [],
+        role: 'ontos_admin',
+      },
+    ],
     role: { ...snapshot.role, bypassRls: true },
-    schemas: snapshot.schemas.map((schema) =>
-      schema.schema === 'contacts' ? { ...schema, create: true } : schema,
-    ),
+    schemas: [
+      ...snapshot.schemas,
+      { create: true, owner: 'empty_owner', schema: 'empty', usage: true },
+    ],
   });
 
   assert.deepEqual(
@@ -154,12 +176,62 @@ test('reports privilege escalation paths without embedding credentials or contex
     [
       'runtime_role_is_privileged',
       'runtime_role_can_assume_administrative_role',
-      'runtime_role_can_create_in_application_schema',
+      'runtime_role_can_create_in_non_system_schema',
       'runtime_role_can_forge_trusted_context',
       'runtime_role_has_cross_owner_dml',
     ],
   );
   assert.doesNotMatch(JSON.stringify(report), /postgresql:|password|secret|tenant-id|entity-id/iu);
+});
+
+test('classifies every assumable role and escalates schema or cluster authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canSetRole: true,
+        createSchemas: ['private'],
+        databaseCreate: false,
+        dmlSchemas: ['private'],
+        ownedSchemas: ['private'],
+        role: 'schema_owner',
+      },
+      {
+        attributes: ordinaryRole,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        dmlSchemas: [],
+        ownedSchemas: [],
+        role: 'report_reader',
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    [
+      'runtime_role_can_assume_privileged_role',
+      'runtime_role_can_assume_other_role',
+      'runtime_role_can_forge_trusted_context',
+      'runtime_role_has_cross_owner_dml',
+    ],
+  );
+});
+
+test('rejects evidence collected from different servers or databases', () => {
+  const target = { database: 'ontos', serverAddress: '10.0.0.1', serverPort: 5432 };
+
+  assert.doesNotThrow(() => assertSameDatabaseTarget(target, { ...target }));
+  assert.throws(
+    () => assertSameDatabaseTarget(target, { ...target, database: 'other' }),
+    /same PostgreSQL server and database/u,
+  );
+  assert.throws(
+    () => assertSameDatabaseTarget(target, { ...target, serverAddress: '10.0.0.2' }),
+    /same PostgreSQL server and database/u,
+  );
 });
 
 test('treats transaction-local context retention as a critical boundary failure', () => {
