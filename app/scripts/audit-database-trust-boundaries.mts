@@ -20,7 +20,7 @@ interface DefaultPrivilege {
   readonly objectType: string;
   readonly owner: string;
   readonly privilege: string;
-  readonly schema: string;
+  readonly schema: string | null;
   readonly source: 'assumable' | 'direct' | 'inherited' | 'public';
 }
 
@@ -112,8 +112,8 @@ interface DatabaseTrustBoundaryFinding {
     | 'runtime_role_can_assume_administrative_role'
     | 'runtime_role_can_assume_other_role'
     | 'runtime_role_can_assume_privileged_role'
-    | 'runtime_role_can_create_in_non_system_schema'
     | 'runtime_role_can_forge_trusted_context'
+    | 'runtime_role_has_ddl_authority'
     | 'runtime_role_has_cross_owner_dml'
     | 'runtime_role_is_privileged'
     | 'trusted_context_survives_transaction';
@@ -186,7 +186,7 @@ export const buildDatabaseTrustBoundaryReport = (
   );
   const defaultPrivileges = [...snapshot.defaultPrivileges].toSorted(
     (left, right) =>
-      left.schema.localeCompare(right.schema) ||
+      (left.schema ?? '').localeCompare(right.schema ?? '') ||
       left.objectType.localeCompare(right.objectType) ||
       left.grantee.localeCompare(right.grantee) ||
       left.privilege.localeCompare(right.privilege),
@@ -240,10 +240,11 @@ export const buildDatabaseTrustBoundaryReport = (
       severity: 'high',
     });
   }
-  if (schemas.some(({ create }) => create)) {
+  if (snapshot.databasePrivileges.create || schemas.some(({ create }) => create)) {
     findings.push({
-      code: 'runtime_role_can_create_in_non_system_schema',
-      evidence: 'The runtime role has CREATE on at least one audited non-system schema.',
+      code: 'runtime_role_has_ddl_authority',
+      evidence:
+        'The runtime role has database-level CREATE or CREATE on an audited non-system schema.',
       severity: 'high',
     });
   }
@@ -373,7 +374,7 @@ interface DefaultPrivilegeRow {
   readonly object_type: string;
   readonly owner: string;
   readonly privilege: string;
-  readonly schema: string;
+  readonly schema: string | null;
   readonly source: 'assumable' | 'direct' | 'inherited' | 'public';
 }
 
@@ -583,11 +584,11 @@ const collectSnapshot = async (
        acl.privilege_type as privilege,
        acl.is_grantable as grantable
      from pg_catalog.pg_default_acl as defaults
-     join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+     left join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
      join pg_catalog.pg_roles as owner on owner.oid = defaults.defaclrole
      cross join lateral aclexplode(defaults.defaclacl) as acl
      left join pg_catalog.pg_roles as grantee on grantee.oid = acl.grantee
-     where namespace.nspname = any($2::text[])
+     where (defaults.defaclnamespace = 0 or namespace.nspname = any($2::text[]))
        and (
          acl.grantee = 0
          or grantee.rolname = $1

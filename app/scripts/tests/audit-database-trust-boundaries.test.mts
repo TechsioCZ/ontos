@@ -22,6 +22,15 @@ const snapshot = {
   databasePrivileges: { connect: true, create: false, temporary: true },
   defaultPrivileges: [
     {
+      grantee: 'analytics_reader',
+      grantable: false,
+      objectType: 'function',
+      owner: 'ontos_admin',
+      privilege: 'EXECUTE',
+      schema: null,
+      source: 'inherited',
+    },
+    {
       grantee: 'ontos_runtime',
       grantable: false,
       objectType: 'sequence',
@@ -132,7 +141,7 @@ test('builds deterministic current-state evidence and identifies the material tr
   );
   assert.deepEqual(
     report.defaultPrivileges.map(({ grantee, schema, source }) => `${source}:${grantee}:${schema}`),
-    ['public:PUBLIC:auth', 'direct:ontos_runtime:contacts'],
+    ['inherited:analytics_reader:null', 'public:PUBLIC:auth', 'direct:ontos_runtime:contacts'],
   );
   assert.deepEqual(
     report.findings.map(({ code, severity }) => `${severity}:${code}`),
@@ -140,7 +149,7 @@ test('builds deterministic current-state evidence and identifies the material tr
   );
   assert.deepEqual(report.summary, {
     auditedSchemaCount: 3,
-    defaultPrivilegeCount: 2,
+    defaultPrivilegeCount: 3,
     dmlSchemaCount: 3,
     dmlTableCount: 3,
     findingCount: 2,
@@ -176,12 +185,30 @@ test('reports privilege escalation paths without embedding credentials or contex
     [
       'runtime_role_is_privileged',
       'runtime_role_can_assume_administrative_role',
-      'runtime_role_can_create_in_non_system_schema',
+      'runtime_role_has_ddl_authority',
       'runtime_role_can_forge_trusted_context',
       'runtime_role_has_cross_owner_dml',
     ],
   );
   assert.doesNotMatch(JSON.stringify(report), /postgresql:|password|secret|tenant-id|entity-id/iu);
+});
+
+test('flags database-level CREATE even when no existing schema is writable', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    databasePrivileges: { ...snapshot.databasePrivileges, create: true },
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
 });
 
 test('classifies every assumable role and escalates schema or cluster authority', () => {
