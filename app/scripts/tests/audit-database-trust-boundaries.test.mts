@@ -546,6 +546,25 @@ test('flags selectable privileged owner-context views but accepts security invok
   );
   assert.equal(ownerContextReport.summary.privilegedOwnerViewCount, 1);
 
+  const writableOwnerContextReport = buildDatabaseTrustBoundaryReport({
+    ...base,
+    tables: [
+      {
+        ...ownerContextView,
+        privileges: {
+          ...ownerContextView.privileges,
+          select: false,
+          update: true,
+        },
+      },
+    ],
+  });
+  assert.deepEqual(
+    writableOwnerContextReport.findings.map(({ code }) => code),
+    ['runtime_role_can_select_privileged_owner_view'],
+  );
+  assert.equal(writableOwnerContextReport.summary.privilegedOwnerViewCount, 1);
+
   const invokerReport = buildDatabaseTrustBoundaryReport({
     ...base,
     tables: [{ ...ownerContextView, securityInvoker: true }],
@@ -610,6 +629,24 @@ test('flags ownership of an audited relation as DDL authority', () => {
   });
 
   assert.equal(report.tables[0]?.kind, 'materialized-view');
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+});
+
+test('flags ownership of an otherwise non-writable schema as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    schemas: [{ create: false, owner: snapshot.runtimeRole, schema: 'runtime_owned' }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
   assert.deepEqual(
     report.findings.map(({ code }) => code),
     ['runtime_role_has_ddl_authority'],
@@ -1333,6 +1370,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   );
   assert.equal(source.match(/stored_expression\.binding !~ '\^column-default:'/gu)?.length, 2);
   assert.equal(source.match(/from pg_catalog\.pg_event_trigger as event_trigger/gu)?.length, 2);
+  assert.match(source, /join pg_catalog\.pg_extension as extension/u);
+  assert.match(source, /join pg_catalog\.pg_foreign_data_wrapper as foreign_data_wrapper/u);
+  assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
   assert.equal(source.match(/event_trigger\.evttags is null/gu)?.length, 4);
   assert.equal(source.match(/audited_trigger\.tgtype & 1 <> 0/gu)?.length, 4);
   assert.match(
