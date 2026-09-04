@@ -280,9 +280,12 @@ export const buildDatabaseTrustBoundaryReport = (
   const defaultPrivileges = [...snapshot.defaultPrivileges].toSorted(
     (left, right) =>
       compareText(left.schema ?? '', right.schema ?? '') ||
+      compareText(left.owner, right.owner) ||
       compareText(left.objectType, right.objectType) ||
       compareText(left.grantee, right.grantee) ||
-      compareText(left.privilege, right.privilege),
+      compareText(left.privilege, right.privilege) ||
+      compareText(left.source, right.source) ||
+      Number(left.grantable) - Number(right.grantable),
   );
   const memberships = [...snapshot.memberships].toSorted((left, right) =>
     compareText(left.role, right.role),
@@ -807,6 +810,7 @@ const collectSnapshot = async (
            and namespace.nspname <> 'information_schema'
            and routine.prosecdef
            and routine.proowner <> candidate.oid
+           and has_schema_privilege(candidate.oid, namespace.oid, 'USAGE')
            and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
          order by namespace.nspname, routine.proname, routine.oid
        ) as security_definer_routines
@@ -857,7 +861,10 @@ const collectSnapshot = async (
        end as kind,
        owner.rolname as owner,
        routine.prosecdef as security_definer,
-       has_function_privilege($1, routine.oid, 'EXECUTE') as executable
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_function_privilege($1, routine.oid, 'EXECUTE')
+       ) as executable
      from pg_catalog.pg_proc as routine
      join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
      join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
@@ -1075,7 +1082,14 @@ const collectSnapshot = async (
          or pg_has_role($1, grantee.oid, 'USAGE')
          or pg_has_role($1, grantee.oid, 'SET')
          or grantee.oid in (select role_oid from administrable_roles)
-     order by expanded.schema nulls first, object_type, grantee, privilege`,
+     order by
+       expanded.schema nulls first,
+       expanded.owner,
+       object_type,
+       grantee,
+       privilege,
+       source,
+       grantable`,
     [runtimeRole, schemaNames, administrativeRole],
   );
   const tenant = await probeSetting(

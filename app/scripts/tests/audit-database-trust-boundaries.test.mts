@@ -192,6 +192,29 @@ test('orders audit evidence by code units rather than locale collation', () => {
   );
 });
 
+test('totally orders default privileges from distinct creator roles', () => {
+  const sharedPrivilege = {
+    grantee: 'PUBLIC',
+    grantable: false,
+    objectType: 'function',
+    privilege: 'EXECUTE',
+    schema: null,
+    source: 'public' as const,
+  };
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    defaultPrivileges: [
+      { ...sharedPrivilege, owner: 'zeta_owner' },
+      { ...sharedPrivilege, owner: 'alpha_owner' },
+    ],
+  });
+
+  assert.deepEqual(
+    report.defaultPrivileges.map(({ owner }) => owner),
+    ['alpha_owner', 'zeta_owner'],
+  );
+});
+
 test('extracts typed audit failures from an Effect cause', () => {
   const reason = 'DATABASE_ADMIN_URL and DATABASE_URL must use distinct roles';
 
