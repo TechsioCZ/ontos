@@ -891,7 +891,38 @@ export const reachableRolesCte = `reachable_roles(role_oid) as (
   where membership.admin_option or membership.set_option
 )`;
 
-export const storedExpressionDependenciesCte = `relation_invocation_paths(invocation_oid, dependency_oid) as (
+export const storedExpressionDependenciesCte = `policy_routine_dependencies(
+  policy_oid,
+  routine_oid,
+  used_by_using,
+  used_by_with_check
+) as (
+  select
+    policy.oid,
+    dependency.refobjid,
+    position(
+      format(':funcid %s ', dependency.refobjid)
+      in coalesce(policy.polqual::text, '')
+    ) > 0,
+    position(
+      format(':funcid %s ', dependency.refobjid)
+      in coalesce(policy.polwithcheck::text, '')
+    ) > 0
+    or (
+      policy.polwithcheck is null
+      and position(
+        format(':funcid %s ', dependency.refobjid)
+        in coalesce(policy.polqual::text, '')
+      ) > 0
+    )
+  from pg_catalog.pg_policy as policy
+  join pg_catalog.pg_depend as dependency
+    on dependency.classid = 'pg_catalog.pg_policy'::regclass
+   and dependency.objid = policy.oid
+   and dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and dependency.deptype = 'n'
+),
+relation_invocation_paths(invocation_oid, dependency_oid) as (
   select relation.oid, relation.oid
   from pg_catalog.pg_class as relation
   join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -986,6 +1017,59 @@ view_access_paths(invocation_oid, affected_oid, effective_owner_oid) as (
    and dependency.refclassid = 'pg_catalog.pg_class'::regclass
    and dependency.deptype = 'n'
   where dependency.refobjid <> nested_view.oid
+),
+direct_view_access_columns(
+  invocation_oid,
+  affected_oid,
+  invocation_attnum,
+  affected_attnum
+) as (
+  select distinct
+    view_relation.oid,
+    target.fields[2]::oid,
+    target.fields[1]::smallint,
+    target.fields[3]::smallint
+  from pg_catalog.pg_class as view_relation
+  join pg_catalog.pg_namespace as namespace on namespace.oid = view_relation.relnamespace
+  join pg_catalog.pg_rewrite as rewrite
+    on rewrite.ev_class = view_relation.oid
+   and rewrite.rulename = '_RETURN'
+  cross join lateral unnest(
+    string_to_array(
+      split_part(
+        (string_to_array(rewrite.ev_action::text, ':targetList ('))[
+          cardinality(string_to_array(rewrite.ev_action::text, ':targetList ('))
+        ],
+        ':override',
+        1
+      ),
+      '{TARGETENTRY'
+    )
+  ) as entry(value)
+  cross join lateral regexp_match(
+    entry.value,
+    ':resno ([1-9][0-9]*).*:resorigtbl ([1-9][0-9]*) :resorigcol ([1-9][0-9]*).*:resjunk false'
+  ) as target(fields)
+  join pg_catalog.pg_class as affected_view
+    on affected_view.oid = target.fields[2]::oid
+   and affected_view.relkind = 'v'
+  where view_relation.relkind = 'v'
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+),
+view_access_columns(invocation_oid, affected_oid, invocation_attnum, affected_attnum) as (
+  select *
+  from direct_view_access_columns
+  union
+  select
+    path.invocation_oid,
+    nested.affected_oid,
+    path.invocation_attnum,
+    nested.affected_attnum
+  from view_access_columns as path
+  join direct_view_access_columns as nested
+    on nested.invocation_oid = path.affected_oid
+   and nested.invocation_attnum = path.affected_attnum
 ),
 writable_view_rewrites(view_oid, affected_oid, actions, target_list, effective_owner_oid) as (
   select
@@ -1198,7 +1282,8 @@ stored_expression_dependencies(
   routine_oid,
   binding,
   selectable,
-  update_columns
+  update_columns,
+  select_columns
 ) as (
   select
     invocation.invocation_oid,
@@ -1229,7 +1314,8 @@ stored_expression_dependencies(
           and column_dependency.refobjsubid > 0
         order by column_dependency.refobjsubid::smallint
       )
-    end
+    end,
+    array[]::smallint[]
   from pg_catalog.pg_attrdef as expression
   join relation_invocation_paths as invocation on invocation.dependency_oid = expression.adrelid
   join pg_catalog.pg_attribute as attribute
@@ -1253,6 +1339,7 @@ stored_expression_dependencies(
     routine_dependency.refobjid,
     format('check-constraint:%I', expression.conname),
     false,
+    array[]::smallint[],
     array[]::smallint[]
   from pg_catalog.pg_constraint as expression
   join relation_invocation_paths as invocation on invocation.dependency_oid = expression.conrelid
@@ -1279,7 +1366,8 @@ stored_expression_dependencies(
       expression.conname
     ),
     false,
-    array[attribute.attnum]
+    array[attribute.attnum],
+    array[]::smallint[]
   from pg_catalog.pg_constraint as expression
   join pg_catalog.pg_type as domain_type on domain_type.oid = expression.contypid
   join pg_catalog.pg_namespace as domain_namespace
@@ -1316,7 +1404,8 @@ stored_expression_dependencies(
         and column_dependency.refobjid = stored_index.indrelid
         and column_dependency.refobjsubid > 0
       order by column_dependency.refobjsubid::smallint
-    )
+    ),
+    array[]::smallint[]
   from pg_catalog.pg_index as stored_index
   join relation_invocation_paths as invocation on invocation.dependency_oid = stored_index.indrelid
   join pg_catalog.pg_class as index_relation on index_relation.oid = stored_index.indexrelid
@@ -1346,6 +1435,7 @@ stored_expression_dependencies(
       expression.rulename
     ),
     false,
+    array[]::smallint[],
     array[]::smallint[]
   from pg_catalog.pg_rewrite as expression
   join pg_catalog.pg_class as relation on relation.oid = expression.ev_class
@@ -1374,7 +1464,38 @@ stored_expression_dependencies(
       )
     end,
     true,
-    array[]::smallint[]
+    array[]::smallint[],
+    case
+      when expression_routine.provolatile = 'v'
+        or position(
+          format(':funcid %s ', routine_dependency.refobjid)
+          in split_part(expression.ev_action::text, ':targetList (', 1)
+        ) > 0 then array[]::smallint[]
+      else array(
+        select distinct accessible.invocation_attnum
+        from unnest(string_to_array(target_list.value, '{TARGETENTRY')) as entry(value)
+        cross join lateral regexp_match(
+          entry.value,
+          ':resno ([1-9][0-9]*).*:resjunk false'
+        ) as target(fields)
+        cross join lateral (
+          select target.fields[1]::smallint as invocation_attnum
+          where invocation.invocation_oid = invocation.dependency_oid
+          union
+          select access.invocation_attnum
+          from view_access_columns as access
+          where invocation.invocation_oid <> invocation.dependency_oid
+            and access.invocation_oid = invocation.invocation_oid
+            and access.affected_oid = invocation.dependency_oid
+            and access.affected_attnum = target.fields[1]::smallint
+        ) as accessible
+        where position(
+          format(':funcid %s ', routine_dependency.refobjid)
+          in entry.value
+        ) > 0
+        order by accessible.invocation_attnum
+      )
+    end
   from view_invocation_paths as invocation
   join pg_catalog.pg_class as dependency_view on dependency_view.oid = invocation.dependency_oid
   join pg_catalog.pg_namespace as dependency_namespace
@@ -1382,11 +1503,22 @@ stored_expression_dependencies(
   join pg_catalog.pg_rewrite as expression
     on expression.ev_class = dependency_view.oid
    and expression.rulename = '_RETURN'
+  cross join lateral (
+    select split_part(
+      (string_to_array(expression.ev_action::text, ':targetList ('))[
+        cardinality(string_to_array(expression.ev_action::text, ':targetList ('))
+      ],
+      ':override',
+      1
+    ) as value
+  ) as target_list
   join pg_catalog.pg_depend as routine_dependency
     on routine_dependency.classid = 'pg_catalog.pg_rewrite'::regclass
    and routine_dependency.objid = expression.oid
    and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
    and routine_dependency.deptype = 'n'
+  join pg_catalog.pg_proc as expression_routine
+    on expression_routine.oid = routine_dependency.refobjid
 )`;
 
 export const referentialWritePathsCte = `referential_write_paths(
@@ -2111,12 +2243,9 @@ const collectSnapshot = async (
          join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
          join pg_catalog.pg_namespace as relation_namespace
            on relation_namespace.oid = relation.relnamespace
-         join pg_catalog.pg_depend as dependency
-           on dependency.classid = 'pg_catalog.pg_policy'::regclass
-          and dependency.objid = policy.oid
-          and dependency.refclassid = 'pg_catalog.pg_proc'::regclass
-          and dependency.deptype = 'n'
-         join pg_catalog.pg_proc as routine on routine.oid = dependency.refobjid
+         join policy_routine_dependencies as dependency
+           on dependency.policy_oid = policy.oid
+         join pg_catalog.pg_proc as routine on routine.oid = dependency.routine_oid
          join pg_catalog.pg_namespace as routine_namespace
            on routine_namespace.oid = routine.pronamespace
          where relation.relrowsecurity
@@ -2150,23 +2279,46 @@ const collectSnapshot = async (
                )
                and case policy.polcmd
                  when 'r' then
-                   has_table_privilege(candidate.oid, relation.oid, 'SELECT')
-                   or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+                   dependency.used_by_using
+                   and (
+                     has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+                     or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+                   )
                  when 'a' then
-                   has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-                   or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+                   dependency.used_by_with_check
+                   and (
+                     has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                     or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+                   )
                  when 'w' then
-                   has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-                   or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
-                 when 'd' then has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+                   (dependency.used_by_using or dependency.used_by_with_check)
+                   and (
+                     has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                     or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+                   )
+                 when 'd' then
+                   dependency.used_by_using
+                   and has_table_privilege(candidate.oid, relation.oid, 'DELETE')
                  when '*' then
-                   has_table_privilege(candidate.oid, relation.oid, 'SELECT')
-                   or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
-                   or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-                   or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
-                   or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-                   or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
-                   or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+                   (
+                     dependency.used_by_using
+                     and (
+                       has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+                       or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+                       or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                       or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+                       or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+                     )
+                   )
+                   or (
+                     dependency.used_by_with_check
+                     and (
+                       has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                       or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+                       or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                       or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+                     )
+                   )
                  else false
                end
              )
@@ -2184,6 +2336,7 @@ const collectSnapshot = async (
                  )
                where view_access.affected_oid = relation.oid
                  and policy.polcmd in ('r', '*')
+                 and dependency.used_by_using
                  and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                  and (
                    has_table_privilege(candidate.oid, invocation_view.oid, 'SELECT')
@@ -2249,6 +2402,7 @@ const collectSnapshot = async (
                  and (
                    (
                      policy.polcmd in ('a', '*')
+                     and dependency.used_by_with_check
                      and writable_view.actions & 8 <> 0
                      and (
                        has_table_privilege(candidate.oid, invocation_view.oid, 'INSERT')
@@ -2261,6 +2415,7 @@ const collectSnapshot = async (
                    )
                    or (
                      policy.polcmd in ('w', '*')
+                     and (dependency.used_by_using or dependency.used_by_with_check)
                      and writable_view.actions & 4 <> 0
                      and (
                        has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
@@ -2273,6 +2428,7 @@ const collectSnapshot = async (
                    )
                    or (
                      policy.polcmd in ('d', '*')
+                     and dependency.used_by_using
                      and writable_view.actions & 16 <> 0
                      and has_table_privilege(candidate.oid, invocation_view.oid, 'DELETE')
                      and has_table_privilege(effective_owner.oid, relation.oid, 'DELETE')
@@ -2314,7 +2470,24 @@ const collectSnapshot = async (
                and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                and (
                  has_table_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
-                 or has_any_column_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
+                 or (
+                   cardinality(stored_expression.select_columns) = 0
+                   and has_any_column_privilege(
+                     candidate.oid,
+                     invocation_relation.oid,
+                     'SELECT'
+                   )
+                 )
+                 or exists (
+                   select 1
+                   from unnest(stored_expression.select_columns) as selected(attnum)
+                   where has_column_privilege(
+                     candidate.oid,
+                     invocation_relation.oid,
+                     selected.attnum,
+                     'SELECT'
+                   )
+                 )
                  or exists (
                    select 1
                    from writable_view_paths as writable_view
@@ -3258,12 +3431,9 @@ const collectSnapshot = async (
          join pg_catalog.pg_class as relation on relation.oid = policy.polrelid
          join pg_catalog.pg_namespace as relation_namespace
            on relation_namespace.oid = relation.relnamespace
-         join pg_catalog.pg_depend as dependency
-           on dependency.classid = 'pg_catalog.pg_policy'::regclass
-          and dependency.objid = policy.oid
-          and dependency.refclassid = 'pg_catalog.pg_proc'::regclass
-          and dependency.refobjid = routine.oid
-          and dependency.deptype = 'n'
+         join policy_routine_dependencies as dependency
+           on dependency.policy_oid = policy.oid
+          and dependency.routine_oid = routine.oid
          where relation.relrowsecurity
            and relation_namespace.nspname = any($2::text[])
            and routine.prosecdef
@@ -3292,23 +3462,46 @@ const collectSnapshot = async (
                )
                and case policy.polcmd
                  when 'r' then
-                   has_table_privilege($1, relation.oid, 'SELECT')
-                   or has_any_column_privilege($1, relation.oid, 'SELECT')
+                   dependency.used_by_using
+                   and (
+                     has_table_privilege($1, relation.oid, 'SELECT')
+                     or has_any_column_privilege($1, relation.oid, 'SELECT')
+                   )
                  when 'a' then
-                   has_table_privilege($1, relation.oid, 'INSERT')
-                   or has_any_column_privilege($1, relation.oid, 'INSERT')
+                   dependency.used_by_with_check
+                   and (
+                     has_table_privilege($1, relation.oid, 'INSERT')
+                     or has_any_column_privilege($1, relation.oid, 'INSERT')
+                   )
                  when 'w' then
-                   has_table_privilege($1, relation.oid, 'UPDATE')
-                   or has_any_column_privilege($1, relation.oid, 'UPDATE')
-                 when 'd' then has_table_privilege($1, relation.oid, 'DELETE')
+                   (dependency.used_by_using or dependency.used_by_with_check)
+                   and (
+                     has_table_privilege($1, relation.oid, 'UPDATE')
+                     or has_any_column_privilege($1, relation.oid, 'UPDATE')
+                   )
+                 when 'd' then
+                   dependency.used_by_using
+                   and has_table_privilege($1, relation.oid, 'DELETE')
                  when '*' then
-                   has_table_privilege($1, relation.oid, 'SELECT')
-                   or has_any_column_privilege($1, relation.oid, 'SELECT')
-                   or has_table_privilege($1, relation.oid, 'INSERT')
-                   or has_any_column_privilege($1, relation.oid, 'INSERT')
-                   or has_table_privilege($1, relation.oid, 'UPDATE')
-                   or has_any_column_privilege($1, relation.oid, 'UPDATE')
-                   or has_table_privilege($1, relation.oid, 'DELETE')
+                   (
+                     dependency.used_by_using
+                     and (
+                       has_table_privilege($1, relation.oid, 'SELECT')
+                       or has_any_column_privilege($1, relation.oid, 'SELECT')
+                       or has_table_privilege($1, relation.oid, 'UPDATE')
+                       or has_any_column_privilege($1, relation.oid, 'UPDATE')
+                       or has_table_privilege($1, relation.oid, 'DELETE')
+                     )
+                   )
+                   or (
+                     dependency.used_by_with_check
+                     and (
+                       has_table_privilege($1, relation.oid, 'INSERT')
+                       or has_any_column_privilege($1, relation.oid, 'INSERT')
+                       or has_table_privilege($1, relation.oid, 'UPDATE')
+                       or has_any_column_privilege($1, relation.oid, 'UPDATE')
+                     )
+                   )
                  else false
                end
              )
@@ -3326,6 +3519,7 @@ const collectSnapshot = async (
                  )
                where view_access.affected_oid = relation.oid
                  and policy.polcmd in ('r', '*')
+                 and dependency.used_by_using
                  and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                  and (
                    has_table_privilege($1, invocation_view.oid, 'SELECT')
@@ -3391,6 +3585,7 @@ const collectSnapshot = async (
                  and (
                    (
                      policy.polcmd in ('a', '*')
+                     and dependency.used_by_with_check
                      and writable_view.actions & 8 <> 0
                      and (
                        has_table_privilege($1, invocation_view.oid, 'INSERT')
@@ -3403,6 +3598,7 @@ const collectSnapshot = async (
                    )
                    or (
                      policy.polcmd in ('w', '*')
+                     and (dependency.used_by_using or dependency.used_by_with_check)
                      and writable_view.actions & 4 <> 0
                      and (
                        has_table_privilege($1, invocation_view.oid, 'UPDATE')
@@ -3415,6 +3611,7 @@ const collectSnapshot = async (
                    )
                    or (
                      policy.polcmd in ('d', '*')
+                     and dependency.used_by_using
                      and writable_view.actions & 16 <> 0
                      and has_table_privilege($1, invocation_view.oid, 'DELETE')
                      and has_table_privilege(effective_owner.oid, relation.oid, 'DELETE')
@@ -3450,7 +3647,20 @@ const collectSnapshot = async (
                and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                and (
                  has_table_privilege($1, invocation_relation.oid, 'SELECT')
-                 or has_any_column_privilege($1, invocation_relation.oid, 'SELECT')
+                 or (
+                   cardinality(stored_expression.select_columns) = 0
+                   and has_any_column_privilege($1, invocation_relation.oid, 'SELECT')
+                 )
+                 or exists (
+                   select 1
+                   from unnest(stored_expression.select_columns) as selected(attnum)
+                   where has_column_privilege(
+                     $1,
+                     invocation_relation.oid,
+                     selected.attnum,
+                     'SELECT'
+                   )
+                 )
                  or exists (
                    select 1
                    from writable_view_paths as writable_view
