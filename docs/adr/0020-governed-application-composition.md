@@ -27,7 +27,10 @@ Each immutable revision is identified by a SHA-256 value assigned by its publish
 
 A pure validator rejects the complete candidate on schema, identity, ownership, dependency,
 contract, expose, ABI, capability, singleton, or observed-digest contradictions. Network collection,
-publication, promotion storage, and live Shell loading remain outside this validator.
+publication, promotion storage, and live Shell loading remain outside this validator. A selected
+module admits its complete observed Shell-contribution and Federation-expose surface rather than a
+potentially broken subset. Candidate Shell/Core compatibility claims must also match trusted
+evidence from the deployed runtime.
 
 Promotion is explicit and audited. Rollback explicitly promotes a previously validated immutable
 revision; there is no automatic persistent last-known-good selection. Tenant module state controls

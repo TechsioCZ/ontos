@@ -101,6 +101,7 @@ export interface ObservedModuleFederationManifest {
 export interface ApplicationCompositionCandidateEvidence {
   readonly contracts: Readonly<Record<string, ObservedApplicationCompositionContract>>;
   readonly federationManifests: Readonly<Record<string, ObservedModuleFederationManifest>>;
+  readonly runtime: ApplicationComposition['shell'];
 }
 
 export class ApplicationCompositionValidationError extends Schema.TaggedError<ApplicationCompositionValidationError>()(
@@ -117,11 +118,39 @@ const invalid = (reason: string): ApplicationCompositionValidationError =>
 const identityKey = (identity: ApplicationCompositionVersionedIdentity): string =>
   `${identity.id}@${identity.version}`;
 
-const singletonKey = (
-  singleton: ApplicationCompositionModule['sharedSingletons'][number],
-): string => `${singleton.packageName}@${singleton.version}`;
+const compareSingletons = (
+  left: ApplicationCompositionModule['sharedSingletons'][number],
+  right: ApplicationCompositionModule['sharedSingletons'][number],
+): number =>
+  left.packageName.localeCompare(right.packageName) || left.version.localeCompare(right.version);
 
 const normalizeArtifactUrl = (value: string): string => new URL(value).href;
+
+const sameUniqueStrings = (left: readonly string[], right: readonly string[]): boolean => {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return (
+    leftSet.size === left.length &&
+    rightSet.size === right.length &&
+    leftSet.size === rightSet.size &&
+    left.every((value) => rightSet.has(value))
+  );
+};
+
+const sameVersionClaims = <Value extends { readonly version: string }>(
+  left: readonly Value[],
+  right: readonly Value[],
+  key: (value: Value) => string,
+): boolean => {
+  const leftVersions = new Map(left.map((value) => [key(value), value.version]));
+  const rightVersions = new Map(right.map((value) => [key(value), value.version]));
+  return (
+    leftVersions.size === left.length &&
+    rightVersions.size === right.length &&
+    leftVersions.size === rightVersions.size &&
+    [...leftVersions].every(([claim, claimVersion]) => rightVersions.get(claim) === claimVersion)
+  );
+};
 
 const claim = (claims: Set<string>, value: string, label: string): void => {
   if (claims.has(value)) {
@@ -178,7 +207,7 @@ const assertShellCompatibility = (
   module: ApplicationCompositionModule,
   shell: ApplicationComposition['shell'],
   availableCapabilities: ReadonlySet<string>,
-  availableSingletons: ReadonlySet<string>,
+  availableSingletons: ReadonlyMap<string, string>,
 ): void => {
   if (identityKey(module.requiredShellAbi) !== identityKey(shell.contributionAbi)) {
     throw invalid(`module ${module.moduleId} requires an incompatible Shell contribution ABI`);
@@ -195,7 +224,7 @@ const assertShellCompatibility = (
   const singletonPackages = new Set<string>();
   for (const singleton of module.sharedSingletons) {
     claim(singletonPackages, singleton.packageName, 'required shared singleton');
-    if (!availableSingletons.has(singletonKey(singleton))) {
+    if (availableSingletons.get(singleton.packageName) !== singleton.version) {
       throw invalid(
         `module ${module.moduleId} requires incompatible shared singleton ${singleton.packageName}`,
       );
@@ -207,8 +236,6 @@ const assertObservedDeployment = (
   module: ApplicationCompositionModule,
   contract: ObservedApplicationCompositionContract | undefined,
 ): void => {
-  const contributionKeys = new Set(contract?.contributionKeys);
-  const federationExposes = new Set(contract?.federationExposes);
   if (
     contract === undefined ||
     contract.contractUrl !== module.contract.url ||
@@ -220,8 +247,8 @@ const assertObservedDeployment = (
     contract.publicContract.version !== module.publicContract.version ||
     contract.publicContract.sha256 !== module.publicContract.sha256 ||
     module.publicContract.id !== module.moduleId ||
-    module.allowedContributions.some((contributionKey) => !contributionKeys.has(contributionKey)) ||
-    module.federation.exposes.some((expose) => !federationExposes.has(expose))
+    !sameUniqueStrings(module.allowedContributions, contract.contributionKeys) ||
+    !sameUniqueStrings(module.federation.exposes, contract.federationExposes)
   ) {
     throw invalid(`module ${module.moduleId} does not match its observed deployment contract`);
   }
@@ -231,15 +258,31 @@ const assertObservedFederationManifest = (
   module: ApplicationCompositionModule,
   manifest: ObservedModuleFederationManifest | undefined,
 ): void => {
-  const exposes = new Set(manifest?.exposes);
   if (
     manifest === undefined ||
     manifest.sha256 !== module.federation.manifest.sha256 ||
-    module.federation.exposes.some((expose) => !exposes.has(expose))
+    !sameUniqueStrings(module.federation.exposes, manifest.exposes)
   ) {
     throw invalid(
       `module ${module.moduleId} does not match its observed Module Federation manifest`,
     );
+  }
+};
+
+const assertObservedRuntime = (
+  shell: ApplicationComposition['shell'],
+  runtime: ApplicationCompositionCandidateEvidence['runtime'],
+): void => {
+  if (
+    identityKey(shell.contributionAbi) !== identityKey(runtime.contributionAbi) ||
+    !sameVersionClaims(shell.coreCapabilities, runtime.coreCapabilities, ({ id }) => id) ||
+    !sameVersionClaims(
+      shell.sharedSingletons,
+      runtime.sharedSingletons,
+      ({ packageName }) => packageName,
+    )
+  ) {
+    throw invalid('Shell and Core claims do not match the observed runtime contract');
   }
 };
 
@@ -276,9 +319,7 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
           id: module.requiredShellAbi.id,
           version: module.requiredShellAbi.version,
         },
-        sharedSingletons: module.sharedSingletons.toSorted((left, right) =>
-          singletonKey(left).localeCompare(singletonKey(right)),
-        ),
+        sharedSingletons: module.sharedSingletons.toSorted(compareSingletons),
       }))
       .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId)),
     revision: composition.revision,
@@ -291,9 +332,7 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
       coreCapabilities: composition.shell.coreCapabilities.toSorted((left, right) =>
         identityKey(left).localeCompare(identityKey(right)),
       ),
-      sharedSingletons: composition.shell.sharedSingletons.toSorted((left, right) =>
-        singletonKey(left).localeCompare(singletonKey(right)),
-      ),
+      sharedSingletons: composition.shell.sharedSingletons.toSorted(compareSingletons),
     },
   });
 
@@ -308,7 +347,12 @@ const validateDecodedApplicationComposition = (
   const contributionKeys = new Set<string>();
   const remoteNames = new Set<string>();
   const shellCapabilities = new Set(composition.shell.coreCapabilities.map(identityKey));
-  const shellSingletons = new Set(composition.shell.sharedSingletons.map(singletonKey));
+  const shellSingletons = new Map(
+    composition.shell.sharedSingletons.map(({ packageName, version: singletonVersion }) => [
+      packageName,
+      singletonVersion,
+    ]),
+  );
   const shellCapabilityIds = new Set<string>();
   const shellSingletonPackages = new Set<string>();
   for (const capability of composition.shell.coreCapabilities) {
@@ -317,6 +361,7 @@ const validateDecodedApplicationComposition = (
   for (const singleton of composition.shell.sharedSingletons) {
     claim(shellSingletonPackages, singleton.packageName, 'shared singleton');
   }
+  assertObservedRuntime(composition.shell, evidence.runtime);
 
   for (const module of composition.modules) {
     claim(appIds, module.deployment.appId, 'deployment app ID');
