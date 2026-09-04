@@ -21,9 +21,10 @@ promotion.
 These are non-negotiable:
 
 1. **Topology is the delivery inventory.** Every deployable `appId`, service, package path, port,
-   readiness route, public URL, migration owner, dependency edge, and Shell remote must derive from
-   one generated or mechanically validated topology contract. Do not add a second hand-maintained
-   registry.
+   readiness route, public URL, and migration owner derives from one generated or mechanically
+   validated topology contract. Application Composition separately governs the approved runtime
+   module graph and exact contract/remote artifacts; neither tenant state nor a reachable service
+   may add an artifact.
 2. **Build once, promote unchanged.** A release deploys immutable artifacts identified by source SHA
    and digest. Do not rebuild the same revision separately for stage and production.
 3. **Prove the real artifact.** A successful source build is not a deploy test. CI must build,
@@ -35,8 +36,9 @@ These are non-negotiable:
    authoritative release flag and defaults inactive until canary verification succeeds.
 6. **Every overlap is backward compatible.** Database, authorization, manifest, BFF, Module
    Federation, and Shell/MicroVertical boundaries must work while old and new versions coexist.
-7. **Rollback is prepared before rollout.** Record a last-known-good immutable artifact for every
-   affected delivery unit. Application rollback must not depend on reversing a schema migration.
+7. **Rollback is prepared before rollout.** Record a previously validated immutable composition and
+   artifact for every affected delivery unit. Rollback is an explicit audited promotion, never an
+   automatic persistent fallback, and must not depend on reversing a schema migration.
 8. **One failed gate stops promotion.** Preserve the artifact and evidence, reproduce in the parity
    environment, fix the failure class, and rerun the release sequence from its first gate.
 9. **Continuous product delivery is not customer version pinning.** OntOS controls promotion of
@@ -79,7 +81,8 @@ The generated plan must conservatively include:
   changes;
 - every consumer when a shared runtime package or public contract changes;
 - SpiceDB whenever its schema, image, datastore bootstrap, transport, or client contract changes;
-- Shell whenever its code/config changes or a referenced public remote URL/contract changes;
+- Shell whenever its code/config or contribution ABI changes; compatible remote URLs and contracts
+  move through a new Application Composition revision without rebuilding or redeploying Shell;
 - a MicroVertical whenever its owner-local code, manifest, registration, migrations, configuration,
   or runtime dependencies change;
 - all Node delivery units whenever the common lockfile, workspace dependency policy, runtime
@@ -257,6 +260,10 @@ consumer of public module contracts, not as Shell/Core business behavior.
 
 - React, Modern runtime, and provider-context packages such as i18n must be exact strict singletons
   on both Shell and remotes.
+- Promoted compositions pin immutable `mf-manifest.json` references and permit browser execution
+  only. Routine upgrades wait for a new browser document; they never force-replace a loaded remote.
+- Shell/Core SSR renders stable framing and typed placeholders. Any future MicroVertical SSR runs in
+  a MicroVertical-owned isolated process, not the Shell/Core Node.js process.
 - Every app owns a CSS prefix/namespace. A Shell or MicroVertical build must not scan, erase, or
   collide with another delivery unit's utility classes.
 - A remote is healthy only when its manifest, remote entry, chunks, shared runtime, localized page,
@@ -276,8 +283,10 @@ Use this sequence for a new or changed MicroVertical:
 5. **Deploy providers:** deploy affected MicroVerticals in dependency order, initially dark.
 6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint;
    make endpoint provisioning idempotent by checking its final state.
-7. **Deploy Shell:** deploy only after every referenced provider is healthy.
-8. **Smoke:** execute the authenticated distributed smoke suite.
+7. **Promote composition:** validate and explicitly promote one immutable candidate revision. A
+   compatible MicroVertical update or installation does not redeploy Shell.
+8. **Smoke:** open a new browser document pinned to that revision and execute the authenticated
+   distributed smoke suite.
 9. **Canary:** activate the selected module—and its explicit implementation once supported—plus
    affected Storefront Clients for one approved tenant/cohort.
 10. **Observe:** hold expansion until the canary window and required signals are healthy.
@@ -337,9 +346,8 @@ Rollback must be executable and tested before rollout:
 1. deactivate the affected tenant module state/canary;
 2. stop further promotion;
 3. identify the failed unit and the last successful phase from structured evidence;
-4. restore Shell first when it references an invalid remote; otherwise restore units in reverse
-   dependency order;
-5. restore each affected unit to its recorded last-known-good artifact;
+4. explicitly promote the previously validated composition revision;
+5. restore affected delivery units to the artifacts pinned by that revision when required;
 6. leave additive PostgreSQL and compatible SpiceDB changes in place;
 7. rerun the complete authenticated smoke suite;
 8. record the rollback artifacts and outcome.

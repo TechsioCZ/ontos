@@ -23,6 +23,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0016](0016-independently-deployable-microverticals.md)    | Independent MicroVertical deployment seams                | Accepted                          |
 | [0017](0017-commerce-application-boundaries.md)            | Commerce application boundaries                           | Accepted                          |
 | [0019](0019-explicit-action-authorization.md)              | Explicit fail-closed Action authorization                 | Accepted                          |
+| [0020](0020-governed-application-composition.md)           | Governed runtime Application Composition                  | Accepted                          |
 
 ## Status meanings
 
