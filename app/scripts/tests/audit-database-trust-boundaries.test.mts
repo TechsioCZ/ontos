@@ -549,7 +549,7 @@ test('flags selectable privileged owner-context views but accepts security invok
   assert.deepEqual(invokerReport.findings, []);
 });
 
-test('flags owner-context views that bypass RLS through owner-matched dependencies', () => {
+test('preserves nested owner-context RLS bypasses through security-invoker views', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     tables: [
@@ -560,7 +560,7 @@ test('flags owner-context views that bypass RLS through owner-matched dependenci
         ownerBypassRls: false,
         ownerContextRlsBypass: true,
         ownerSuperuser: false,
-        securityInvoker: false,
+        securityInvoker: true,
       },
     ],
     trustedContext: {
@@ -621,6 +621,7 @@ test('flags ownership of an audited routine as DDL authority', () => {
         identityArguments: '',
         kind: 'procedure',
         owner: snapshot.runtimeRole,
+        policyBindings: [],
         routine: 'refresh_projection',
         schema: 'contacts',
         securityDefiner: false,
@@ -730,6 +731,7 @@ test('flags direct relation control and executable security-definer authority', 
         identityArguments: 'uuid',
         kind: 'function',
         owner: 'ontos_admin',
+        policyBindings: [],
         routine: 'enter_trusted_scope',
         schema: 'contacts',
         securityDefiner: true,
@@ -765,6 +767,7 @@ test('flags security-definer routines invocable only through table triggers', ()
         identityArguments: '',
         kind: 'function',
         owner: 'ontos_admin',
+        policyBindings: [],
         routine: 'capture_customer_change',
         schema: 'contacts',
         securityDefiner: true,
@@ -784,6 +787,74 @@ test('flags security-definer routines invocable only through table triggers', ()
     ['runtime_role_can_execute_security_definer'],
   );
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('flags security-definer routines invoked through applicable RLS policies', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        executable: false,
+        identityArguments: 'uuid',
+        kind: 'function',
+        owner: 'ontos_admin',
+        policyBindings: ['contacts.customers:tenant_isolation'],
+        routine: 'can_access_tenant',
+        schema: 'private',
+        securityDefiner: true,
+        triggerBindings: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('classifies reachable roles that invoke security-definer RLS policies as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'policy_reader',
+        securityDefinerPolicyBindings: [
+          'contacts.customers:tenant_isolation->private.can_access_tenant(uuid)',
+        ],
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
 });
 
 test('classifies reachable roles that can fire security-definer triggers as privileged', () => {
@@ -934,8 +1005,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
 
   assert.equal(
     source.match(/where membership\.admin_option or membership\.set_option/gu)?.length,
-    3,
+    1,
   );
+  assert.equal(source.match(/\$\{reachableRolesCte\}/gu)?.length, 3);
   assert.match(
     source,
     /candidate\.oid in \(select role_oid from reachable_roles\) as can_set_role/u,
@@ -953,6 +1025,22 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 2);
   assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
   assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 2);
+  assert.equal(
+    source.match(
+      /select relation\.oid\s+union\s+select ancestor\.oid\s+from pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu,
+    )?.length,
+    2,
+  );
+  assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
+  assert.equal(
+    source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
+    2,
+  );
+  assert.equal(
+    source.match(/from unnest\(audited_trigger\.tgattr::smallint\[\]\) as watched\(attnum\)/gu)
+      ?.length,
+    2,
+  );
   assert.match(source, /from pg_catalog\.pg_extension as extension/u);
 });
 
