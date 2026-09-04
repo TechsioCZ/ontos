@@ -175,6 +175,7 @@ test('reports privilege escalation paths without embedding credentials or contex
         createSchemas: [],
         databaseCreate: false,
         ownedRelations: [],
+        ownedRoutines: [],
         ownedSchemas: [],
         relationPrivilegeSchemas: [],
         role: 'ontos_admin',
@@ -253,6 +254,34 @@ test('flags ownership of an audited relation as DDL authority', () => {
   );
 });
 
+test('flags ownership of an audited routine as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        executable: true,
+        identityArguments: '',
+        kind: 'procedure',
+        owner: snapshot.runtimeRole,
+        routine: 'refresh_projection',
+        schema: 'contacts',
+        securityDefiner: false,
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+});
+
 test('flags direct relation control and executable security-definer authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -320,6 +349,7 @@ test('classifies every assumable role and escalates relation authority', () => {
         createSchemas: [],
         databaseCreate: false,
         ownedRelations: [],
+        ownedRoutines: [],
         ownedSchemas: [],
         relationPrivilegeSchemas: ['private'],
         role: 'table_truncator',
@@ -331,6 +361,7 @@ test('classifies every assumable role and escalates relation authority', () => {
         createSchemas: [],
         databaseCreate: false,
         ownedRelations: [],
+        ownedRoutines: [],
         ownedSchemas: [],
         relationPrivilegeSchemas: [],
         role: 'report_reader',
