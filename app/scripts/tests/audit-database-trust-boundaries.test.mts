@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
   buildDatabaseTrustBoundaryReport,
   type DatabaseTrustBoundarySnapshot,
@@ -73,6 +74,7 @@ const snapshot = {
       privileges: {
         delete: true,
         insert: true,
+        maintain: false,
         references: false,
         select: true,
         trigger: false,
@@ -90,6 +92,7 @@ const snapshot = {
       privileges: {
         delete: true,
         insert: true,
+        maintain: false,
         references: false,
         select: true,
         trigger: false,
@@ -107,6 +110,7 @@ const snapshot = {
       privileges: {
         delete: true,
         insert: true,
+        maintain: false,
         references: false,
         select: true,
         trigger: false,
@@ -119,6 +123,7 @@ const snapshot = {
       table: 'tenants',
     },
   ],
+  types: [],
   trustedContext: {
     legalEntitySettingRetainedAfterRollback: false,
     legalEntitySettingSettable: true,
@@ -161,6 +166,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     securityDefinerExecutableCount: 0,
     sequenceCount: 1,
     tableCount: 3,
+    typeCount: 0,
   });
   assert.equal(report.schemaVersion, 1);
 });
@@ -171,12 +177,14 @@ test('reports privilege escalation paths without embedding credentials or contex
     memberships: [
       {
         attributes: ordinaryRole,
+        canAdministerRole: false,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
         ownedRelations: [],
         ownedRoutines: [],
         ownedSchemas: [],
+        ownedTypes: [],
         relationPrivilegeSchemas: [],
         role: 'ontos_admin',
         securityDefinerRoutines: [],
@@ -232,6 +240,7 @@ test('flags ownership of an audited relation as DDL authority', () => {
         privileges: {
           delete: false,
           insert: false,
+          maintain: false,
           references: false,
           select: false,
           trigger: false,
@@ -282,6 +291,32 @@ test('flags ownership of an audited routine as DDL authority', () => {
   );
 });
 
+test('flags ownership of an audited enum or domain as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+    types: [
+      {
+        kind: 'enum',
+        owner: snapshot.runtimeRole,
+        schema: 'contacts',
+        type: 'contact_status',
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+  assert.equal(report.summary.typeCount, 1);
+});
+
 test('flags direct relation control and executable security-definer authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -299,7 +334,7 @@ test('flags direct relation control and executable security-definer authority', 
     tables: [
       {
         ...snapshot.tables[0],
-        privileges: { ...snapshot.tables[0].privileges, truncate: true },
+        privileges: { ...snapshot.tables[0].privileges, maintain: true },
       },
     ],
     trustedContext: {
@@ -345,24 +380,28 @@ test('classifies every assumable role and escalates relation authority', () => {
     memberships: [
       {
         attributes: ordinaryRole,
+        canAdministerRole: false,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
         ownedRelations: [],
         ownedRoutines: [],
         ownedSchemas: [],
+        ownedTypes: [],
         relationPrivilegeSchemas: ['private'],
         role: 'table_truncator',
         securityDefinerRoutines: [],
       },
       {
         attributes: ordinaryRole,
+        canAdministerRole: false,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
         ownedRelations: [],
         ownedRoutines: [],
         ownedSchemas: [],
+        ownedTypes: [],
         relationPrivilegeSchemas: [],
         role: 'report_reader',
         securityDefinerRoutines: [],
@@ -378,6 +417,62 @@ test('classifies every assumable role and escalates relation authority', () => {
       'runtime_role_can_forge_trusted_context',
       'runtime_role_has_cross_owner_dml',
     ],
+  );
+});
+
+test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: true,
+        canSetRole: false,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: ['contacts.contact_status'],
+        relationPrivilegeSchemas: [],
+        role: 'tenant_bypass',
+        securityDefinerRoutines: [],
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    [
+      'runtime_role_can_assume_privileged_role',
+      'runtime_role_can_forge_trusted_context',
+      'runtime_role_has_cross_owner_dml',
+    ],
+  );
+});
+
+test('requires direct, distinct live database session identities', () => {
+  assert.doesNotThrow(() =>
+    assertDatabaseSessionIdentities(
+      { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
+      { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' },
+    ),
+  );
+  assert.throws(
+    () =>
+      assertDatabaseSessionIdentities(
+        { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
+        { currentRole: 'ontos_admin', sessionRole: 'ontos_admin' },
+      ),
+    /distinct authenticated PostgreSQL roles/u,
+  );
+  assert.throws(
+    () =>
+      assertDatabaseSessionIdentities(
+        { currentRole: 'startup_role', sessionRole: 'ontos_runtime' },
+        { currentRole: 'ontos_runtime', sessionRole: 'ontos_runtime' },
+      ),
+    /current_user must equal session_user/u,
   );
 });
 

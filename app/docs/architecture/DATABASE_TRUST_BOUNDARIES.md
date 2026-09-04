@@ -26,12 +26,16 @@ privileges, direct/`PUBLIC`/inherited/assumable default ACL sources, ownership, 
 finding codes, but no URL, password, secret, tenant ID, or legal-entity ID. The command rejects an
 admin/runtime pair that resolves to a different observed server endpoint or database. When both
 connections use Unix sockets and the observed network address and port are null, it compares the
-configured socket host and port instead. This check requires no monitoring-role privilege. Its pure
-report uses `null` schema for a global default ACL. It evaluates PostgreSQL's built-in global
-defaults even when `pg_default_acl` has no stored row, including defaults for future schemas. It
-includes column-level DML and `REFERENCES`; classifies tables, partitioned tables, views,
-materialized views, foreign tables, and sequences; and inventories executable `SECURITY DEFINER`
-routines. Its pure report builder and target validator are covered by
+configured socket host and port instead. It derives both audited identities from live
+`session_user`/`current_user` evidence, rejects a startup role switch, and rejects an
+admin/runtime identity collapse even if URL query parameters override the authority user. These
+checks require no monitoring-role privilege. Its pure report uses `null` schema for a global
+default ACL. It evaluates PostgreSQL's built-in global defaults even when `pg_default_acl` has no
+stored row, including defaults for future schemas. It includes column-level DML, `REFERENCES`, and
+PostgreSQL 17 `MAINTAIN`; classifies tables, partitioned tables, views, materialized views, foreign
+tables, and sequences; inventories executable `SECURITY DEFINER` routines and enum/domain
+ownership; and distinguishes `SET OPTION` from direct `ADMIN OPTION` escalation paths. Its pure
+report builder and target/session validators are covered by
 `scripts/tests/audit-database-trust-boundaries.test.mts`.
 
 ## Reproduced local baseline
@@ -44,9 +48,10 @@ baseline, the audit reported:
 | Cluster role     | Login; no superuser, `BYPASSRLS`, database creation, role creation, replication, inheritance, or role memberships                                                                      |
 | Database         | `CONNECT` and temporary objects; no database `CREATE`                                                                                                                                  |
 | Schemas          | `USAGE` on `core`, `auth`, `contacts`, and `public`; neither `USAGE` nor `CREATE` on `drizzle`; no `CREATE` on any non-system schema                                                   |
-| Tables           | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals                                                                        |
+| Tables           | `SELECT`, `INSERT`, `UPDATE`, and `DELETE` across 27 owner tables; no privilege on the three `drizzle` journals and no `MAINTAIN`, `TRUNCATE`, `REFERENCES`, or `TRIGGER` authority    |
 | Sequences        | `USAGE` and `SELECT` on the one application sequence; no privilege on the three `drizzle` sequences and no `UPDATE` anywhere                                                           |
 | Routines         | No routines exist in the audited non-system schemas; therefore no executable `SECURITY DEFINER` routine                                                                                |
+| Enums/domains    | No enum or domain exists in the audited non-system schemas                                                                                                                             |
 | Future objects   | 22 effective default privileges: owner-local table DML and sequence `USAGE`/`SELECT`, plus global `PUBLIC EXECUTE` on functions and `PUBLIC USAGE` on types for relevant creator roles |
 | Ownership        | All three logical owner schemas and their relations are physically owned by `ontos_admin`                                                                                              |
 | RLS              | Two of 27 current tables have enabled and forced RLS                                                                                                                                   |
@@ -111,7 +116,7 @@ unforgeable trust boundary.
 | Threat                                          | Existing evidence                                                                                                                                                                                                          | Remaining gap                                                                                                                                                     |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Superuser or `BYPASSRLS` runtime                | Bootstrap verifies both are false; the audit reads effective role attributes.                                                                                                                                              | Production must be audited rather than inferred from bootstrap source.                                                                                            |
-| Admin/runtime identity collapse                 | Config tests reject identical URLs/users and a `postgres` runtime login.                                                                                                                                                   | Deployed secret injection is outside repository evidence.                                                                                                         |
+| Admin/runtime identity collapse                 | Config tests reject identical URLs/users and a `postgres` runtime login; the audit validates distinct live session identities and rejects startup role switching.                                                          | Production must be audited rather than inferred from configuration text.                                                                                          |
 | Missing, malformed, or leaked transaction scope | Core tenant-isolation integration tests verify no match and no scope leakage; the audit probes rollback retention.                                                                                                         | The runtime role can deliberately install a different valid value.                                                                                                |
 | Cross-tenant rows and references                | Core tenant-isolation and Contacts database-boundary integration tests exercise RLS and same-tenant constraints.                                                                                                           | These tests demonstrate policy behavior under selected settings, not authenticity of the settings.                                                                |
 | Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                                                            | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
