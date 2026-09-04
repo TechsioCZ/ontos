@@ -555,7 +555,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_execute_security_definer',
       evidence:
-        'The runtime role can directly execute, or invoke through an applicable RLS policy, stored relation expression, table DML trigger, or database event trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
+        'The runtime role can directly execute, or invoke through an applicable RLS policy, stored relation expression, DML rewrite rule, table DML trigger, or database event trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
       severity: 'high',
     });
   }
@@ -997,15 +997,13 @@ writable_view_rewrites(view_oid, affected_oid, actions, target_list, effective_o
   join pg_catalog.pg_rewrite as rewrite
     on rewrite.ev_class = view_relation.oid
    and rewrite.rulename = '_RETURN'
-  cross join lateral (
-    select regexp_match(
-      split_part(rewrite.ev_action::text, ':rtable ({RANGETBLENTRY', 2),
-      ':relid ([1-9][0-9]*)'
-    ) as fields
-  ) as target
+  cross join lateral regexp_matches(
+    split_part(rewrite.ev_action::text, ':rteperminfos', 1),
+    ':relid ([1-9][0-9]*)',
+    'g'
+  ) as target(fields)
   join pg_catalog.pg_class as affected_relation on affected_relation.oid = target.fields[1]::oid
   where view_relation.relkind = 'v'
-    and target.fields is not null
     and affected_relation.relkind in ('r', 'p', 'f', 'v')
     and affected_relation.oid <> view_relation.oid
     and namespace.nspname !~ '^pg_'
@@ -1217,6 +1215,36 @@ stored_expression_dependencies(
    and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
    and routine_dependency.deptype = 'n'
   where (stored_index.indexprs is not null or stored_index.indpred is not null)
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union all
+  select
+    relation.oid,
+    relation.oid,
+    routine_dependency.refobjid,
+    format(
+      'dml-rule:%s:%s:%I',
+      case expression.ev_type
+        when '2' then 'UPDATE'
+        when '3' then 'INSERT'
+        when '4' then 'DELETE'
+      end,
+      expression.ev_enabled,
+      expression.rulename
+    ),
+    false,
+    array[]::smallint[]
+  from pg_catalog.pg_rewrite as expression
+  join pg_catalog.pg_class as relation on relation.oid = expression.ev_class
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  join pg_catalog.pg_depend as routine_dependency
+    on routine_dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+   and routine_dependency.objid = expression.oid
+   and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and routine_dependency.deptype = 'n'
+  where expression.rulename <> '_RETURN'
+    and expression.ev_type in ('2', '3', '4')
+    and expression.ev_enabled in ('O', 'A', 'R')
     and namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
   union all
@@ -1555,6 +1583,112 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
       ('ddl_command_end'::text, 'DROP SERVER'::text),
       ('sql_drop'::text, 'DROP SERVER'::text)
   ) as command(event, tag)
+  union
+  select role.oid, event.name, command.tag
+  from pg_catalog.pg_roles as role
+  cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
+  cross join (values ('GRANT'::text), ('REVOKE'::text)) as command(tag)
+  where exists (
+      select 1
+      from pg_catalog.pg_database as database
+      where database.datname = current_database()
+        and (
+          pg_has_role(role.oid, database.datdba, 'USAGE')
+          or has_database_privilege(role.oid, database.oid, 'CONNECT WITH GRANT OPTION')
+          or has_database_privilege(role.oid, database.oid, 'CREATE WITH GRANT OPTION')
+          or has_database_privilege(role.oid, database.oid, 'TEMPORARY WITH GRANT OPTION')
+        )
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_namespace as namespace
+      where pg_has_role(role.oid, namespace.nspowner, 'USAGE')
+         or has_schema_privilege(role.oid, namespace.oid, 'CREATE WITH GRANT OPTION')
+         or has_schema_privilege(role.oid, namespace.oid, 'USAGE WITH GRANT OPTION')
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_class as relation
+      where pg_has_role(role.oid, relation.relowner, 'USAGE')
+         or has_table_privilege(role.oid, relation.oid, 'SELECT WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'INSERT WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'UPDATE WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'DELETE WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'TRUNCATE WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'REFERENCES WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'TRIGGER WITH GRANT OPTION')
+         or has_table_privilege(role.oid, relation.oid, 'MAINTAIN WITH GRANT OPTION')
+         or (
+           relation.relkind = 'S'
+           and (
+             has_sequence_privilege(role.oid, relation.oid, 'USAGE WITH GRANT OPTION')
+             or has_sequence_privilege(role.oid, relation.oid, 'SELECT WITH GRANT OPTION')
+             or has_sequence_privilege(role.oid, relation.oid, 'UPDATE WITH GRANT OPTION')
+           )
+         )
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_attribute as attribute
+      where attribute.attnum > 0
+        and not attribute.attisdropped
+        and (
+          has_column_privilege(role.oid, attribute.attrelid, attribute.attnum, 'SELECT WITH GRANT OPTION')
+          or has_column_privilege(role.oid, attribute.attrelid, attribute.attnum, 'INSERT WITH GRANT OPTION')
+          or has_column_privilege(role.oid, attribute.attrelid, attribute.attnum, 'UPDATE WITH GRANT OPTION')
+          or has_column_privilege(role.oid, attribute.attrelid, attribute.attnum, 'REFERENCES WITH GRANT OPTION')
+        )
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_proc as routine
+      where pg_has_role(role.oid, routine.proowner, 'USAGE')
+         or has_function_privilege(role.oid, routine.oid, 'EXECUTE WITH GRANT OPTION')
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_type as type
+      where pg_has_role(role.oid, type.typowner, 'USAGE')
+         or has_type_privilege(role.oid, type.oid, 'USAGE WITH GRANT OPTION')
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_parameter_acl as parameter
+      where has_parameter_privilege(role.oid, parameter.parname, 'SET WITH GRANT OPTION')
+         or has_parameter_privilege(
+           role.oid,
+           parameter.parname,
+           'ALTER SYSTEM WITH GRANT OPTION'
+         )
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_language as language
+      where pg_has_role(role.oid, language.lanowner, 'USAGE')
+         or has_language_privilege(role.oid, language.oid, 'USAGE WITH GRANT OPTION')
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_foreign_data_wrapper as wrapper
+      where pg_has_role(role.oid, wrapper.fdwowner, 'USAGE')
+         or has_foreign_data_wrapper_privilege(
+           role.oid,
+           wrapper.oid,
+           'USAGE WITH GRANT OPTION'
+         )
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_foreign_server as server
+      where pg_has_role(role.oid, server.srvowner, 'USAGE')
+         or has_server_privilege(role.oid, server.oid, 'USAGE WITH GRANT OPTION')
+    )
+    or exists (
+      select 1
+      from pg_catalog.pg_tablespace as tablespace
+      where pg_has_role(role.oid, tablespace.spcowner, 'USAGE')
+         or has_tablespace_privilege(role.oid, tablespace.oid, 'CREATE WITH GRANT OPTION')
+    )
 )`;
 
 const collectSnapshot = async (
@@ -1923,6 +2057,43 @@ const collectSnapshot = async (
                not stored_expression.selectable
                and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                and (
+                 stored_expression.binding !~ '^dml-rule:[^:]+:R:'
+                 or has_parameter_privilege(
+                   candidate.oid,
+                   'session_replication_role',
+                   'SET'
+                 )
+               )
+               and (
+                 stored_expression.binding !~ '^dml-rule:'
+                 or (
+                   stored_expression.binding ~ '^dml-rule:INSERT:'
+                   and (
+                     has_table_privilege(candidate.oid, invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       invocation_relation.oid,
+                       'INSERT'
+                     )
+                   )
+                 )
+                 or (
+                   stored_expression.binding ~ '^dml-rule:UPDATE:'
+                   and (
+                     has_table_privilege(candidate.oid, invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege(
+                       candidate.oid,
+                       invocation_relation.oid,
+                       'UPDATE'
+                     )
+                   )
+                 )
+                 or (
+                   stored_expression.binding ~ '^dml-rule:DELETE:'
+                   and has_table_privilege(candidate.oid, invocation_relation.oid, 'DELETE')
+                 )
+               )
+               and (
                  has_table_privilege(candidate.oid, invocation_relation.oid, 'INSERT')
                  or exists (
                    select 1
@@ -1972,6 +2143,10 @@ const collectSnapshot = async (
                      'UPDATE'
                    )
                  )
+                 or (
+                   stored_expression.binding ~ '^dml-rule:DELETE:'
+                   and has_table_privilege(candidate.oid, invocation_relation.oid, 'DELETE')
+                 )
                )
              )
              or exists (
@@ -1987,6 +2162,7 @@ const collectSnapshot = async (
                    candidate.oid
                  )
                where not stored_expression.selectable
+                 and stored_expression.binding !~ '^dml-rule:'
                  and writable_view.affected_oid = stored_expression.invocation_oid
                  and has_schema_privilege(candidate.oid, view_namespace.oid, 'USAGE')
                  and (
@@ -2070,6 +2246,7 @@ const collectSnapshot = async (
                join pg_catalog.pg_namespace as root_invocation_namespace
                  on root_invocation_namespace.oid = root_invocation_relation.relnamespace
                where not stored_expression.selectable
+                 and stored_expression.binding !~ '^dml-rule:'
                  and cascade.affected_action = 'UPDATE'
                  and cascade.affected_oid = stored_expression.invocation_oid
                  and has_schema_privilege(
@@ -2752,6 +2929,31 @@ const collectSnapshot = async (
                not stored_expression.selectable
                and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                and (
+                 stored_expression.binding !~ '^dml-rule:[^:]+:R:'
+                 or has_parameter_privilege($1, 'session_replication_role', 'SET')
+               )
+               and (
+                 stored_expression.binding !~ '^dml-rule:'
+                 or (
+                   stored_expression.binding ~ '^dml-rule:INSERT:'
+                   and (
+                     has_table_privilege($1, invocation_relation.oid, 'INSERT')
+                     or has_any_column_privilege($1, invocation_relation.oid, 'INSERT')
+                   )
+                 )
+                 or (
+                   stored_expression.binding ~ '^dml-rule:UPDATE:'
+                   and (
+                     has_table_privilege($1, invocation_relation.oid, 'UPDATE')
+                     or has_any_column_privilege($1, invocation_relation.oid, 'UPDATE')
+                   )
+                 )
+                 or (
+                   stored_expression.binding ~ '^dml-rule:DELETE:'
+                   and has_table_privilege($1, invocation_relation.oid, 'DELETE')
+                 )
+               )
+               and (
                  has_table_privilege($1, invocation_relation.oid, 'INSERT')
                  or exists (
                    select 1
@@ -2801,6 +3003,10 @@ const collectSnapshot = async (
                      'UPDATE'
                    )
                  )
+                 or (
+                   stored_expression.binding ~ '^dml-rule:DELETE:'
+                   and has_table_privilege($1, invocation_relation.oid, 'DELETE')
+                 )
                )
              )
              or exists (
@@ -2816,6 +3022,7 @@ const collectSnapshot = async (
                    runtime_role.oid
                  )
                where not stored_expression.selectable
+                 and stored_expression.binding !~ '^dml-rule:'
                  and writable_view.affected_oid = stored_expression.invocation_oid
                  and has_schema_privilege($1, view_namespace.oid, 'USAGE')
                  and (
@@ -2891,6 +3098,7 @@ const collectSnapshot = async (
                join pg_catalog.pg_namespace as root_invocation_namespace
                  on root_invocation_namespace.oid = root_invocation_relation.relnamespace
                where not stored_expression.selectable
+                 and stored_expression.binding !~ '^dml-rule:'
                  and cascade.affected_action = 'UPDATE'
                  and cascade.affected_oid = stored_expression.invocation_oid
                  and has_schema_privilege($1, root_invocation_namespace.oid, 'USAGE')
