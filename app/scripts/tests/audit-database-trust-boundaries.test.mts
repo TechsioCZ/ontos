@@ -1332,12 +1332,12 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     /has_parameter_privilege\(\s+candidate\.oid,\s+'session_replication_role',\s+'SET'\s+\)/u,
   );
   assert.match(source, /has_parameter_privilege\(\$1, 'session_replication_role', 'SET'\)/u);
-  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 5);
+  assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 7);
   assert.equal(
     source.match(
       /select relation\.oid\s+union\s+select ancestor\.oid\s+from pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu,
     )?.length,
-    4,
+    6,
   );
   assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
   assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
@@ -1348,6 +1348,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
   assert.match(source, /pg_catalog\.pg_rewrite as expression/u);
   assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
+  assert.match(source, /writable_view_paths\(invocation_oid, affected_oid, actions\)/u);
+  assert.match(source, /pg_catalog\.pg_relation_is_updatable/u);
+  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /stored_expression\.invocation_oid/u);
   assert.match(source, /nested-view-expression/u);
@@ -1373,8 +1376,10 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /join pg_catalog\.pg_extension as extension/u);
   assert.match(source, /join pg_catalog\.pg_foreign_data_wrapper as foreign_data_wrapper/u);
   assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
+  assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
   assert.equal(source.match(/event_trigger\.evttags is null/gu)?.length, 4);
-  assert.equal(source.match(/audited_trigger\.tgtype & 1 <> 0/gu)?.length, 4);
+  assert.equal(source.match(/from pg_catalog\.pg_partitioned_table as partitioned/gu)?.length, 4);
+  assert.equal(source.match(/audited_trigger\.tgtype & 12 <> 0/gu)?.length, 4);
   assert.match(
     source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,

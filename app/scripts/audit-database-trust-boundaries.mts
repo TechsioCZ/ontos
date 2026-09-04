@@ -915,6 +915,54 @@ view_invocation_paths(invocation_oid, dependency_oid) as (
   where nested_view.relkind = 'v'
     and nested_view.oid <> expression.ev_class
 ),
+writable_view_paths(invocation_oid, affected_oid, actions) as (
+  select distinct
+    invocation_view.oid,
+    affected_relation.oid,
+    pg_catalog.pg_relation_is_updatable(invocation_view.oid::regclass, false) & 28
+  from pg_catalog.pg_class as invocation_view
+  join pg_catalog.pg_namespace as namespace on namespace.oid = invocation_view.relnamespace
+  join pg_catalog.pg_rewrite as rewrite
+    on rewrite.ev_class = invocation_view.oid
+   and rewrite.rulename = '_RETURN'
+  join pg_catalog.pg_depend as dependency
+    on dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+   and dependency.objid = rewrite.oid
+   and dependency.refclassid = 'pg_catalog.pg_class'::regclass
+   and dependency.deptype = 'n'
+  join pg_catalog.pg_class as affected_relation on affected_relation.oid = dependency.refobjid
+  where invocation_view.relkind = 'v'
+    and affected_relation.relkind in ('r', 'p', 'f', 'v')
+    and affected_relation.oid <> invocation_view.oid
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+    and pg_catalog.pg_relation_is_updatable(invocation_view.oid::regclass, false) & 28 <> 0
+  union
+  select distinct
+    path.invocation_oid,
+    affected_relation.oid,
+    path.actions
+      & pg_catalog.pg_relation_is_updatable(nested_view.oid::regclass, false)
+      & 28
+  from writable_view_paths as path
+  join pg_catalog.pg_class as nested_view
+    on nested_view.oid = path.affected_oid
+   and nested_view.relkind = 'v'
+  join pg_catalog.pg_rewrite as rewrite
+    on rewrite.ev_class = nested_view.oid
+   and rewrite.rulename = '_RETURN'
+  join pg_catalog.pg_depend as dependency
+    on dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+   and dependency.objid = rewrite.oid
+   and dependency.refclassid = 'pg_catalog.pg_class'::regclass
+   and dependency.deptype = 'n'
+  join pg_catalog.pg_class as affected_relation on affected_relation.oid = dependency.refobjid
+  where affected_relation.relkind in ('r', 'p', 'f', 'v')
+    and affected_relation.oid <> nested_view.oid
+    and path.actions
+      & pg_catalog.pg_relation_is_updatable(nested_view.oid::regclass, false)
+      & 28 <> 0
+),
 stored_expression_dependencies(
   invocation_oid,
   relation_oid,
@@ -1188,6 +1236,17 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
   from pg_catalog.pg_roles as role
   cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
   where has_database_privilege(role.oid, current_database(), 'CREATE')
+  union
+  select role.oid, event.name, command.tag
+  from pg_catalog.pg_roles as role
+  cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
+  cross join (
+    values
+      ('CREATE SEQUENCE'::text),
+      ('CREATE TABLE'::text),
+      ('CREATE VIEW'::text)
+  ) as command(tag)
+  where has_database_privilege(role.oid, current_database(), 'TEMPORARY')
   union
   select role.oid, event.name, command.tag
   from pg_catalog.pg_roles as role
@@ -1943,7 +2002,112 @@ const collectSnapshot = async (
                    audited_trigger.tgtype & 32 <> 0
                    and has_table_privilege(candidate.oid, invocation_relation.oid, 'TRUNCATE')
                  )
+                 or (
+                   invocation_relation.oid <> relation.oid
+                   and audited_trigger.tgtype & 1 <> 0
+                   and audited_trigger.tgtype & 12 <> 0
+                   and exists (
+                     select 1
+                     from pg_catalog.pg_partitioned_table as partitioned
+                     where partitioned.partrelid = invocation_relation.oid
+                       and (
+                         has_table_privilege(
+                           candidate.oid,
+                           invocation_relation.oid,
+                           'UPDATE'
+                         )
+                         or exists (
+                           select 1
+                           from unnest(partitioned.partattrs) as key(attnum)
+                           where key.attnum <> 0
+                             and has_column_privilege(
+                               candidate.oid,
+                               invocation_relation.oid,
+                               key.attnum,
+                               'UPDATE'
+                             )
+                         )
+                         or (
+                           0 = any(partitioned.partattrs)
+                           and has_any_column_privilege(
+                             candidate.oid,
+                             invocation_relation.oid,
+                             'UPDATE'
+                           )
+                         )
+                       )
+                   )
+                 )
                )
+             )
+             or exists (
+               select 1
+               from writable_view_paths as writable_view
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = writable_view.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_view.relnamespace
+               where writable_view.affected_oid in (
+                   select relation.oid
+                   union
+                   select ancestor.oid
+                   from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and (
+                   writable_view.affected_oid = relation.oid
+                   or audited_trigger.tgtype & 1 <> 0
+                 )
+                 and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     audited_trigger.tgtype & 4 <> 0
+                     and writable_view.actions & 8 <> 0
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'INSERT')
+                       or has_any_column_privilege(
+                         candidate.oid,
+                         invocation_view.oid,
+                         'INSERT'
+                       )
+                     )
+                   )
+                   or (
+                     audited_trigger.tgtype & 8 <> 0
+                     and writable_view.actions & 16 <> 0
+                     and has_table_privilege(candidate.oid, invocation_view.oid, 'DELETE')
+                   )
+                   or (
+                     audited_trigger.tgtype & 16 <> 0
+                     and writable_view.actions & 4 <> 0
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
+                       or has_any_column_privilege(
+                         candidate.oid,
+                         invocation_view.oid,
+                         'UPDATE'
+                       )
+                     )
+                   )
+                   or (
+                     writable_view.affected_oid <> relation.oid
+                     and audited_trigger.tgtype & 1 <> 0
+                     and audited_trigger.tgtype & 12 <> 0
+                     and writable_view.actions & 4 <> 0
+                     and exists (
+                       select 1
+                       from pg_catalog.pg_partitioned_table as partitioned
+                       where partitioned.partrelid = writable_view.affected_oid
+                     )
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
+                       or has_any_column_privilege(
+                         candidate.oid,
+                         invocation_view.oid,
+                         'UPDATE'
+                       )
+                     )
+                   )
+                 )
              )
              or exists (
                select 1
@@ -2435,7 +2599,96 @@ const collectSnapshot = async (
                    audited_trigger.tgtype & 32 <> 0
                    and has_table_privilege($1, invocation_relation.oid, 'TRUNCATE')
                  )
+                 or (
+                   invocation_relation.oid <> relation.oid
+                   and audited_trigger.tgtype & 1 <> 0
+                   and audited_trigger.tgtype & 12 <> 0
+                   and exists (
+                     select 1
+                     from pg_catalog.pg_partitioned_table as partitioned
+                     where partitioned.partrelid = invocation_relation.oid
+                       and (
+                         has_table_privilege($1, invocation_relation.oid, 'UPDATE')
+                         or exists (
+                           select 1
+                           from unnest(partitioned.partattrs) as key(attnum)
+                           where key.attnum <> 0
+                             and has_column_privilege(
+                               $1,
+                               invocation_relation.oid,
+                               key.attnum,
+                               'UPDATE'
+                             )
+                         )
+                         or (
+                           0 = any(partitioned.partattrs)
+                           and has_any_column_privilege(
+                             $1,
+                             invocation_relation.oid,
+                             'UPDATE'
+                           )
+                         )
+                       )
+                   )
+                 )
                )
+             )
+             or exists (
+               select 1
+               from writable_view_paths as writable_view
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = writable_view.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_view.relnamespace
+               where writable_view.affected_oid in (
+                   select relation.oid
+                   union
+                   select ancestor.oid
+                   from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and (
+                   writable_view.affected_oid = relation.oid
+                   or audited_trigger.tgtype & 1 <> 0
+                 )
+                 and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     audited_trigger.tgtype & 4 <> 0
+                     and writable_view.actions & 8 <> 0
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'INSERT')
+                       or has_any_column_privilege($1, invocation_view.oid, 'INSERT')
+                     )
+                   )
+                   or (
+                     audited_trigger.tgtype & 8 <> 0
+                     and writable_view.actions & 16 <> 0
+                     and has_table_privilege($1, invocation_view.oid, 'DELETE')
+                   )
+                   or (
+                     audited_trigger.tgtype & 16 <> 0
+                     and writable_view.actions & 4 <> 0
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'UPDATE')
+                       or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                     )
+                   )
+                   or (
+                     writable_view.affected_oid <> relation.oid
+                     and audited_trigger.tgtype & 1 <> 0
+                     and audited_trigger.tgtype & 12 <> 0
+                     and writable_view.actions & 4 <> 0
+                     and exists (
+                       select 1
+                       from pg_catalog.pg_partitioned_table as partitioned
+                       where partitioned.partrelid = writable_view.affected_oid
+                     )
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'UPDATE')
+                       or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                     )
+                   )
+                 )
              )
              or exists (
                select 1
