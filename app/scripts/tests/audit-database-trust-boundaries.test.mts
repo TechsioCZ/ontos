@@ -64,6 +64,7 @@ const snapshot = {
   grantOptions: [],
   memberships: [],
   parameterPrivileges: [],
+  publications: [],
   role: ordinaryRole,
   runtimeRole: 'ontos_runtime',
   schemas: [
@@ -180,6 +181,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     foreignServerCount: 0,
     grantOptionCount: 0,
     parameterPrivilegeCount: 0,
+    publicationCount: 0,
     privilegedOwnerViewCount: 0,
     routineCount: 0,
     securityDefinerExecutableCount: 0,
@@ -740,6 +742,60 @@ test('classifies an assumable extension owner as privileged', () => {
         ownedTypes: [],
         relationPrivilegeSchemas: [],
         role: 'extension_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
+test('flags direct publication ownership as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    publications: [{ owner: snapshot.runtimeRole, publication: 'tenant_changes' }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+  assert.equal(report.summary.publicationCount, 1);
+});
+
+test('classifies an assumable publication owner as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedPublications: ['tenant_changes'],
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'publication_owner',
         securityDefinerRoutines: [],
       },
     ],
@@ -1440,12 +1496,16 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /join pg_catalog\.pg_extension as extension/u);
   assert.match(source, /join pg_catalog\.pg_foreign_data_wrapper as foreign_data_wrapper/u);
   assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
+  assert.match(source, /from pg_catalog\.pg_publication as publication/u);
+  assert.match(source, /publication\.pubowner = candidate\.oid/u);
   assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
   assert.match(source, /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u);
   assert.match(source, /event_trigger\.evtevent = 'ddl_command_start'/u);
   assert.match(source, /has_table_privilege\(role\.oid, relation\.oid, 'TRIGGER'\)/u);
   assert.match(source, /trigger_routine\.prorettype = 'pg_catalog\.trigger'::regtype/u);
   assert.match(source, /'ddl_command_end'::text, 'CREATE TRIGGER'::text/u);
+  assert.match(source, /'CREATE COLLATION'::text/u);
+  assert.match(source, /'ddl_command_end'::text, 'ALTER PUBLICATION'::text/u);
   assert.match(
     source,
     /left join lateral unnest\(event_trigger\.evttags\) as configured_tag\(name\) on true/u,
