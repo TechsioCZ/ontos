@@ -497,7 +497,11 @@ export const collectSnapshot = async (
            on referenced_relation.oid = dependency.referenced_oid
          where dependency.view_oid = relation.oid
            and referenced_relation.relkind in ('r', 'p')
-           and referenced_relation.relowner = dependency.effective_owner_oid
+           and pg_has_role(
+             dependency.effective_owner_oid,
+             referenced_relation.relowner,
+             'USAGE'
+           )
            and referenced_relation.relrowsecurity
            and not referenced_relation.relforcerowsecurity
        ) as owner_context_rls_bypass,
