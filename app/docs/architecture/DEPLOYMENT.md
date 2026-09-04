@@ -11,6 +11,10 @@ and every new or changed MicroVertical.
 > Until then, releases use one implicit `standard` implementation per `moduleId` and the current
 > generated `buildMarker`; do not simulate missing fields with ad hoc configuration.
 
+Application Composition validation is implemented; publication and live Shell loading are not.
+Until #374–#377 wire those paths in, remote URL and generated lazy-registry changes still require
+Shell regeneration and redeployment. The composition promotion sequence below is the target flow.
+
 The rules exist because the first Zerops stage rollout was merged after source-level validation and
 then required 43 linear repair commits. Stage had become the first production-shaped integration
 test. Future releases must prove the target artifact and the distributed user journey before
@@ -81,8 +85,9 @@ The generated plan must conservatively include:
   changes;
 - every consumer when a shared runtime package or public contract changes;
 - SpiceDB whenever its schema, image, datastore bootstrap, transport, or client contract changes;
-- Shell whenever its code/config or contribution ABI changes; compatible remote URLs and contracts
-  move through a new Application Composition revision without rebuilding or redeploying Shell;
+- Shell whenever its code/config or contribution ABI changes, including remote URL and generated
+  lazy-registry changes until the live composition loader is integrated. After that integration,
+  compatible remote updates move through a new composition revision without redeploying Shell;
 - a MicroVertical whenever its owner-local code, manifest, registration, migrations, configuration,
   or runtime dependencies change;
 - all Node delivery units whenever the common lockfile, workspace dependency policy, runtime
@@ -347,7 +352,10 @@ Rollback must be executable and tested before rollout:
 2. stop further promotion;
 3. identify the failed unit and the last successful phase from structured evidence;
 4. explicitly promote the previously validated composition revision;
-5. restore affected delivery units to the artifacts pinned by that revision when required;
+5. restore affected delivery units using the deployment automation's immutable release records.
+   Composition pins public contract and MF-manifest digests; its `buildMarker` alone is not an
+   executable artifact identity. The publisher in #374 must bind the composition revision to those
+   release records before supporting rollback;
 6. leave additive PostgreSQL and compatible SpiceDB changes in place;
 7. rerun the complete authenticated smoke suite;
 8. record the rollback artifacts and outcome.
