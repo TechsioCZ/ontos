@@ -730,6 +730,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   );
   assert.match(source, /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
   assert.match(source, /referenced_relation\.relowner = dependency\.effective_owner_oid/u);
+  assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 3);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {
