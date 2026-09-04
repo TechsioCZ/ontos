@@ -1,4 +1,4 @@
-import type { ClientBase } from 'pg';
+import type { Client, ClientBase } from 'pg';
 import { Cause, Option, Schema } from 'effect';
 
 interface DatabasePrivileges {
@@ -81,6 +81,8 @@ interface SequencePrivilege {
 }
 
 interface TablePrivilege {
+  readonly deletable?: boolean;
+  readonly insertable?: boolean;
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly ownerBypassRls?: boolean;
@@ -102,6 +104,7 @@ interface TablePrivilege {
   readonly schema: string;
   readonly securityInvoker?: boolean;
   readonly table: string;
+  readonly updatable?: boolean;
 }
 
 interface TypePrivilege {
@@ -247,8 +250,8 @@ export const assertSameDatabaseTarget = (
 export const getEffectiveDatabaseEndpoint = (
   client: Client,
 ): Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'> => ({
-  configuredHost: client.connectionParameters.host,
-  configuredPort: client.connectionParameters.port,
+  configuredHost: client.host,
+  configuredPort: client.port,
 });
 
 export const assertDatabaseSessionIdentities = (
@@ -435,6 +438,8 @@ export const buildDatabaseTrustBoundaryReport = (
   }
   const privilegedOwnerViews = tables.filter(
     ({
+      deletable,
+      insertable,
       kind,
       owner,
       ownerBypassRls,
@@ -443,15 +448,19 @@ export const buildDatabaseTrustBoundaryReport = (
       ownerSuperuser,
       privileges,
       securityInvoker,
+      updatable,
     }) =>
       kind === 'view' &&
-      (privileges.select || privileges.insert || privileges.update || privileges.delete) &&
-      securityInvoker !== true &&
-      (owner === snapshot.administrativeRole ||
-        ownerBypassRls === true ||
+      (privileges.select ||
+        (privileges.insert && insertable !== false) ||
+        (privileges.update && updatable !== false) ||
+        (privileges.delete && deletable !== false)) &&
+      ((securityInvoker !== true &&
+        (owner === snapshot.administrativeRole ||
+          ownerBypassRls === true ||
+          ownerSuperuser === true)) ||
         ownerContextPrivileged === true ||
-        ownerContextRlsBypass === true ||
-        ownerSuperuser === true),
+        ownerContextRlsBypass === true),
   );
   if (privilegedOwnerViews.length > 0) {
     findings.push({

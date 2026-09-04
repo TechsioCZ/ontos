@@ -1,4 +1,4 @@
-import type { Client } from 'pg';
+import type { Client, ClientBase } from 'pg';
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
@@ -74,7 +74,9 @@ interface RoutinePrivilegeRow {
 }
 
 interface TablePrivilegeRow {
+  readonly deletable: boolean;
   readonly delete: boolean;
+  readonly insertable: boolean;
   readonly insert: boolean;
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
@@ -92,6 +94,7 @@ interface TablePrivilegeRow {
   readonly table: string;
   readonly trigger: boolean;
   readonly truncate: boolean;
+  readonly updatable: boolean;
   readonly update: boolean;
 }
 
@@ -443,7 +446,14 @@ export const collectSnapshot = async (
          rewrite.ev_class,
          dependency.refobjid,
          case
-           when coalesce('security_invoker=true' = any(view_relation.reloptions), false)
+           when coalesce(
+             (
+               select option_value::boolean
+               from pg_catalog.pg_options_to_table(view_relation.reloptions)
+               where option_name = 'security_invoker'
+             ),
+             false
+           )
              then runtime_role.oid
            else view_relation.relowner
          end
@@ -462,12 +472,20 @@ export const collectSnapshot = async (
          dependency.view_oid,
          nested_dependency.refobjid,
          case
-           when coalesce('security_invoker=true' = any(nested_view.reloptions), false)
-             then dependency.effective_owner_oid
+           when coalesce(
+             (
+               select option_value::boolean
+               from pg_catalog.pg_options_to_table(nested_view.reloptions)
+               where option_name = 'security_invoker'
+             ),
+             false
+           )
+             then runtime_role.oid
            else nested_view.relowner
          end
        from view_dependencies as dependency
        join pg_catalog.pg_class as nested_view on nested_view.oid = dependency.referenced_oid
+       join pg_catalog.pg_roles as runtime_role on runtime_role.rolname = $1
        join pg_catalog.pg_rewrite as nested_rewrite
          on nested_rewrite.ev_class = nested_view.oid
         and nested_rewrite.rulename = '_RETURN'
@@ -521,7 +539,17 @@ export const collectSnapshot = async (
        owner.rolsuper as owner_superuser,
        relation.relrowsecurity as rls_enabled,
        relation.relforcerowsecurity as rls_forced,
-       coalesce('security_invoker=true' = any(relation.reloptions), false) as security_invoker,
+       coalesce(
+         (
+           select option_value::boolean
+           from pg_catalog.pg_options_to_table(relation.reloptions)
+           where option_name = 'security_invoker'
+         ),
+         false
+       ) as security_invoker,
+       (pg_catalog.pg_relation_is_updatable(relation.oid, true) & 8) <> 0 as insertable,
+       (pg_catalog.pg_relation_is_updatable(relation.oid, true) & 4) <> 0 as updatable,
+       (pg_catalog.pg_relation_is_updatable(relation.oid, true) & 16) <> 0 as deletable,
        (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and (
@@ -1048,6 +1076,8 @@ export const collectSnapshot = async (
       sequence: sequence.sequence,
     })),
     tables: tables.rows.map((table) => ({
+      deletable: table.deletable,
+      insertable: table.insertable,
       kind: table.kind,
       owner: table.owner,
       ownerBypassRls: table.owner_bypass_rls,
@@ -1069,6 +1099,7 @@ export const collectSnapshot = async (
       schema: table.schema,
       securityInvoker: table.security_invoker,
       table: table.table,
+      updatable: table.updatable,
     })),
     trustedContext: {
       legalEntitySettingRetainedAfterRollback: legalEntity.retainedAfterRollback,

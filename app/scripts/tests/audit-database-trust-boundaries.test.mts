@@ -369,6 +369,8 @@ test('flags creator-default grant options as persistent authority', () => {
 test('flags selectable privileged owner-context views but accepts security invokers', () => {
   const ownerContextView = {
     ...snapshot.tables[0],
+    deletable: true,
+    insertable: true,
     kind: 'view' as const,
     owner: snapshot.administrativeRole,
     ownerBypassRls: false,
@@ -384,6 +386,7 @@ test('flags selectable privileged owner-context views but accepts security invok
       update: false,
     },
     securityInvoker: false,
+    updatable: true,
   };
   const base = {
     ...snapshot,
@@ -412,6 +415,18 @@ test('flags selectable privileged owner-context views but accepts security invok
     ],
   });
   assert.deepEqual(findingCodes(writableReport), ['runtime_role_can_use_privileged_owner_view']);
+
+  const readOnlyReport = buildDatabaseTrustBoundaryReport({
+    ...base,
+    tables: [
+      {
+        ...ownerContextView,
+        privileges: { ...ownerContextView.privileges, select: false, update: true },
+        updatable: false,
+      },
+    ],
+  });
+  assert.deepEqual(readOnlyReport.findings, []);
 
   const invokerReport = buildDatabaseTrustBoundaryReport({
     ...base,
@@ -454,7 +469,7 @@ test('flags privileged owners in nested owner-context views', () => {
         ownerBypassRls: false,
         ownerContextPrivileged: true,
         ownerSuperuser: false,
-        securityInvoker: false,
+        securityInvoker: true,
       },
     ],
     trustedContext: {
