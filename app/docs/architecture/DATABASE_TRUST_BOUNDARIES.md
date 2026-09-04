@@ -96,13 +96,13 @@ shared credential an unforgeable security boundary.
 
 ## Negative evidence and remaining gaps
 
-| Threat                  | Current evidence                                                                                                     | Gap                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Cross-tenant SQL        | RLS integration tests prove filtering for selected context.                                                          | They do not prove the context is authentic.                                           |
-| Raw database access     | Static boundaries reject imports from non-owner surfaces.                                                            | Arbitrary code inside an allowed server process retains the credential.               |
-| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none.     | Production needs its own audit and pilot denial probes.                               |
-| Privileged execution    | The audit checks executable `SECURITY DEFINER` routines and privileged owner-context views; local baseline has none. | Every future privileged path needs a narrow contract and review.                      |
-| Unrelated-schema DML    | The audit enumerates effective relation and sequence access.                                                         | Denial is impossible today because the shared role intentionally spans three schemas. |
+| Threat                  | Current evidence                                                                                                              | Gap                                                                                   |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Cross-tenant SQL        | RLS integration tests prove filtering for selected context.                                                                   | They do not prove the context is authentic.                                           |
+| Raw database access     | Static boundaries reject imports from non-owner surfaces.                                                                     | Arbitrary code inside an allowed server process retains the credential.               |
+| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none.              | Production needs its own audit and pilot denial probes.                               |
+| Privileged execution    | The audit checks directly executable `SECURITY DEFINER` routines and privileged owner-context views; local baseline has none. | Every future privileged path needs a narrow contract and review.                      |
+| Unrelated-schema DML    | The audit enumerates effective relation and sequence access.                                                                  | Denial is impossible today because the shared role intentionally spans three schemas. |
 
 ## Pilot options
 
