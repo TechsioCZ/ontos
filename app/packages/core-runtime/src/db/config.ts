@@ -93,7 +93,9 @@ export const parseDatabaseConfig = (
       const database = decodeURIComponent(parsed.pathname.replace(/^\/+/u, ''));
       const host = parsed.hostname;
       const port = parsed.port.length > 0 ? Math.trunc(Number(parsed.port)) : 5432;
-      const user = decodeURIComponent(parsed.username);
+      const authorityUser = decodeURIComponent(parsed.username);
+      const queryUser = parsed.searchParams.getAll('user').at(-1);
+      const user = queryUser === undefined || queryUser.length === 0 ? authorityUser : queryUser;
 
       if (
         database.length === 0 ||

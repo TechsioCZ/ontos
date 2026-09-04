@@ -58,6 +58,7 @@ const snapshot = {
       source: 'public',
     },
   ],
+  grantOptions: [],
   memberships: [],
   parameterPrivileges: [],
   role: ordinaryRole,
@@ -171,6 +172,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     dmlSchemaCount: 3,
     dmlTableCount: 3,
     findingCount: 2,
+    grantOptionCount: 0,
     parameterPrivilegeCount: 0,
     privilegedOwnerViewCount: 0,
     routineCount: 0,
@@ -371,6 +373,44 @@ test('flags effective configuration parameter authority', () => {
     ['runtime_role_has_parameter_authority'],
   );
   assert.equal(report.summary.parameterPrivilegeCount, 1);
+});
+
+test('flags grant options on current objects as persistent authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    grantOptions: ['relation:contacts.customers:SELECT'],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_grant_authority'],
+  );
+  assert.equal(report.summary.grantOptionCount, 1);
+});
+
+test('flags creator-default grant options as persistent authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    defaultPrivileges: [{ ...snapshot.defaultPrivileges[0], grantable: true }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_grant_authority'],
+  );
+  assert.equal(report.summary.grantOptionCount, 1);
 });
 
 test('flags selectable privileged owner-context views but accepts security invokers', () => {
@@ -688,6 +728,8 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     source,
     /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
   );
+  assert.match(source, /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
+  assert.match(source, /referenced_relation\.relowner = dependency\.effective_owner_oid/u);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {

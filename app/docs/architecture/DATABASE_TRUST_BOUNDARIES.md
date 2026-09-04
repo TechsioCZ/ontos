@@ -46,8 +46,11 @@ descendants reached only after an administrable role is re-granted to the runtim
 ownership authority inherited without `SET ROLE`; cluster attributes are not treated as inherited.
 It classifies directly authenticated and reachable PostgreSQL predefined roles as privileged, inventories effective
 parameter-level `SET`/`ALTER SYSTEM` grants, and distinguishes security-invoker views from views
-that execute in a privileged owner's context. For ordinary owner-context views, it recursively
-checks referenced relations and detects the table-owner exemption from unforced row-level security.
+that execute in a privileged owner's context. For nested views, it carries the effective execution
+owner across each owner-context or security-invoker boundary and detects the table-owner exemption
+from unforced row-level security. It separately inventories current-object and creator-default grant
+options on database, schema, relation, column, sequence, routine, type, parameter, language,
+foreign-data, and tablespace objects.
 Its pure report builder and target/session validators are covered by
 `scripts/tests/audit-database-trust-boundaries.test.mts`.
 
@@ -69,6 +72,7 @@ baseline, the audit reported:
 | Ownership         | All three logical owner schemas and their relations are physically owned by `ontos_admin`                                                                                              |
 | RLS               | Two of 27 current tables have enabled and forced RLS                                                                                                                                   |
 | Parameters        | No explicit parameter-level `SET` or `ALTER SYSTEM` privilege                                                                                                                          |
+| Grant options     | No current-object or creator-default grant option on a database, schema, relation, column, sequence, routine, type, parameter, language, foreign-data, or tablespace object            |
 | Trusted settings  | The runtime role can set and read both `ontos.tenant_id` and `ontos.legal_entity_id`; transaction-local values disappear after rollback                                                |
 
 The exact counts are local-baseline evidence, not a claim about production. Re-run the command
@@ -136,6 +140,7 @@ unforgeable trust boundary.
 | Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                                                                                                   | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
 | Privileged routines                             | Audit inventories routines in every non-system schema and flags `SECURITY DEFINER` routines that the runtime or an assumable role can both resolve through schema `USAGE` and execute; the baseline has none.                                                     | Every future privileged routine needs a narrow contract and hardening review; production must be audited rather than inferred.                                    |
 | DDL and role escalation                         | Audit checks database-level `CREATE`, every non-system schema, audited relation/routine/type ownership, predefined roles, parameter ACLs, and cluster/database/schema/object authority for every reachable role; the baseline has no DDL authority or membership. | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
+| Grant authority                                 | Audit inventories effective current-object and creator-default grant options across databases, schemas, relations, columns, sequences, routines, types, parameters, languages, foreign-data objects, and tablespaces; the baseline has none.                      | Production must be audited rather than inferred from local grants.                                                                                                |
 | Privileged owner-context views                  | Audit records `security_invoker`, recursively follows view dependencies, and flags selectable owner-context views whose owner is administrative, `BYPASSRLS`, superuser, or owns a referenced unforced-RLS table; the baseline has no views.                      | A future owner-context view requires an explicit tenant-isolation review even when its owner is not otherwise privileged.                                         |
 | Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                                                                                                                                                                        | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
 
