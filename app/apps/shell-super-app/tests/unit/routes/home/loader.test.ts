@@ -82,7 +82,9 @@ beforeEach(() => {
       state: 'authenticated',
     }),
   );
-  shellCompositionMock.mockReturnValue(Effect.succeed({ navigation, state: 'available' as const }));
+  shellCompositionMock.mockReturnValue(
+    Effect.succeed({ navigation, state: 'available' as const, unavailableDeployments: [] }),
+  );
   availableTenantsMock.mockReturnValue(
     Effect.succeed({
       tenants: [
@@ -101,7 +103,7 @@ test('resolves trusted context before returning one serializable composition', a
       items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       state: 'available',
     },
-    navigation: { items: navigation, state: 'available' },
+    navigation: { items: navigation, state: 'available', unavailableDeployments: [] },
     selectedLegalEntityId: 'legal-1',
     state: 'authenticated',
     tenants: {

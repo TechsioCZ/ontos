@@ -64,8 +64,10 @@ Shell contributions bind stable navigation/page, public-component, API-backed re
 timeline, search, report, and media targets to descriptors already owned by the same manifest.
 They may contain semantic keys, ordering, grouping metadata, and the page contribution's canonical
 root-relative `routePath`, but never absolute URLs, import specifiers, remote strings, functions,
-schemas, executable routes, or source paths. The Installed Module Catalog rejects the entire
-snapshot when one binding is missing, duplicated, cross-owned, or role/access incompatible.
+schemas, executable routes, or source paths. Candidate promotion validates the complete proposed
+composition and rejects it when one binding is missing, duplicated, cross-owned, or role/access
+incompatible. Runtime discovery then settles each promoted deployment independently: an invalid
+deployment is reported as incompatible without removing unrelated healthy deployments.
 
 ## Import and execution boundaries
 
@@ -76,9 +78,15 @@ and asynchronous communication uses published schema-only Outbox contracts. Exec
 Policies, workers, migrations, routes, repositories, search implementations, and report
 implementations stay owner-local.
 
-The installed catalog rejects unsupported schema versions, deployment/manifest identity mismatch,
-duplicate app or module IDs, mismatched Outbox consumer ownership or entrypoints, and duplicate
-worker keys. A failed load never creates or caches a partial catalog. A subscription may name a
+The strict candidate catalog rejects unsupported schema versions, deployment/manifest identity
+mismatch, duplicate app or module IDs, mismatched Outbox consumer ownership or entrypoints, and
+duplicate worker keys before promotion. Runtime discovery excludes every claimant involved in a
+global identity or worker-key contradiction while preserving unrelated healthy deployments. Each
+installed deployment remains visible with an authoritative `disabled` or `revoked` state, or a
+typed transient `timeout`, `unavailable`, or `incompatible` diagnostic. Authoritative state takes
+precedence over a stale fetched contract. A degraded runtime result is never cached; discovery is
+retried, and only a fully healthy result is cached for its immutable allowlist/composition revision.
+No persistent last-known-good contract is selected automatically. A subscription may name a
 producer that is not installed; it remains dormant until matching messages can exist.
 
 Core capabilities are implicit universal infrastructure, not per-module requirements. External

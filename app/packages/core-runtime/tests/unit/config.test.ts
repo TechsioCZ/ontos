@@ -93,11 +93,28 @@ void test('requires distinct administrative and least-privilege runtime identiti
       }),
     ),
   );
+  const queryParameterIdentities = await Effect.runPromise(
+    parseDatabaseConnectionPair({
+      DATABASE_ADMIN_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_admin',
+      DATABASE_URL: 'postgresql://connection-proxy@localhost:5433/ontos?user=ontos_runtime',
+    }),
+  );
+  const queryParameterCollision = await Effect.runPromise(
+    Effect.flip(
+      parseDatabaseConnectionPair({
+        DATABASE_ADMIN_URL: 'postgresql://admin-authority@localhost:5433/ontos?user=effective_role',
+        DATABASE_URL: 'postgresql://runtime-authority@localhost:5433/ontos?user=effective_role',
+      }),
+    ),
+  );
 
   assert.equal(valid.admin.user, 'ontos_admin');
   assert.equal(valid.runtime.user, 'ontos_runtime');
+  assert.equal(queryParameterIdentities.admin.user, 'ontos_admin');
+  assert.equal(queryParameterIdentities.runtime.user, 'ontos_runtime');
   assert.equal(missing._tag, 'DatabaseConfigError');
   assert.equal(identical._tag, 'DatabaseConfigError');
+  assert.equal(queryParameterCollision._tag, 'DatabaseConfigError');
   assert.equal(superuserCompatible._tag, 'DatabaseConfigError');
 });
 

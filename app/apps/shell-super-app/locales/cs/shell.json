@@ -104,6 +104,13 @@
         "label": "Aktivní MicroVerticaly",
         "unavailable": "Aktivní MicroVerticaly jsou dočasně nedostupné. Pro další pokus znovu načtěte stránku."
       },
+      "discovery": {
+        "disabled": "Modul je deaktivovaný.",
+        "incompatible": "Smlouva nasazeného modulu není kompatibilní.",
+        "revoked": "Modul byl odvolán.",
+        "timeout": "Vypršel časový limit nasazení modulu.",
+        "unavailable": "Nasazení modulu je dočasně nedostupné."
+      },
       "state": {
         "active": "Aktivní",
         "deprecated": "Zastaralý",
@@ -113,11 +120,13 @@
     },
     "moduleTarget": {
       "forbidden": "K otevření tohoto modulu nemáte oprávnění.",
+      "incompatible": "Nasazený vstupní bod modulu není kompatibilní.",
       "loading": "Načítání modulu…",
       "not_found": "Tento modul není v aktuálním kontextu dostupný.",
       "selection_required": "Před otevřením modulu vyberte právní subjekt.",
       "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
       "title": "Modul",
+      "timeout": "Vypršel časový limit vstupního bodu modulu. Zkuste to znovu.",
       "unavailable": "Modul je dočasně nedostupný. Zkuste to znovu."
     },
     "search": {

@@ -66,6 +66,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         tenantSwitchFailed={controls.tenantSwitchFailed}
         tenantSwitchPending={controls.tenantSwitchPending}
         title={t('shell.dashboard.home.title')}
+        unavailableDeployments={model.navigation.unavailableDeployments}
       >
         <section
           aria-label={t('shell.auth.identity.title')}

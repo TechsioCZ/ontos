@@ -10,6 +10,7 @@ import { SearchForm } from '@techsio/ui-kit/molecules/search-form';
 import { Header } from '@techsio/ui-kit/organisms/header';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { ShellUnavailableDeployment } from '../../shared/api.ts';
 
 interface DashboardAccount {
   readonly displayName: string;
@@ -56,6 +57,7 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly tenantSwitchFailed: boolean;
   readonly tenantSwitchPending: boolean;
   readonly title?: string;
+  readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
 }
 
 export const AuthenticatedDashboardLayout = ({
@@ -80,6 +82,7 @@ export const AuthenticatedDashboardLayout = ({
   tenantSwitchFailed,
   tenantSwitchPending,
   title,
+  unavailableDeployments,
 }: AuthenticatedDashboardLayoutProps) => {
   const { t } = useModernI18n();
   const [searchValue, setSearchValue] = useState('');
@@ -296,6 +299,21 @@ export const AuthenticatedDashboardLayout = ({
                     {t('shell.modules.unavailable')}
                   </StatusText>
                 ) : null}
+              </li>
+            ))}
+            {unavailableDeployments.map((deployment) => (
+              <li
+                className="shell:flex shell:flex-wrap shell:items-center shell:gap-2"
+                key={deployment.appId}
+              >
+                <span>{deployment.appId}</span>
+                <StatusText showIcon size="sm" status="warning">
+                  {t(
+                    `shell.modules.discovery.${
+                      deployment.status === 'unavailable' ? deployment.reason : deployment.status
+                    }`,
+                  )}
+                </StatusText>
               </li>
             ))}
           </ul>
