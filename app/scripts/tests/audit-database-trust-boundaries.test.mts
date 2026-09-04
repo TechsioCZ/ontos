@@ -622,6 +622,7 @@ test('flags ownership of an audited routine as DDL authority', () => {
         routine: 'refresh_projection',
         schema: 'contacts',
         securityDefiner: false,
+        triggerBindings: [],
       },
     ],
     tables: snapshot.tables.slice(0, 1),
@@ -676,6 +677,7 @@ test('flags direct relation control and executable security-definer authority', 
         routine: 'enter_trusted_scope',
         schema: 'contacts',
         securityDefiner: true,
+        triggerBindings: [],
       },
     ],
     tables: [
@@ -696,6 +698,73 @@ test('flags direct relation control and executable security-definer authority', 
     ['runtime_role_has_relation_control_authority', 'runtime_role_can_execute_security_definer'],
   );
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('flags security-definer routines invocable only through table triggers', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        executable: false,
+        identityArguments: '',
+        kind: 'function',
+        owner: 'ontos_admin',
+        routine: 'capture_customer_change',
+        schema: 'contacts',
+        securityDefiner: true,
+        triggerBindings: ['contacts.customers:capture_customer_change'],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('classifies reachable roles that can fire security-definer triggers as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'trigger_writer',
+        securityDefinerRoutines: [],
+        securityDefinerTriggerBindings: [
+          'contacts.customers:capture_customer_change->contacts.capture_customer_change()',
+        ],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
 });
 
 test('flags direct sequence mutation authority', () => {
@@ -825,6 +894,8 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /effective_owner\.rolsuper/u);
   assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 3);
   assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
+  assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 2);
+  assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {
