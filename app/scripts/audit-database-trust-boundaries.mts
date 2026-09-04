@@ -1052,11 +1052,22 @@ const collectSnapshot = async (
          from view_dependencies as dependency
          join pg_catalog.pg_class as referenced_relation
            on referenced_relation.oid = dependency.referenced_oid
+         join pg_catalog.pg_roles as effective_owner
+           on effective_owner.oid = dependency.effective_owner_oid
          where dependency.view_oid = relation.oid
            and referenced_relation.relkind in ('r', 'p')
-           and referenced_relation.relowner = dependency.effective_owner_oid
            and referenced_relation.relrowsecurity
            and not referenced_relation.relforcerowsecurity
+           and (
+             referenced_relation.relowner = dependency.effective_owner_oid
+             or effective_owner.rolbypassrls
+             or effective_owner.rolsuper
+             or pg_has_role(
+               dependency.effective_owner_oid,
+               referenced_relation.relowner,
+               'USAGE'
+             )
+           )
        ) as owner_context_rls_bypass,
        owner.rolsuper as owner_superuser,
        relation.relrowsecurity as rls_enabled,
