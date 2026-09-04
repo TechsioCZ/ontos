@@ -10,6 +10,8 @@ import { collectSnapshot } from './database-trust-audit/collect-snapshot.mts';
 import {
   buildDatabaseTrustBoundaryReport,
   DatabaseTrustBoundaryAuditError,
+  DatabaseSessionIdentityError,
+  DatabaseTargetMismatchError,
   genericAuditFailureMessage,
   getDatabaseTrustBoundaryFailureMessage,
   type DatabaseTrustBoundaryReport,

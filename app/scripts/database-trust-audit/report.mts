@@ -205,9 +205,9 @@ export const getDatabaseTrustBoundaryFailureMessage = (
     : genericAuditFailureMessage;
 };
 
-class DatabaseTargetMismatchError extends Error {}
+export class DatabaseTargetMismatchError extends Error {}
 
-class DatabaseSessionIdentityError extends Error {}
+export class DatabaseSessionIdentityError extends Error {}
 
 const hasDml = (table: TablePrivilege): boolean =>
   table.privileges.delete ||
