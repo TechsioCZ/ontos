@@ -52,7 +52,10 @@ Every MicroVertical deployment serves the immutable document at
 `application/json`, `Cache-Control: no-cache`, a strong build-marker ETag, and is limited to 1 MiB.
 The publisher observes it with a bounded fetch and exact deployment `appId` matching, then supplies
 that evidence to pure candidate validation before promotion. Contract URLs must use HTTPS except
-loopback HTTP during development. Credentials, fragments, unsafe schemes, and duplicate normalized
+loopback HTTP during development. Candidate validation requires HTTPS unless the publisher supplies
+`environment: 'development'` in trusted evidence, never in the candidate itself. Omitted environment
+evidence keeps HTTPS required for both deployment contracts and Federation manifests.
+Credentials, fragments, unsafe schemes, and duplicate normalized
 URLs are forbidden. The current Shell loader still uses the generated topology allowlist as a
 compatibility bridge until Application Composition publication and runtime loading are wired in
 follow-up work.
