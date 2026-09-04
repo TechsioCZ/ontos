@@ -378,7 +378,13 @@ test('flags effective configuration parameter authority', () => {
 test('flags grant options on current objects as persistent authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
-    grantOptions: ['relation:contacts.customers:SELECT'],
+    grantOptions: [
+      {
+        authority: 'relation:contacts.customers:SELECT',
+        role: snapshot.runtimeRole,
+        source: 'direct',
+      },
+    ],
     tables: snapshot.tables.slice(0, 1),
     trustedContext: {
       ...snapshot.trustedContext,
@@ -397,7 +403,7 @@ test('flags grant options on current objects as persistent authority', () => {
 test('flags creator-default grant options as persistent authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
-    defaultPrivileges: [{ ...snapshot.defaultPrivileges[0], grantable: true }],
+    defaultPrivileges: [{ ...snapshot.defaultPrivileges[1], grantable: true }],
     tables: snapshot.tables.slice(0, 1),
     trustedContext: {
       ...snapshot.trustedContext,
@@ -411,6 +417,91 @@ test('flags creator-default grant options as persistent authority', () => {
     ['runtime_role_has_grant_authority'],
   );
   assert.equal(report.summary.grantOptionCount, 1);
+});
+
+test('classifies grant options held by a reachable role as privileged membership authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    grantOptions: [
+      {
+        authority: 'database:ontos:CONNECT',
+        role: 'grant_delegate',
+        source: 'assumable',
+      },
+    ],
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'grant_delegate',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+  assert.equal(report.summary.grantOptionCount, 1);
+});
+
+test('does not treat inheritance-only grant options as exercisable', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    defaultPrivileges: [
+      {
+        ...snapshot.defaultPrivileges[0],
+        grantable: true,
+        grantee: 'inherited_reader',
+        source: 'inherited',
+      },
+    ],
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: true,
+        canSetRole: false,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'inherited_reader',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_other_role'],
+  );
+  assert.equal(report.summary.grantOptionCount, 0);
 });
 
 test('flags selectable privileged owner-context views but accepts security invokers', () => {
@@ -718,7 +809,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
 
   assert.equal(
     source.match(/where membership\.admin_option or membership\.set_option/gu)?.length,
-    2,
+    3,
   );
   assert.match(
     source,
@@ -733,6 +824,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /effective_owner\.rolbypassrls/u);
   assert.match(source, /effective_owner\.rolsuper/u);
   assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 3);
+  assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {

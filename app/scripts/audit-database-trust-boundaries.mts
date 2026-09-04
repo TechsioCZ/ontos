@@ -24,6 +24,12 @@ interface DefaultPrivilege {
   readonly source: 'assumable' | 'direct' | 'inherited' | 'public';
 }
 
+interface GrantOption {
+  readonly authority: string;
+  readonly role: string;
+  readonly source: 'assumable' | 'direct';
+}
+
 interface RoleMembership {
   readonly attributes: RoleAttributes;
   readonly canAdministerRole: boolean;
@@ -143,7 +149,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly database: string;
   readonly databasePrivileges: DatabasePrivileges;
   readonly defaultPrivileges: readonly DefaultPrivilege[];
-  readonly grantOptions: readonly string[];
+  readonly grantOptions: readonly GrantOption[];
   readonly memberships: readonly RoleMembership[];
   readonly parameterPrivileges: readonly ParameterPrivilege[];
   readonly role: RoleAttributes;
@@ -311,8 +317,12 @@ export const buildDatabaseTrustBoundaryReport = (
   const memberships = [...snapshot.memberships].toSorted((left, right) =>
     compareText(left.role, right.role),
   );
-  const grantOptions = [...snapshot.grantOptions].toSorted(compareText);
-  const grantableDefaultPrivileges = defaultPrivileges.filter(({ grantable }) => grantable);
+  const grantOptions = [...snapshot.grantOptions].toSorted(
+    (left, right) =>
+      compareText(left.role, right.role) ||
+      compareText(left.source, right.source) ||
+      compareText(left.authority, right.authority),
+  );
   const parameterPrivileges = [...snapshot.parameterPrivileges].toSorted((left, right) =>
     compareText(left.parameter, right.parameter),
   );
@@ -343,6 +353,22 @@ export const buildDatabaseTrustBoundaryReport = (
     ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
       (canSetRole || canAdministerRole || canInheritRole) && role !== snapshot.administrativeRole,
   );
+  const assumableRoleNames = new Set(
+    memberships
+      .filter(({ canAdministerRole, canSetRole }) => canAdministerRole || canSetRole)
+      .map(({ role }) => role),
+  );
+  const usableGrantableDefaultPrivileges = defaultPrivileges.filter(
+    ({ grantee, grantable, source }) =>
+      grantable &&
+      (source === 'direct' || source === 'assumable' || assumableRoleNames.has(grantee)),
+  );
+  const grantAuthorityRoles = new Set([
+    ...grantOptions.filter(({ source }) => source === 'assumable').map(({ role }) => role),
+    ...usableGrantableDefaultPrivileges
+      .filter(({ source }) => source !== 'direct')
+      .map(({ grantee }) => grantee),
+  ]);
   const privilegedMemberships = nonAdministrativeMemberships.filter(
     ({
       attributes,
@@ -357,6 +383,7 @@ export const buildDatabaseTrustBoundaryReport = (
       parameterPrivileges = [],
       predefinedRole,
       relationPrivilegeSchemas,
+      role,
       securityDefinerRoutines,
     }) =>
       ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
@@ -368,6 +395,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedSchemas.length > 0 ||
       ownedTypes.length > 0 ||
       parameterPrivileges.length > 0 ||
+      grantAuthorityRoles.has(role) ||
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerRoutines.length > 0,
   );
@@ -375,7 +403,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, relation, routine, type, or parameter authority through inheritance, SET ROLE, or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, relation, routine, type, parameter, or grant authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -473,7 +501,10 @@ export const buildDatabaseTrustBoundaryReport = (
       severity: 'critical',
     });
   }
-  if (grantOptions.length > 0 || grantableDefaultPrivileges.length > 0) {
+  if (
+    grantOptions.some(({ source }) => source === 'direct') ||
+    usableGrantableDefaultPrivileges.some(({ source }) => source === 'direct')
+  ) {
     findings.push({
       code: 'runtime_role_has_grant_authority',
       evidence:
@@ -535,7 +566,7 @@ export const buildDatabaseTrustBoundaryReport = (
       dmlSchemaCount: dmlSchemas.size,
       dmlTableCount: dmlTables.length,
       findingCount: findings.length,
-      grantOptionCount: grantOptions.length + grantableDefaultPrivileges.length,
+      grantOptionCount: grantOptions.length + usableGrantableDefaultPrivileges.length,
       parameterPrivilegeCount: parameterPrivileges.length,
       privilegedOwnerViewCount: privilegedOwnerViews.length,
       routineCount: routines.length,
@@ -671,6 +702,8 @@ interface DefaultPrivilegeRow {
 
 interface GrantOptionRow {
   readonly grant_option: string;
+  readonly role: string;
+  readonly source: 'assumable' | 'direct';
 }
 
 interface SettingRow {
@@ -1201,12 +1234,32 @@ const collectSnapshot = async (
     [runtimeRole],
   );
   const grantOptions = await admin.query<GrantOptionRow>(
-    `select authority.grant_option
-     from (
+    `with recursive reachable_roles(role_oid) as (
+       select candidate.oid
+       from pg_catalog.pg_roles as candidate
+       where candidate.rolname = $1
+          or pg_has_role($1, candidate.oid, 'SET')
+       union
+       select membership.roleid
+       from pg_catalog.pg_auth_members as membership
+       join reachable_roles as reachable on reachable.role_oid = membership.member
+       where membership.admin_option or membership.set_option
+     ),
+     audited_roles(role_oid, role, source) as (
+       select
+         candidate.oid,
+         candidate.rolname,
+         case when candidate.rolname = $1 then 'direct' else 'assumable' end
+       from pg_catalog.pg_roles as candidate
+       where candidate.oid in (select role_oid from reachable_roles)
+     )
+     select audited_role.role, audited_role.source, authority.grant_option
+     from audited_roles as audited_role
+     cross join lateral (
        select format('database:%I:%s', current_database(), privilege.name) as grant_option
        from (values ('CONNECT'::text), ('CREATE'::text), ('TEMPORARY'::text)) as privilege(name)
        where has_database_privilege(
-         $1,
+         audited_role.role_oid,
          current_database(),
          privilege.name || ' WITH GRANT OPTION'
        )
@@ -1216,7 +1269,7 @@ const collectSnapshot = async (
        cross join (values ('CREATE'::text), ('USAGE'::text)) as privilege(name)
        where namespace.nspname = any($2::text[])
          and has_schema_privilege(
-           $1,
+           audited_role.role_oid,
            namespace.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -1243,7 +1296,7 @@ const collectSnapshot = async (
        where namespace.nspname = any($2::text[])
          and relation.relkind in ('r', 'p', 'v', 'm', 'f')
          and has_table_privilege(
-           $1,
+           audited_role.role_oid,
            relation.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -1267,13 +1320,13 @@ const collectSnapshot = async (
        where namespace.nspname = any($2::text[])
          and relation.relkind in ('r', 'p', 'v', 'm', 'f')
          and has_column_privilege(
-           $1,
+           audited_role.role_oid,
            relation.oid,
            attribute.attnum,
            privilege.name || ' WITH GRANT OPTION'
          )
          and not has_table_privilege(
-           $1,
+           audited_role.role_oid,
            relation.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -1290,7 +1343,7 @@ const collectSnapshot = async (
        where namespace.nspname = any($2::text[])
          and relation.relkind = 'S'
          and has_sequence_privilege(
-           $1,
+           audited_role.role_oid,
            relation.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -1304,7 +1357,11 @@ const collectSnapshot = async (
        from pg_catalog.pg_proc as routine
        join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
        where namespace.nspname = any($2::text[])
-         and has_function_privilege($1, routine.oid, 'EXECUTE WITH GRANT OPTION')
+         and has_function_privilege(
+           audited_role.role_oid,
+           routine.oid,
+           'EXECUTE WITH GRANT OPTION'
+         )
        union all
        select format('type:%I.%I:USAGE', namespace.nspname, audited_type.typname)
        from pg_catalog.pg_type as audited_type
@@ -1323,34 +1380,54 @@ const collectSnapshot = async (
              )
            )
          )
-         and has_type_privilege($1, audited_type.oid, 'USAGE WITH GRANT OPTION')
+         and has_type_privilege(
+           audited_role.role_oid,
+           audited_type.oid,
+           'USAGE WITH GRANT OPTION'
+         )
        union all
        select format('parameter:%s:%s', parameter.parname, privilege.name)
        from pg_catalog.pg_parameter_acl as parameter
        cross join (values ('ALTER SYSTEM'::text), ('SET'::text)) as privilege(name)
        where has_parameter_privilege(
-         $1,
+         audited_role.role_oid,
          parameter.parname,
          privilege.name || ' WITH GRANT OPTION'
        )
        union all
        select format('language:%I:USAGE', language.lanname)
        from pg_catalog.pg_language as language
-       where has_language_privilege($1, language.oid, 'USAGE WITH GRANT OPTION')
+       where has_language_privilege(
+         audited_role.role_oid,
+         language.oid,
+         'USAGE WITH GRANT OPTION'
+       )
        union all
        select format('foreign-data-wrapper:%I:USAGE', wrapper.fdwname)
        from pg_catalog.pg_foreign_data_wrapper as wrapper
-       where has_foreign_data_wrapper_privilege($1, wrapper.oid, 'USAGE WITH GRANT OPTION')
+       where has_foreign_data_wrapper_privilege(
+         audited_role.role_oid,
+         wrapper.oid,
+         'USAGE WITH GRANT OPTION'
+       )
        union all
        select format('foreign-server:%I:USAGE', server.srvname)
        from pg_catalog.pg_foreign_server as server
-       where has_server_privilege($1, server.oid, 'USAGE WITH GRANT OPTION')
+       where has_server_privilege(
+         audited_role.role_oid,
+         server.oid,
+         'USAGE WITH GRANT OPTION'
+       )
        union all
        select format('tablespace:%I:CREATE', tablespace.spcname)
        from pg_catalog.pg_tablespace as tablespace
-       where has_tablespace_privilege($1, tablespace.oid, 'CREATE WITH GRANT OPTION')
+       where has_tablespace_privilege(
+         audited_role.role_oid,
+         tablespace.oid,
+         'CREATE WITH GRANT OPTION'
+       )
      ) as authority
-     order by authority.grant_option`,
+     order by audited_role.role, audited_role.source, authority.grant_option`,
     [runtimeRole, schemaNames],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
@@ -1508,7 +1585,11 @@ const collectSnapshot = async (
       schema: privilege.schema,
       source: privilege.source,
     })),
-    grantOptions: grantOptions.rows.map(({ grant_option }) => grant_option),
+    grantOptions: grantOptions.rows.map(({ grant_option, role, source }) => ({
+      authority: grant_option,
+      role,
+      source,
+    })),
     memberships: memberships.rows.map((membership) => ({
       attributes: {
         bypassRls: membership.bypass_rls,
