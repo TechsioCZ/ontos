@@ -1398,7 +1398,14 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /effective_owner\.rolsuper/u);
   assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 6);
   assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
-  assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 2);
+  assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 3);
+  assert.match(source, /trigger_routine_dependencies\(\s+trigger_oid,\s+routine_oid\s+\)/u);
+  assert.match(source, /dependency\.refobjid = audited_trigger\.tgfoid/u);
+  assert.match(source, /audited_trigger\.tgqual::text/u);
+  assert.equal(
+    source.match(/join trigger_routine_dependencies as trigger_dependency/gu)?.length,
+    2,
+  );
   assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
   assert.equal(source.match(/audited_trigger\.tgenabled = 'R'/gu)?.length, 2);
   assert.match(
@@ -1454,7 +1461,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/from dml_rule_write_paths as rule_write/gu)?.length, 4);
   assert.equal(source.match(/policy\.polcmd in \('a', '\*'\)/gu)?.length, 2);
   assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 8);
-  assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 2);
+  assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 6);
   assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /stored_expression\.invocation_oid/u);
@@ -1475,8 +1482,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu)?.length, 2);
   assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu)?.length, 4);
   assert.match(source, /expression\.contypid/u);
-  assert.match(source, /from pg_catalog\.pg_trigger as before_update_trigger/u);
+  assert.equal(source.match(/from pg_catalog\.pg_trigger as before_update_trigger/gu)?.length, 2);
   assert.match(source, /before_update_trigger\.tgrelid = expression\.adrelid/u);
+  assert.match(source, /before_update_trigger\.tgrelid = stored_index\.indrelid/u);
   assert.match(source, /before_update_trigger\.tgtype & 1 <> 0/u);
   assert.match(source, /before_update_trigger\.tgtype & 2 <> 0/u);
   assert.match(source, /before_update_trigger\.tgtype & 16 <> 0/u);
@@ -1526,7 +1534,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 10);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
-    4,
+    6,
   );
   assert.equal(
     source.match(/from unnest\(audited_trigger\.tgattr::smallint\[\]\) as watched\(attnum\)/gu)

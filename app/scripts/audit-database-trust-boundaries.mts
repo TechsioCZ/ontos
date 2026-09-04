@@ -916,7 +916,26 @@ export const reachableRolesCte = `reachable_roles(role_oid) as (
   where membership.admin_option or membership.set_option
 )`;
 
-export const storedExpressionDependenciesCte = `policy_routine_dependencies(
+export const storedExpressionDependenciesCte = `trigger_routine_dependencies(
+  trigger_oid,
+  routine_oid
+) as (
+  select distinct
+    audited_trigger.oid,
+    dependency.refobjid
+  from pg_catalog.pg_trigger as audited_trigger
+  join pg_catalog.pg_depend as dependency
+    on dependency.classid = 'pg_catalog.pg_trigger'::regclass
+   and dependency.objid = audited_trigger.oid
+   and dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and dependency.deptype = 'n'
+  where dependency.refobjid = audited_trigger.tgfoid
+     or position(
+       format(':funcid %s ', dependency.refobjid)
+       in coalesce(audited_trigger.tgqual::text, '')
+     ) > 0
+),
+policy_routine_dependencies(
   policy_oid,
   routine_oid,
   used_by_using,
@@ -1420,16 +1439,26 @@ stored_expression_dependencies(
     routine_dependency.refobjid,
     format('expression-index:%I', index_relation.relname),
     false,
-    array(
-      select distinct column_dependency.refobjsubid::smallint
-      from pg_catalog.pg_depend as column_dependency
-      where column_dependency.classid = 'pg_catalog.pg_class'::regclass
-        and column_dependency.objid = stored_index.indexrelid
-        and column_dependency.refclassid = 'pg_catalog.pg_class'::regclass
-        and column_dependency.refobjid = stored_index.indrelid
-        and column_dependency.refobjsubid > 0
-      order by column_dependency.refobjsubid::smallint
-    ),
+    case
+      when exists (
+        select 1
+        from pg_catalog.pg_trigger as before_update_trigger
+        where before_update_trigger.tgrelid = stored_index.indrelid
+          and before_update_trigger.tgtype & 1 <> 0
+          and before_update_trigger.tgtype & 2 <> 0
+          and before_update_trigger.tgtype & 16 <> 0
+      ) then array[]::smallint[]
+      else array(
+        select distinct column_dependency.refobjsubid::smallint
+        from pg_catalog.pg_depend as column_dependency
+        where column_dependency.classid = 'pg_catalog.pg_class'::regclass
+          and column_dependency.objid = stored_index.indexrelid
+          and column_dependency.refclassid = 'pg_catalog.pg_class'::regclass
+          and column_dependency.refobjid = stored_index.indrelid
+          and column_dependency.refobjsubid > 0
+        order by column_dependency.refobjsubid::smallint
+      )
+    end,
     array[]::smallint[]
   from pg_catalog.pg_index as stored_index
   join relation_invocation_paths as invocation on invocation.dependency_oid = stored_index.indrelid
@@ -2950,7 +2979,9 @@ const collectSnapshot = async (
          join pg_catalog.pg_class as relation on relation.oid = audited_trigger.tgrelid
          join pg_catalog.pg_namespace as relation_namespace
            on relation_namespace.oid = relation.relnamespace
-         join pg_catalog.pg_proc as routine on routine.oid = audited_trigger.tgfoid
+         join trigger_routine_dependencies as trigger_dependency
+           on trigger_dependency.trigger_oid = audited_trigger.oid
+         join pg_catalog.pg_proc as routine on routine.oid = trigger_dependency.routine_oid
          join pg_catalog.pg_namespace as routine_namespace
            on routine_namespace.oid = routine.pronamespace
          where not audited_trigger.tgisinternal
@@ -3140,10 +3171,34 @@ const collectSnapshot = async (
                      and writable_view.actions & 4 <> 0
                      and (
                        has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
-                       or has_any_column_privilege(
-                         candidate.oid,
-                         invocation_view.oid,
-                         'UPDATE'
+                       or (
+                         cardinality(audited_trigger.tgattr::smallint[]) = 0
+                         and has_any_column_privilege(
+                           candidate.oid,
+                           invocation_view.oid,
+                           'UPDATE'
+                         )
+                       )
+                       or exists (
+                         select 1
+                         from writable_view_columns as writable_column
+                         join pg_catalog.pg_attribute as affected_column
+                           on affected_column.attrelid = writable_column.affected_oid
+                          and affected_column.attnum = writable_column.affected_attnum
+                         join pg_catalog.pg_attribute as trigger_column
+                           on trigger_column.attrelid = relation.oid
+                          and trigger_column.attname = affected_column.attname
+                         where writable_column.invocation_oid = writable_view.invocation_oid
+                           and writable_column.affected_oid = writable_view.affected_oid
+                           and trigger_column.attnum = any(
+                             audited_trigger.tgattr::smallint[]
+                           )
+                           and has_column_privilege(
+                             candidate.oid,
+                             invocation_view.oid,
+                             writable_column.invocation_attnum,
+                             'UPDATE'
+                           )
                        )
                      )
                      and (
@@ -3168,15 +3223,26 @@ const collectSnapshot = async (
                        select 1
                        from pg_catalog.pg_partitioned_table as partitioned
                        where partitioned.partrelid = writable_view.affected_oid
-                     )
-                     and (
-                       has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
-                       or has_any_column_privilege(
-                         candidate.oid,
-                         invocation_view.oid,
-                         'UPDATE'
+                         and (
+                           has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
+                           or exists (
+                             select 1
+                             from writable_view_columns as writable_column
+                             where writable_column.invocation_oid = writable_view.invocation_oid
+                               and writable_column.affected_oid = writable_view.affected_oid
+                               and (
+                                 writable_column.affected_attnum = any(partitioned.partattrs)
+                                 or 0 = any(partitioned.partattrs)
+                               )
+                               and has_column_privilege(
+                                 candidate.oid,
+                                 invocation_view.oid,
+                                 writable_column.invocation_attnum,
+                                 'UPDATE'
+                               )
+                           )
+                         )
                        )
-                     )
                      and (
                        has_table_privilege(
                          effective_owner.oid,
@@ -4048,11 +4114,13 @@ const collectSnapshot = async (
            audited_trigger.tgname
          )
          from pg_catalog.pg_trigger as audited_trigger
+         join trigger_routine_dependencies as trigger_dependency
+           on trigger_dependency.trigger_oid = audited_trigger.oid
+          and trigger_dependency.routine_oid = routine.oid
          join pg_catalog.pg_class as relation on relation.oid = audited_trigger.tgrelid
          join pg_catalog.pg_namespace as relation_namespace
            on relation_namespace.oid = relation.relnamespace
-         where audited_trigger.tgfoid = routine.oid
-           and not audited_trigger.tgisinternal
+         where not audited_trigger.tgisinternal
            and (
              audited_trigger.tgenabled in ('O', 'A')
              or (
@@ -4214,7 +4282,31 @@ const collectSnapshot = async (
                      and writable_view.actions & 4 <> 0
                      and (
                        has_table_privilege($1, invocation_view.oid, 'UPDATE')
-                       or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                       or (
+                         cardinality(audited_trigger.tgattr::smallint[]) = 0
+                         and has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                       )
+                       or exists (
+                         select 1
+                         from writable_view_columns as writable_column
+                         join pg_catalog.pg_attribute as affected_column
+                           on affected_column.attrelid = writable_column.affected_oid
+                          and affected_column.attnum = writable_column.affected_attnum
+                         join pg_catalog.pg_attribute as trigger_column
+                           on trigger_column.attrelid = relation.oid
+                          and trigger_column.attname = affected_column.attname
+                         where writable_column.invocation_oid = writable_view.invocation_oid
+                           and writable_column.affected_oid = writable_view.affected_oid
+                           and trigger_column.attnum = any(
+                             audited_trigger.tgattr::smallint[]
+                           )
+                           and has_column_privilege(
+                             $1,
+                             invocation_view.oid,
+                             writable_column.invocation_attnum,
+                             'UPDATE'
+                           )
+                       )
                      )
                      and (
                        has_table_privilege(
@@ -4238,10 +4330,25 @@ const collectSnapshot = async (
                        select 1
                        from pg_catalog.pg_partitioned_table as partitioned
                        where partitioned.partrelid = writable_view.affected_oid
-                     )
-                     and (
-                       has_table_privilege($1, invocation_view.oid, 'UPDATE')
-                       or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                         and (
+                           has_table_privilege($1, invocation_view.oid, 'UPDATE')
+                           or exists (
+                             select 1
+                             from writable_view_columns as writable_column
+                             where writable_column.invocation_oid = writable_view.invocation_oid
+                               and writable_column.affected_oid = writable_view.affected_oid
+                               and (
+                                 writable_column.affected_attnum = any(partitioned.partattrs)
+                                 or 0 = any(partitioned.partattrs)
+                               )
+                               and has_column_privilege(
+                                 $1,
+                                 invocation_view.oid,
+                                 writable_column.invocation_attnum,
+                                 'UPDATE'
+                               )
+                           )
+                         )
                      )
                      and (
                        has_table_privilege(
