@@ -47,8 +47,8 @@ ownership authority inherited without `SET ROLE`; cluster attributes are not tre
 It classifies directly authenticated and reachable PostgreSQL predefined roles as privileged, inventories effective
 parameter-level `SET`/`ALTER SYSTEM` grants, and distinguishes security-invoker views from views
 that execute in a privileged owner's context. For nested views, it carries the effective execution
-owner across each owner-context or security-invoker boundary and detects the table-owner exemption
-from unforced row-level security. It separately inventories current-object and creator-default grant
+owner across each owner-context or security-invoker boundary and detects superuser, `BYPASSRLS`,
+exact-owner, and inherited-owner exemptions from unforced row-level security. It separately inventories current-object and creator-default grant
 options on database, schema, relation, column, sequence, routine, type, parameter, language,
 foreign-data, and tablespace objects.
 Its pure report builder and target/session validators are covered by
