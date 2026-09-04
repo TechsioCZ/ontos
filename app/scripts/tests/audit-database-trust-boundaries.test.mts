@@ -398,9 +398,20 @@ test('flags selectable privileged owner-context views but accepts security invok
   const ownerContextReport = buildDatabaseTrustBoundaryReport(base);
   assert.deepEqual(
     ownerContextReport.findings.map(({ code }) => code),
-    ['runtime_role_can_select_privileged_owner_view'],
+    ['runtime_role_can_use_privileged_owner_view'],
   );
   assert.equal(ownerContextReport.summary.privilegedOwnerViewCount, 1);
+
+  const writableReport = buildDatabaseTrustBoundaryReport({
+    ...base,
+    tables: [
+      {
+        ...ownerContextView,
+        privileges: { ...ownerContextView.privileges, select: false, update: true },
+      },
+    ],
+  });
+  assert.deepEqual(findingCodes(writableReport), ['runtime_role_can_use_privileged_owner_view']);
 
   const invokerReport = buildDatabaseTrustBoundaryReport({
     ...base,
@@ -429,7 +440,7 @@ test('flags owner-context views that bypass RLS through owner-matched dependenci
     },
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_can_select_privileged_owner_view']);
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_use_privileged_owner_view']);
   assert.equal(report.summary.privilegedOwnerViewCount, 1);
 });
 
@@ -453,7 +464,7 @@ test('flags privileged owners in nested owner-context views', () => {
     },
   });
 
-  assert.deepEqual(findingCodes(report), ['runtime_role_can_select_privileged_owner_view']);
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_use_privileged_owner_view']);
 });
 
 test('flags ownership of an audited relation as DDL authority', () => {
