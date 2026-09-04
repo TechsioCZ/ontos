@@ -161,20 +161,6 @@ const freeze = <Value>(value: Value): Value => {
   return Object.freeze(value);
 };
 
-const canonicalValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) {
-    return value.map(canonicalValue);
-  }
-  if (Predicate.isObjectKeyword(value) && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .toSorted(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonicalValue(nested)]),
-    );
-  }
-  return value;
-};
-
 const assertDependenciesPresent = (
   module: ApplicationCompositionModule,
   moduleIds: ReadonlySet<string>,
@@ -219,6 +205,8 @@ const assertObservedDeployment = (
   module: ApplicationCompositionModule,
   contract: ObservedApplicationCompositionContract | undefined,
 ): void => {
+  const contributionKeys = new Set(contract?.contributionKeys);
+  const federationExposes = new Set(contract?.federationExposes);
   if (
     contract === undefined ||
     contract.contractUrl !== module.contract.url ||
@@ -230,10 +218,8 @@ const assertObservedDeployment = (
     contract.publicContract.version !== module.publicContract.version ||
     contract.publicContract.sha256 !== module.publicContract.sha256 ||
     module.publicContract.id !== module.moduleId ||
-    module.allowedContributions.some(
-      (contributionKey) => !contract.contributionKeys.includes(contributionKey),
-    ) ||
-    module.federation.exposes.some((expose) => !contract.federationExposes.includes(expose))
+    module.allowedContributions.some((contributionKey) => !contributionKeys.has(contributionKey)) ||
+    module.federation.exposes.some((expose) => !federationExposes.has(expose))
   ) {
     throw invalid(`module ${module.moduleId} does not match its observed deployment contract`);
   }
@@ -243,10 +229,11 @@ const assertObservedFederationManifest = (
   module: ApplicationCompositionModule,
   manifest: ObservedModuleFederationManifest | undefined,
 ): void => {
+  const exposes = new Set(manifest?.exposes);
   if (
     manifest === undefined ||
     manifest.sha256 !== module.federation.manifest.sha256 ||
-    module.federation.exposes.some((expose) => !manifest.exposes.includes(expose))
+    module.federation.exposes.some((expose) => !exposes.has(expose))
   ) {
     throw invalid(
       `module ${module.moduleId} does not match its observed Module Federation manifest`,
@@ -255,37 +242,61 @@ const assertObservedFederationManifest = (
 };
 
 export const canonicalizeApplicationComposition = (composition: ApplicationComposition): string =>
-  JSON.stringify(
-    canonicalValue({
-      ...composition,
-      modules: composition.modules
-        .map((module) => ({
-          ...module,
-          allowedContributions: module.allowedContributions.toSorted(),
-          dependencies: module.dependencies.toSorted(),
-          federation: { ...module.federation, exposes: module.federation.exposes.toSorted() },
-          requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted((left, right) =>
-            identityKey(left).localeCompare(identityKey(right)),
-          ),
-          sharedSingletons: module.sharedSingletons.toSorted((left, right) =>
-            singletonKey(left).localeCompare(singletonKey(right)),
-          ),
-        }))
-        .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId)),
-      shell: {
-        ...composition.shell,
-        coreCapabilities: composition.shell.coreCapabilities.toSorted((left, right) =>
+  JSON.stringify({
+    modules: composition.modules
+      .map((module) => ({
+        allowedContributions: module.allowedContributions.toSorted(),
+        contract: { sha256: module.contract.sha256, url: module.contract.url },
+        dependencies: module.dependencies.toSorted(),
+        deployment: {
+          appId: module.deployment.appId,
+          buildMarker: module.deployment.buildMarker,
+        },
+        federation: {
+          execution: module.federation.execution,
+          exposes: module.federation.exposes.toSorted(),
+          manifest: {
+            sha256: module.federation.manifest.sha256,
+            url: module.federation.manifest.url,
+          },
+          remoteName: module.federation.remoteName,
+        },
+        moduleId: module.moduleId,
+        publicContract: {
+          id: module.publicContract.id,
+          sha256: module.publicContract.sha256,
+          version: module.publicContract.version,
+        },
+        requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted((left, right) =>
           identityKey(left).localeCompare(identityKey(right)),
         ),
-        sharedSingletons: composition.shell.sharedSingletons.toSorted((left, right) =>
+        requiredShellAbi: {
+          id: module.requiredShellAbi.id,
+          version: module.requiredShellAbi.version,
+        },
+        sharedSingletons: module.sharedSingletons.toSorted((left, right) =>
           singletonKey(left).localeCompare(singletonKey(right)),
         ),
+      }))
+      .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId)),
+    revision: composition.revision,
+    schemaVersion: composition.schemaVersion,
+    shell: {
+      contributionAbi: {
+        id: composition.shell.contributionAbi.id,
+        version: composition.shell.contributionAbi.version,
       },
-    }),
-  );
+      coreCapabilities: composition.shell.coreCapabilities.toSorted((left, right) =>
+        identityKey(left).localeCompare(identityKey(right)),
+      ),
+      sharedSingletons: composition.shell.sharedSingletons.toSorted((left, right) =>
+        singletonKey(left).localeCompare(singletonKey(right)),
+      ),
+    },
+  });
 
-export const validateApplicationCompositionCandidate = (
-  input: unknown,
+export const validateApplicationCompositionCandidate = <Input>(
+  input: Input,
   evidence: ApplicationCompositionCandidateEvidence,
 ): ApplicationComposition => {
   let composition: ApplicationComposition;
