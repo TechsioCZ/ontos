@@ -59,6 +59,7 @@ const snapshot = {
     },
   ],
   extensions: [],
+  foreignDataWrappers: [],
   foreignServers: [],
   grantOptions: [],
   memberships: [],
@@ -175,6 +176,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     dmlTableCount: 3,
     extensionCount: 0,
     findingCount: 2,
+    foreignDataWrapperCount: 0,
     foreignServerCount: 0,
     grantOptionCount: 0,
     parameterPrivilegeCount: 0,
@@ -753,6 +755,60 @@ test('classifies an assumable foreign-server owner as privileged', () => {
   );
 });
 
+test('flags direct foreign-data-wrapper ownership as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    foreignDataWrappers: [{ owner: snapshot.runtimeRole, wrapper: 'customer_connector' }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+  assert.equal(report.summary.foreignDataWrapperCount, 1);
+});
+
+test('classifies an assumable foreign-data-wrapper owner as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedForeignDataWrappers: ['customer_connector'],
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'foreign_data_wrapper_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
 test('flags ownership of an audited application type as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -1170,8 +1226,14 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /from pg_catalog\.pg_attrdef as expression/u);
   assert.match(source, /from pg_catalog\.pg_constraint as expression/u);
   assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
-  assert.match(source, /from pg_catalog\.pg_rewrite as expression/u);
+  assert.match(source, /pg_catalog\.pg_rewrite as expression/u);
+  assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
+  assert.match(source, /nested-view-expression/u);
   assert.match(source, /expression\.contypid/u);
+  assert.match(
+    source,
+    /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
+  );
   assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 4);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
@@ -1184,6 +1246,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   );
   assert.match(source, /from pg_catalog\.pg_extension as extension/u);
   assert.match(source, /from pg_catalog\.pg_foreign_server as foreign_server/u);
+  assert.match(source, /foreign_data_wrapper\.fdwowner/u);
   assert.match(source, /join audit_owners as owner on owner\.oid = defaults\.defaclrole/u);
   assert.match(
     source,
