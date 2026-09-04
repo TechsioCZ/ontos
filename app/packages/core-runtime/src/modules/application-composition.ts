@@ -101,6 +101,7 @@ const observedFederationSchema = Schema.Struct({
 });
 const candidateEvidenceSchema = Schema.Struct({
   contracts: Schema.Record(Schema.String, observedContractSchema),
+  environment: Schema.optionalKey(Schema.NonEmptyString),
   federationManifests: Schema.Record(Schema.String, observedFederationSchema),
   runtime: ApplicationCompositionSchema.fields.shell,
 });
@@ -389,9 +390,16 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
   yield* assertObservedRuntime(composition.shell, observed.runtime);
 
   for (const module of composition.modules) {
+    const manifestUrl = module.federation.manifest.url;
+    if (
+      observed.environment !== 'development' &&
+      [module.contract.url, manifestUrl].some((url) => new URL(url).protocol !== 'https:')
+    ) {
+      return yield* invalid('artifact URLs must use HTTPS outside development');
+    }
     yield* claim(appIds, module.deployment.appId, 'deployment app ID');
     yield* claim(artifactUrls, new URL(module.contract.url).href, 'artifact URL');
-    yield* claim(artifactUrls, new URL(module.federation.manifest.url).href, 'artifact URL');
+    yield* claim(artifactUrls, new URL(manifestUrl).href, 'artifact URL');
     yield* claim(claimedModuleIds, module.moduleId, 'module ID');
     yield* claim(remoteNames, module.federation.remoteName, 'Module Federation remote');
     for (const contributionKey of module.allowedContributions) {
@@ -400,10 +408,7 @@ export const validateApplicationCompositionCandidate = Effect.fnUntraced(functio
     yield* assertDependenciesPresent(module, moduleIds);
     yield* assertShellCompatibility(module, composition.shell, shellCapabilities, shellSingletons);
     yield* assertObservedDeployment(module, observed.contracts[module.deployment.appId]);
-    yield* assertObservedFederationManifest(
-      module,
-      observed.federationManifests[module.federation.manifest.url],
-    );
+    yield* assertObservedFederationManifest(module, observed.federationManifests[manifestUrl]);
   }
 
   yield* assertAcyclicDependencies(composition.modules);

@@ -176,6 +176,49 @@ test('accepts one provider-neutral composition and produces deterministic canoni
   );
 });
 
+test('allows loopback HTTP only with trusted development evidence', () => {
+  for (const host of ['localhost', '127.0.0.1', '[::1]', 'contacts.localhost']) {
+    for (const artifact of ['contract', 'federation']) {
+      const input = candidate();
+      const observations = evidence();
+      const module = onlyModule(input);
+      if (artifact === 'contract') {
+        module.contract.url = `http://${host}/ontos-module-manifest.json`;
+        observations.contracts.contacts.contractUrl = module.contract.url;
+      } else {
+        module.federation.manifest.url = `http://${host}/mf-manifest.json`;
+      }
+      const observed = {
+        ...observations,
+        federationManifests: {
+          [module.federation.manifest.url]: federationManifest(observations),
+        },
+      };
+      for (const environment of [{}, { environment: 'stage' }, { environment: 'production' }]) {
+        assertInvalid(
+          validateApplicationCompositionCandidate(input, { ...observed, ...environment }),
+          /HTTPS outside development/u,
+        );
+      }
+      assert.deepEqual(
+        Effect.runSync(
+          validateApplicationCompositionCandidate(input, {
+            ...observed,
+            environment: 'development',
+          }),
+        ),
+        input,
+      );
+    }
+  }
+  const input = candidate();
+  onlyModule(input).contract.url = 'http://contacts.example/manifest.json';
+  assertInvalid(
+    validateApplicationCompositionCandidate(input, { ...evidence(), environment: 'development' }),
+    /supported .* schema/u,
+  );
+});
+
 test('rejects candidate-wide ownership and compatibility contradictions', () => {
   const cases: readonly [
     mutate: (input: Candidate, observations: Evidence) => number | readonly string[] | string,
