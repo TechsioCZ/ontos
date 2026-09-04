@@ -31,6 +31,7 @@ interface RoleMembership {
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
   readonly ownedRelations: readonly string[];
+  readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
   readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
@@ -254,6 +255,7 @@ export const buildDatabaseTrustBoundaryReport = (
       createSchemas,
       databaseCreate,
       ownedRelations,
+      ownedRoutines,
       ownedSchemas,
       relationPrivilegeSchemas,
       securityDefinerRoutines,
@@ -262,6 +264,7 @@ export const buildDatabaseTrustBoundaryReport = (
       databaseCreate ||
       createSchemas.length > 0 ||
       ownedRelations.length > 0 ||
+      ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerRoutines.length > 0,
@@ -284,10 +287,16 @@ export const buildDatabaseTrustBoundaryReport = (
   const ownsRelation =
     tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
-  if (snapshot.databasePrivileges.create || schemas.some(({ create }) => create) || ownsRelation) {
+  const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
+  if (
+    snapshot.databasePrivileges.create ||
+    schemas.some(({ create }) => create) ||
+    ownsRelation ||
+    ownsRoutine
+  ) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
-      evidence: 'The runtime role has database/schema CREATE or owns an audited relation.',
+      evidence: 'The runtime role has database/schema CREATE or owns an audited relation/routine.',
       severity: 'high',
     });
   }
@@ -394,6 +403,7 @@ interface MembershipRow {
   readonly database_create: boolean;
   readonly inherit: boolean;
   readonly owned_relations: string[];
+  readonly owned_routines: string[];
   readonly owned_schemas: string[];
   readonly relation_privilege_schemas: string[];
   readonly replication: boolean;
@@ -587,6 +597,20 @@ const collectSnapshot = async (
            and relation.relowner = candidate.oid
          order by namespace.nspname, relation.relname
        ) as owned_relations,
+       array(
+         select format(
+           '%I.%I(%s)',
+           namespace.nspname,
+           routine.proname,
+           pg_get_function_identity_arguments(routine.oid)
+         )
+         from pg_catalog.pg_proc as routine
+         join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+         where namespace.nspname !~ '^pg_'
+           and namespace.nspname <> 'information_schema'
+           and routine.proowner = candidate.oid
+         order by namespace.nspname, routine.proname, routine.oid
+       ) as owned_routines,
        array(
          select distinct namespace.nspname
          from pg_catalog.pg_class as relation
@@ -881,6 +905,7 @@ const collectSnapshot = async (
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
       ownedRelations: membership.owned_relations,
+      ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
