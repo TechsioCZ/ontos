@@ -1,4 +1,4 @@
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Order, Predicate, Schema } from 'effect';
 import { OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.ts';
 
 export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
@@ -118,22 +118,15 @@ const invalid = (reason: string): ApplicationCompositionValidationError =>
 const identityKey = (identity: ApplicationCompositionVersionedIdentity): string =>
   `${identity.id}@${identity.version}`;
 
-const compareStrings = (left: string, right: string): number => {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
-};
-
-const compareSingletons = (
-  left: ApplicationCompositionModule['sharedSingletons'][number],
-  right: ApplicationCompositionModule['sharedSingletons'][number],
-): number =>
-  compareStrings(left.packageName, right.packageName) ||
-  compareStrings(left.version, right.version);
+const identityOrder = Order.mapInput(Order.String, identityKey);
+const moduleOrder = Order.mapInput(
+  Order.String,
+  (module: ApplicationCompositionModule) => module.moduleId,
+);
+const singletonOrder = Order.Struct({
+  packageName: Order.String,
+  version: Order.String,
+});
 
 const normalizeArtifactUrl = (value: string): string => new URL(value).href;
 
@@ -330,16 +323,14 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
           sha256: module.publicContract.sha256,
           version: module.publicContract.version,
         },
-        requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted((left, right) =>
-          compareStrings(identityKey(left), identityKey(right)),
-        ),
+        requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted(identityOrder),
         requiredShellAbi: {
           id: module.requiredShellAbi.id,
           version: module.requiredShellAbi.version,
         },
-        sharedSingletons: module.sharedSingletons.toSorted(compareSingletons),
+        sharedSingletons: module.sharedSingletons.toSorted(singletonOrder),
       }))
-      .toSorted((left, right) => compareStrings(left.moduleId, right.moduleId)),
+      .toSorted(moduleOrder),
     revision: composition.revision,
     schemaVersion: composition.schemaVersion,
     shell: {
@@ -347,10 +338,8 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
         id: composition.shell.contributionAbi.id,
         version: composition.shell.contributionAbi.version,
       },
-      coreCapabilities: composition.shell.coreCapabilities.toSorted((left, right) =>
-        compareStrings(identityKey(left), identityKey(right)),
-      ),
-      sharedSingletons: composition.shell.sharedSingletons.toSorted(compareSingletons),
+      coreCapabilities: composition.shell.coreCapabilities.toSorted(identityOrder),
+      sharedSingletons: composition.shell.sharedSingletons.toSorted(singletonOrder),
     },
   });
 
