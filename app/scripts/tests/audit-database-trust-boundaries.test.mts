@@ -1361,7 +1361,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     /writable_view_paths\(invocation_oid, affected_oid, actions, effective_owner_oid\)/u,
   );
   assert.match(source, /:resorigtbl \(\[1-9\]\[0-9\]\*\) :resorigcol/u);
-  assert.match(source, /split_part\(rewrite\.ev_action::text, ':rtable \(\{RANGETBLENTRY'/u);
+  assert.match(source, /split_part\(rewrite\.ev_action::text, ':rteperminfos', 1\)/u);
+  assert.match(source, /cross join lateral regexp_matches\(/u);
+  assert.match(source, /affected_relation\.oid <> view_relation\.oid/u);
   assert.match(source, /pg_catalog\.pg_relation_is_updatable/u);
   assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 4);
   assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 2);
@@ -1369,6 +1371,14 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /stored_expression\.invocation_oid/u);
   assert.match(source, /nested-view-expression/u);
+  assert.match(source, /expression\.rulename <> '_RETURN'/u);
+  assert.match(source, /expression\.ev_type in \('2', '3', '4'\)/u);
+  assert.match(source, /expression\.ev_enabled in \('O', 'A', 'R'\)/u);
+  assert.match(source, /'dml-rule:%s:%s:%I'/u);
+  assert.equal(source.match(/stored_expression\.binding !~ '\^dml-rule:'/gu)?.length, 6);
+  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:INSERT:'/gu)?.length, 2);
+  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu)?.length, 2);
+  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu)?.length, 4);
   assert.match(source, /expression\.contypid/u);
   assert.match(source, /from pg_catalog\.pg_trigger as before_update_trigger/u);
   assert.match(source, /before_update_trigger\.tgrelid = expression\.adrelid/u);
@@ -1392,6 +1402,13 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /join pg_catalog\.pg_foreign_data_wrapper as foreign_data_wrapper/u);
   assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
   assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
+  assert.match(source, /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u);
+  assert.match(source, /'SELECT WITH GRANT OPTION'/u);
+  assert.match(source, /has_column_privilege\(role\.oid, attribute\.attrelid/u);
+  assert.match(
+    source,
+    /has_function_privilege\(role\.oid, routine\.oid, 'EXECUTE WITH GRANT OPTION'\)/u,
+  );
   assert.equal(source.match(/event_trigger\.evttags is null/gu)?.length, 4);
   assert.equal(source.match(/from pg_catalog\.pg_partitioned_table as partitioned/gu)?.length, 4);
   assert.equal(source.match(/audited_trigger\.tgtype & 12 <> 0/gu)?.length, 4);
