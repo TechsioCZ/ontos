@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Cause } from 'effect';
 import { Client } from 'pg';
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
   buildDatabaseTrustBoundaryReport,
+  DatabaseTrustBoundaryAuditError,
   getEffectiveDatabaseEndpoint,
+  getDatabaseTrustBoundaryFailureMessage,
+  hasTrustedContextValue,
   type DatabaseTrustBoundarySnapshot,
 } from '../audit-database-trust-boundaries.mts';
 
@@ -156,7 +160,7 @@ test('builds deterministic current-state evidence and identifies the material tr
   );
   assert.deepEqual(
     report.findings.map(({ code, severity }) => `${severity}:${code}`),
-    ['high:runtime_role_can_forge_trusted_context', 'high:runtime_role_has_cross_owner_dml'],
+    ['high:runtime_role_can_forge_trusted_context', 'high:runtime_role_has_cross_schema_dml'],
   );
   assert.deepEqual(report.summary, {
     auditedSchemaCount: 3,
@@ -171,6 +175,42 @@ test('builds deterministic current-state evidence and identifies the material tr
     typeCount: 0,
   });
   assert.equal(report.schemaVersion, 1);
+});
+
+test('orders audit evidence by code units rather than locale collation', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    types: [
+      { kind: 'enum', owner: 'ontos_admin', schema: 'ärea', type: 'status' },
+      { kind: 'enum', owner: 'ontos_admin', schema: 'zeta', type: 'status' },
+    ],
+  });
+
+  assert.deepEqual(
+    report.types.map(({ schema, type }) => `${schema}.${type}`),
+    ['zeta.status', 'ärea.status'],
+  );
+});
+
+test('extracts typed audit failures from an Effect cause', () => {
+  const reason = 'DATABASE_ADMIN_URL and DATABASE_URL must use distinct roles';
+
+  assert.equal(
+    getDatabaseTrustBoundaryFailureMessage(
+      Cause.fail(new DatabaseTrustBoundaryAuditError({ reason })),
+    ),
+    reason,
+  );
+  assert.equal(
+    getDatabaseTrustBoundaryFailureMessage(Cause.die(new Error('driver defect'))),
+    'Database trust-boundary audit failed',
+  );
+});
+
+test('treats any non-empty post-rollback trusted context as retained', () => {
+  assert.equal(hasTrustedContextValue(null), false);
+  assert.equal(hasTrustedContextValue(''), false);
+  assert.equal(hasTrustedContextValue('pre-existing-tenant-context'), true);
 });
 
 test('reports privilege escalation paths without embedding credentials or context values', () => {
@@ -207,7 +247,7 @@ test('reports privilege escalation paths without embedding credentials or contex
       'runtime_role_can_assume_administrative_role',
       'runtime_role_has_ddl_authority',
       'runtime_role_can_forge_trusted_context',
-      'runtime_role_has_cross_owner_dml',
+      'runtime_role_has_cross_schema_dml',
     ],
   );
   assert.doesNotMatch(JSON.stringify(report), /postgresql:|password|secret|tenant-id|entity-id/iu);
@@ -294,7 +334,7 @@ test('flags ownership of an audited routine as DDL authority', () => {
   );
 });
 
-test('flags ownership of an audited enum or domain as DDL authority', () => {
+test('flags ownership of an audited application type as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
     tables: snapshot.tables.slice(0, 1),
@@ -305,7 +345,7 @@ test('flags ownership of an audited enum or domain as DDL authority', () => {
     },
     types: [
       {
-        kind: 'enum',
+        kind: 'range',
         owner: snapshot.runtimeRole,
         schema: 'contacts',
         type: 'contact_status',
@@ -420,7 +460,7 @@ test('classifies every assumable role and escalates relation authority', () => {
       'runtime_role_can_assume_privileged_role',
       'runtime_role_can_assume_other_role',
       'runtime_role_can_forge_trusted_context',
-      'runtime_role_has_cross_owner_dml',
+      'runtime_role_has_cross_schema_dml',
     ],
   );
 });
@@ -452,7 +492,7 @@ test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () =>
     [
       'runtime_role_can_assume_privileged_role',
       'runtime_role_can_forge_trusted_context',
-      'runtime_role_has_cross_owner_dml',
+      'runtime_role_has_cross_schema_dml',
     ],
   );
 });

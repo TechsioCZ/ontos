@@ -5,7 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Client } from 'pg';
 import type { ClientBase } from 'pg';
-import { Effect, Schema } from 'effect';
+import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 
 interface DatabasePrivileges {
@@ -98,7 +98,7 @@ interface TablePrivilege {
 }
 
 interface TypePrivilege {
-  readonly kind: 'domain' | 'enum';
+  readonly kind: 'base' | 'composite' | 'domain' | 'enum' | 'multirange' | 'range';
   readonly owner: string;
   readonly schema: string;
   readonly type: string;
@@ -149,7 +149,7 @@ interface DatabaseTrustBoundaryFinding {
     | 'runtime_role_can_forge_trusted_context'
     | 'runtime_role_can_execute_security_definer'
     | 'runtime_role_has_ddl_authority'
-    | 'runtime_role_has_cross_owner_dml'
+    | 'runtime_role_has_cross_schema_dml'
     | 'runtime_role_has_relation_control_authority'
     | 'runtime_role_has_sequence_mutation_authority'
     | 'runtime_role_is_privileged'
@@ -180,6 +180,17 @@ export class DatabaseTrustBoundaryAuditError extends Schema.TaggedError<Database
   { reason: Schema.String },
 ) {}
 
+const genericAuditFailureMessage = 'Database trust-boundary audit failed';
+
+export const getDatabaseTrustBoundaryFailureMessage = (
+  cause: Cause.Cause<DatabaseTrustBoundaryAuditError>,
+): string => {
+  const failure = Cause.findErrorOption(cause);
+  return Option.isSome(failure) && failure.value instanceof DatabaseTrustBoundaryAuditError
+    ? failure.value.reason
+    : genericAuditFailureMessage;
+};
+
 class DatabaseTargetMismatchError extends Error {}
 
 class DatabaseSessionIdentityError extends Error {}
@@ -196,6 +207,9 @@ const hasClusterPrivilege = (role: RoleAttributes): boolean =>
   role.canCreateDatabases ||
   role.canCreateRoles ||
   role.replication;
+
+const compareText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
 
 export const assertSameDatabaseTarget = (
   administrative: DatabaseTargetIdentity,
@@ -245,34 +259,33 @@ export const buildDatabaseTrustBoundaryReport = (
   snapshot: DatabaseTrustBoundarySnapshot,
 ): DatabaseTrustBoundaryReport => {
   const schemas = [...snapshot.schemas].toSorted((left, right) =>
-    left.schema.localeCompare(right.schema),
+    compareText(left.schema, right.schema),
   );
   const tables = [...snapshot.tables].toSorted(
-    (left, right) =>
-      left.schema.localeCompare(right.schema) || left.table.localeCompare(right.table),
+    (left, right) => compareText(left.schema, right.schema) || compareText(left.table, right.table),
   );
   const sequences = [...snapshot.sequences].toSorted(
     (left, right) =>
-      left.schema.localeCompare(right.schema) || left.sequence.localeCompare(right.sequence),
+      compareText(left.schema, right.schema) || compareText(left.sequence, right.sequence),
   );
   const routines = [...snapshot.routines].toSorted(
     (left, right) =>
-      left.schema.localeCompare(right.schema) ||
-      left.routine.localeCompare(right.routine) ||
-      left.identityArguments.localeCompare(right.identityArguments),
+      compareText(left.schema, right.schema) ||
+      compareText(left.routine, right.routine) ||
+      compareText(left.identityArguments, right.identityArguments),
   );
   const types = [...snapshot.types].toSorted(
-    (left, right) => left.schema.localeCompare(right.schema) || left.type.localeCompare(right.type),
+    (left, right) => compareText(left.schema, right.schema) || compareText(left.type, right.type),
   );
   const defaultPrivileges = [...snapshot.defaultPrivileges].toSorted(
     (left, right) =>
-      (left.schema ?? '').localeCompare(right.schema ?? '') ||
-      left.objectType.localeCompare(right.objectType) ||
-      left.grantee.localeCompare(right.grantee) ||
-      left.privilege.localeCompare(right.privilege),
+      compareText(left.schema ?? '', right.schema ?? '') ||
+      compareText(left.objectType, right.objectType) ||
+      compareText(left.grantee, right.grantee) ||
+      compareText(left.privilege, right.privilege),
   );
   const memberships = [...snapshot.memberships].toSorted((left, right) =>
-    left.role.localeCompare(right.role),
+    compareText(left.role, right.role),
   );
   const findings: DatabaseTrustBoundaryFinding[] = [];
   const dmlTables = tables.filter(hasDml);
@@ -364,7 +377,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, enum, or domain.',
+        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -420,10 +433,11 @@ export const buildDatabaseTrustBoundaryReport = (
       severity: 'critical',
     });
   }
-  if (new Set(dmlTables.map(({ schema }) => schema)).size > 1) {
+  const dmlSchemas = new Set(dmlTables.map(({ schema }) => schema));
+  if (dmlSchemas.size > 1) {
     findings.push({
-      code: 'runtime_role_has_cross_owner_dml',
-      evidence: 'One runtime role has DML privileges in more than one application-owner schema.',
+      code: 'runtime_role_has_cross_schema_dml',
+      evidence: 'One runtime role has DML privileges in more than one audited application schema.',
       severity: 'high',
     });
   }
@@ -440,7 +454,7 @@ export const buildDatabaseTrustBoundaryReport = (
     summary: {
       auditedSchemaCount: schemas.length,
       defaultPrivilegeCount: defaultPrivileges.length,
-      dmlSchemaCount: new Set(dmlTables.map(({ schema }) => schema)).size,
+      dmlSchemaCount: dmlSchemas.size,
       dmlTableCount: dmlTables.length,
       findingCount: findings.length,
       routineCount: routines.length,
@@ -536,7 +550,7 @@ interface TablePrivilegeRow {
 }
 
 interface TypePrivilegeRow {
-  readonly kind: 'domain' | 'enum';
+  readonly kind: 'base' | 'composite' | 'domain' | 'enum' | 'multirange' | 'range';
   readonly owner: string;
   readonly schema: string;
   readonly type: string;
@@ -565,6 +579,9 @@ interface SettingRow {
   readonly value: string | null;
 }
 
+export const hasTrustedContextValue = (value: string | null): boolean =>
+  value !== null && value.length > 0;
+
 const probeSetting = async (
   client: ClientBase,
   setting: 'ontos.legal_entity_id' | 'ontos.tenant_id',
@@ -586,7 +603,10 @@ const probeSetting = async (
   const after = await client.query<SettingRow>('select current_setting($1, true) as value', [
     setting,
   ]);
-  return { retainedAfterRollback: after.rows[0]?.value === value, settable };
+  return {
+    retainedAfterRollback: hasTrustedContextValue(after.rows[0]?.value ?? null),
+    settable,
+  };
 };
 
 const collectSnapshot = async (
@@ -730,7 +750,19 @@ const collectSnapshot = async (
          join pg_catalog.pg_namespace as namespace on namespace.oid = owned_type.typnamespace
          where namespace.nspname !~ '^pg_'
            and namespace.nspname <> 'information_schema'
-           and owned_type.typtype in ('d', 'e')
+           and (
+             owned_type.typtype in ('d', 'e', 'm', 'r')
+             or (owned_type.typtype = 'b' and owned_type.typelem = 0)
+             or (
+               owned_type.typtype = 'c'
+               and exists (
+                 select 1
+                 from pg_catalog.pg_class as composite_relation
+                 where composite_relation.reltype = owned_type.oid
+                   and composite_relation.relkind = 'c'
+               )
+             )
+           )
            and owned_type.typowner = candidate.oid
          order by namespace.nspname, owned_type.typname
        ) as owned_types,
@@ -880,14 +912,30 @@ const collectSnapshot = async (
        namespace.nspname as schema,
        audited_type.typname as type,
        case audited_type.typtype
+         when 'b' then 'base'
+         when 'c' then 'composite'
          when 'd' then 'domain'
          when 'e' then 'enum'
+         when 'm' then 'multirange'
+         when 'r' then 'range'
        end as kind,
        owner.rolname as owner
      from pg_catalog.pg_type as audited_type
      join pg_catalog.pg_namespace as namespace on namespace.oid = audited_type.typnamespace
      join pg_catalog.pg_roles as owner on owner.oid = audited_type.typowner
-     where audited_type.typtype in ('d', 'e')
+     where (
+         audited_type.typtype in ('d', 'e', 'm', 'r')
+         or (audited_type.typtype = 'b' and audited_type.typelem = 0)
+         or (
+           audited_type.typtype = 'c'
+           and exists (
+             select 1
+             from pg_catalog.pg_class as composite_relation
+             where composite_relation.reltype = audited_type.oid
+               and composite_relation.relkind = 'c'
+           )
+         )
+       )
        and namespace.nspname = any($1::text[])
      order by namespace.nspname, audited_type.typname`,
     [schemaNames],
@@ -950,26 +998,29 @@ const collectSnapshot = async (
               )
           )
      ),
-     object_types(code, object_type) as (
+     object_types(catalog_code, default_code, object_type) as (
        values
-         ('r'::"char", 'table'::text),
-         ('S'::"char", 'sequence'::text),
-         ('f'::"char", 'function'::text),
-         ('T'::"char", 'type'::text),
-         ('n'::"char", 'schema'::text)
+         ('r'::"char", 'r'::"char", 'table'::text),
+         ('S'::"char", 's'::"char", 'sequence'::text),
+         ('f'::"char", 'f'::"char", 'function'::text),
+         ('T'::"char", 'T'::"char", 'type'::text),
+         ('n'::"char", 'n'::"char", 'schema'::text)
      ),
      global_acl as (
        select
          null::text as schema,
          owner.rolname as owner,
          object_types.object_type,
-         coalesce(defaults.defaclacl, acldefault(object_types.code, owner.oid)) as acl
+         coalesce(
+           defaults.defaclacl,
+           acldefault(object_types.default_code, owner.oid)
+         ) as acl
        from audit_owners as owner
        cross join object_types
        left join pg_catalog.pg_default_acl as defaults
          on defaults.defaclrole = owner.oid
         and defaults.defaclnamespace = 0
-        and defaults.defaclobjtype = object_types.code
+        and defaults.defaclobjtype = object_types.catalog_code
      ),
      schema_acl as (
        select
@@ -1188,17 +1239,21 @@ if (isMain) {
     process.env['ULTRAMODERN_WORKSPACE_ROOT'] ?? path.resolve(import.meta.dirname, '..');
   const output = path.join(workspaceRoot, '.codex/reports/database/database-trust-boundary.json');
   try {
-    const report = await Effect.runPromise(auditDatabaseTrustBoundaries());
-    await mkdir(path.dirname(output), { recursive: true });
-    await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
-    console.log(
-      `Database trust-boundary evidence written with ${report.findings.length} finding(s).`,
-    );
+    const exit = await Effect.runPromiseExit(auditDatabaseTrustBoundaries());
+    if (Exit.isFailure(exit)) {
+      console.error(getDatabaseTrustBoundaryFailureMessage(exit.cause));
+      process.exitCode = 1;
+    } else {
+      const report = exit.value;
+      await mkdir(path.dirname(output), { recursive: true });
+      await writeFile(output, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
+      console.log(
+        `Database trust-boundary evidence written with ${report.findings.length} finding(s).`,
+      );
+    }
   } catch (error) {
     console.error(
-      error instanceof DatabaseTrustBoundaryAuditError
-        ? error.reason
-        : 'Database trust-boundary audit failed',
+      error instanceof DatabaseTrustBoundaryAuditError ? error.reason : genericAuditFailureMessage,
     );
     process.exitCode = 1;
   }
