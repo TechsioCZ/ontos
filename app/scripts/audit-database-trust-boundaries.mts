@@ -46,6 +46,11 @@ interface PublicationOwnership {
   readonly publication: string;
 }
 
+interface SubscriptionOwnership {
+  readonly owner: string;
+  readonly subscription: string;
+}
+
 interface GrantOption {
   readonly authority: string;
   readonly role: string;
@@ -64,6 +69,7 @@ interface RoleMembership {
   readonly ownedForeignDataWrappers?: readonly string[];
   readonly ownedForeignServers?: readonly string[];
   readonly ownedPublications?: readonly string[];
+  readonly ownedSubscriptions?: readonly string[];
   readonly ownedRelations: readonly string[];
   readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
@@ -74,6 +80,7 @@ interface RoleMembership {
   readonly role: string;
   readonly securityDefinerPolicyBindings?: readonly string[];
   readonly securityDefinerRoutines: readonly string[];
+  readonly securityDefinerAggregateBindings?: readonly string[];
   readonly securityDefinerEventTriggerBindings?: readonly string[];
   readonly securityDefinerOperatorBindings?: readonly string[];
   readonly securityDefinerStoredExpressionBindings?: readonly string[];
@@ -105,6 +112,7 @@ interface SchemaPrivilege {
 }
 
 interface RoutinePrivilege {
+  readonly aggregateBindings?: readonly string[];
   readonly eventTriggerBindings: readonly string[];
   readonly executable: boolean;
   readonly identityArguments: string;
@@ -198,6 +206,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly runtimeRole: string;
   readonly schemas: readonly SchemaPrivilege[];
   readonly sequences: readonly SequencePrivilege[];
+  readonly subscriptions: readonly SubscriptionOwnership[];
   readonly tables: readonly TablePrivilege[];
   readonly trustedContext: TrustedContextEvidence;
   readonly types: readonly TypePrivilege[];
@@ -242,6 +251,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly routineCount: number;
     readonly securityDefinerExecutableCount: number;
     readonly sequenceCount: number;
+    readonly subscriptionCount: number;
     readonly tableCount: number;
     readonly typeCount: number;
   };
@@ -358,6 +368,9 @@ export const buildDatabaseTrustBoundaryReport = (
   const publications = [...snapshot.publications].toSorted((left, right) =>
     compareText(left.publication, right.publication),
   );
+  const subscriptions = [...snapshot.subscriptions].toSorted((left, right) =>
+    compareText(left.subscription, right.subscription),
+  );
   const types = [...snapshot.types].toSorted(
     (left, right) => compareText(left.schema, right.schema) || compareText(left.type, right.type),
   );
@@ -438,6 +451,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedForeignDataWrappers = [],
       ownedForeignServers = [],
       ownedPublications = [],
+      ownedSubscriptions = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -448,6 +462,7 @@ export const buildDatabaseTrustBoundaryReport = (
       role,
       securityDefinerPolicyBindings = [],
       securityDefinerRoutines,
+      securityDefinerAggregateBindings = [],
       securityDefinerEventTriggerBindings = [],
       securityDefinerOperatorBindings = [],
       securityDefinerStoredExpressionBindings = [],
@@ -462,6 +477,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedForeignDataWrappers.length > 0 ||
       ownedForeignServers.length > 0 ||
       ownedPublications.length > 0 ||
+      ownedSubscriptions.length > 0 ||
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
@@ -471,6 +487,7 @@ export const buildDatabaseTrustBoundaryReport = (
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerPolicyBindings.length > 0 ||
       securityDefinerRoutines.length > 0 ||
+      securityDefinerAggregateBindings.length > 0 ||
       securityDefinerEventTriggerBindings.length > 0 ||
       securityDefinerOperatorBindings.length > 0 ||
       securityDefinerStoredExpressionBindings.length > 0 ||
@@ -503,6 +520,7 @@ export const buildDatabaseTrustBoundaryReport = (
   );
   const ownsForeignServer = foreignServers.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsPublication = publications.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsSubscription = subscriptions.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
   const inheritsOwnership = memberships.some(
     ({
@@ -512,6 +530,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedForeignDataWrappers = [],
       ownedForeignServers = [],
       ownedPublications = [],
+      ownedSubscriptions = [],
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
@@ -523,6 +542,7 @@ export const buildDatabaseTrustBoundaryReport = (
         ownedForeignDataWrappers.length > 0 ||
         ownedForeignServers.length > 0 ||
         ownedPublications.length > 0 ||
+        ownedSubscriptions.length > 0 ||
         ownedRelations.length > 0 ||
         ownedRoutines.length > 0 ||
         ownedSchemas.length > 0 ||
@@ -542,6 +562,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ownsForeignDataWrapper ||
     ownsForeignServer ||
     ownsPublication ||
+    ownsSubscription ||
     ownsSchema ||
     ownsType ||
     inheritsOwnership ||
@@ -550,7 +571,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE, direct/reachable ownership of the current database, or direct/inherited ownership of an audited extension, foreign-data wrapper or server, publication, schema, relation, routine, or application type.',
+        'The runtime role has database/schema CREATE, direct/reachable ownership of the current database, or direct/inherited ownership of an audited extension, foreign-data wrapper or server, publication, subscription, schema, relation, routine, or application type.',
       severity: 'high',
     });
   }
@@ -569,6 +590,7 @@ export const buildDatabaseTrustBoundaryReport = (
   const executableSecurityDefiners = routines.filter(
     ({
       executable,
+      aggregateBindings = [],
       eventTriggerBindings,
       owner,
       operatorBindings = [],
@@ -578,6 +600,7 @@ export const buildDatabaseTrustBoundaryReport = (
       triggerBindings,
     }) =>
       (executable ||
+        aggregateBindings.length > 0 ||
         eventTriggerBindings.length > 0 ||
         operatorBindings.length > 0 ||
         policyBindings.length > 0 ||
@@ -590,7 +613,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_execute_security_definer',
       evidence:
-        'The runtime role can directly execute, or invoke through an accessible operator, applicable RLS policy, stored relation expression, DML rewrite rule, table DML trigger, or database event trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
+        'The runtime role can directly execute, or invoke through an accessible operator, aggregate support path, applicable RLS policy, stored relation expression, DML rewrite rule, table DML trigger, or database event trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
       severity: 'high',
     });
   }
@@ -707,10 +730,12 @@ export const buildDatabaseTrustBoundaryReport = (
       routineCount: routines.length,
       securityDefinerExecutableCount: executableSecurityDefiners.length,
       sequenceCount: sequences.length,
+      subscriptionCount: subscriptions.length,
       tableCount: tables.length,
       typeCount: types.length,
     },
     tables,
+    subscriptions,
     types,
   };
 };
@@ -742,6 +767,7 @@ interface MembershipRow {
   readonly owned_foreign_data_wrappers: string[];
   readonly owned_foreign_servers: string[];
   readonly owned_publications: string[];
+  readonly owned_subscriptions: string[];
   readonly owned_relations: string[];
   readonly owned_routines: string[];
   readonly owned_schemas: string[];
@@ -753,6 +779,7 @@ interface MembershipRow {
   readonly role: string;
   readonly security_definer_policy_bindings: string[];
   readonly security_definer_routines: string[];
+  readonly security_definer_aggregate_bindings: string[];
   readonly security_definer_event_trigger_bindings: string[];
   readonly security_definer_operator_bindings: string[];
   readonly security_definer_stored_expression_bindings: string[];
@@ -797,6 +824,11 @@ interface PublicationOwnershipRow {
   readonly publication: string;
 }
 
+interface SubscriptionOwnershipRow {
+  readonly owner: string;
+  readonly subscription: string;
+}
+
 interface SchemaPrivilegeRow {
   readonly create: boolean;
   readonly owner: string;
@@ -805,6 +837,7 @@ interface SchemaPrivilegeRow {
 }
 
 interface RoutinePrivilegeRow {
+  readonly aggregate_bindings: string[];
   readonly event_trigger_bindings: string[];
   readonly executable: boolean;
   readonly identity_arguments: string;
@@ -942,6 +975,29 @@ export const storedExpressionDependenciesCte = `trigger_routine_dependencies(
        format(':funcid %s ', dependency.refobjid)
        in coalesce(audited_trigger.tgqual::text, '')
      ) > 0
+),
+aggregate_routine_dependencies(
+  aggregate_oid,
+  routine_oid,
+  binding
+) as (
+  select
+    aggregate.aggfnoid,
+    support.routine_oid,
+    support.binding
+  from pg_catalog.pg_aggregate as aggregate
+  cross join lateral (
+    values
+      (aggregate.aggtransfn, 'transition'::text),
+      (aggregate.aggfinalfn, 'final'::text),
+      (aggregate.aggcombinefn, 'combine'::text),
+      (aggregate.aggserialfn, 'serialize'::text),
+      (aggregate.aggdeserialfn, 'deserialize'::text),
+      (aggregate.aggmtransfn, 'moving-transition'::text),
+      (aggregate.aggminvtransfn, 'moving-inverse'::text),
+      (aggregate.aggmfinalfn, 'moving-final'::text)
+  ) as support(routine_oid, binding)
+  where support.routine_oid <> 0
 ),
 policy_routine_dependencies(
   policy_oid,
@@ -1953,6 +2009,19 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
   union
   select role.oid, command.event, command.tag
   from pg_catalog.pg_roles as role
+  join pg_catalog.pg_subscription as subscription
+    on pg_has_role(role.oid, subscription.subowner, 'USAGE')
+  cross join lateral (
+    values
+      ('ddl_command_start'::text, 'ALTER SUBSCRIPTION'::text),
+      ('ddl_command_end'::text, 'ALTER SUBSCRIPTION'::text),
+      ('ddl_command_start'::text, 'DROP SUBSCRIPTION'::text),
+      ('ddl_command_end'::text, 'DROP SUBSCRIPTION'::text),
+      ('sql_drop'::text, 'DROP SUBSCRIPTION'::text)
+  ) as command(event, tag)
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
   join pg_catalog.pg_extension as extension
     on pg_has_role(role.oid, extension.extowner, 'USAGE')
   cross join lateral (
@@ -2225,6 +2294,12 @@ const collectSnapshot = async (
          where publication.pubowner = candidate.oid
          order by publication.pubname
        ) as owned_publications,
+       array(
+         select subscription.subname
+         from pg_catalog.pg_subscription as subscription
+         where subscription.subowner = candidate.oid
+         order by subscription.subname
+       ) as owned_subscriptions,
        array(
          select namespace.nspname
          from pg_catalog.pg_namespace as namespace
@@ -3112,6 +3187,34 @@ const collectSnapshot = async (
        ) as security_definer_routines,
        array(
          select distinct format(
+           'aggregate:%I.%I(%s):%s->%I.%I(%s)',
+           aggregate_namespace.nspname,
+           aggregate_routine.proname,
+           pg_get_function_identity_arguments(aggregate_routine.oid),
+           dependency.binding,
+           routine_namespace.nspname,
+           support_routine.proname,
+           pg_get_function_identity_arguments(support_routine.oid)
+         )
+         from aggregate_routine_dependencies as dependency
+         join pg_catalog.pg_proc as aggregate_routine
+           on aggregate_routine.oid = dependency.aggregate_oid
+         join pg_catalog.pg_namespace as aggregate_namespace
+           on aggregate_namespace.oid = aggregate_routine.pronamespace
+         join pg_catalog.pg_proc as support_routine
+           on support_routine.oid = dependency.routine_oid
+         join pg_catalog.pg_namespace as routine_namespace
+           on routine_namespace.oid = support_routine.pronamespace
+         where routine_namespace.nspname !~ '^pg_'
+           and routine_namespace.nspname <> 'information_schema'
+           and support_routine.prosecdef
+           and support_routine.proowner <> candidate.oid
+           and has_schema_privilege(candidate.oid, aggregate_namespace.oid, 'USAGE')
+           and has_function_privilege(candidate.oid, aggregate_routine.oid, 'EXECUTE')
+         order by 1
+       ) as security_definer_aggregate_bindings,
+       array(
+         select distinct format(
            'operator:%I.%s(%s,%s)->%I.%I(%s)',
            operator_namespace.nspname,
            audited_operator.oprname,
@@ -3782,6 +3885,14 @@ const collectSnapshot = async (
      join pg_catalog.pg_roles as owner on owner.oid = publication.pubowner
      order by publication.pubname`,
   );
+  const subscriptions = await admin.query<SubscriptionOwnershipRow>(
+    `select
+       subscription.subname as subscription,
+       owner.rolname as owner
+     from pg_catalog.pg_subscription as subscription
+     join pg_catalog.pg_roles as owner on owner.oid = subscription.subowner
+     order by subscription.subname`,
+  );
   const schemas = await admin.query<SchemaPrivilegeRow>(
     `select
        namespace.nspname as schema,
@@ -3816,6 +3927,24 @@ const collectSnapshot = async (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and has_function_privilege($1, routine.oid, 'EXECUTE')
        ) as executable,
+       array(
+         select distinct format(
+           'aggregate:%I.%I(%s):%s',
+           aggregate_namespace.nspname,
+           aggregate_routine.proname,
+           pg_get_function_identity_arguments(aggregate_routine.oid),
+           dependency.binding
+         )
+         from aggregate_routine_dependencies as dependency
+         join pg_catalog.pg_proc as aggregate_routine
+           on aggregate_routine.oid = dependency.aggregate_oid
+         join pg_catalog.pg_namespace as aggregate_namespace
+           on aggregate_namespace.oid = aggregate_routine.pronamespace
+         where dependency.routine_oid = routine.oid
+           and has_schema_privilege($1, aggregate_namespace.oid, 'USAGE')
+           and has_function_privilege($1, aggregate_routine.oid, 'EXECUTE')
+         order by 1
+       ) as aggregate_bindings,
        array(
          select distinct format(
            'operator:%I.%s(%s,%s)',
@@ -5608,6 +5737,7 @@ const collectSnapshot = async (
       ownedForeignDataWrappers: membership.owned_foreign_data_wrappers,
       ownedForeignServers: membership.owned_foreign_servers,
       ownedPublications: membership.owned_publications,
+      ownedSubscriptions: membership.owned_subscriptions,
       ownedRelations: membership.owned_relations,
       ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
@@ -5617,6 +5747,7 @@ const collectSnapshot = async (
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
       securityDefinerEventTriggerBindings: membership.security_definer_event_trigger_bindings,
+      securityDefinerAggregateBindings: membership.security_definer_aggregate_bindings,
       securityDefinerOperatorBindings: membership.security_definer_operator_bindings,
       securityDefinerPolicyBindings: membership.security_definer_policy_bindings,
       securityDefinerRoutines: membership.security_definer_routines,
@@ -5630,6 +5761,7 @@ const collectSnapshot = async (
       set: privilege.set,
     })),
     publications: publications.rows,
+    subscriptions: subscriptions.rows,
     role: {
       bypassRls: roleRow.bypass_rls,
       canCreateDatabases: roleRow.can_create_databases,
@@ -5641,6 +5773,7 @@ const collectSnapshot = async (
       superuser: roleRow.superuser,
     },
     routines: routines.rows.map((routine) => ({
+      aggregateBindings: routine.aggregate_bindings,
       eventTriggerBindings: routine.event_trigger_bindings,
       executable: routine.executable,
       identityArguments: routine.identity_arguments,
