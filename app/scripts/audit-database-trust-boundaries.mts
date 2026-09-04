@@ -474,6 +474,7 @@ export const buildDatabaseTrustBoundaryReport = (
   const ownsRelation =
     tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsSchema = schemas.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsExtension = extensions.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsForeignDataWrapper = foreignDataWrappers.some(
@@ -509,6 +510,7 @@ export const buildDatabaseTrustBoundaryReport = (
     ownsExtension ||
     ownsForeignDataWrapper ||
     ownsForeignServer ||
+    ownsSchema ||
     ownsType ||
     inheritsOwnership
   ) {
@@ -568,7 +570,7 @@ export const buildDatabaseTrustBoundaryReport = (
       securityInvoker,
     }) =>
       kind === 'view' &&
-      privileges.select &&
+      (privileges.delete || privileges.insert || privileges.select || privileges.update) &&
       (ownerContextRlsBypass === true ||
         (securityInvoker !== true &&
           (owner === snapshot.administrativeRole ||
@@ -579,7 +581,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_select_privileged_owner_view',
       evidence:
-        'The runtime role can select a view whose outer or nested owner context is administrative, superuser, BYPASSRLS, or otherwise bypasses an unforced RLS relation.',
+        'The runtime role can read or write a view whose outer or nested owner context is administrative, superuser, BYPASSRLS, or otherwise bypasses an unforced RLS relation.',
       severity: 'high',
     });
   }
@@ -1337,6 +1339,45 @@ export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag
   ) as command(event, tag)
   where namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_extension as extension
+    on pg_has_role(role.oid, extension.extowner, 'USAGE')
+  cross join lateral (
+    values
+      ('ddl_command_start'::text, 'ALTER EXTENSION'::text),
+      ('ddl_command_end'::text, 'ALTER EXTENSION'::text),
+      ('ddl_command_start'::text, 'DROP EXTENSION'::text),
+      ('ddl_command_end'::text, 'DROP EXTENSION'::text),
+      ('sql_drop'::text, 'DROP EXTENSION'::text)
+  ) as command(event, tag)
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_foreign_data_wrapper as foreign_data_wrapper
+    on pg_has_role(role.oid, foreign_data_wrapper.fdwowner, 'USAGE')
+  cross join lateral (
+    values
+      ('ddl_command_start'::text, 'ALTER FOREIGN DATA WRAPPER'::text),
+      ('ddl_command_end'::text, 'ALTER FOREIGN DATA WRAPPER'::text),
+      ('ddl_command_start'::text, 'DROP FOREIGN DATA WRAPPER'::text),
+      ('ddl_command_end'::text, 'DROP FOREIGN DATA WRAPPER'::text),
+      ('sql_drop'::text, 'DROP FOREIGN DATA WRAPPER'::text)
+  ) as command(event, tag)
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_foreign_server as foreign_server
+    on pg_has_role(role.oid, foreign_server.srvowner, 'USAGE')
+  cross join lateral (
+    values
+      ('ddl_command_start'::text, 'ALTER SERVER'::text),
+      ('ddl_command_end'::text, 'ALTER SERVER'::text),
+      ('ddl_command_start'::text, 'DROP SERVER'::text),
+      ('ddl_command_end'::text, 'DROP SERVER'::text),
+      ('sql_drop'::text, 'DROP SERVER'::text)
+  ) as command(event, tag)
 )`;
 
 const collectSnapshot = async (
