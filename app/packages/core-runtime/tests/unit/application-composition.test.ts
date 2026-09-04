@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Schema } from 'effect';
+import { Effect } from 'effect';
+import type { ApplicationCompositionValidationError } from '../../src/modules/application-composition.ts';
 import {
-  ApplicationCompositionValidationError,
   canonicalizeApplicationComposition,
   validateApplicationCompositionCandidate,
 } from '../../src/modules/application-composition.ts';
@@ -10,16 +10,10 @@ import {
 const sha256 = (character: string) => character.repeat(64);
 const strings = (...values: string[]): string[] => values;
 
-const assertInvalid = <Value>(run: () => Value, reason: RegExp): void => {
-  let thrown: unknown;
-  try {
-    run();
-  } catch (error) {
-    thrown = error;
-  }
-  assert.ok(Schema.is(ApplicationCompositionValidationError)(thrown));
-  assert.match(thrown.reason, reason);
-};
+const assertInvalid = <Value>(
+  effect: Effect.Effect<Value, ApplicationCompositionValidationError>,
+  reason: RegExp,
+): void => assert.match(Effect.runSync(Effect.flip(effect)).reason, reason);
 
 type Candidate = ReturnType<typeof candidate>;
 type Evidence = ReturnType<typeof evidence>;
@@ -114,15 +108,26 @@ const addModuleCopy = (
   const module = onlyModule(input);
   return input.modules.push({
     ...structuredClone(module),
+    contract: {
+      ...module.contract,
+      url: 'https://inventory.example/.well-known/ontos-module-manifest.json',
+    },
     deployment: { appId: 'inventory', buildMarker: 'inventory-build-1' },
-    federation: { ...module.federation, remoteName: 'inventory' },
+    federation: {
+      ...module.federation,
+      manifest: {
+        ...module.federation.manifest,
+        url: 'https://inventory.example/mf-manifest.json',
+      },
+      remoteName: 'inventory',
+    },
     ...overrides,
   });
 };
 
 test('accepts one provider-neutral composition and produces deterministic canonical JSON', () => {
   const input = candidate();
-  const composition = validateApplicationCompositionCandidate(input, evidence());
+  const composition = Effect.runSync(validateApplicationCompositionCandidate(input, evidence()));
 
   assert.deepEqual(composition, input);
   assert.equal(Object.isFrozen(composition), true);
@@ -169,6 +174,44 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
       (input) => addModuleCopy(input, { allowedContributions: [] }),
       /duplicate module ID contacts\.core/u,
     ],
+    [
+      (input) => {
+        const module = onlyModule(input);
+        return addModuleCopy(input, {
+          allowedContributions: [],
+          contract: {
+            ...module.contract,
+            url: 'https://contacts.example:443/.well-known/ontos-module-manifest.json',
+          },
+          moduleId: 'inventory.stock',
+          publicContract: { ...module.publicContract, id: 'inventory.stock' },
+        });
+      },
+      /duplicate artifact URL/u,
+    ],
+    [
+      (input) => {
+        const module = onlyModule(input);
+        return addModuleCopy(input, {
+          allowedContributions: [],
+          contract: {
+            ...module.contract,
+            url: 'https://inventory.example/.well-known/ontos-module-manifest.json',
+          },
+          federation: {
+            ...module.federation,
+            manifest: {
+              ...module.federation.manifest,
+              url: 'https://contacts.example/artifacts/../mf-manifest.json',
+            },
+            remoteName: 'inventory',
+          },
+          moduleId: 'inventory.stock',
+          publicContract: { ...module.publicContract, id: 'inventory.stock' },
+        });
+      },
+      /duplicate artifact URL/u,
+    ],
     [(input) => (onlyModule(input).requiredShellAbi.version = '2'), /Shell contribution ABI/u],
     [
       (input) => (required(onlyModule(input).requiredCoreCapabilities[0]).version = '2'),
@@ -194,6 +237,6 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
     const input = candidate();
     const observations = evidence();
     mutate(input, observations);
-    assertInvalid(() => validateApplicationCompositionCandidate(input, observations), reason);
+    assertInvalid(validateApplicationCompositionCandidate(input, observations), reason);
   }
 });

@@ -1,4 +1,4 @@
-import { Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.ts';
 
 export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
@@ -120,6 +120,8 @@ const identityKey = (identity: ApplicationCompositionVersionedIdentity): string 
 const singletonKey = (
   singleton: ApplicationCompositionModule['sharedSingletons'][number],
 ): string => `${singleton.packageName}@${singleton.version}`;
+
+const normalizeArtifactUrl = (value: string): string => new URL(value).href;
 
 const claim = (claims: Set<string>, value: string, label: string): void => {
   if (claims.has(value)) {
@@ -295,21 +297,13 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
     },
   });
 
-export const validateApplicationCompositionCandidate = <Input>(
-  input: Input,
+const validateDecodedApplicationComposition = (
+  composition: ApplicationComposition,
   evidence: ApplicationCompositionCandidateEvidence,
 ): ApplicationComposition => {
-  let composition: ApplicationComposition;
-  try {
-    composition = Schema.decodeUnknownSync(ApplicationCompositionSchema, {
-      onExcessProperty: 'error',
-    })(input);
-  } catch {
-    throw invalid('candidate does not match the supported Application Composition schema');
-  }
-
   const moduleIds = new Set(composition.modules.map(({ moduleId }) => moduleId));
   const appIds = new Set<string>();
+  const artifactUrls = new Set<string>();
   const claimedModuleIds = new Set<string>();
   const contributionKeys = new Set<string>();
   const remoteNames = new Set<string>();
@@ -326,6 +320,8 @@ export const validateApplicationCompositionCandidate = <Input>(
 
   for (const module of composition.modules) {
     claim(appIds, module.deployment.appId, 'deployment app ID');
+    claim(artifactUrls, normalizeArtifactUrl(module.contract.url), 'artifact URL');
+    claim(artifactUrls, normalizeArtifactUrl(module.federation.manifest.url), 'artifact URL');
     claim(claimedModuleIds, module.moduleId, 'module ID');
     claim(remoteNames, module.federation.remoteName, 'Module Federation remote');
     for (const contributionKey of module.allowedContributions) {
@@ -344,3 +340,24 @@ export const validateApplicationCompositionCandidate = <Input>(
 
   return freeze(composition);
 };
+
+export const validateApplicationCompositionCandidate = <Input>(
+  input: Input,
+  evidence: ApplicationCompositionCandidateEvidence,
+): Effect.Effect<ApplicationComposition, ApplicationCompositionValidationError> =>
+  Schema.decodeUnknownEffect(ApplicationCompositionSchema, { onExcessProperty: 'error' })(
+    input,
+  ).pipe(
+    Effect.mapError(() =>
+      invalid('candidate does not match the supported Application Composition schema'),
+    ),
+    Effect.flatMap((composition) =>
+      Effect.try({
+        catch: (error) =>
+          Schema.is(ApplicationCompositionValidationError)(error)
+            ? error
+            : invalid('candidate could not be validated'),
+        try: () => validateDecodedApplicationComposition(composition, evidence),
+      }),
+    ),
+  );
