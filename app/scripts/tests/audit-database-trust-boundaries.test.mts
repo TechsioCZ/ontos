@@ -1018,6 +1018,40 @@ test('flags security-definer routines invocable only through table triggers', ()
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
 });
 
+test('flags security-definer routines invocable through accessible operators', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        executable: false,
+        eventTriggerBindings: [],
+        identityArguments: 'integer, integer',
+        kind: 'function',
+        operatorBindings: ['operator:public.##(integer,integer)'],
+        owner: 'ontos_admin',
+        policyBindings: [],
+        routine: 'private_integer_equal',
+        schema: 'private',
+        securityDefiner: true,
+        storedExpressionBindings: [],
+        triggerBindings: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
 test('flags security-definer routines invoked through applicable RLS policies', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -1143,6 +1177,43 @@ test('classifies reachable roles that invoke security-definer stored expressions
         securityDefinerStoredExpressionBindings: [
           'contacts.customers:check-constraint:customers_valid->private.validate_customer()',
         ],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
+test('classifies reachable roles that invoke security-definer operators as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'operator_user',
+        securityDefinerOperatorBindings: [
+          'operator:public.##(integer,integer)->private.private_integer_equal(integer, integer)',
+        ],
+        securityDefinerRoutines: [],
       },
     ],
     tables: snapshot.tables.slice(0, 1),
@@ -1461,6 +1532,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/from dml_rule_write_paths as rule_write/gu)?.length, 4);
   assert.equal(source.match(/policy\.polcmd in \('a', '\*'\)/gu)?.length, 2);
   assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 8);
+  assert.equal(source.match(/from writable_view_paths as rule_view/gu)?.length, 4);
   assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 6);
   assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
@@ -1477,10 +1549,10 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /expression\.ev_type in \('2', '3', '4'\)/u);
   assert.match(source, /expression\.ev_enabled in \('O', 'A', 'R'\)/u);
   assert.match(source, /'dml-rule:%s:%s:%I'/u);
-  assert.equal(source.match(/stored_expression\.binding !~ '\^dml-rule:'/gu)?.length, 8);
-  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:INSERT:'/gu)?.length, 2);
-  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu)?.length, 2);
-  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu)?.length, 4);
+  assert.equal(source.match(/stored_expression\.binding !~ '\^dml-rule:'/gu)?.length, 12);
+  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:INSERT:'/gu)?.length, 4);
+  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:UPDATE:'/gu)?.length, 4);
+  assert.equal(source.match(/stored_expression\.binding ~ '\^dml-rule:DELETE:'/gu)?.length, 6);
   assert.match(source, /expression\.contypid/u);
   assert.equal(source.match(/from pg_catalog\.pg_trigger as before_update_trigger/gu)?.length, 2);
   assert.match(source, /before_update_trigger\.tgrelid = expression\.adrelid/u);
@@ -1513,6 +1585,10 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /trigger_routine\.prorettype = 'pg_catalog\.trigger'::regtype/u);
   assert.match(source, /'ddl_command_end'::text, 'CREATE TRIGGER'::text/u);
   assert.match(source, /'CREATE COLLATION'::text/u);
+  assert.equal(source.match(/from pg_catalog\.pg_operator as audited_operator/gu)?.length, 2);
+  assert.match(source, /audited_operator\.oprcode = routine\.oid/u);
+  assert.match(source, /security_definer_operator_bindings/u);
+  assert.match(source, /operator_bindings/u);
   assert.match(source, /'ddl_command_end'::text, 'ALTER PUBLICATION'::text/u);
   assert.match(
     source,
