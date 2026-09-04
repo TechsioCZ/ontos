@@ -1214,6 +1214,12 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
   assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 2);
   assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
+  assert.equal(source.match(/audited_trigger\.tgenabled = 'R'/gu)?.length, 2);
+  assert.match(
+    source,
+    /has_parameter_privilege\(\s+candidate\.oid,\s+'session_replication_role',\s+'SET'\s+\)/u,
+  );
+  assert.match(source, /has_parameter_privilege\(\$1, 'session_replication_role', 'SET'\)/u);
   assert.equal(source.match(/pg_catalog\.pg_partition_ancestors\(relation\.oid\)/gu)?.length, 2);
   assert.equal(
     source.match(
@@ -1230,6 +1236,11 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /nested-view-expression/u);
   assert.match(source, /expression\.contypid/u);
+  assert.match(source, /from pg_catalog\.pg_trigger as before_update_trigger/u);
+  assert.match(source, /before_update_trigger\.tgrelid = expression\.adrelid/u);
+  assert.match(source, /before_update_trigger\.tgtype & 1 <> 0/u);
+  assert.match(source, /before_update_trigger\.tgtype & 2 <> 0/u);
+  assert.match(source, /before_update_trigger\.tgtype & 16 <> 0/u);
   assert.match(
     source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
