@@ -253,8 +253,8 @@ export const assertSameDatabaseTarget = (
 export const getEffectiveDatabaseEndpoint = (
   client: Client,
 ): Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'> => ({
-  configuredHost: client.connectionParameters.host,
-  configuredPort: client.connectionParameters.port,
+  configuredHost: client.host,
+  configuredPort: client.port,
 });
 
 export const assertDatabaseSessionIdentities = (
@@ -985,7 +985,14 @@ const collectSnapshot = async (
          rewrite.ev_class,
          dependency.refobjid,
          case
-           when coalesce('security_invoker=true' = any(view_relation.reloptions), false)
+           when coalesce(
+             (
+               select option.option_value::boolean
+               from pg_catalog.pg_options_to_table(view_relation.reloptions) as option
+               where option.option_name = 'security_invoker'
+             ),
+             false
+           )
              then runtime_role.oid
            else view_relation.relowner
          end
@@ -1004,7 +1011,14 @@ const collectSnapshot = async (
          dependency.view_oid,
          nested_dependency.refobjid,
          case
-           when coalesce('security_invoker=true' = any(nested_view.reloptions), false)
+           when coalesce(
+             (
+               select option.option_value::boolean
+               from pg_catalog.pg_options_to_table(nested_view.reloptions) as option
+               where option.option_name = 'security_invoker'
+             ),
+             false
+           )
              then dependency.effective_owner_oid
            else nested_view.relowner
          end
@@ -1047,7 +1061,14 @@ const collectSnapshot = async (
        owner.rolsuper as owner_superuser,
        relation.relrowsecurity as rls_enabled,
        relation.relforcerowsecurity as rls_forced,
-       coalesce('security_invoker=true' = any(relation.reloptions), false) as security_invoker,
+       coalesce(
+         (
+           select option.option_value::boolean
+           from pg_catalog.pg_options_to_table(relation.reloptions) as option
+           where option.option_name = 'security_invoker'
+         ),
+         false
+       ) as security_invoker,
        (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and (
