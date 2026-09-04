@@ -1357,7 +1357,11 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     )?.length,
     8,
   );
-  assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
+  assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 3);
+  assert.match(source, /policy_routine_dependencies\(/u);
+  assert.match(source, /used_by_using/u);
+  assert.match(source, /used_by_with_check/u);
+  assert.match(source, /policy\.polwithcheck is null/u);
   assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
   assert.equal(source.match(/\$\{referentialWritePathsCte\}/gu)?.length, 2);
   assert.equal(source.match(/\$\{roleDdlCommandTagsCte\}/gu)?.length, 2);
@@ -1367,6 +1371,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /pg_catalog\.pg_rewrite as expression/u);
   assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /view_access_paths\(invocation_oid, affected_oid, effective_owner_oid\)/u);
+  assert.match(source, /direct_view_access_columns\(/u);
+  assert.match(source, /view_access_columns\(invocation_oid, affected_oid/u);
+  assert.match(source, /access\.affected_attnum = target\.fields\[1\]::smallint/u);
   assert.match(
     source,
     /writable_view_rewrites\(view_oid, affected_oid, actions, target_list, effective_owner_oid\)/u,
@@ -1395,6 +1402,13 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /stored_expression\.invocation_oid/u);
+  assert.match(source, /stored_expression\.select_columns/u);
+  assert.match(source, /expression_routine\.provolatile = 'v'/u);
+  assert.equal(
+    source.match(/from unnest\(stored_expression\.select_columns\) as selected\(attnum\)/gu)
+      ?.length,
+    2,
+  );
   assert.match(source, /nested-view-expression/u);
   assert.match(source, /expression\.rulename <> '_RETURN'/u);
   assert.match(source, /expression\.ev_type in \('2', '3', '4'\)/u);
