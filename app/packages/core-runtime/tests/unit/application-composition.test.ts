@@ -87,6 +87,7 @@ const evidence = () => ({
       sha256: sha256('b'),
     },
   },
+  runtime: structuredClone(candidate().shell),
 });
 
 const required = <Value>(value: Value | undefined): Value => {
@@ -175,6 +176,14 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
       /duplicate module ID contacts\.core/u,
     ],
     [
+      (input) => (onlyModule(input).allowedContributions = ['contacts.core.page.contacts']),
+      /observed deployment contract/u,
+    ],
+    [
+      (input) => (onlyModule(input).federation.exposes = ['./Navigation']),
+      /observed deployment contract/u,
+    ],
+    [
       (input) => {
         const module = onlyModule(input);
         return addModuleCopy(input, {
@@ -211,6 +220,29 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
         });
       },
       /duplicate artifact URL/u,
+    ],
+    [
+      (input) => {
+        onlyModule(input).requiredShellAbi.version = '2';
+        input.shell.contributionAbi.version = '2';
+        return input.shell.contributionAbi.version;
+      },
+      /observed runtime contract/u,
+    ],
+    [
+      (input, observations) => {
+        const moduleSingleton = required(onlyModule(input).sharedSingletons[0]);
+        const runtimeSingleton = required(observations.runtime.sharedSingletons[0]);
+        const shellSingleton = required(input.shell.sharedSingletons[0]);
+        shellSingleton.packageName = 'foo';
+        shellSingleton.version = 'bar@baz';
+        runtimeSingleton.packageName = 'foo';
+        runtimeSingleton.version = 'bar@baz';
+        moduleSingleton.packageName = 'foo@bar';
+        moduleSingleton.version = 'baz';
+        return moduleSingleton.version;
+      },
+      /incompatible shared singleton foo@bar/u,
     ],
     [(input) => (onlyModule(input).requiredShellAbi.version = '2'), /Shell contribution ABI/u],
     [
