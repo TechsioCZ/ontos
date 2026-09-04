@@ -33,7 +33,8 @@ admin/runtime identity collapse even if URL query parameters override the author
 checks require no monitoring-role privilege. Its pure report uses `null` schema for a global
 default ACL. It evaluates PostgreSQL's built-in global defaults even when `pg_default_acl` has no
 stored row, including the distinct catalog and `acldefault` sequence type codes and defaults for
-future schemas. Report ordering uses locale-independent code-unit comparison. It includes
+future schemas created by a database-`CREATE`-capable runtime or reachable role. Report ordering
+uses locale-independent code-unit comparison. It includes
 column-level DML, `REFERENCES`, and
 PostgreSQL 17 `MAINTAIN`; classifies tables, partitioned tables, views, materialized views, foreign
 tables, and sequences while requiring schema `USAGE` for effective object access; inventories

@@ -1018,6 +1018,10 @@ const collectSnapshot = async (
        select candidate.oid, candidate.rolname
        from pg_catalog.pg_roles as candidate
        where candidate.rolname = $3
+          or (
+            candidate.oid in (select role_oid from reachable_roles)
+            and has_database_privilege(candidate.oid, current_database(), 'CREATE')
+          )
           or exists (
             select 1
             from pg_catalog.pg_namespace as namespace
