@@ -516,7 +516,7 @@ export const collectSnapshot = async (
            on effective_owner.oid = dependency.effective_owner_oid
          where dependency.view_oid = relation.oid
            and (
-             effective_owner.rolname = $3
+             pg_has_role(effective_owner.oid, $3, 'USAGE')
              or effective_owner.rolbypassrls
              or effective_owner.rolsuper
            )
