@@ -79,6 +79,7 @@ interface TablePrivilegeRow {
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
   readonly owner_bypass_rls: boolean;
+  readonly owner_context_privileged: boolean;
   readonly owner_context_rls_bypass: boolean;
   readonly owner_superuser: boolean;
   readonly maintain: boolean;
@@ -493,6 +494,18 @@ export const collectSnapshot = async (
        exists (
          select 1
          from view_dependencies as dependency
+         join pg_catalog.pg_roles as effective_owner
+           on effective_owner.oid = dependency.effective_owner_oid
+         where dependency.view_oid = relation.oid
+           and (
+             effective_owner.rolname = $3
+             or effective_owner.rolbypassrls
+             or effective_owner.rolsuper
+           )
+       ) as owner_context_privileged,
+       exists (
+         select 1
+         from view_dependencies as dependency
          join pg_catalog.pg_class as referenced_relation
            on referenced_relation.oid = dependency.referenced_oid
          where dependency.view_oid = relation.oid
@@ -559,7 +572,7 @@ export const collectSnapshot = async (
      where relation.relkind in ('r', 'p', 'v', 'm', 'f')
        and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
-    [runtimeRole, schemaNames],
+    [runtimeRole, schemaNames, administrativeRole],
   );
   const types = await admin.query<TypePrivilegeRow>(
     `select
@@ -1003,6 +1016,7 @@ export const collectSnapshot = async (
       kind: table.kind,
       owner: table.owner,
       ownerBypassRls: table.owner_bypass_rls,
+      ownerContextPrivileged: table.owner_context_privileged,
       ownerContextRlsBypass: table.owner_context_rls_bypass,
       ownerSuperuser: table.owner_superuser,
       privileges: {

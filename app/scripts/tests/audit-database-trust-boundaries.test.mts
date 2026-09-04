@@ -433,6 +433,29 @@ test('flags owner-context views that bypass RLS through owner-matched dependenci
   assert.equal(report.summary.privilegedOwnerViewCount, 1);
 });
 
+test('flags privileged owners in nested owner-context views', () => {
+  const report = buildHardenedReport({
+    tables: [
+      {
+        ...snapshot.tables[0],
+        kind: 'view',
+        owner: 'reporting_owner',
+        ownerBypassRls: false,
+        ownerContextPrivileged: true,
+        ownerSuperuser: false,
+        securityInvoker: false,
+      },
+    ],
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(findingCodes(report), ['runtime_role_can_select_privileged_owner_view']);
+});
+
 test('flags ownership of an audited relation as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -633,6 +656,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
   );
   assert.match(source, /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
+  assert.match(source, /effective_owner\.rolname = \$3/u);
   assert.match(
     source,
     /pg_has_role\(\s*dependency\.effective_owner_oid,\s*referenced_relation\.relowner,\s*'USAGE'\s*\)/u,
