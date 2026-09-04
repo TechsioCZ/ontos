@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import type { ApplicationCompositionValidationError } from '../../src/modules/application-composition.ts';
 import {
   canonicalizeApplicationComposition,
+  ApplicationCompositionSchema,
   validateApplicationCompositionCandidate,
 } from '../../src/modules/application-composition.ts';
 
 const sha256 = (character: string) => character.repeat(64);
-const strings = (...values: string[]): string[] => values;
 
 const assertInvalid = <Value>(
   effect: Effect.Effect<Value, ApplicationCompositionValidationError>,
@@ -18,56 +18,59 @@ const assertInvalid = <Value>(
 type Candidate = ReturnType<typeof candidate>;
 type Evidence = ReturnType<typeof evidence>;
 
-const candidate = () => ({
-  modules: [
-    {
-      allowedContributions: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
-      contract: {
-        sha256: sha256('a'),
-        url: 'https://contacts.example/.well-known/ontos-module-manifest.json',
-      },
-      dependencies: strings(),
-      deployment: { appId: 'contacts', buildMarker: 'contacts-build-1' },
-      federation: {
-        execution: 'browser',
-        exposes: ['./Navigation', './PageContacts'],
-        manifest: {
-          sha256: sha256('b'),
-          url: 'https://contacts.example/mf-manifest.json',
+const candidate = () => {
+  const dependencies: string[] = [];
+  return {
+    modules: [
+      {
+        allowedContributions: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
+        contract: {
+          sha256: sha256('a'),
+          url: 'https://contacts.example/.well-known/ontos-module-manifest.json',
         },
-        remoteName: 'contacts',
+        dependencies,
+        deployment: { appId: 'contacts', buildMarker: 'contacts-build-1' },
+        federation: {
+          execution: 'browser',
+          exposes: ['./Navigation', './PageContacts'],
+          manifest: {
+            sha256: sha256('b'),
+            url: 'https://contacts.example/mf-manifest.json',
+          },
+          remoteName: 'contacts',
+        },
+        moduleId: 'contacts.core',
+        publicContract: {
+          id: 'contacts.core',
+          sha256: sha256('c'),
+          version: '2',
+        },
+        requiredCoreCapabilities: [
+          { id: 'core.authorization', version: '1' },
+          { id: 'core.module-state', version: '1' },
+        ],
+        requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
+        sharedSingletons: [
+          { packageName: 'react', version: '19.2.0' },
+          { packageName: 'react-dom', version: '19.2.0' },
+        ],
       },
-      moduleId: 'contacts.core',
-      publicContract: {
-        id: 'contacts.core',
-        sha256: sha256('c'),
-        version: '2',
-      },
-      requiredCoreCapabilities: [
+    ],
+    revision: sha256('d'),
+    schemaVersion: '1',
+    shell: {
+      contributionAbi: { id: 'ontos.shell-contributions', version: '1' },
+      coreCapabilities: [
         { id: 'core.authorization', version: '1' },
         { id: 'core.module-state', version: '1' },
       ],
-      requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
       sharedSingletons: [
         { packageName: 'react', version: '19.2.0' },
         { packageName: 'react-dom', version: '19.2.0' },
       ],
     },
-  ],
-  revision: sha256('d'),
-  schemaVersion: '1',
-  shell: {
-    contributionAbi: { id: 'ontos.shell-contributions', version: '1' },
-    coreCapabilities: [
-      { id: 'core.authorization', version: '1' },
-      { id: 'core.module-state', version: '1' },
-    ],
-    sharedSingletons: [
-      { packageName: 'react', version: '19.2.0' },
-      { packageName: 'react-dom', version: '19.2.0' },
-    ],
-  },
-});
+  };
+};
 
 const evidence = () => ({
   contracts: {
@@ -76,6 +79,7 @@ const evidence = () => ({
       contributionKeys: ['contacts.core.navigation.contacts', 'contacts.core.page.contacts'],
       deployment: { appId: 'contacts', buildMarker: 'contacts-build-1' },
       federationExposes: ['./Navigation', './PageContacts'],
+      mfBoundaryId: 'contacts',
       moduleId: 'contacts.core',
       publicContract: { id: 'contacts.core', sha256: sha256('c'), version: '2' },
       sha256: sha256('a'),
@@ -84,17 +88,16 @@ const evidence = () => ({
   federationManifests: {
     'https://contacts.example/mf-manifest.json': {
       exposes: ['./Navigation', './PageContacts'],
+      remoteName: 'contacts',
       sha256: sha256('b'),
-      sharedSingletons: structuredClone(candidate().shell.sharedSingletons),
+      sharedSingletons: candidate().shell.sharedSingletons,
     },
   },
-  runtime: structuredClone(candidate().shell),
+  runtime: candidate().shell,
 });
 
 const required = <Value>(value: Value | undefined): Value => {
-  if (value === undefined) {
-    throw new Error('invalid test fixture');
-  }
+  assert.ok(value !== undefined, 'invalid test fixture');
   return value;
 };
 
@@ -133,18 +136,11 @@ test('accepts one provider-neutral composition and produces deterministic canoni
 
   assert.deepEqual(composition, input);
   assert.equal(Object.isFrozen(composition), true);
-  assert.equal(
-    canonicalizeApplicationComposition(composition),
-    canonicalizeApplicationComposition({
-      modules: composition.modules,
-      revision: composition.revision,
-      schemaVersion: composition.schemaVersion,
-      shell: composition.shell,
-    }),
-  );
-  assert.doesNotMatch(
-    canonicalizeApplicationComposition(composition),
-    /cloudflare|zephyr|credential|provider/iu,
+  assert.equal(Object.isFrozen(required(composition.modules[0]).federation.exposes), true);
+  assert.equal(Object.isFrozen(input), false);
+  assertInvalid(
+    validateApplicationCompositionCandidate({ ...input, provider: 'zephyr' }, evidence()),
+    /supported .* schema/u,
   );
 
   const reordered = structuredClone(composition);
@@ -155,9 +151,28 @@ test('accepts one provider-neutral composition and produces deterministic canoni
   reorderedModule.sharedSingletons.reverse();
   reordered.shell.coreCapabilities.reverse();
   reordered.shell.sharedSingletons.reverse();
+  /* oxlint-disable perfectionist/sort-objects -- Deliberately reorder nested fields to test canonical encoding. */
+  reordered.shell.coreCapabilities = reordered.shell.coreCapabilities.map(({ id, version }) => ({
+    version,
+    id,
+  }));
+  reorderedModule.sharedSingletons = reorderedModule.sharedSingletons.map(
+    ({ packageName, version }) => ({ version, packageName }),
+  );
+  reorderedModule.contract = {
+    url: reorderedModule.contract.url,
+    sha256: reorderedModule.contract.sha256,
+  };
+  /* oxlint-enable perfectionist/sort-objects */
   assert.equal(
     canonicalizeApplicationComposition(reordered),
     canonicalizeApplicationComposition(composition),
+  );
+  assert.deepEqual(
+    Schema.decodeSync(Schema.fromJsonString(ApplicationCompositionSchema))(
+      canonicalizeApplicationComposition(composition),
+    ),
+    composition,
   );
 });
 
@@ -166,6 +181,22 @@ test('rejects candidate-wide ownership and compatibility contradictions', () => 
     mutate: (input: Candidate, observations: Evidence) => number | readonly string[] | string,
     reason: RegExp,
   ][] = [
+    [
+      (input) => (onlyModule(input).federation.remoteName = 'anotherRemote'),
+      /observed deployment contract/u,
+    ],
+    [
+      (_input, observations) => (observations.contracts.contacts.mfBoundaryId = 'anotherRemote'),
+      /observed deployment contract/u,
+    ],
+    [
+      (_input, observations) => (federationManifest(observations).remoteName = 'anotherRemote'),
+      /Module Federation manifest/u,
+    ],
+    [
+      (_input, observations) => (observations.contracts.contacts.contractUrl = 'invalid-url'),
+      /observation schema/u,
+    ],
     [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
     [(input) => onlyModule(input).dependencies.push('contacts.core'), /dependency cycle/u],
     [

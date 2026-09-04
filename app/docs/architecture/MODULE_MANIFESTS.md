@@ -105,6 +105,10 @@ The provider-neutral Effect Schema and pure candidate validator are defined by
 live Shell loading are separate follow-up slices; this contract alone does not change runtime
 loading.
 
+The validator checks the revision's format; it does not assign or reserve revision identities.
+The publisher in [#374](https://github.com/TechsioCZ/ontos/issues/374) must bind each revision to
+immutable canonical bytes and reject conflicting publication before advancing the active pointer.
+
 A continuously delivered Application Composition owns a dependency-closed DAG of Foundational and
 Business Module Contract Identities and their permitted implementations. Core validates that graph
 without learning its business meaning. Installation, activation, and entrypoint execution preserve

@@ -1,32 +1,33 @@
 import { Effect, Order, Predicate, Schema } from 'effect';
-import { OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.ts';
+import {
+  OntosComponentContractSchema,
+  OntosDeploymentIdentitySchema,
+  OntosModuleIdSchema,
+} from './manifest.ts';
 
 export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
 
 const sha256 = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const version = Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u));
-const artifactUrl = Schema.String.pipe(
-  Schema.check(
-    Schema.makeFilter((value) => {
-      try {
-        const url = new URL(value);
-        const loopback =
-          url.hostname === 'localhost' ||
-          url.hostname === '127.0.0.1' ||
-          url.hostname === '[::1]' ||
-          url.hostname.endsWith('.localhost');
-        return (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) &&
-          url.username === '' &&
-          url.password === '' &&
-          url.search === '' &&
-          url.hash === ''
-          ? undefined
-          : 'artifact URL must use HTTPS (or loopback HTTP) without credentials, query, or fragment';
-      } catch {
-        return 'artifact URL must be absolute';
-      }
-    }),
-  ),
+const artifactUrl = Schema.String.check(
+  Schema.makeFilter((value) => {
+    const url = URL.parse(value);
+    if (url === null) {
+      return 'artifact URL must be absolute';
+    }
+    const loopback =
+      url.hostname === 'localhost' ||
+      url.hostname === '127.0.0.1' ||
+      url.hostname === '[::1]' ||
+      url.hostname.endsWith('.localhost');
+    return (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) &&
+      url.username === '' &&
+      url.password === '' &&
+      url.search === '' &&
+      url.hash === ''
+      ? undefined
+      : 'artifact URL must use HTTPS (or loopback HTTP) without credentials, query, or fragment';
+  }),
 );
 
 export const ApplicationCompositionArtifactReferenceSchema = Schema.Struct({
@@ -53,7 +54,7 @@ export const ApplicationCompositionModuleSchema = Schema.Struct({
     execution: Schema.Literal('browser'),
     exposes: Schema.Array(Schema.NonEmptyString),
     manifest: ApplicationCompositionArtifactReferenceSchema,
-    remoteName: Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9]*$/u)),
+    remoteName: OntosComponentContractSchema.fields.mfBoundaryId,
   }),
   moduleId: OntosModuleIdSchema,
   publicContract: Schema.Struct({
@@ -82,27 +83,31 @@ export type ApplicationCompositionModule = typeof ApplicationCompositionModuleSc
 export type ApplicationCompositionVersionedIdentity =
   typeof ApplicationCompositionVersionedIdentitySchema.Type;
 
-export interface ObservedApplicationCompositionContract {
-  readonly contractUrl: string;
-  readonly contributionKeys: readonly string[];
-  readonly deployment: ApplicationCompositionModule['deployment'];
-  readonly federationExposes: readonly string[];
-  readonly moduleId: ApplicationCompositionModule['moduleId'];
-  readonly publicContract: ApplicationCompositionModule['publicContract'];
-  readonly sha256: string;
-}
+const observedContractSchema = Schema.Struct({
+  contractUrl: artifactUrl,
+  contributionKeys: ApplicationCompositionModuleSchema.fields.allowedContributions,
+  deployment: OntosDeploymentIdentitySchema,
+  federationExposes: ApplicationCompositionModuleSchema.fields.federation.fields.exposes,
+  mfBoundaryId: OntosComponentContractSchema.fields.mfBoundaryId,
+  moduleId: OntosModuleIdSchema,
+  publicContract: ApplicationCompositionModuleSchema.fields.publicContract,
+  sha256,
+});
+const observedFederationSchema = Schema.Struct({
+  exposes: ApplicationCompositionModuleSchema.fields.federation.fields.exposes,
+  remoteName: OntosComponentContractSchema.fields.mfBoundaryId,
+  sha256,
+  sharedSingletons: ApplicationCompositionModuleSchema.fields.sharedSingletons,
+});
+const candidateEvidenceSchema = Schema.Struct({
+  contracts: Schema.Record(Schema.String, observedContractSchema),
+  federationManifests: Schema.Record(Schema.String, observedFederationSchema),
+  runtime: ApplicationCompositionSchema.fields.shell,
+});
 
-export interface ObservedModuleFederationManifest {
-  readonly exposes: readonly string[];
-  readonly sha256: string;
-  readonly sharedSingletons: readonly ApplicationCompositionModule['sharedSingletons'][number][];
-}
-
-export interface ApplicationCompositionCandidateEvidence {
-  readonly contracts: Readonly<Record<string, ObservedApplicationCompositionContract>>;
-  readonly federationManifests: Readonly<Record<string, ObservedModuleFederationManifest>>;
-  readonly runtime: ApplicationComposition['shell'];
-}
+export type ObservedApplicationCompositionContract = typeof observedContractSchema.Type;
+export type ObservedModuleFederationManifest = typeof observedFederationSchema.Type;
+export type ApplicationCompositionCandidateEvidence = typeof candidateEvidenceSchema.Type;
 
 export class ApplicationCompositionValidationError extends Schema.TaggedError<ApplicationCompositionValidationError>()(
   'ApplicationCompositionValidationError',
@@ -127,8 +132,10 @@ const singletonOrder = Order.Struct({
   packageName: Order.String,
   version: Order.String,
 });
-
-const normalizeArtifactUrl = (value: string): string => new URL(value).href;
+const sameDeployment = Schema.toEquivalence(OntosDeploymentIdentitySchema);
+const samePublicContract = Schema.toEquivalence(
+  ApplicationCompositionModuleSchema.fields.publicContract,
+);
 
 const sameUniqueStrings = (left: readonly string[], right: readonly string[]): boolean => {
   const leftSet = new Set(left);
@@ -156,35 +163,45 @@ const sameVersionClaims = <Value extends { readonly version: string }>(
   );
 };
 
-const claim = (claims: Set<string>, value: string, label: string): void => {
+const claim = Effect.fnUntraced(function* claimUnique(
+  claims: Set<string>,
+  value: string,
+  label: string,
+) {
   if (claims.has(value)) {
-    throw invalid(`duplicate ${label} ${value}`);
+    return yield* invalid(`duplicate ${label} ${value}`);
   }
   claims.add(value);
-};
+  return yield* Effect.void;
+});
 
-const assertAcyclicDependencies = (modules: readonly ApplicationCompositionModule[]): void => {
+const assertAcyclicDependencies = Effect.fnUntraced(function* checkCycles(
+  modules: readonly ApplicationCompositionModule[],
+) {
   const dependencies = new Map(modules.map((module) => [module.moduleId, module.dependencies]));
   const visiting = new Set<string>();
   const visited = new Set<string>();
-  const visit = (moduleId: string): void => {
-    if (visiting.has(moduleId)) {
-      throw invalid(`dependency cycle includes module ${moduleId}`);
-    }
-    if (visited.has(moduleId)) {
-      return;
-    }
-    visiting.add(moduleId);
-    for (const dependency of dependencies.get(moduleId) ?? []) {
-      visit(dependency);
-    }
-    visiting.delete(moduleId);
-    visited.add(moduleId);
-  };
+  const visit = (moduleId: string): Effect.Effect<void, ApplicationCompositionValidationError> =>
+    Effect.gen(function* visitDependency() {
+      if (visiting.has(moduleId)) {
+        return yield* invalid(`dependency cycle includes module ${moduleId}`);
+      }
+      if (visited.has(moduleId)) {
+        return yield* Effect.void;
+      }
+      visiting.add(moduleId);
+      for (const dependency of dependencies.get(moduleId) ?? []) {
+        yield* visit(dependency);
+      }
+      visiting.delete(moduleId);
+      visited.add(moduleId);
+      return yield* Effect.void;
+    });
   for (const module of modules) {
-    visit(module.moduleId);
+    yield* visit(module.moduleId);
   }
-};
+  return yield* Effect.void;
+});
 
 const freeze = <Value>(value: Value): Value => {
   if (!Predicate.isObjectKeyword(value) || value === null || Object.isFrozen(value)) {
@@ -196,76 +213,82 @@ const freeze = <Value>(value: Value): Value => {
   return Object.freeze(value);
 };
 
-const assertDependenciesPresent = (
+const assertDependenciesPresent = Effect.fnUntraced(function* checkDependencies(
   module: ApplicationCompositionModule,
   moduleIds: ReadonlySet<string>,
-): void => {
+) {
   const dependencies = new Set<string>();
   for (const dependency of module.dependencies) {
-    claim(dependencies, dependency, `dependency in module ${module.moduleId}`);
+    yield* claim(dependencies, dependency, `dependency in module ${module.moduleId}`);
     if (!moduleIds.has(dependency)) {
-      throw invalid(`module ${module.moduleId} requires missing dependency ${dependency}`);
+      return yield* invalid(`module ${module.moduleId} requires missing dependency ${dependency}`);
     }
   }
-};
+  return yield* Effect.void;
+});
 
-const assertShellCompatibility = (
+const assertShellCompatibility = Effect.fnUntraced(function* checkCompatibility(
   module: ApplicationCompositionModule,
   shell: ApplicationComposition['shell'],
   availableCapabilities: ReadonlySet<string>,
   availableSingletons: ReadonlyMap<string, string>,
-): void => {
+) {
   if (identityKey(module.requiredShellAbi) !== identityKey(shell.contributionAbi)) {
-    throw invalid(`module ${module.moduleId} requires an incompatible Shell contribution ABI`);
+    return yield* invalid(
+      `module ${module.moduleId} requires an incompatible Shell contribution ABI`,
+    );
   }
   const capabilityIds = new Set<string>();
   for (const capability of module.requiredCoreCapabilities) {
-    claim(capabilityIds, capability.id, 'required Core capability');
+    yield* claim(capabilityIds, capability.id, 'required Core capability');
     if (!availableCapabilities.has(identityKey(capability))) {
-      throw invalid(
+      return yield* invalid(
         `module ${module.moduleId} requires unavailable Core capability ${capability.id}`,
       );
     }
   }
   const singletonPackages = new Set<string>();
   for (const singleton of module.sharedSingletons) {
-    claim(singletonPackages, singleton.packageName, 'required shared singleton');
+    yield* claim(singletonPackages, singleton.packageName, 'required shared singleton');
     if (availableSingletons.get(singleton.packageName) !== singleton.version) {
-      throw invalid(
+      return yield* invalid(
         `module ${module.moduleId} requires incompatible shared singleton ${singleton.packageName}`,
       );
     }
   }
-};
+  return yield* Effect.void;
+});
 
-const assertObservedDeployment = (
+const assertObservedDeployment = Effect.fnUntraced(function* checkDeployment(
   module: ApplicationCompositionModule,
   contract: ObservedApplicationCompositionContract | undefined,
-): void => {
+) {
   if (
     contract === undefined ||
     contract.contractUrl !== module.contract.url ||
     contract.sha256 !== module.contract.sha256 ||
-    contract.deployment.appId !== module.deployment.appId ||
-    contract.deployment.buildMarker !== module.deployment.buildMarker ||
+    !sameDeployment(contract.deployment, module.deployment) ||
     contract.moduleId !== module.moduleId ||
-    contract.publicContract.id !== module.publicContract.id ||
-    contract.publicContract.version !== module.publicContract.version ||
-    contract.publicContract.sha256 !== module.publicContract.sha256 ||
+    contract.mfBoundaryId !== module.federation.remoteName ||
+    !samePublicContract(contract.publicContract, module.publicContract) ||
     module.publicContract.id !== module.moduleId ||
     !sameUniqueStrings(module.allowedContributions, contract.contributionKeys) ||
     !sameUniqueStrings(module.federation.exposes, contract.federationExposes)
   ) {
-    throw invalid(`module ${module.moduleId} does not match its observed deployment contract`);
+    return yield* invalid(
+      `module ${module.moduleId} does not match its observed deployment contract`,
+    );
   }
-};
+  return yield* Effect.void;
+});
 
-const assertObservedFederationManifest = (
+const assertObservedFederationManifest = Effect.fnUntraced(function* checkFederation(
   module: ApplicationCompositionModule,
   manifest: ObservedModuleFederationManifest | undefined,
-): void => {
+) {
   if (
     manifest === undefined ||
+    manifest.remoteName !== module.federation.remoteName ||
     manifest.sha256 !== module.federation.manifest.sha256 ||
     !sameUniqueStrings(module.federation.exposes, manifest.exposes) ||
     !sameVersionClaims(
@@ -274,16 +297,17 @@ const assertObservedFederationManifest = (
       ({ packageName }) => packageName,
     )
   ) {
-    throw invalid(
+    return yield* invalid(
       `module ${module.moduleId} does not match its observed Module Federation manifest`,
     );
   }
-};
+  return yield* Effect.void;
+});
 
-const assertObservedRuntime = (
+const assertObservedRuntime = Effect.fnUntraced(function* checkRuntime(
   shell: ApplicationComposition['shell'],
   runtime: ApplicationCompositionCandidateEvidence['runtime'],
-): void => {
+) {
   if (
     identityKey(shell.contributionAbi) !== identityKey(runtime.contributionAbi) ||
     !sameVersionClaims(shell.coreCapabilities, runtime.coreCapabilities, ({ id }) => id) ||
@@ -293,60 +317,54 @@ const assertObservedRuntime = (
       ({ packageName }) => packageName,
     )
   ) {
-    throw invalid('Shell and Core claims do not match the observed runtime contract');
+    return yield* invalid('Shell and Core claims do not match the observed runtime contract');
   }
-};
+  return yield* Effect.void;
+});
+
+const encodeCompositionJson = Schema.encodeSync(
+  Schema.fromJsonString(ApplicationCompositionSchema),
+);
 
 export const canonicalizeApplicationComposition = (composition: ApplicationComposition): string =>
-  JSON.stringify({
+  encodeCompositionJson({
+    ...composition,
     modules: composition.modules
       .map((module) => ({
+        ...module,
         allowedContributions: module.allowedContributions.toSorted(),
-        contract: { sha256: module.contract.sha256, url: module.contract.url },
         dependencies: module.dependencies.toSorted(),
-        deployment: {
-          appId: module.deployment.appId,
-          buildMarker: module.deployment.buildMarker,
-        },
         federation: {
-          execution: module.federation.execution,
+          ...module.federation,
           exposes: module.federation.exposes.toSorted(),
-          manifest: {
-            sha256: module.federation.manifest.sha256,
-            url: module.federation.manifest.url,
-          },
-          remoteName: module.federation.remoteName,
-        },
-        moduleId: module.moduleId,
-        publicContract: {
-          id: module.publicContract.id,
-          sha256: module.publicContract.sha256,
-          version: module.publicContract.version,
         },
         requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted(identityOrder),
-        requiredShellAbi: {
-          id: module.requiredShellAbi.id,
-          version: module.requiredShellAbi.version,
-        },
         sharedSingletons: module.sharedSingletons.toSorted(singletonOrder),
       }))
       .toSorted(moduleOrder),
-    revision: composition.revision,
-    schemaVersion: composition.schemaVersion,
     shell: {
-      contributionAbi: {
-        id: composition.shell.contributionAbi.id,
-        version: composition.shell.contributionAbi.version,
-      },
+      ...composition.shell,
       coreCapabilities: composition.shell.coreCapabilities.toSorted(identityOrder),
       sharedSingletons: composition.shell.sharedSingletons.toSorted(singletonOrder),
     },
   });
 
-const validateDecodedApplicationComposition = (
-  composition: ApplicationComposition,
+export const validateApplicationCompositionCandidate = Effect.fnUntraced(function* validate<Input>(
+  input: Input,
   evidence: ApplicationCompositionCandidateEvidence,
-): ApplicationComposition => {
+) {
+  const composition = yield* Schema.decodeUnknownEffect(ApplicationCompositionSchema, {
+    onExcessProperty: 'error',
+  })(input).pipe(
+    Effect.mapError(() =>
+      invalid('candidate does not match the supported Application Composition schema'),
+    ),
+  );
+  const observed = yield* Schema.decodeUnknownEffect(candidateEvidenceSchema)(evidence).pipe(
+    Effect.mapError(() =>
+      invalid('candidate evidence does not match the supported observation schema'),
+    ),
+  );
   const moduleIds = new Set(composition.modules.map(({ moduleId }) => moduleId));
   const appIds = new Set<string>();
   const artifactUrls = new Set<string>();
@@ -363,53 +381,32 @@ const validateDecodedApplicationComposition = (
   const shellCapabilityIds = new Set<string>();
   const shellSingletonPackages = new Set<string>();
   for (const capability of composition.shell.coreCapabilities) {
-    claim(shellCapabilityIds, capability.id, 'Core capability');
+    yield* claim(shellCapabilityIds, capability.id, 'Core capability');
   }
   for (const singleton of composition.shell.sharedSingletons) {
-    claim(shellSingletonPackages, singleton.packageName, 'shared singleton');
+    yield* claim(shellSingletonPackages, singleton.packageName, 'shared singleton');
   }
-  assertObservedRuntime(composition.shell, evidence.runtime);
+  yield* assertObservedRuntime(composition.shell, observed.runtime);
 
   for (const module of composition.modules) {
-    claim(appIds, module.deployment.appId, 'deployment app ID');
-    claim(artifactUrls, normalizeArtifactUrl(module.contract.url), 'artifact URL');
-    claim(artifactUrls, normalizeArtifactUrl(module.federation.manifest.url), 'artifact URL');
-    claim(claimedModuleIds, module.moduleId, 'module ID');
-    claim(remoteNames, module.federation.remoteName, 'Module Federation remote');
+    yield* claim(appIds, module.deployment.appId, 'deployment app ID');
+    yield* claim(artifactUrls, new URL(module.contract.url).href, 'artifact URL');
+    yield* claim(artifactUrls, new URL(module.federation.manifest.url).href, 'artifact URL');
+    yield* claim(claimedModuleIds, module.moduleId, 'module ID');
+    yield* claim(remoteNames, module.federation.remoteName, 'Module Federation remote');
     for (const contributionKey of module.allowedContributions) {
-      claim(contributionKeys, contributionKey, 'Shell contribution');
+      yield* claim(contributionKeys, contributionKey, 'Shell contribution');
     }
-    assertDependenciesPresent(module, moduleIds);
-    assertShellCompatibility(module, composition.shell, shellCapabilities, shellSingletons);
-    assertObservedDeployment(module, evidence.contracts[module.deployment.appId]);
-    assertObservedFederationManifest(
+    yield* assertDependenciesPresent(module, moduleIds);
+    yield* assertShellCompatibility(module, composition.shell, shellCapabilities, shellSingletons);
+    yield* assertObservedDeployment(module, observed.contracts[module.deployment.appId]);
+    yield* assertObservedFederationManifest(
       module,
-      evidence.federationManifests[module.federation.manifest.url],
+      observed.federationManifests[module.federation.manifest.url],
     );
   }
 
-  assertAcyclicDependencies(composition.modules);
+  yield* assertAcyclicDependencies(composition.modules);
 
   return freeze(composition);
-};
-
-export const validateApplicationCompositionCandidate = <Input>(
-  input: Input,
-  evidence: ApplicationCompositionCandidateEvidence,
-): Effect.Effect<ApplicationComposition, ApplicationCompositionValidationError> =>
-  Schema.decodeUnknownEffect(ApplicationCompositionSchema, { onExcessProperty: 'error' })(
-    input,
-  ).pipe(
-    Effect.mapError(() =>
-      invalid('candidate does not match the supported Application Composition schema'),
-    ),
-    Effect.flatMap((composition) =>
-      Effect.try({
-        catch: (error) =>
-          Schema.is(ApplicationCompositionValidationError)(error)
-            ? error
-            : invalid('candidate could not be validated'),
-        try: () => validateDecodedApplicationComposition(composition, evidence),
-      }),
-    ),
-  );
+});
