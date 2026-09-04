@@ -96,6 +96,7 @@ export interface ObservedApplicationCompositionContract {
 export interface ObservedModuleFederationManifest {
   readonly exposes: readonly string[];
   readonly sha256: string;
+  readonly sharedSingletons: readonly ApplicationCompositionModule['sharedSingletons'][number][];
 }
 
 export interface ApplicationCompositionCandidateEvidence {
@@ -118,11 +119,22 @@ const invalid = (reason: string): ApplicationCompositionValidationError =>
 const identityKey = (identity: ApplicationCompositionVersionedIdentity): string =>
   `${identity.id}@${identity.version}`;
 
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+};
+
 const compareSingletons = (
   left: ApplicationCompositionModule['sharedSingletons'][number],
   right: ApplicationCompositionModule['sharedSingletons'][number],
 ): number =>
-  left.packageName.localeCompare(right.packageName) || left.version.localeCompare(right.version);
+  compareStrings(left.packageName, right.packageName) ||
+  compareStrings(left.version, right.version);
 
 const normalizeArtifactUrl = (value: string): string => new URL(value).href;
 
@@ -196,7 +208,9 @@ const assertDependenciesPresent = (
   module: ApplicationCompositionModule,
   moduleIds: ReadonlySet<string>,
 ): void => {
+  const dependencies = new Set<string>();
   for (const dependency of module.dependencies) {
+    claim(dependencies, dependency, `dependency in module ${module.moduleId}`);
     if (!moduleIds.has(dependency)) {
       throw invalid(`module ${module.moduleId} requires missing dependency ${dependency}`);
     }
@@ -261,7 +275,12 @@ const assertObservedFederationManifest = (
   if (
     manifest === undefined ||
     manifest.sha256 !== module.federation.manifest.sha256 ||
-    !sameUniqueStrings(module.federation.exposes, manifest.exposes)
+    !sameUniqueStrings(module.federation.exposes, manifest.exposes) ||
+    !sameVersionClaims(
+      module.sharedSingletons,
+      manifest.sharedSingletons,
+      ({ packageName }) => packageName,
+    )
   ) {
     throw invalid(
       `module ${module.moduleId} does not match its observed Module Federation manifest`,
@@ -313,7 +332,7 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
           version: module.publicContract.version,
         },
         requiredCoreCapabilities: module.requiredCoreCapabilities.toSorted((left, right) =>
-          identityKey(left).localeCompare(identityKey(right)),
+          compareStrings(identityKey(left), identityKey(right)),
         ),
         requiredShellAbi: {
           id: module.requiredShellAbi.id,
@@ -321,7 +340,7 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
         },
         sharedSingletons: module.sharedSingletons.toSorted(compareSingletons),
       }))
-      .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId)),
+      .toSorted((left, right) => compareStrings(left.moduleId, right.moduleId)),
     revision: composition.revision,
     schemaVersion: composition.schemaVersion,
     shell: {
@@ -330,7 +349,7 @@ export const canonicalizeApplicationComposition = (composition: ApplicationCompo
         version: composition.shell.contributionAbi.version,
       },
       coreCapabilities: composition.shell.coreCapabilities.toSorted((left, right) =>
-        identityKey(left).localeCompare(identityKey(right)),
+        compareStrings(identityKey(left), identityKey(right)),
       ),
       sharedSingletons: composition.shell.sharedSingletons.toSorted(compareSingletons),
     },
