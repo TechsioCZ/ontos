@@ -41,11 +41,13 @@ tables, and sequences while requiring schema `USAGE` for effective object access
 executable `SECURITY DEFINER` routines and user-defined base,
 standalone composite, domain, enum, range, and multirange type
 ownership; and distinguishes `SET OPTION` from direct `ADMIN OPTION` escalation paths. Its pure
-membership analysis also follows `ADMIN OPTION` edges reachable after `SET ROLE` and records
+membership analysis follows every effective `SET OPTION` and `ADMIN OPTION` edge, including `SET`
+descendants reached only after an administrable role is re-granted to the runtime, and records
 ownership authority inherited without `SET ROLE`; cluster attributes are not treated as inherited.
-It classifies reachable PostgreSQL predefined roles as privileged, inventories effective
+It classifies directly authenticated and reachable PostgreSQL predefined roles as privileged, inventories effective
 parameter-level `SET`/`ALTER SYSTEM` grants, and distinguishes security-invoker views from views
-that execute in a privileged owner's context.
+that execute in a privileged owner's context. For ordinary owner-context views, it recursively
+checks referenced relations and detects the table-owner exemption from unforced row-level security.
 Its pure report builder and target/session validators are covered by
 `scripts/tests/audit-database-trust-boundaries.test.mts`.
 
@@ -134,7 +136,7 @@ unforgeable trust boundary.
 | Raw database access from business boundaries    | `database-access:check` rejects database imports from handlers, Actions, reads, BFFs, and hidden Core bypasses.                                                                                                                                                   | A dependency exploit or arbitrary-code execution inside a permitted server process remains inside the credential boundary.                                        |
 | Privileged routines                             | Audit inventories routines in every non-system schema and flags `SECURITY DEFINER` routines that the runtime or an assumable role can both resolve through schema `USAGE` and execute; the baseline has none.                                                     | Every future privileged routine needs a narrow contract and hardening review; production must be audited rather than inferred.                                    |
 | DDL and role escalation                         | Audit checks database-level `CREATE`, every non-system schema, audited relation/routine/type ownership, predefined roles, parameter ACLs, and cluster/database/schema/object authority for every reachable role; the baseline has no DDL authority or membership. | There is no deployed-environment evidence until the audit is run there; executable denial probes for `SET ROLE` and representative DDL could be added to a pilot. |
-| Privileged owner-context views                  | Audit records `security_invoker` and flags selectable views owned by the administrative, `BYPASSRLS`, or superuser identity unless they use invoker semantics; the baseline has no views.                                                                         | A future owner-context view requires an explicit tenant-isolation review even when its owner is not otherwise privileged.                                         |
+| Privileged owner-context views                  | Audit records `security_invoker`, recursively follows view dependencies, and flags selectable owner-context views whose owner is administrative, `BYPASSRLS`, superuser, or owns a referenced unforced-RLS table; the baseline has no views.                      | A future owner-context view requires an explicit tenant-isolation review even when its owner is not otherwise privileged.                                         |
 | Unrelated schema DML                            | Audit enumerates every effective application table and sequence privilege.                                                                                                                                                                                        | Today denial cannot be proven: the shared role intentionally has DML in all three schemas.                                                                        |
 
 ## Bounded pilot options
