@@ -2,6 +2,9 @@ name: Ultramodern Workspace Gates and Stage Deploy
 
 on:
   push:
+    branches:
+      - main
+      - stage
   pull_request:
 
 permissions:
