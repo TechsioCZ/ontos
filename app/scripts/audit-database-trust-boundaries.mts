@@ -7,7 +7,6 @@ import { Client } from 'pg';
 import type { ClientBase } from 'pg';
 import { Effect, Schema } from 'effect';
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
-import type { DatabaseConfigValue } from '../packages/core-runtime/src/db/config.ts';
 
 interface DatabasePrivileges {
   readonly connect: boolean;
@@ -28,6 +27,7 @@ interface DefaultPrivilege {
 interface RoleMembership {
   readonly attributes: RoleAttributes;
   readonly canAdministerRole: boolean;
+  readonly canInheritRole: boolean;
   readonly canSetRole: boolean;
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
@@ -215,6 +215,13 @@ export const assertSameDatabaseTarget = (
   }
 };
 
+export const getEffectiveDatabaseEndpoint = (
+  client: Client,
+): Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'> => ({
+  configuredHost: client.connectionParameters.host,
+  configuredPort: client.connectionParameters.port,
+});
+
 export const assertDatabaseSessionIdentities = (
   administrative: DatabaseSessionIdentity,
   runtime: DatabaseSessionIdentity,
@@ -278,24 +285,26 @@ export const buildDatabaseTrustBoundaryReport = (
     });
   }
   const administrativeMembership = memberships.some(
-    ({ canAdministerRole, canSetRole, role }) =>
-      (canSetRole || canAdministerRole) && role === snapshot.administrativeRole,
+    ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
+      (canSetRole || canAdministerRole || canInheritRole) && role === snapshot.administrativeRole,
   );
   if (administrativeMembership) {
     findings.push({
       code: 'runtime_role_can_assume_administrative_role',
       evidence:
-        'The runtime role can SET ROLE to, or has ADMIN OPTION on, the authenticated administrative identity.',
+        'The runtime role can inherit, SET ROLE to, or has ADMIN OPTION on the authenticated administrative identity.',
       severity: 'critical',
     });
   }
   const nonAdministrativeMemberships = memberships.filter(
-    ({ canAdministerRole, canSetRole, role }) =>
-      (canSetRole || canAdministerRole) && role !== snapshot.administrativeRole,
+    ({ canAdministerRole, canInheritRole, canSetRole, role }) =>
+      (canSetRole || canAdministerRole || canInheritRole) && role !== snapshot.administrativeRole,
   );
   const privilegedMemberships = nonAdministrativeMemberships.filter(
     ({
       attributes,
+      canAdministerRole,
+      canSetRole,
       createSchemas,
       databaseCreate,
       ownedRelations,
@@ -305,7 +314,7 @@ export const buildDatabaseTrustBoundaryReport = (
       relationPrivilegeSchemas,
       securityDefinerRoutines,
     }) =>
-      hasClusterPrivilege(attributes) ||
+      ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
       databaseCreate ||
       createSchemas.length > 0 ||
       ownedRelations.length > 0 ||
@@ -319,14 +328,15 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with cluster, database, schema, relation, routine, or type authority through SET ROLE or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with cluster, database, schema, relation, routine, or type authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
   if (nonAdministrativeMemberships.length > privilegedMemberships.length) {
     findings.push({
       code: 'runtime_role_can_assume_other_role',
-      evidence: 'The runtime role can SET ROLE to at least one additional identity.',
+      evidence:
+        'The runtime role can inherit, SET ROLE to, or administer at least one additional identity.',
       severity: 'high',
     });
   }
@@ -335,17 +345,26 @@ export const buildDatabaseTrustBoundaryReport = (
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
+  const inheritsOwnership = memberships.some(
+    ({ canInheritRole, ownedRelations, ownedRoutines, ownedSchemas, ownedTypes }) =>
+      canInheritRole &&
+      (ownedRelations.length > 0 ||
+        ownedRoutines.length > 0 ||
+        ownedSchemas.length > 0 ||
+        ownedTypes.length > 0),
+  );
   if (
     snapshot.databasePrivileges.create ||
     schemas.some(({ create }) => create) ||
     ownsRelation ||
     ownsRoutine ||
-    ownsType
+    ownsType ||
+    inheritsOwnership
   ) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
       evidence:
-        'The runtime role has database/schema CREATE or owns an audited relation, routine, enum, or domain.',
+        'The runtime role has database/schema CREATE or direct/inherited ownership of an audited schema, relation, routine, enum, or domain.',
       severity: 'high',
     });
   }
@@ -448,6 +467,7 @@ interface RoleRow {
 interface MembershipRow {
   readonly bypass_rls: boolean;
   readonly can_administer_role: boolean;
+  readonly can_inherit_role: boolean;
   readonly can_set_role: boolean;
   readonly can_create_databases: boolean;
   readonly can_create_roles: boolean;
@@ -572,8 +592,6 @@ const probeSetting = async (
 const collectSnapshot = async (
   admin: Client,
   runtime: Client,
-  administrativeConfig: DatabaseConfigValue,
-  runtimeConfig: DatabaseConfigValue,
 ): Promise<DatabaseTrustBoundarySnapshot> => {
   const targetQuery = `select
     current_user::text as current_role,
@@ -590,17 +608,17 @@ const collectSnapshot = async (
   if (administrativeTargetRow === undefined || runtimeTargetRow === undefined) {
     throw new Error('database target identity is unavailable');
   }
+  const administrativeEndpoint = getEffectiveDatabaseEndpoint(admin);
+  const runtimeEndpoint = getEffectiveDatabaseEndpoint(runtime);
   assertSameDatabaseTarget(
     {
-      configuredHost: administrativeConfig.host,
-      configuredPort: administrativeConfig.port,
+      ...administrativeEndpoint,
       database: administrativeTargetRow.database,
       serverAddress: administrativeTargetRow.server_address,
       serverPort: administrativeTargetRow.server_port,
     },
     {
-      configuredHost: runtimeConfig.host,
-      configuredPort: runtimeConfig.port,
+      ...runtimeEndpoint,
       database: runtimeTargetRow.database,
       serverAddress: runtimeTargetRow.server_address,
       serverPort: runtimeTargetRow.server_port,
@@ -636,18 +654,28 @@ const collectSnapshot = async (
   if (roleRow === undefined) throw new Error('runtime role is absent');
 
   const memberships = await admin.query<MembershipRow>(
-    `select
+    `with recursive reachable_roles(role_oid) as (
+       select candidate.oid
+       from pg_catalog.pg_roles as candidate
+       where candidate.rolname = $1
+          or pg_has_role($1, candidate.oid, 'SET')
+       union
+       select membership.roleid
+       from pg_catalog.pg_auth_members as membership
+       join reachable_roles as reachable on reachable.role_oid = membership.member
+       where membership.admin_option
+     ),
+     administrable_roles(role_oid) as (
+       select distinct membership.roleid
+       from pg_catalog.pg_auth_members as membership
+       join reachable_roles as reachable on reachable.role_oid = membership.member
+       where membership.admin_option
+     )
+     select
        candidate.rolname as role,
        pg_has_role($1, candidate.oid, 'SET') as can_set_role,
-       exists (
-         select 1
-         from pg_catalog.pg_auth_members as direct_membership
-         join pg_catalog.pg_roles as direct_member
-           on direct_member.oid = direct_membership.member
-         where direct_membership.roleid = candidate.oid
-           and direct_member.rolname = $1
-           and direct_membership.admin_option
-       ) as can_administer_role,
+       pg_has_role($1, candidate.oid, 'USAGE') as can_inherit_role,
+       candidate.oid in (select role_oid from administrable_roles) as can_administer_role,
        candidate.rolbypassrls as bypass_rls,
        candidate.rolcreatedb as can_create_databases,
        candidate.rolcreaterole as can_create_roles,
@@ -751,7 +779,11 @@ const collectSnapshot = async (
          order by namespace.nspname, routine.proname, routine.oid
        ) as security_definer_routines
      from pg_catalog.pg_roles as candidate
-     where candidate.rolname <> $1 and pg_has_role($1, candidate.oid, 'MEMBER')
+     where candidate.rolname <> $1
+       and (
+         pg_has_role($1, candidate.oid, 'MEMBER')
+         or candidate.oid in (select role_oid from reachable_roles)
+       )
      order by candidate.rolname`,
     [runtimeRole],
   );
@@ -876,7 +908,24 @@ const collectSnapshot = async (
     [runtimeRole, schemaNames],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
-    `with audit_owners as (
+    `with recursive reachable_roles(role_oid) as (
+       select candidate.oid
+       from pg_catalog.pg_roles as candidate
+       where candidate.rolname = $1
+          or pg_has_role($1, candidate.oid, 'SET')
+       union
+       select membership.roleid
+       from pg_catalog.pg_auth_members as membership
+       join reachable_roles as reachable on reachable.role_oid = membership.member
+       where membership.admin_option
+     ),
+     administrable_roles(role_oid) as (
+       select distinct membership.roleid
+       from pg_catalog.pg_auth_members as membership
+       join reachable_roles as reachable on reachable.role_oid = membership.member
+       where membership.admin_option
+     ),
+     audit_owners as (
        select candidate.oid, candidate.rolname
        from pg_catalog.pg_roles as candidate
        where candidate.rolname = $3
@@ -974,15 +1023,7 @@ const collectSnapshot = async (
          or grantee.rolname = $1
          or pg_has_role($1, grantee.oid, 'USAGE')
          or pg_has_role($1, grantee.oid, 'SET')
-         or exists (
-           select 1
-           from pg_catalog.pg_auth_members as direct_membership
-           join pg_catalog.pg_roles as direct_member
-             on direct_member.oid = direct_membership.member
-           where direct_membership.roleid = grantee.oid
-             and direct_member.rolname = $1
-             and direct_membership.admin_option
-         )
+         or grantee.oid in (select role_oid from administrable_roles)
      order by expanded.schema nulls first, object_type, grantee, privilege`,
     [runtimeRole, schemaNames, administrativeRole],
   );
@@ -1025,6 +1066,7 @@ const collectSnapshot = async (
         superuser: membership.superuser,
       },
       canAdministerRole: membership.can_administer_role,
+      canInheritRole: membership.can_inherit_role,
       canSetRole: membership.can_set_role,
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
@@ -1127,9 +1169,7 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
           adminConnected = true;
           await runtime.connect();
           runtimeConnected = true;
-          return buildDatabaseTrustBoundaryReport(
-            await collectSnapshot(admin, runtime, connections.admin, connections.runtime),
-          );
+          return buildDatabaseTrustBoundaryReport(await collectSnapshot(admin, runtime));
         } finally {
           await Promise.allSettled([
             ...(runtimeConnected ? [runtime.end()] : []),
