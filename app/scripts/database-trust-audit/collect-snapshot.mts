@@ -643,12 +643,31 @@ export const collectSnapshot = async (
     [runtimeRole],
   );
   const grantOptions = await admin.query<GrantOptionRow>(
-    `select authority.grant_option
-     from (
+    `with recursive reachable_roles(role_oid) as (
+       select candidate.oid
+       from pg_catalog.pg_roles as candidate
+       where candidate.rolname = $1
+          or pg_has_role($1, candidate.oid, 'SET')
+       union
+       select membership.roleid
+       from pg_catalog.pg_auth_members as membership
+       join reachable_roles as reachable on reachable.role_oid = membership.member
+       where membership.admin_option or membership.set_option
+     ),
+     target_roles(role_oid, role_name) as (
+       select candidate.oid, candidate.rolname
+       from pg_catalog.pg_roles as candidate
+       join reachable_roles as reachable on reachable.role_oid = candidate.oid
+     )
+     select format('role:%I:%s', target.role_name, authority.grant_option) as grant_option
+     from target_roles as target
+     cross join lateral (
        select format('database:%I:%s', current_database(), privilege.name) as grant_option
-       from (values ('CONNECT'::text), ('CREATE'::text), ('TEMPORARY'::text)) as privilege(name)
+       from (
+         values ('CONNECT'::text), ('CREATE'::text), ('TEMPORARY'::text)
+       ) as privilege(name)
        where has_database_privilege(
-         $1,
+         target.role_oid,
          current_database(),
          privilege.name || ' WITH GRANT OPTION'
        )
@@ -658,7 +677,7 @@ export const collectSnapshot = async (
        cross join (values ('CREATE'::text), ('USAGE'::text)) as privilege(name)
        where namespace.nspname = any($2::text[])
          and has_schema_privilege(
-           $1,
+           target.role_oid,
            namespace.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -685,7 +704,7 @@ export const collectSnapshot = async (
        where namespace.nspname = any($2::text[])
          and relation.relkind in ('r', 'p', 'v', 'm', 'f')
          and has_table_privilege(
-           $1,
+           target.role_oid,
            relation.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -709,13 +728,13 @@ export const collectSnapshot = async (
        where namespace.nspname = any($2::text[])
          and relation.relkind in ('r', 'p', 'v', 'm', 'f')
          and has_column_privilege(
-           $1,
+           target.role_oid,
            relation.oid,
            attribute.attnum,
            privilege.name || ' WITH GRANT OPTION'
          )
          and not has_table_privilege(
-           $1,
+           target.role_oid,
            relation.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -732,7 +751,7 @@ export const collectSnapshot = async (
        where namespace.nspname = any($2::text[])
          and relation.relkind = 'S'
          and has_sequence_privilege(
-           $1,
+           target.role_oid,
            relation.oid,
            privilege.name || ' WITH GRANT OPTION'
          )
@@ -746,7 +765,11 @@ export const collectSnapshot = async (
        from pg_catalog.pg_proc as routine
        join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
        where namespace.nspname = any($2::text[])
-         and has_function_privilege($1, routine.oid, 'EXECUTE WITH GRANT OPTION')
+         and has_function_privilege(
+           target.role_oid,
+           routine.oid,
+           'EXECUTE WITH GRANT OPTION'
+         )
        union all
        select format('type:%I.%I:USAGE', namespace.nspname, audited_type.typname)
        from pg_catalog.pg_type as audited_type
@@ -765,34 +788,46 @@ export const collectSnapshot = async (
              )
            )
          )
-         and has_type_privilege($1, audited_type.oid, 'USAGE WITH GRANT OPTION')
+         and has_type_privilege(target.role_oid, audited_type.oid, 'USAGE WITH GRANT OPTION')
        union all
        select format('parameter:%s:%s', parameter.parname, privilege.name)
        from pg_catalog.pg_parameter_acl as parameter
        cross join (values ('ALTER SYSTEM'::text), ('SET'::text)) as privilege(name)
        where has_parameter_privilege(
-         $1,
+         target.role_oid,
          parameter.parname,
          privilege.name || ' WITH GRANT OPTION'
        )
        union all
        select format('language:%I:USAGE', language.lanname)
        from pg_catalog.pg_language as language
-       where has_language_privilege($1, language.oid, 'USAGE WITH GRANT OPTION')
+       where has_language_privilege(
+         target.role_oid,
+         language.oid,
+         'USAGE WITH GRANT OPTION'
+       )
        union all
        select format('foreign-data-wrapper:%I:USAGE', wrapper.fdwname)
        from pg_catalog.pg_foreign_data_wrapper as wrapper
-       where has_foreign_data_wrapper_privilege($1, wrapper.oid, 'USAGE WITH GRANT OPTION')
+       where has_foreign_data_wrapper_privilege(
+         target.role_oid,
+         wrapper.oid,
+         'USAGE WITH GRANT OPTION'
+       )
        union all
        select format('foreign-server:%I:USAGE', server.srvname)
        from pg_catalog.pg_foreign_server as server
-       where has_server_privilege($1, server.oid, 'USAGE WITH GRANT OPTION')
+       where has_server_privilege(target.role_oid, server.oid, 'USAGE WITH GRANT OPTION')
        union all
        select format('tablespace:%I:CREATE', tablespace.spcname)
        from pg_catalog.pg_tablespace as tablespace
-       where has_tablespace_privilege($1, tablespace.oid, 'CREATE WITH GRANT OPTION')
+       where has_tablespace_privilege(
+         target.role_oid,
+         tablespace.oid,
+         'CREATE WITH GRANT OPTION'
+       )
      ) as authority
-     order by authority.grant_option`,
+     order by target.role_name, authority.grant_option`,
     [runtimeRole, schemaNames],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
