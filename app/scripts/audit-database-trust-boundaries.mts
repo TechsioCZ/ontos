@@ -776,6 +776,7 @@ const collectSnapshot = async (
          where namespace.nspname !~ '^pg_'
            and namespace.nspname <> 'information_schema'
            and relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+           and has_schema_privilege(candidate.oid, namespace.oid, 'USAGE')
            and case
              when relation.relkind = 'S' then
                has_sequence_privilege(candidate.oid, relation.oid, 'USAGE')
@@ -887,25 +888,49 @@ const collectSnapshot = async (
        relation.relrowsecurity as rls_enabled,
        relation.relforcerowsecurity as rls_forced,
        (
-         has_table_privilege($1, relation.oid, 'SELECT')
-         or has_any_column_privilege($1, relation.oid, 'SELECT')
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and (
+           has_table_privilege($1, relation.oid, 'SELECT')
+           or has_any_column_privilege($1, relation.oid, 'SELECT')
+         )
        ) as select,
        (
-         has_table_privilege($1, relation.oid, 'INSERT')
-         or has_any_column_privilege($1, relation.oid, 'INSERT')
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and (
+           has_table_privilege($1, relation.oid, 'INSERT')
+           or has_any_column_privilege($1, relation.oid, 'INSERT')
+         )
        ) as insert,
        (
-         has_table_privilege($1, relation.oid, 'UPDATE')
-         or has_any_column_privilege($1, relation.oid, 'UPDATE')
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and (
+           has_table_privilege($1, relation.oid, 'UPDATE')
+           or has_any_column_privilege($1, relation.oid, 'UPDATE')
+         )
        ) as update,
-       has_table_privilege($1, relation.oid, 'DELETE') as delete,
-       has_table_privilege($1, relation.oid, 'TRUNCATE') as truncate,
        (
-         has_table_privilege($1, relation.oid, 'REFERENCES')
-         or has_any_column_privilege($1, relation.oid, 'REFERENCES')
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'DELETE')
+       ) as delete,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'TRUNCATE')
+       ) as truncate,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and (
+           has_table_privilege($1, relation.oid, 'REFERENCES')
+           or has_any_column_privilege($1, relation.oid, 'REFERENCES')
+         )
        ) as references,
-       has_table_privilege($1, relation.oid, 'TRIGGER') as trigger,
-       has_table_privilege($1, relation.oid, 'MAINTAIN') as maintain
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'TRIGGER')
+       ) as trigger,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_table_privilege($1, relation.oid, 'MAINTAIN')
+       ) as maintain
      from pg_catalog.pg_class as relation
      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
      join pg_catalog.pg_roles as owner on owner.oid = relation.relowner
@@ -952,9 +977,18 @@ const collectSnapshot = async (
        namespace.nspname as schema,
        relation.relname as sequence,
        owner.rolname as owner,
-       has_sequence_privilege($1, relation.oid, 'USAGE') as usage,
-       has_sequence_privilege($1, relation.oid, 'SELECT') as select,
-       has_sequence_privilege($1, relation.oid, 'UPDATE') as update
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_sequence_privilege($1, relation.oid, 'USAGE')
+       ) as usage,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_sequence_privilege($1, relation.oid, 'SELECT')
+       ) as select,
+       (
+         has_schema_privilege($1, namespace.oid, 'USAGE')
+         and has_sequence_privilege($1, relation.oid, 'UPDATE')
+       ) as update
      from pg_catalog.pg_class as relation
      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
      join pg_catalog.pg_roles as owner on owner.oid = relation.relowner
