@@ -26,7 +26,8 @@ privileges, direct/`PUBLIC`/inherited/assumable default ACL sources, ownership, 
 finding codes, but no URL, password, secret, tenant ID, or legal-entity ID. The command rejects an
 admin/runtime pair that resolves to a different observed server endpoint or database. When both
 connections use Unix sockets and the observed network address and port are null, it compares the
-configured socket host and port instead. It derives both audited identities from live
+effective node-postgres socket host and port instead, including connection-string query
+overrides. It derives both audited identities from live
 `session_user`/`current_user` evidence, rejects a startup role switch, and rejects an
 admin/runtime identity collapse even if URL query parameters override the authority user. These
 checks require no monitoring-role privilege. Its pure report uses `null` schema for a global
@@ -35,7 +36,9 @@ stored row, including defaults for future schemas. It includes column-level DML,
 PostgreSQL 17 `MAINTAIN`; classifies tables, partitioned tables, views, materialized views, foreign
 tables, and sequences; inventories executable `SECURITY DEFINER` routines and enum/domain
 ownership; and distinguishes `SET OPTION` from direct `ADMIN OPTION` escalation paths. Its pure
-report builder and target/session validators are covered by
+membership analysis also follows `ADMIN OPTION` edges reachable after `SET ROLE` and records
+ownership authority inherited without `SET ROLE`; cluster attributes are not treated as inherited.
+Its pure report builder and target/session validators are covered by
 `scripts/tests/audit-database-trust-boundaries.test.mts`.
 
 ## Reproduced local baseline

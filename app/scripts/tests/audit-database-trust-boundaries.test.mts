@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Client } from 'pg';
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
   buildDatabaseTrustBoundaryReport,
+  getEffectiveDatabaseEndpoint,
   type DatabaseTrustBoundarySnapshot,
 } from '../audit-database-trust-boundaries.mts';
 
@@ -178,6 +180,7 @@ test('reports privilege escalation paths without embedding credentials or contex
       {
         attributes: ordinaryRole,
         canAdministerRole: false,
+        canInheritRole: false,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
@@ -381,6 +384,7 @@ test('classifies every assumable role and escalates relation authority', () => {
       {
         attributes: ordinaryRole,
         canAdministerRole: false,
+        canInheritRole: false,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
@@ -395,6 +399,7 @@ test('classifies every assumable role and escalates relation authority', () => {
       {
         attributes: ordinaryRole,
         canAdministerRole: false,
+        canInheritRole: false,
         canSetRole: true,
         createSchemas: [],
         databaseCreate: false,
@@ -427,6 +432,7 @@ test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () =>
       {
         attributes: ordinaryRole,
         canAdministerRole: true,
+        canInheritRole: false,
         canSetRole: false,
         createSchemas: [],
         databaseCreate: false,
@@ -449,6 +455,86 @@ test('treats ADMIN OPTION as an escalation path when SET OPTION is false', () =>
       'runtime_role_has_cross_owner_dml',
     ],
   );
+});
+
+test('treats inherited owner-role authority as effective runtime DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: true,
+        canSetRole: false,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: ['contacts.customers'],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'contacts_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role', 'runtime_role_has_ddl_authority'],
+  );
+});
+
+test('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: { ...ordinaryRole, bypassRls: true },
+        canAdministerRole: false,
+        canInheritRole: true,
+        canSetRole: false,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'attribute_only_role',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_other_role'],
+  );
+});
+
+test('uses node-postgres effective query-parameter socket endpoints', () => {
+  const client = new Client({
+    connectionString:
+      'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Ftmp%2Fruntime-db&port=6432',
+  });
+
+  assert.deepEqual(getEffectiveDatabaseEndpoint(client), {
+    configuredHost: '/tmp/runtime-db',
+    configuredPort: 6432,
+  });
 });
 
 test('requires direct, distinct live database session identities', () => {
