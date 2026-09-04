@@ -65,6 +65,7 @@ const snapshot = {
   memberships: [],
   parameterPrivileges: [],
   publications: [],
+  subscriptions: [],
   role: ordinaryRole,
   runtimeRole: 'ontos_runtime',
   schemas: [
@@ -186,6 +187,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     routineCount: 0,
     securityDefinerExecutableCount: 0,
     sequenceCount: 1,
+    subscriptionCount: 0,
     tableCount: 3,
     typeCount: 0,
   });
@@ -813,6 +815,60 @@ test('classifies an assumable publication owner as privileged', () => {
   );
 });
 
+test('flags direct subscription ownership as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    subscriptions: [{ owner: snapshot.runtimeRole, subscription: 'tenant_changes' }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+  assert.equal(report.summary.subscriptionCount, 1);
+});
+
+test('classifies an assumable subscription owner as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedSubscriptions: ['tenant_changes'],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'subscription_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
 test('flags direct foreign-server ownership as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -1052,6 +1108,40 @@ test('flags security-definer routines invocable through accessible operators', (
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
 });
 
+test('flags security-definer routines invocable through accessible aggregate support paths', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        aggregateBindings: ['aggregate:public.audit_sum(integer):transition'],
+        executable: false,
+        eventTriggerBindings: [],
+        identityArguments: 'integer, integer',
+        kind: 'function',
+        owner: 'ontos_admin',
+        policyBindings: [],
+        routine: 'private_sum_transition',
+        schema: 'private',
+        securityDefiner: true,
+        storedExpressionBindings: [],
+        triggerBindings: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
 test('flags security-definer routines invoked through applicable RLS policies', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -1212,6 +1302,43 @@ test('classifies reachable roles that invoke security-definer operators as privi
         role: 'operator_user',
         securityDefinerOperatorBindings: [
           'operator:public.##(integer,integer)->private.private_integer_equal(integer, integer)',
+        ],
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
+test('classifies reachable roles that invoke security-definer aggregate support paths as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'aggregate_user',
+        securityDefinerAggregateBindings: [
+          'aggregate:public.audit_sum(integer):transition->private.private_sum_transition(integer, integer)',
         ],
         securityDefinerRoutines: [],
       },
@@ -1578,6 +1705,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /join pg_catalog\.pg_foreign_server as foreign_server/u);
   assert.match(source, /from pg_catalog\.pg_publication as publication/u);
   assert.match(source, /publication\.pubowner = candidate\.oid/u);
+  assert.match(source, /from pg_catalog\.pg_subscription as subscription/u);
+  assert.match(source, /subscription\.subowner = candidate\.oid/u);
+  assert.match(source, /'ddl_command_end'::text, 'ALTER SUBSCRIPTION'::text/u);
   assert.match(source, /has_database_privilege\(role\.oid, current_database\(\), 'TEMPORARY'\)/u);
   assert.match(source, /cross join \(values \('GRANT'::text\), \('REVOKE'::text\)\)/u);
   assert.match(source, /event_trigger\.evtevent = 'ddl_command_start'/u);
@@ -1589,6 +1719,17 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /audited_operator\.oprcode = routine\.oid/u);
   assert.match(source, /security_definer_operator_bindings/u);
   assert.match(source, /operator_bindings/u);
+  assert.match(source, /aggregate_routine_dependencies\(/u);
+  assert.match(source, /aggregate\.aggtransfn/u);
+  assert.match(source, /aggregate\.aggfinalfn/u);
+  assert.match(source, /aggregate\.aggcombinefn/u);
+  assert.match(source, /aggregate\.aggserialfn/u);
+  assert.match(source, /aggregate\.aggdeserialfn/u);
+  assert.match(source, /aggregate\.aggmtransfn/u);
+  assert.match(source, /aggregate\.aggminvtransfn/u);
+  assert.match(source, /aggregate\.aggmfinalfn/u);
+  assert.match(source, /security_definer_aggregate_bindings/u);
+  assert.match(source, /aggregate_bindings/u);
   assert.match(source, /'ddl_command_end'::text, 'ALTER PUBLICATION'::text/u);
   assert.match(
     source,
