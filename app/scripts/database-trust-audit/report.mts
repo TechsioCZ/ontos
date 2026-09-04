@@ -157,7 +157,7 @@ interface DatabaseTrustBoundaryFinding {
     | 'runtime_role_can_assume_privileged_role'
     | 'runtime_role_can_forge_trusted_context'
     | 'runtime_role_can_execute_security_definer'
-    | 'runtime_role_can_select_privileged_owner_view'
+    | 'runtime_role_can_use_privileged_owner_view'
     | 'runtime_role_has_ddl_authority'
     | 'runtime_role_has_grant_authority'
     | 'runtime_role_has_cross_schema_dml'
@@ -445,7 +445,7 @@ export const buildDatabaseTrustBoundaryReport = (
       securityInvoker,
     }) =>
       kind === 'view' &&
-      privileges.select &&
+      (privileges.select || privileges.insert || privileges.update || privileges.delete) &&
       securityInvoker !== true &&
       (owner === snapshot.administrativeRole ||
         ownerBypassRls === true ||
@@ -455,9 +455,9 @@ export const buildDatabaseTrustBoundaryReport = (
   );
   if (privilegedOwnerViews.length > 0) {
     findings.push({
-      code: 'runtime_role_can_select_privileged_owner_view',
+      code: 'runtime_role_can_use_privileged_owner_view',
       evidence:
-        'The runtime role can select an owner-context view with an administrative, BYPASSRLS, superuser, or RLS-bypassing owner in its dependency chain.',
+        'The runtime role can read or write through an owner-context view with an administrative, BYPASSRLS, superuser, or RLS-bypassing owner in its dependency chain.',
       severity: 'high',
     });
   }
