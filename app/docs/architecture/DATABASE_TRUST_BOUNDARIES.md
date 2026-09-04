@@ -25,10 +25,13 @@ Evidence in this document is:
 - **UNKNOWN** when it is controlled outside this repository.
 
 The audit covers current and reachable-role authority over databases, schemas, relations,
-sequences, routines, types, extensions, foreign data, publications, subscriptions, parameters,
-grant options, defaults, RLS, owner-context views, and direct or indirect `SECURITY DEFINER`
-execution. The executable report is the detailed capability inventory; this document records only
-the architectural conclusions.
+sequences, routines, types, parameters, grant options, defaults, RLS, owner-context views, and
+directly executable `SECURITY DEFINER` routines. The executable report is the detailed capability
+inventory; this document records only the architectural conclusions.
+
+This is not a general PostgreSQL reachability analyzer. Indirect execution through triggers,
+rewrite rules, aggregate support functions, event triggers, cascades, or partition routing is
+outside this baseline; introducing such a path requires its own narrow security contract and test.
 
 ## Reproduced local baseline
 
@@ -93,13 +96,13 @@ shared credential an unforgeable security boundary.
 
 ## Negative evidence and remaining gaps
 
-| Threat                  | Current evidence                                                                                                 | Gap                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Cross-tenant SQL        | RLS integration tests prove filtering for selected context.                                                      | They do not prove the context is authentic.                                           |
-| Raw database access     | Static boundaries reject imports from non-owner surfaces.                                                        | Arbitrary code inside an allowed server process retains the credential.               |
-| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none. | Production needs its own audit and pilot denial probes.                               |
-| Privileged execution    | The audit follows direct and indirect privileged routine/view paths; local baseline has none.                    | Every future privileged path needs a narrow contract and review.                      |
-| Unrelated-schema DML    | The audit enumerates effective relation and sequence access.                                                     | Denial is impossible today because the shared role intentionally spans three schemas. |
+| Threat                  | Current evidence                                                                                                     | Gap                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Cross-tenant SQL        | RLS integration tests prove filtering for selected context.                                                          | They do not prove the context is authentic.                                           |
+| Raw database access     | Static boundaries reject imports from non-owner surfaces.                                                            | Arbitrary code inside an allowed server process retains the credential.               |
+| DDL and role escalation | The audit checks effective privileges, ownership, grant authority, and reachable roles; local baseline has none.     | Production needs its own audit and pilot denial probes.                               |
+| Privileged execution    | The audit checks executable `SECURITY DEFINER` routines and privileged owner-context views; local baseline has none. | Every future privileged path needs a narrow contract and review.                      |
+| Unrelated-schema DML    | The audit enumerates effective relation and sequence access.                                                         | Denial is impossible today because the shared role intentionally spans three schemas. |
 
 ## Pilot options
 
