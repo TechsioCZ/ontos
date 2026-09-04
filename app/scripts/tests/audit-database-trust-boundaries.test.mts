@@ -1322,7 +1322,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /referenced_relation\.relowner = dependency\.effective_owner_oid/u);
   assert.match(source, /effective_owner\.rolbypassrls/u);
   assert.match(source, /effective_owner\.rolsuper/u);
-  assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 3);
+  assert.equal(source.match(/pg_catalog\.pg_options_to_table\([^)]*\.reloptions\)/gu)?.length, 6);
   assert.match(source, /select audited_role\.role, audited_role\.source, authority\.grant_option/u);
   assert.equal(source.match(/from pg_catalog\.pg_trigger as audited_trigger/gu)?.length, 2);
   assert.equal(source.match(/audited_trigger\.tgenabled in \('O', 'A'\)/gu)?.length, 2);
@@ -1348,9 +1348,24 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
   assert.match(source, /pg_catalog\.pg_rewrite as expression/u);
   assert.match(source, /view_invocation_paths\(invocation_oid, dependency_oid\)/u);
-  assert.match(source, /writable_view_paths\(invocation_oid, affected_oid, actions\)/u);
+  assert.match(source, /view_access_paths\(invocation_oid, affected_oid, effective_owner_oid\)/u);
+  assert.match(
+    source,
+    /writable_view_rewrites\(view_oid, affected_oid, actions, target_list, effective_owner_oid\)/u,
+  );
+  assert.match(source, /direct_writable_view_paths\(invocation_oid, affected_oid, actions/u);
+  assert.match(source, /direct_writable_view_columns\(/u);
+  assert.match(source, /writable_view_columns\(/u);
+  assert.match(
+    source,
+    /writable_view_paths\(invocation_oid, affected_oid, actions, effective_owner_oid\)/u,
+  );
+  assert.match(source, /:resorigtbl \(\[1-9\]\[0-9\]\*\) :resorigcol/u);
+  assert.match(source, /split_part\(rewrite\.ev_action::text, ':rtable \(\{RANGETBLENTRY'/u);
   assert.match(source, /pg_catalog\.pg_relation_is_updatable/u);
-  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 2);
+  assert.equal(source.match(/from writable_view_paths as writable_view/gu)?.length, 4);
+  assert.equal(source.match(/from writable_view_columns as writable_column/gu)?.length, 2);
+  assert.equal(source.match(/from view_access_paths as view_access/gu)?.length, 2);
   assert.match(source, /relation_invocation_paths\(invocation_oid, dependency_oid\)/u);
   assert.match(source, /stored_expression\.invocation_oid/u);
   assert.match(source, /nested-view-expression/u);
@@ -1384,7 +1399,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
   );
-  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 6);
+  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 8);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
     4,

@@ -915,36 +915,51 @@ view_invocation_paths(invocation_oid, dependency_oid) as (
   where nested_view.relkind = 'v'
     and nested_view.oid <> expression.ev_class
 ),
-writable_view_paths(invocation_oid, affected_oid, actions) as (
-  select distinct
-    invocation_view.oid,
-    affected_relation.oid,
-    pg_catalog.pg_relation_is_updatable(invocation_view.oid::regclass, false) & 28
-  from pg_catalog.pg_class as invocation_view
-  join pg_catalog.pg_namespace as namespace on namespace.oid = invocation_view.relnamespace
+view_access_paths(invocation_oid, affected_oid, effective_owner_oid) as (
+  select
+    view_relation.oid,
+    dependency.refobjid,
+    case
+      when coalesce(
+        (
+          select option.option_value::boolean
+          from pg_catalog.pg_options_to_table(view_relation.reloptions) as option
+          where option.option_name = 'security_invoker'
+        ),
+        false
+      ) then null::oid
+      else view_relation.relowner
+    end
+  from pg_catalog.pg_class as view_relation
+  join pg_catalog.pg_namespace as namespace on namespace.oid = view_relation.relnamespace
   join pg_catalog.pg_rewrite as rewrite
-    on rewrite.ev_class = invocation_view.oid
+    on rewrite.ev_class = view_relation.oid
    and rewrite.rulename = '_RETURN'
   join pg_catalog.pg_depend as dependency
     on dependency.classid = 'pg_catalog.pg_rewrite'::regclass
    and dependency.objid = rewrite.oid
    and dependency.refclassid = 'pg_catalog.pg_class'::regclass
    and dependency.deptype = 'n'
-  join pg_catalog.pg_class as affected_relation on affected_relation.oid = dependency.refobjid
-  where invocation_view.relkind = 'v'
-    and affected_relation.relkind in ('r', 'p', 'f', 'v')
-    and affected_relation.oid <> invocation_view.oid
+  where view_relation.relkind = 'v'
+    and dependency.refobjid <> view_relation.oid
     and namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
-    and pg_catalog.pg_relation_is_updatable(invocation_view.oid::regclass, false) & 28 <> 0
   union
-  select distinct
+  select
     path.invocation_oid,
-    affected_relation.oid,
-    path.actions
-      & pg_catalog.pg_relation_is_updatable(nested_view.oid::regclass, false)
-      & 28
-  from writable_view_paths as path
+    dependency.refobjid,
+    case
+      when coalesce(
+        (
+          select option.option_value::boolean
+          from pg_catalog.pg_options_to_table(nested_view.reloptions) as option
+          where option.option_name = 'security_invoker'
+        ),
+        false
+      ) then path.effective_owner_oid
+      else nested_view.relowner
+    end
+  from view_access_paths as path
   join pg_catalog.pg_class as nested_view
     on nested_view.oid = path.affected_oid
    and nested_view.relkind = 'v'
@@ -956,12 +971,115 @@ writable_view_paths(invocation_oid, affected_oid, actions) as (
    and dependency.objid = rewrite.oid
    and dependency.refclassid = 'pg_catalog.pg_class'::regclass
    and dependency.deptype = 'n'
-  join pg_catalog.pg_class as affected_relation on affected_relation.oid = dependency.refobjid
-  where affected_relation.relkind in ('r', 'p', 'f', 'v')
-    and affected_relation.oid <> nested_view.oid
-    and path.actions
-      & pg_catalog.pg_relation_is_updatable(nested_view.oid::regclass, false)
-      & 28 <> 0
+  where dependency.refobjid <> nested_view.oid
+),
+writable_view_rewrites(view_oid, affected_oid, actions, target_list, effective_owner_oid) as (
+  select
+    view_relation.oid,
+    affected_relation.oid,
+    pg_catalog.pg_relation_is_updatable(view_relation.oid::regclass, false) & 28,
+    (string_to_array(rewrite.ev_action::text, ':targetList ('))[
+      cardinality(string_to_array(rewrite.ev_action::text, ':targetList ('))
+    ],
+    case
+      when coalesce(
+        (
+          select option.option_value::boolean
+          from pg_catalog.pg_options_to_table(view_relation.reloptions) as option
+          where option.option_name = 'security_invoker'
+        ),
+        false
+      ) then null::oid
+      else view_relation.relowner
+    end
+  from pg_catalog.pg_class as view_relation
+  join pg_catalog.pg_namespace as namespace on namespace.oid = view_relation.relnamespace
+  join pg_catalog.pg_rewrite as rewrite
+    on rewrite.ev_class = view_relation.oid
+   and rewrite.rulename = '_RETURN'
+  cross join lateral (
+    select regexp_match(
+      split_part(rewrite.ev_action::text, ':rtable ({RANGETBLENTRY', 2),
+      ':relid ([1-9][0-9]*)'
+    ) as fields
+  ) as target
+  join pg_catalog.pg_class as affected_relation on affected_relation.oid = target.fields[1]::oid
+  where view_relation.relkind = 'v'
+    and target.fields is not null
+    and affected_relation.relkind in ('r', 'p', 'f', 'v')
+    and affected_relation.oid <> view_relation.oid
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+    and pg_catalog.pg_relation_is_updatable(view_relation.oid::regclass, false) & 28 <> 0
+),
+direct_writable_view_paths(invocation_oid, affected_oid, actions, effective_owner_oid) as (
+  select view_oid, affected_oid, actions, effective_owner_oid
+  from writable_view_rewrites
+),
+direct_writable_view_columns(
+  invocation_oid,
+  affected_oid,
+  invocation_attnum,
+  affected_attnum,
+  actions,
+  effective_owner_oid
+) as (
+  select distinct
+    rewrite.view_oid,
+    rewrite.affected_oid,
+    target.fields[1]::smallint,
+    target.fields[3]::smallint,
+    rewrite.actions,
+    rewrite.effective_owner_oid
+  from writable_view_rewrites as rewrite
+  cross join lateral unnest(string_to_array(rewrite.target_list, '{TARGETENTRY')) as entry(value)
+  cross join lateral (
+    select regexp_match(
+      entry.value,
+      ':resno ([0-9]+).*:resorigtbl ([1-9][0-9]*) :resorigcol ([1-9][0-9]*).*:resjunk false'
+    ) as fields
+  ) as target
+  where target.fields is not null
+    and target.fields[2]::oid = rewrite.affected_oid
+),
+writable_view_paths(invocation_oid, affected_oid, actions, effective_owner_oid) as (
+  select *
+  from direct_writable_view_paths
+  union
+  select
+    path.invocation_oid,
+    nested.affected_oid,
+    path.actions
+      & nested.actions,
+    coalesce(nested.effective_owner_oid, path.effective_owner_oid)
+  from writable_view_paths as path
+  join direct_writable_view_paths as nested on nested.invocation_oid = path.affected_oid
+  where path.actions & nested.actions <> 0
+),
+writable_view_columns(
+  invocation_oid,
+  affected_oid,
+  invocation_attnum,
+  affected_attnum,
+  actions,
+  effective_owner_oid
+) as (
+  select *
+  from direct_writable_view_columns
+  union
+  select
+    path.invocation_oid,
+    nested.affected_oid,
+    path.invocation_attnum,
+    nested.affected_attnum,
+    path.actions
+      & nested.actions,
+    coalesce(nested.effective_owner_oid, path.effective_owner_oid)
+  from writable_view_columns as path
+  join direct_writable_view_columns as nested
+    on nested.invocation_oid = path.affected_oid
+   and nested.invocation_attnum = path.affected_attnum
+  where path.actions & nested.actions <> 0
 ),
 stored_expression_dependencies(
   invocation_oid,
@@ -1676,47 +1794,94 @@ const collectSnapshot = async (
            and routine_namespace.nspname <> 'information_schema'
            and routine.prosecdef
            and routine.proowner <> candidate.oid
-           and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
-           and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
-           and not candidate.rolbypassrls
-           and not candidate.rolsuper
            and (
-             relation.relforcerowsecurity
-             or not pg_has_role(candidate.oid, relation.relowner, 'USAGE')
-           )
-           and (
-             0::oid = any(policy.polroles)
+             (
+               has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
+               and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
+               and not candidate.rolbypassrls
+               and not candidate.rolsuper
+               and (
+                 relation.relforcerowsecurity
+                 or not pg_has_role(candidate.oid, relation.relowner, 'USAGE')
+               )
+               and (
+                 0::oid = any(policy.polroles)
+                 or exists (
+                   select 1
+                   from unnest(policy.polroles) as policy_role(oid)
+                   where policy_role.oid <> 0
+                     and (
+                       policy_role.oid = candidate.oid
+                       or pg_has_role(candidate.oid, policy_role.oid, 'MEMBER')
+                     )
+                 )
+               )
+               and case policy.polcmd
+                 when 'r' then
+                   has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+                   or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+                 when 'a' then
+                   has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                   or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+                 when 'w' then
+                   has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                   or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+                 when 'd' then has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+                 when '*' then
+                   has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+                   or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
+                   or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                   or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+                   or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                   or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+                   or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+                 else false
+               end
+             )
              or exists (
                select 1
-               from unnest(policy.polroles) as policy_role(oid)
-               where policy_role.oid <> 0
+               from view_access_paths as view_access
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = view_access.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   view_access.effective_owner_oid,
+                   candidate.oid
+                 )
+               where view_access.affected_oid = relation.oid
+                 and policy.polcmd in ('r', '*')
+                 and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                  and (
-                   policy_role.oid = candidate.oid
-                   or pg_has_role(candidate.oid, policy_role.oid, 'MEMBER')
+                   has_table_privilege(candidate.oid, invocation_view.oid, 'SELECT')
+                   or has_any_column_privilege(candidate.oid, invocation_view.oid, 'SELECT')
+                 )
+                 and (
+                   has_table_privilege(effective_owner.oid, relation.oid, 'SELECT')
+                   or has_any_column_privilege(effective_owner.oid, relation.oid, 'SELECT')
+                 )
+                 and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
+                 and not effective_owner.rolbypassrls
+                 and not effective_owner.rolsuper
+                 and (
+                   relation.relforcerowsecurity
+                   or not pg_has_role(effective_owner.oid, relation.relowner, 'USAGE')
+                 )
+                 and (
+                   0::oid = any(policy.polroles)
+                   or exists (
+                     select 1
+                     from unnest(policy.polroles) as policy_role(oid)
+                     where policy_role.oid <> 0
+                       and (
+                         policy_role.oid = effective_owner.oid
+                         or pg_has_role(effective_owner.oid, policy_role.oid, 'MEMBER')
+                       )
+                   )
                  )
              )
            )
-           and case policy.polcmd
-             when 'r' then
-               has_table_privilege(candidate.oid, relation.oid, 'SELECT')
-               or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
-             when 'a' then
-               has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-               or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
-             when 'w' then
-               has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-               or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
-             when 'd' then has_table_privilege(candidate.oid, relation.oid, 'DELETE')
-             when '*' then
-               has_table_privilege(candidate.oid, relation.oid, 'SELECT')
-               or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
-               or has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-               or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
-               or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-               or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
-               or has_table_privilege(candidate.oid, relation.oid, 'DELETE')
-             else false
-           end
          order by 1
        ) as security_definer_policy_bindings,
        array(
@@ -1808,6 +1973,94 @@ const collectSnapshot = async (
                    )
                  )
                )
+             )
+             or exists (
+               select 1
+               from writable_view_paths as writable_view
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = writable_view.invocation_oid
+               join pg_catalog.pg_namespace as view_namespace
+                 on view_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   writable_view.effective_owner_oid,
+                   candidate.oid
+                 )
+               where not stored_expression.selectable
+                 and writable_view.affected_oid = stored_expression.invocation_oid
+                 and has_schema_privilege(candidate.oid, view_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     writable_view.actions & 8 <> 0
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'INSERT')
+                       or has_any_column_privilege(
+                         candidate.oid,
+                         invocation_view.oid,
+                         'INSERT'
+                       )
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                     )
+                   )
+                   or (
+                     writable_view.actions & 4 <> 0
+                     and (
+                       has_table_privilege(candidate.oid, invocation_view.oid, 'UPDATE')
+                       or (
+                         cardinality(stored_expression.update_columns) = 0
+                         and has_any_column_privilege(
+                           candidate.oid,
+                           invocation_view.oid,
+                           'UPDATE'
+                         )
+                       )
+                       or exists (
+                         select 1
+                         from writable_view_columns as writable_column
+                         join pg_catalog.pg_attribute as affected_column
+                           on affected_column.attrelid = writable_column.affected_oid
+                          and affected_column.attnum = writable_column.affected_attnum
+                         join pg_catalog.pg_attribute as expression_column
+                           on expression_column.attrelid = relation.oid
+                          and expression_column.attname = affected_column.attname
+                         where writable_column.invocation_oid = writable_view.invocation_oid
+                           and writable_column.affected_oid = writable_view.affected_oid
+                           and expression_column.attnum = any(
+                             stored_expression.update_columns
+                           )
+                           and has_column_privilege(
+                             candidate.oid,
+                             invocation_view.oid,
+                             writable_column.invocation_attnum,
+                             'UPDATE'
+                           )
+                       )
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                     )
+                   )
+                 )
              )
              or exists (
                select 1
@@ -2047,6 +2300,11 @@ const collectSnapshot = async (
                  on invocation_view.oid = writable_view.invocation_oid
                join pg_catalog.pg_namespace as invocation_namespace
                  on invocation_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   writable_view.effective_owner_oid,
+                   candidate.oid
+                 )
                where writable_view.affected_oid in (
                    select relation.oid
                    union
@@ -2070,11 +2328,28 @@ const collectSnapshot = async (
                          'INSERT'
                        )
                      )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                     )
                    )
                    or (
                      audited_trigger.tgtype & 8 <> 0
                      and writable_view.actions & 16 <> 0
                      and has_table_privilege(candidate.oid, invocation_view.oid, 'DELETE')
+                     and has_table_privilege(
+                       effective_owner.oid,
+                       writable_view.affected_oid,
+                       'DELETE'
+                     )
                    )
                    or (
                      audited_trigger.tgtype & 16 <> 0
@@ -2084,6 +2359,18 @@ const collectSnapshot = async (
                        or has_any_column_privilege(
                          candidate.oid,
                          invocation_view.oid,
+                         'UPDATE'
+                       )
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
                          'UPDATE'
                        )
                      )
@@ -2103,6 +2390,18 @@ const collectSnapshot = async (
                        or has_any_column_privilege(
                          candidate.oid,
                          invocation_view.oid,
+                         'UPDATE'
+                       )
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
                          'UPDATE'
                        )
                      )
@@ -2330,47 +2629,94 @@ const collectSnapshot = async (
            and relation_namespace.nspname = any($2::text[])
            and routine.prosecdef
            and routine.proowner <> runtime_role.oid
-           and has_function_privilege($1, routine.oid, 'EXECUTE')
-           and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
-           and not runtime_role.rolbypassrls
-           and not runtime_role.rolsuper
            and (
-             relation.relforcerowsecurity
-             or not pg_has_role(runtime_role.oid, relation.relowner, 'USAGE')
-           )
-           and (
-             0::oid = any(policy.polroles)
+             (
+               has_function_privilege($1, routine.oid, 'EXECUTE')
+               and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
+               and not runtime_role.rolbypassrls
+               and not runtime_role.rolsuper
+               and (
+                 relation.relforcerowsecurity
+                 or not pg_has_role(runtime_role.oid, relation.relowner, 'USAGE')
+               )
+               and (
+                 0::oid = any(policy.polroles)
+                 or exists (
+                   select 1
+                   from unnest(policy.polroles) as policy_role(oid)
+                   where policy_role.oid <> 0
+                     and (
+                       policy_role.oid = runtime_role.oid
+                       or pg_has_role(runtime_role.oid, policy_role.oid, 'MEMBER')
+                     )
+                 )
+               )
+               and case policy.polcmd
+                 when 'r' then
+                   has_table_privilege($1, relation.oid, 'SELECT')
+                   or has_any_column_privilege($1, relation.oid, 'SELECT')
+                 when 'a' then
+                   has_table_privilege($1, relation.oid, 'INSERT')
+                   or has_any_column_privilege($1, relation.oid, 'INSERT')
+                 when 'w' then
+                   has_table_privilege($1, relation.oid, 'UPDATE')
+                   or has_any_column_privilege($1, relation.oid, 'UPDATE')
+                 when 'd' then has_table_privilege($1, relation.oid, 'DELETE')
+                 when '*' then
+                   has_table_privilege($1, relation.oid, 'SELECT')
+                   or has_any_column_privilege($1, relation.oid, 'SELECT')
+                   or has_table_privilege($1, relation.oid, 'INSERT')
+                   or has_any_column_privilege($1, relation.oid, 'INSERT')
+                   or has_table_privilege($1, relation.oid, 'UPDATE')
+                   or has_any_column_privilege($1, relation.oid, 'UPDATE')
+                   or has_table_privilege($1, relation.oid, 'DELETE')
+                 else false
+               end
+             )
              or exists (
                select 1
-               from unnest(policy.polroles) as policy_role(oid)
-               where policy_role.oid <> 0
+               from view_access_paths as view_access
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = view_access.invocation_oid
+               join pg_catalog.pg_namespace as invocation_namespace
+                 on invocation_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   view_access.effective_owner_oid,
+                   runtime_role.oid
+                 )
+               where view_access.affected_oid = relation.oid
+                 and policy.polcmd in ('r', '*')
+                 and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                  and (
-                   policy_role.oid = runtime_role.oid
-                   or pg_has_role(runtime_role.oid, policy_role.oid, 'MEMBER')
+                   has_table_privilege($1, invocation_view.oid, 'SELECT')
+                   or has_any_column_privilege($1, invocation_view.oid, 'SELECT')
+                 )
+                 and (
+                   has_table_privilege(effective_owner.oid, relation.oid, 'SELECT')
+                   or has_any_column_privilege(effective_owner.oid, relation.oid, 'SELECT')
+                 )
+                 and has_function_privilege($1, routine.oid, 'EXECUTE')
+                 and not effective_owner.rolbypassrls
+                 and not effective_owner.rolsuper
+                 and (
+                   relation.relforcerowsecurity
+                   or not pg_has_role(effective_owner.oid, relation.relowner, 'USAGE')
+                 )
+                 and (
+                   0::oid = any(policy.polroles)
+                   or exists (
+                     select 1
+                     from unnest(policy.polroles) as policy_role(oid)
+                     where policy_role.oid <> 0
+                       and (
+                         policy_role.oid = effective_owner.oid
+                         or pg_has_role(effective_owner.oid, policy_role.oid, 'MEMBER')
+                       )
+                   )
                  )
              )
            )
-           and case policy.polcmd
-             when 'r' then
-               has_table_privilege($1, relation.oid, 'SELECT')
-               or has_any_column_privilege($1, relation.oid, 'SELECT')
-             when 'a' then
-               has_table_privilege($1, relation.oid, 'INSERT')
-               or has_any_column_privilege($1, relation.oid, 'INSERT')
-             when 'w' then
-               has_table_privilege($1, relation.oid, 'UPDATE')
-               or has_any_column_privilege($1, relation.oid, 'UPDATE')
-             when 'd' then has_table_privilege($1, relation.oid, 'DELETE')
-             when '*' then
-               has_table_privilege($1, relation.oid, 'SELECT')
-               or has_any_column_privilege($1, relation.oid, 'SELECT')
-               or has_table_privilege($1, relation.oid, 'INSERT')
-               or has_any_column_privilege($1, relation.oid, 'INSERT')
-               or has_table_privilege($1, relation.oid, 'UPDATE')
-               or has_any_column_privilege($1, relation.oid, 'UPDATE')
-               or has_table_privilege($1, relation.oid, 'DELETE')
-             else false
-           end
          order by 1
        ) as policy_bindings,
        array(
@@ -2456,6 +2802,86 @@ const collectSnapshot = async (
                    )
                  )
                )
+             )
+             or exists (
+               select 1
+               from writable_view_paths as writable_view
+               join pg_catalog.pg_class as invocation_view
+                 on invocation_view.oid = writable_view.invocation_oid
+               join pg_catalog.pg_namespace as view_namespace
+                 on view_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   writable_view.effective_owner_oid,
+                   runtime_role.oid
+                 )
+               where not stored_expression.selectable
+                 and writable_view.affected_oid = stored_expression.invocation_oid
+                 and has_schema_privilege($1, view_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     writable_view.actions & 8 <> 0
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'INSERT')
+                       or has_any_column_privilege($1, invocation_view.oid, 'INSERT')
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                     )
+                   )
+                   or (
+                     writable_view.actions & 4 <> 0
+                     and (
+                       has_table_privilege($1, invocation_view.oid, 'UPDATE')
+                       or (
+                         cardinality(stored_expression.update_columns) = 0
+                         and has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                       )
+                       or exists (
+                         select 1
+                         from writable_view_columns as writable_column
+                         join pg_catalog.pg_attribute as affected_column
+                           on affected_column.attrelid = writable_column.affected_oid
+                          and affected_column.attnum = writable_column.affected_attnum
+                         join pg_catalog.pg_attribute as expression_column
+                           on expression_column.attrelid = relation.oid
+                          and expression_column.attname = affected_column.attname
+                         where writable_column.invocation_oid = writable_view.invocation_oid
+                           and writable_column.affected_oid = writable_view.affected_oid
+                           and expression_column.attnum = any(
+                             stored_expression.update_columns
+                           )
+                           and has_column_privilege(
+                             $1,
+                             invocation_view.oid,
+                             writable_column.invocation_attnum,
+                             'UPDATE'
+                           )
+                       )
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                     )
+                   )
+                 )
              )
              or exists (
                select 1
@@ -2640,6 +3066,11 @@ const collectSnapshot = async (
                  on invocation_view.oid = writable_view.invocation_oid
                join pg_catalog.pg_namespace as invocation_namespace
                  on invocation_namespace.oid = invocation_view.relnamespace
+               join pg_catalog.pg_roles as effective_owner
+                 on effective_owner.oid = coalesce(
+                   writable_view.effective_owner_oid,
+                   runtime_role.oid
+                 )
                where writable_view.affected_oid in (
                    select relation.oid
                    union
@@ -2659,11 +3090,28 @@ const collectSnapshot = async (
                        has_table_privilege($1, invocation_view.oid, 'INSERT')
                        or has_any_column_privilege($1, invocation_view.oid, 'INSERT')
                      )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'INSERT'
+                       )
+                     )
                    )
                    or (
                      audited_trigger.tgtype & 8 <> 0
                      and writable_view.actions & 16 <> 0
                      and has_table_privilege($1, invocation_view.oid, 'DELETE')
+                     and has_table_privilege(
+                       effective_owner.oid,
+                       writable_view.affected_oid,
+                       'DELETE'
+                     )
                    )
                    or (
                      audited_trigger.tgtype & 16 <> 0
@@ -2671,6 +3119,18 @@ const collectSnapshot = async (
                      and (
                        has_table_privilege($1, invocation_view.oid, 'UPDATE')
                        or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
                      )
                    )
                    or (
@@ -2686,6 +3146,18 @@ const collectSnapshot = async (
                      and (
                        has_table_privilege($1, invocation_view.oid, 'UPDATE')
                        or has_any_column_privilege($1, invocation_view.oid, 'UPDATE')
+                     )
+                     and (
+                       has_table_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
+                       or has_any_column_privilege(
+                         effective_owner.oid,
+                         writable_view.affected_oid,
+                         'UPDATE'
+                       )
                      )
                    )
                  )
