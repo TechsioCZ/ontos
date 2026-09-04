@@ -6,4 +6,5 @@
   documentation or agent discovery.
 - Repository-root `.github/workflows/` may be changed when required for GitHub to discover and run
   the application's CI or deployment workflows.
-- `mvp/` and `mvp2/` are read-only historical implementations.
+- Treat [`docs/evidence/`](docs/evidence/) as historical provenance, not current guidance. Read or
+  change it only when the task explicitly concerns historical evidence.

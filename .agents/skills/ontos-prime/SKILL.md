@@ -1,59 +1,59 @@
 ---
 name: ontos-prime
-description: Prime Codex for work in the OntOS application by reading the tracked file set, repository instructions, project overview, required architecture guidance, toolchain, and worktree state, then summarizing the codebase. Use when the user asks to prime, onboard, or understand OntOS, or before OntOS planning or implementation when project context is not fresh.
+description: Prime an agent for focused OntOS work by inspecting repository state, executable workspace sources, application guardrails, and only the task-relevant documentation. Use when onboarding, refreshing stale project context, or preparing to plan or implement a specific OntOS change.
 ---
 
-# Prime
+# Prime OntOS
 
-> Execute the following sections to understand the codebase, then summarize your understanding.
+Inspect enough current evidence to start the supplied task without bulk-loading the repository.
 
-## Project Root
+## Root
 
-Work from the `app/` directory inside the OntOS repository. Treat `app/` as the application root even though the Git repository root is its parent.
+Work from `app/`. The Git repository root is its parent.
 
-## Run
+## Inspect state
 
 ```bash
 pwd
-git ls-files
-git status --short
+git rev-parse --show-toplevel
+git status --short --branch
+git branch --show-current
 ```
 
-Inspect `package.json` and `pnpm-workspace.yaml` to understand workspace packages, scripts, and the repository-managed toolchain. Inspect additional directory listings only when they clarify the application structure.
+Inspect `package.json`, `pnpm-workspace.yaml`, and only the package or directory listings needed to
+locate the task owner. Do not run `git ls-files` or dump broad trees into context.
 
-## Read
+## Read progressively
 
-Read these files:
+1. Read `../AGENTS.md`, `AGENTS.md`, and `README.md`.
+2. Read `DEVELOPMENT.md` only for branch, sandbox, or local startup work.
+3. Use the README routing table to open one implementation document for the supplied concern.
+4. Use `../CONTEXT-MAP.md` to select one domain context when terminology or business semantics are
+   needed. Open only a referenced shared OntOS section when the selected context leaves a shared
+   term unclear.
+5. Open an ADR only when current guidance or the task points to that decision.
+6. Open a specification only when the task names it. Completed or superseded specifications are
+   historical evidence, not background reading.
 
-- `../AGENTS.md`
-- `AGENTS.md`
-- `README.md`
-- `DEVELOPMENT.md`
+Read source and tests only to resolve a concrete ownership or architecture question. Do not
+bulk-read `../docs/`, `docs/`, `specs/`, or historical evidence.
 
-Use the routing table in `README.md` to read only the implementation document relevant to the
-upcoming task. Use `../CONTEXT-MAP.md` to select at most the relevant product context, and open an
-ADR only when the task or current guidance points to that decision. Do not bulk-read `../docs/`,
-`docs/`, or completed specifications.
+## Establish
 
-## Instructions
-
-- Identify the shell application, MicroVerticals, shared packages, topology, generators, tests, and validation commands.
-- Treat `main` as the canonical development and pull-request base. Report when the current branch
-  is behind, ahead of, or diverged from `main` in a way that affects the requested work.
-- Preserve the strict deployment seams between MicroVerticals and the generated Effect BFF seam inside each MicroVertical.
-- Note that every state change must use a typed Action and every expected failure must remain a declared typed Effect error.
-- Note the mandatory Codesmith generators from `README.md`. Generated output is the required starting point for supported business file types.
+- Identify the Shell, current MicroVerticals, shared packages, topology, generators, package-owned
+  tests, and relevant validation scripts.
+- Treat `main` as the development and pull-request base. Report branch divergence that can affect
+  the task.
+- Confirm the owner-local MicroVertical seam, generated Effect BFF boundary, typed Action rule, and
+  tagged expected-error rule from their current owners.
+- Discover supported generators from `package.json` `scaffold:*` scripts; inspect only the relevant
+  command with `--help`.
 - Run pnpm commands from `app/` as `mise exec -- pnpm <command>`.
-- Keep the investigation focused. Read more source only to resolve an important architectural relationship or prepare for the supplied task.
 
 ## Report
 
-Summarize:
+Summarize the application owner, relevant boundaries, supported commands, current worktree state,
+pre-existing changes, and unresolved facts that can change the next step.
 
-- the application shape and important boundaries;
-- the development, testing, and validation commands;
-- the non-negotiable architecture and generator rules;
-- the current worktree state, including pre-existing changes;
-- uncertainties that could affect subsequent planning or implementation.
-
-Do not modify files, install dependencies, start services, run builds or tests, or perform Git hosting operations while priming.
+Do not modify files, install dependencies, start services, run builds or tests, or perform Git
+hosting operations while priming.
