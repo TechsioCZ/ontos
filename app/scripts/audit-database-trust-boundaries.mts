@@ -66,6 +66,7 @@ interface RoleMembership {
   readonly role: string;
   readonly securityDefinerPolicyBindings?: readonly string[];
   readonly securityDefinerRoutines: readonly string[];
+  readonly securityDefinerEventTriggerBindings?: readonly string[];
   readonly securityDefinerStoredExpressionBindings?: readonly string[];
   readonly securityDefinerTriggerBindings?: readonly string[];
 }
@@ -95,6 +96,7 @@ interface SchemaPrivilege {
 }
 
 interface RoutinePrivilege {
+  readonly eventTriggerBindings: readonly string[];
   readonly executable: boolean;
   readonly identityArguments: string;
   readonly kind: 'aggregate' | 'function' | 'procedure' | 'window';
@@ -429,6 +431,7 @@ export const buildDatabaseTrustBoundaryReport = (
       role,
       securityDefinerPolicyBindings = [],
       securityDefinerRoutines,
+      securityDefinerEventTriggerBindings = [],
       securityDefinerStoredExpressionBindings = [],
       securityDefinerTriggerBindings = [],
     }) =>
@@ -448,6 +451,7 @@ export const buildDatabaseTrustBoundaryReport = (
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerPolicyBindings.length > 0 ||
       securityDefinerRoutines.length > 0 ||
+      securityDefinerEventTriggerBindings.length > 0 ||
       securityDefinerStoredExpressionBindings.length > 0 ||
       securityDefinerTriggerBindings.length > 0,
   );
@@ -530,6 +534,7 @@ export const buildDatabaseTrustBoundaryReport = (
   const executableSecurityDefiners = routines.filter(
     ({
       executable,
+      eventTriggerBindings,
       owner,
       policyBindings,
       securityDefiner,
@@ -537,6 +542,7 @@ export const buildDatabaseTrustBoundaryReport = (
       triggerBindings,
     }) =>
       (executable ||
+        eventTriggerBindings.length > 0 ||
         policyBindings.length > 0 ||
         storedExpressionBindings.length > 0 ||
         triggerBindings.length > 0) &&
@@ -547,7 +553,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_execute_security_definer',
       evidence:
-        'The runtime role can directly execute, or invoke through an applicable RLS policy, stored relation expression, or table DML and an enabled trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
+        'The runtime role can directly execute, or invoke through an applicable RLS policy, stored relation expression, table DML trigger, or database event trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
       severity: 'high',
     });
   }
@@ -706,6 +712,7 @@ interface MembershipRow {
   readonly role: string;
   readonly security_definer_policy_bindings: string[];
   readonly security_definer_routines: string[];
+  readonly security_definer_event_trigger_bindings: string[];
   readonly security_definer_stored_expression_bindings: string[];
   readonly security_definer_trigger_bindings: string[];
   readonly superuser: boolean;
@@ -750,6 +757,7 @@ interface SchemaPrivilegeRow {
 }
 
 interface RoutinePrivilegeRow {
+  readonly event_trigger_bindings: string[];
   readonly executable: boolean;
   readonly identity_arguments: string;
   readonly kind: 'aggregate' | 'function' | 'procedure' | 'window';
@@ -1079,7 +1087,8 @@ export const referentialWritePathsCte = `referential_write_paths(
   invocation_columns,
   affected_oid,
   affected_action,
-  affected_columns
+  affected_columns,
+  affected_uses_default
 ) as (
   select
     invocation.invocation_oid,
@@ -1091,7 +1100,8 @@ export const referentialWritePathsCte = `referential_write_paths(
     end,
     foreign_key.conrelid,
     action.affected_action,
-    action.affected_columns
+    action.affected_columns,
+    action.affected_uses_default
   from pg_catalog.pg_constraint as foreign_key
   join relation_invocation_paths as invocation
     on invocation.dependency_oid = foreign_key.confrelid
@@ -1108,13 +1118,15 @@ export const referentialWritePathsCte = `referential_write_paths(
           foreign_key.conkey,
           array[]::smallint[]
         )
-      end as affected_columns
+      end as affected_columns,
+      foreign_key.confdeltype = 'd' as affected_uses_default
     union all
     select
       'UPDATE'::text,
       foreign_key.confupdtype,
       'UPDATE'::text,
-      coalesce(foreign_key.conkey, array[]::smallint[])
+      coalesce(foreign_key.conkey, array[]::smallint[]),
+      foreign_key.confupdtype = 'd'
   ) as action
   where foreign_key.contype = 'f'
     and action.action_type in ('c', 'n', 'd')
@@ -1126,7 +1138,8 @@ export const referentialWritePathsCte = `referential_write_paths(
     path.invocation_columns,
     foreign_key.conrelid,
     action.affected_action,
-    action.affected_columns
+    action.affected_columns,
+    action.affected_uses_default
   from referential_write_paths as path
   join pg_catalog.pg_constraint as foreign_key on foreign_key.confrelid = path.affected_oid
   cross join lateral (
@@ -1141,13 +1154,15 @@ export const referentialWritePathsCte = `referential_write_paths(
           foreign_key.conkey,
           array[]::smallint[]
         )
-      end as affected_columns
+      end as affected_columns,
+      foreign_key.confdeltype = 'd' as affected_uses_default
     where path.affected_action = 'DELETE'
     union all
     select
       foreign_key.confupdtype,
       'UPDATE'::text,
-      coalesce(foreign_key.conkey, array[]::smallint[])
+      coalesce(foreign_key.conkey, array[]::smallint[]),
+      foreign_key.confupdtype = 'd'
     where path.affected_action = 'UPDATE'
   ) as action
   where foreign_key.contype = 'f'
@@ -1160,6 +1175,168 @@ export const referentialWritePathsCte = `referential_write_paths(
         where changed.attnum = any(coalesce(foreign_key.confkey, array[]::smallint[]))
       )
     )
+)`;
+
+export const roleDdlCommandTagsCte = `role_ddl_command_tags(role_oid, event, tag) as (
+  select role.oid, event.name, 'ALTER DEFAULT PRIVILEGES'::text
+  from pg_catalog.pg_roles as role
+  cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
+  union
+  select role.oid, event.name, 'CREATE SCHEMA'::text
+  from pg_catalog.pg_roles as role
+  cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
+  where has_database_privilege(role.oid, current_database(), 'CREATE')
+  union
+  select role.oid, event.name, command.tag
+  from pg_catalog.pg_roles as role
+  cross join (values ('ddl_command_start'::text), ('ddl_command_end'::text)) as event(name)
+  cross join (
+    values
+      ('CREATE AGGREGATE'::text),
+      ('CREATE DOMAIN'::text),
+      ('CREATE FUNCTION'::text),
+      ('CREATE MATERIALIZED VIEW'::text),
+      ('CREATE PROCEDURE'::text),
+      ('CREATE SEQUENCE'::text),
+      ('CREATE TABLE'::text),
+      ('CREATE TYPE'::text),
+      ('CREATE VIEW'::text)
+  ) as command(tag)
+  where exists (
+    select 1
+    from pg_catalog.pg_namespace as namespace
+    where namespace.nspname !~ '^pg_'
+      and namespace.nspname <> 'information_schema'
+      and has_schema_privilege(role.oid, namespace.oid, 'CREATE')
+  )
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_class as relation
+    on pg_has_role(role.oid, relation.relowner, 'USAGE')
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  cross join lateral (
+    values
+      ('r'::"char", 'ddl_command_start'::text, 'ALTER TABLE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'ALTER TABLE'::text),
+      ('r'::"char", 'table_rewrite'::text, 'ALTER TABLE'::text),
+      ('r'::"char", 'ddl_command_start'::text, 'DROP TABLE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'DROP TABLE'::text),
+      ('r'::"char", 'sql_drop'::text, 'DROP TABLE'::text),
+      ('p'::"char", 'ddl_command_start'::text, 'ALTER TABLE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'ALTER TABLE'::text),
+      ('p'::"char", 'table_rewrite'::text, 'ALTER TABLE'::text),
+      ('p'::"char", 'ddl_command_start'::text, 'DROP TABLE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'DROP TABLE'::text),
+      ('p'::"char", 'sql_drop'::text, 'DROP TABLE'::text),
+      ('f'::"char", 'ddl_command_start'::text, 'ALTER FOREIGN TABLE'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'ALTER FOREIGN TABLE'::text),
+      ('f'::"char", 'ddl_command_start'::text, 'DROP FOREIGN TABLE'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'DROP FOREIGN TABLE'::text),
+      ('f'::"char", 'sql_drop'::text, 'DROP FOREIGN TABLE'::text),
+      ('v'::"char", 'ddl_command_start'::text, 'ALTER VIEW'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'ALTER VIEW'::text),
+      ('v'::"char", 'ddl_command_start'::text, 'DROP VIEW'::text),
+      ('v'::"char", 'ddl_command_end'::text, 'DROP VIEW'::text),
+      ('v'::"char", 'sql_drop'::text, 'DROP VIEW'::text),
+      ('m'::"char", 'ddl_command_start'::text, 'ALTER MATERIALIZED VIEW'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'ALTER MATERIALIZED VIEW'::text),
+      ('m'::"char", 'table_rewrite'::text, 'ALTER MATERIALIZED VIEW'::text),
+      ('m'::"char", 'ddl_command_start'::text, 'DROP MATERIALIZED VIEW'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'DROP MATERIALIZED VIEW'::text),
+      ('m'::"char", 'sql_drop'::text, 'DROP MATERIALIZED VIEW'::text),
+      ('S'::"char", 'ddl_command_start'::text, 'ALTER SEQUENCE'::text),
+      ('S'::"char", 'ddl_command_end'::text, 'ALTER SEQUENCE'::text),
+      ('S'::"char", 'ddl_command_start'::text, 'DROP SEQUENCE'::text),
+      ('S'::"char", 'ddl_command_end'::text, 'DROP SEQUENCE'::text),
+      ('S'::"char", 'sql_drop'::text, 'DROP SEQUENCE'::text)
+  ) as command(relkind, event, tag)
+  where relation.relkind = command.relkind
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_proc as routine
+    on pg_has_role(role.oid, routine.proowner, 'USAGE')
+  join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
+  cross join lateral (
+    values
+      ('a'::"char", 'ddl_command_start'::text, 'ALTER AGGREGATE'::text),
+      ('a'::"char", 'ddl_command_end'::text, 'ALTER AGGREGATE'::text),
+      ('a'::"char", 'ddl_command_start'::text, 'DROP AGGREGATE'::text),
+      ('a'::"char", 'ddl_command_end'::text, 'DROP AGGREGATE'::text),
+      ('a'::"char", 'sql_drop'::text, 'DROP AGGREGATE'::text),
+      ('f'::"char", 'ddl_command_start'::text, 'ALTER FUNCTION'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'ALTER FUNCTION'::text),
+      ('f'::"char", 'ddl_command_start'::text, 'DROP FUNCTION'::text),
+      ('f'::"char", 'ddl_command_end'::text, 'DROP FUNCTION'::text),
+      ('f'::"char", 'sql_drop'::text, 'DROP FUNCTION'::text),
+      ('p'::"char", 'ddl_command_start'::text, 'ALTER PROCEDURE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'ALTER PROCEDURE'::text),
+      ('p'::"char", 'ddl_command_start'::text, 'DROP PROCEDURE'::text),
+      ('p'::"char", 'ddl_command_end'::text, 'DROP PROCEDURE'::text),
+      ('p'::"char", 'sql_drop'::text, 'DROP PROCEDURE'::text),
+      ('w'::"char", 'ddl_command_start'::text, 'ALTER FUNCTION'::text),
+      ('w'::"char", 'ddl_command_end'::text, 'ALTER FUNCTION'::text),
+      ('w'::"char", 'ddl_command_start'::text, 'DROP FUNCTION'::text),
+      ('w'::"char", 'ddl_command_end'::text, 'DROP FUNCTION'::text),
+      ('w'::"char", 'sql_drop'::text, 'DROP FUNCTION'::text)
+  ) as command(prokind, event, tag)
+  where routine.prokind = command.prokind
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_type as type on pg_has_role(role.oid, type.typowner, 'USAGE')
+  join pg_catalog.pg_namespace as namespace on namespace.oid = type.typnamespace
+  cross join lateral (
+    values
+      ('d'::"char", 'ddl_command_start'::text, 'ALTER DOMAIN'::text),
+      ('d'::"char", 'ddl_command_end'::text, 'ALTER DOMAIN'::text),
+      ('d'::"char", 'table_rewrite'::text, 'ALTER DOMAIN'::text),
+      ('d'::"char", 'ddl_command_start'::text, 'DROP DOMAIN'::text),
+      ('d'::"char", 'ddl_command_end'::text, 'DROP DOMAIN'::text),
+      ('d'::"char", 'sql_drop'::text, 'DROP DOMAIN'::text),
+      ('e'::"char", 'ddl_command_start'::text, 'ALTER TYPE'::text),
+      ('e'::"char", 'ddl_command_end'::text, 'ALTER TYPE'::text),
+      ('e'::"char", 'table_rewrite'::text, 'ALTER TYPE'::text),
+      ('e'::"char", 'ddl_command_start'::text, 'DROP TYPE'::text),
+      ('e'::"char", 'ddl_command_end'::text, 'DROP TYPE'::text),
+      ('e'::"char", 'sql_drop'::text, 'DROP TYPE'::text),
+      ('r'::"char", 'ddl_command_start'::text, 'ALTER TYPE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'ALTER TYPE'::text),
+      ('r'::"char", 'table_rewrite'::text, 'ALTER TYPE'::text),
+      ('r'::"char", 'ddl_command_start'::text, 'DROP TYPE'::text),
+      ('r'::"char", 'ddl_command_end'::text, 'DROP TYPE'::text),
+      ('r'::"char", 'sql_drop'::text, 'DROP TYPE'::text),
+      ('m'::"char", 'ddl_command_start'::text, 'ALTER TYPE'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'ALTER TYPE'::text),
+      ('m'::"char", 'table_rewrite'::text, 'ALTER TYPE'::text),
+      ('m'::"char", 'ddl_command_start'::text, 'DROP TYPE'::text),
+      ('m'::"char", 'ddl_command_end'::text, 'DROP TYPE'::text),
+      ('m'::"char", 'sql_drop'::text, 'DROP TYPE'::text)
+  ) as command(typtype, event, tag)
+  where type.typtype = command.typtype
+    and type.typrelid = 0
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union
+  select role.oid, command.event, command.tag
+  from pg_catalog.pg_roles as role
+  join pg_catalog.pg_namespace as namespace
+    on pg_has_role(role.oid, namespace.nspowner, 'USAGE')
+  cross join lateral (
+    values
+      ('ddl_command_start'::text, 'ALTER SCHEMA'::text),
+      ('ddl_command_end'::text, 'ALTER SCHEMA'::text),
+      ('ddl_command_start'::text, 'DROP SCHEMA'::text),
+      ('ddl_command_end'::text, 'DROP SCHEMA'::text),
+      ('sql_drop'::text, 'DROP SCHEMA'::text)
+  ) as command(event, tag)
+  where namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
 )`;
 
 const collectSnapshot = async (
@@ -1231,6 +1408,7 @@ const collectSnapshot = async (
     `with recursive ${reachableRolesCte},
      ${storedExpressionDependenciesCte},
      ${referentialWritePathsCte},
+     ${roleDdlCommandTagsCte},
      administrable_roles(role_oid) as (
        select distinct membership.roleid
        from pg_catalog.pg_auth_members as membership
@@ -1467,10 +1645,10 @@ const collectSnapshot = async (
            and routine.prosecdef
            and routine.proowner <> candidate.oid
            and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
-           and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
            and (
              (
                stored_expression.selectable
+               and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                and (
                  has_table_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
                  or has_any_column_privilege(candidate.oid, invocation_relation.oid, 'SELECT')
@@ -1478,6 +1656,7 @@ const collectSnapshot = async (
              )
              or (
                not stored_expression.selectable
+               and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                and (
                  has_table_privilege(candidate.oid, invocation_relation.oid, 'INSERT')
                  or exists (
@@ -1529,6 +1708,76 @@ const collectSnapshot = async (
                    )
                  )
                )
+             )
+             or exists (
+               select 1
+               from referential_write_paths as cascade
+               join pg_catalog.pg_class as root_invocation_relation
+                 on root_invocation_relation.oid = cascade.invocation_oid
+               join pg_catalog.pg_namespace as root_invocation_namespace
+                 on root_invocation_namespace.oid = root_invocation_relation.relnamespace
+               where not stored_expression.selectable
+                 and cascade.affected_action = 'UPDATE'
+                 and cascade.affected_oid = stored_expression.invocation_oid
+                 and has_schema_privilege(
+                   candidate.oid,
+                   root_invocation_namespace.oid,
+                   'USAGE'
+                 )
+                 and (
+                   (
+                     cascade.invocation_action = 'DELETE'
+                     and has_table_privilege(
+                       candidate.oid,
+                       root_invocation_relation.oid,
+                       'DELETE'
+                     )
+                   )
+                   or (
+                     cascade.invocation_action = 'UPDATE'
+                     and (
+                       has_table_privilege(
+                         candidate.oid,
+                         root_invocation_relation.oid,
+                         'UPDATE'
+                       )
+                       or exists (
+                         select 1
+                         from unnest(cascade.invocation_columns) as changed(attnum)
+                         join pg_catalog.pg_attribute as referenced_column
+                           on referenced_column.attrelid = cascade.invocation_relation_oid
+                          and referenced_column.attnum = changed.attnum
+                         join pg_catalog.pg_attribute as root_invocation_column
+                           on root_invocation_column.attrelid = root_invocation_relation.oid
+                          and root_invocation_column.attname = referenced_column.attname
+                         where has_column_privilege(
+                           candidate.oid,
+                           root_invocation_relation.oid,
+                           root_invocation_column.attnum,
+                           'UPDATE'
+                         )
+                       )
+                     )
+                   )
+                 )
+                 and (
+                   cardinality(stored_expression.update_columns) = 0
+                   or exists (
+                     select 1
+                     from unnest(cascade.affected_columns) as changed(attnum)
+                     join pg_catalog.pg_attribute as affected_column
+                       on affected_column.attrelid = cascade.affected_oid
+                      and affected_column.attnum = changed.attnum
+                     join pg_catalog.pg_attribute as expression_column
+                       on expression_column.attrelid = relation.oid
+                      and expression_column.attname = affected_column.attname
+                     where expression_column.attnum = any(stored_expression.update_columns)
+                       and (
+                         stored_expression.binding !~ '^column-default:'
+                         or cascade.affected_uses_default
+                       )
+                   )
+                 )
              )
            )
          order by 1
@@ -1600,6 +1849,10 @@ const collectSnapshot = async (
                on invocation_namespace.oid = invocation_relation.relnamespace
              where has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                and (
+                 invocation_relation.oid = relation.oid
+                 or audited_trigger.tgtype & 1 <> 0
+               )
+               and (
                  (
                    audited_trigger.tgtype & 4 <> 0
                    and (
@@ -1664,6 +1917,10 @@ const collectSnapshot = async (
                    select ancestor.oid
                    from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
                  )
+                 and (
+                   cascade.affected_oid = relation.oid
+                   or audited_trigger.tgtype & 1 <> 0
+                 )
                  and has_schema_privilege(candidate.oid, invocation_namespace.oid, 'USAGE')
                  and (
                    (
@@ -1722,7 +1979,51 @@ const collectSnapshot = async (
              )
            )
          order by 1
-       ) as security_definer_trigger_bindings
+       ) as security_definer_trigger_bindings,
+       array(
+         select distinct format(
+           'event-trigger:%I:%s%s->%I.%I(%s)',
+           event_trigger.evtname,
+           event_trigger.evtevent,
+           case
+             when event_trigger.evttags is null then ''
+             else format('[%s]', array_to_string(event_trigger.evttags, ','))
+           end,
+           routine_namespace.nspname,
+           routine.proname,
+           pg_get_function_identity_arguments(routine.oid)
+         )
+         from pg_catalog.pg_event_trigger as event_trigger
+         join pg_catalog.pg_proc as routine on routine.oid = event_trigger.evtfoid
+         join pg_catalog.pg_namespace as routine_namespace
+           on routine_namespace.oid = routine.pronamespace
+         where (
+             event_trigger.evtenabled in ('O', 'A')
+             or (
+               event_trigger.evtenabled = 'R'
+               and has_parameter_privilege(
+                 candidate.oid,
+                 'session_replication_role',
+                 'SET'
+               )
+             )
+           )
+           and routine_namespace.nspname !~ '^pg_'
+           and routine_namespace.nspname <> 'information_schema'
+           and routine.prosecdef
+           and routine.proowner <> candidate.oid
+           and exists (
+             select 1
+             from role_ddl_command_tags as authority
+             where authority.role_oid = candidate.oid
+               and authority.event = event_trigger.evtevent
+               and (
+                 event_trigger.evttags is null
+                 or authority.tag = any(event_trigger.evttags)
+               )
+           )
+         order by 1
+       ) as security_definer_event_trigger_bindings
      from pg_catalog.pg_roles as candidate
      where candidate.rolname <> $1
        and (
@@ -1785,7 +2086,8 @@ const collectSnapshot = async (
   const schemaNames = schemas.rows.map(({ schema }) => schema);
   const routines = await admin.query<RoutinePrivilegeRow>(
     `with recursive ${storedExpressionDependenciesCte},
-     ${referentialWritePathsCte}
+     ${referentialWritePathsCte},
+     ${roleDdlCommandTagsCte}
      select
        namespace.nspname as schema,
        routine.proname as routine,
@@ -1886,10 +2188,10 @@ const collectSnapshot = async (
            and routine.prosecdef
            and routine.proowner <> runtime_role.oid
            and has_function_privilege($1, routine.oid, 'EXECUTE')
-           and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
            and (
              (
                stored_expression.selectable
+               and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                and (
                  has_table_privilege($1, invocation_relation.oid, 'SELECT')
                  or has_any_column_privilege($1, invocation_relation.oid, 'SELECT')
@@ -1897,6 +2199,7 @@ const collectSnapshot = async (
              )
              or (
                not stored_expression.selectable
+               and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                and (
                  has_table_privilege($1, invocation_relation.oid, 'INSERT')
                  or exists (
@@ -1949,6 +2252,64 @@ const collectSnapshot = async (
                  )
                )
              )
+             or exists (
+               select 1
+               from referential_write_paths as cascade
+               join pg_catalog.pg_class as root_invocation_relation
+                 on root_invocation_relation.oid = cascade.invocation_oid
+               join pg_catalog.pg_namespace as root_invocation_namespace
+                 on root_invocation_namespace.oid = root_invocation_relation.relnamespace
+               where not stored_expression.selectable
+                 and cascade.affected_action = 'UPDATE'
+                 and cascade.affected_oid = stored_expression.invocation_oid
+                 and has_schema_privilege($1, root_invocation_namespace.oid, 'USAGE')
+                 and (
+                   (
+                     cascade.invocation_action = 'DELETE'
+                     and has_table_privilege($1, root_invocation_relation.oid, 'DELETE')
+                   )
+                   or (
+                     cascade.invocation_action = 'UPDATE'
+                     and (
+                       has_table_privilege($1, root_invocation_relation.oid, 'UPDATE')
+                       or exists (
+                         select 1
+                         from unnest(cascade.invocation_columns) as changed(attnum)
+                         join pg_catalog.pg_attribute as referenced_column
+                           on referenced_column.attrelid = cascade.invocation_relation_oid
+                          and referenced_column.attnum = changed.attnum
+                         join pg_catalog.pg_attribute as root_invocation_column
+                           on root_invocation_column.attrelid = root_invocation_relation.oid
+                          and root_invocation_column.attname = referenced_column.attname
+                         where has_column_privilege(
+                           $1,
+                           root_invocation_relation.oid,
+                           root_invocation_column.attnum,
+                           'UPDATE'
+                         )
+                       )
+                     )
+                   )
+                 )
+                 and (
+                   cardinality(stored_expression.update_columns) = 0
+                   or exists (
+                     select 1
+                     from unnest(cascade.affected_columns) as changed(attnum)
+                     join pg_catalog.pg_attribute as affected_column
+                       on affected_column.attrelid = cascade.affected_oid
+                      and affected_column.attnum = changed.attnum
+                     join pg_catalog.pg_attribute as expression_column
+                       on expression_column.attrelid = relation.oid
+                      and expression_column.attname = affected_column.attname
+                     where expression_column.attnum = any(stored_expression.update_columns)
+                       and (
+                         stored_expression.binding !~ '^column-default:'
+                         or cascade.affected_uses_default
+                       )
+                   )
+                 )
+             )
            )
          order by 1
        ) as stored_expression_bindings,
@@ -1987,6 +2348,10 @@ const collectSnapshot = async (
              join pg_catalog.pg_namespace as invocation_namespace
                on invocation_namespace.oid = invocation_relation.relnamespace
              where has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
+               and (
+                 invocation_relation.oid = relation.oid
+                 or audited_trigger.tgtype & 1 <> 0
+               )
                and (
                  (
                    audited_trigger.tgtype & 4 <> 0
@@ -2043,6 +2408,10 @@ const collectSnapshot = async (
                    union
                    select ancestor.oid
                    from pg_catalog.pg_partition_ancestors(relation.oid) as ancestor(oid)
+                 )
+                 and (
+                   cascade.affected_oid = relation.oid
+                   or audited_trigger.tgtype & 1 <> 0
                  )
                  and has_schema_privilege($1, invocation_namespace.oid, 'USAGE')
                  and (
@@ -2102,7 +2471,41 @@ const collectSnapshot = async (
              )
            )
          order by 1
-       ) as trigger_bindings
+       ) as trigger_bindings,
+       array(
+         select distinct format(
+           'event-trigger:%I:%s%s',
+           event_trigger.evtname,
+           event_trigger.evtevent,
+           case
+             when event_trigger.evttags is null then ''
+             else format('[%s]', array_to_string(event_trigger.evttags, ','))
+           end
+         )
+         from pg_catalog.pg_event_trigger as event_trigger
+         where event_trigger.evtfoid = routine.oid
+           and (
+             event_trigger.evtenabled in ('O', 'A')
+             or (
+               event_trigger.evtenabled = 'R'
+               and has_parameter_privilege($1, 'session_replication_role', 'SET')
+             )
+           )
+           and (
+             event_trigger.evtevent = 'login'
+             or exists (
+               select 1
+               from role_ddl_command_tags as authority
+               where authority.role_oid = runtime_role.oid
+                 and authority.event = event_trigger.evtevent
+                 and (
+                   event_trigger.evttags is null
+                   or authority.tag = any(event_trigger.evttags)
+                 )
+             )
+           )
+         order by 1
+       ) as event_trigger_bindings
      from pg_catalog.pg_proc as routine
      join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
      join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
@@ -2687,6 +3090,7 @@ const collectSnapshot = async (
       predefinedRole: membership.predefined_role,
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
+      securityDefinerEventTriggerBindings: membership.security_definer_event_trigger_bindings,
       securityDefinerPolicyBindings: membership.security_definer_policy_bindings,
       securityDefinerRoutines: membership.security_definer_routines,
       securityDefinerStoredExpressionBindings:
@@ -2709,6 +3113,7 @@ const collectSnapshot = async (
       superuser: roleRow.superuser,
     },
     routines: routines.rows.map((routine) => ({
+      eventTriggerBindings: routine.event_trigger_bindings,
       executable: routine.executable,
       identityArguments: routine.identity_arguments,
       kind: routine.kind,

@@ -621,6 +621,7 @@ test('flags ownership of an audited routine as DDL authority', () => {
     ...snapshot,
     routines: [
       {
+        eventTriggerBindings: [],
         executable: true,
         identityArguments: '',
         kind: 'procedure',
@@ -841,6 +842,7 @@ test('flags direct relation control and executable security-definer authority', 
     routines: [
       {
         executable: true,
+        eventTriggerBindings: [],
         identityArguments: 'uuid',
         kind: 'function',
         owner: 'ontos_admin',
@@ -878,6 +880,7 @@ test('flags security-definer routines invocable only through table triggers', ()
     routines: [
       {
         executable: false,
+        eventTriggerBindings: [],
         identityArguments: '',
         kind: 'function',
         owner: 'ontos_admin',
@@ -910,6 +913,7 @@ test('flags security-definer routines invoked through applicable RLS policies', 
     routines: [
       {
         executable: false,
+        eventTriggerBindings: [],
         identityArguments: 'uuid',
         kind: 'function',
         owner: 'ontos_admin',
@@ -942,6 +946,7 @@ test('flags security-definer routines invoked through stored expressions', () =>
     routines: [
       {
         executable: false,
+        eventTriggerBindings: [],
         identityArguments: '',
         kind: 'function',
         owner: 'ontos_admin',
@@ -955,6 +960,39 @@ test('flags security-definer routines invoked through stored expressions', () =>
           'contacts.customers:expression-index:customers_normalized_name_idx',
           'contacts.customer_overview:view-expression',
         ],
+        triggerBindings: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('flags security-definer routines invoked through applicable event triggers', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        eventTriggerBindings: ['event-trigger:audit_ddl:ddl_command_end[ALTER DEFAULT PRIVILEGES]'],
+        executable: false,
+        identityArguments: '',
+        kind: 'function',
+        owner: 'ontos_admin',
+        policyBindings: [],
+        routine: 'audit_ddl',
+        schema: 'private',
+        securityDefiner: true,
+        storedExpressionBindings: [],
         triggerBindings: [],
       },
     ],
@@ -1068,6 +1106,43 @@ test('classifies reachable roles that can fire security-definer triggers as priv
         securityDefinerTriggerBindings: [
           'contacts.customers:capture_customer_change->contacts.capture_customer_change()',
         ],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
+test('classifies reachable roles that can fire security-definer event triggers as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'ddl_operator',
+        securityDefinerEventTriggerBindings: [
+          'event-trigger:audit_ddl:ddl_command_end[ALTER DEFAULT PRIVILEGES]->private.audit_ddl()',
+        ],
+        securityDefinerRoutines: [],
       },
     ],
     tables: snapshot.tables.slice(0, 1),
@@ -1230,6 +1305,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
   assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
   assert.equal(source.match(/\$\{referentialWritePathsCte\}/gu)?.length, 2);
+  assert.equal(source.match(/\$\{roleDdlCommandTagsCte\}/gu)?.length, 2);
   assert.match(source, /from pg_catalog\.pg_attrdef as expression/u);
   assert.match(source, /from pg_catalog\.pg_constraint as expression/u);
   assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
@@ -1250,11 +1326,20 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /foreign_key\.confdelsetcols/u);
   assert.match(source, /changed\.attnum = any\(coalesce\(foreign_key\.confkey/u);
   assert.match(source, /cascade\.affected_action/u);
+  assert.match(source, /cascade\.affected_uses_default/u);
+  assert.equal(
+    source.match(/cascade\.affected_oid = stored_expression\.invocation_oid/gu)?.length,
+    2,
+  );
+  assert.equal(source.match(/stored_expression\.binding !~ '\^column-default:'/gu)?.length, 2);
+  assert.equal(source.match(/from pg_catalog\.pg_event_trigger as event_trigger/gu)?.length, 2);
+  assert.equal(source.match(/event_trigger\.evttags is null/gu)?.length, 4);
+  assert.equal(source.match(/audited_trigger\.tgtype & 1 <> 0/gu)?.length, 4);
   assert.match(
     source,
     /format\('check-constraint:%I', expression\.conname\),\s+false,\s+array\[\]::smallint\[\]/u,
   );
-  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 4);
+  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 6);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
     4,
