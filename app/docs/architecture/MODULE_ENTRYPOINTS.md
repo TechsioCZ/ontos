@@ -93,10 +93,17 @@ atomic claim query. Producer state never authorizes a consumer. Ineligible or mi
 delivery pending with no claim or attempt. Private Worker handler resolution follows a successful
 eligible claim.
 
+The active immutable Application Composition revision is the runtime authority for which module and
+Shell contributions may be resolved. One browser document remains pinned to one revision. Tenant
+state may disable or revoke a module immediately, but it never selects another artifact and the
+runtime never hot-swaps an already loaded container.
+
 Page/public-component composition uses the approved Shell lazy adapter: collect the full descriptor
 set, prepare one snapshot, evaluate every load, then call loader thunks. Raw `loadRemote(...)`
-strings, eager remote imports, and one state request per component are forbidden. Module APIs need
-verified trusted tenant context and the server gateway; write APIs delegate to registered Actions.
+strings, eager remote imports, remote SSR inside Shell/Core, and one state request per component are
+forbidden. The current generated lazy registry is a compatibility bridge until the composition
+loader is integrated. Module APIs need verified trusted tenant context and the server gateway;
+write APIs delegate to registered Actions.
 
 The Shell first establishes exactly one trusted tenant and active legal entity. Composition then
 uses one tenant-state batch and one module-permission batch. Every direct target independently

@@ -329,6 +329,25 @@ export {
   validateTenantModuleStateTransition,
 } from './modules/tenant-module-state-service.ts';
 export {
+  ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
+  ApplicationCompositionArtifactReferenceSchema,
+  ApplicationCompositionModuleSchema,
+  ApplicationCompositionSchema,
+  ApplicationCompositionSingletonSchema,
+  ApplicationCompositionValidationError,
+  ApplicationCompositionVersionedIdentitySchema,
+  canonicalizeApplicationComposition,
+  validateApplicationCompositionCandidate,
+} from './modules/application-composition.ts';
+export type {
+  ApplicationComposition,
+  ApplicationCompositionCandidateEvidence,
+  ApplicationCompositionModule,
+  ApplicationCompositionVersionedIdentity,
+  ObservedApplicationCompositionContract,
+  ObservedModuleFederationManifest,
+} from './modules/application-composition.ts';
+export {
   MODULE_ENTRYPOINT_ACCESSES,
   MODULE_ENTRYPOINT_ROLES,
   MODULE_ENTRYPOINT_SCOPES,

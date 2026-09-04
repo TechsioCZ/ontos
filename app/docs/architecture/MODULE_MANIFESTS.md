@@ -25,32 +25,37 @@ catalog validation, Customer Configuration, and tests are extended together, tre
 implementation as implicit `standard`; do not hand-add an unvalidated field or simulate selection
 with customer branches, environment flags, duplicate `moduleId` values, or allowlist aliases.
 
-## Four layers
+## Five layers
 
-1. Generated topology and an environment overlay enumerate known deployments and authorize one
-   module-contract URL per topology vertical. A reachable service cannot add or install itself.
+1. Generated topology and an environment overlay enumerate deployable services and their delivery
+   metadata. Topology is delivery inventory, not runtime composition authority.
 2. The owner-authored `vertical.manifest.ts` contains an Effect Schema-validated value referencing
    real typed Actions, Effect API values, Module Federation component values, payload Schemas, and
    plain public descriptors.
 3. The owning build emits a deterministic versioned JSON deployment contract, including only safe
-   semantic Shell contribution bindings. Shell fetches only allowlisted contracts and builds an immutable current catalog indexed by
-   `appId` and `moduleId` without collapsing their roles. Explicit `implementationId` indexing belongs
-   to the accepted target contract described below.
-4. `vertical.registration.ts` binds private executable Actions, pages, components, APIs, search,
+   semantic Shell contribution bindings.
+4. A governed Application Composition revision pins the approved deployment contract and Module
+   Federation manifest for each installed module. Candidate validation rejects cross-module
+   contradictions before explicit promotion; a reachable service cannot install or promote itself.
+5. `vertical.registration.ts` binds private executable Actions, pages, components, APIs, search,
    reports, and workers for the owning process. Only safe descriptors may be projected into the
    deployment contract.
 
-Tenant activation is separate from installation. Deployment and allowlist configuration install a
-known capability; tenant module state decides whether that installed module is active for a tenant.
+Tenant activation is separate from installation. Application Composition installs an approved
+capability; tenant module state decides whether that installed module is active for a tenant and
+never selects an artifact version.
 
 ## Network and artifact contract
 
 Every MicroVertical deployment serves the immutable document at
 `/.well-known/ontos-module-manifest.json`. The document uses schema version `2`, media type
 `application/json`, `Cache-Control: no-cache`, a strong build-marker ETag, and is limited to 1 MiB.
-Shell loads it with a five-second deadline, redirect following disabled, and exact topology `appId`
-matching. Contract URLs must use HTTPS except loopback HTTP during development. Credentials,
-fragments, unsafe schemes, and duplicate normalized URLs are forbidden.
+The publisher observes it with a bounded fetch and exact deployment `appId` matching, then supplies
+that evidence to pure candidate validation before promotion. Contract URLs must use HTTPS except
+loopback HTTP during development. Credentials, fragments, unsafe schemes, and duplicate normalized
+URLs are forbidden. The current Shell loader still uses the generated topology allowlist as a
+compatibility bridge until Application Composition publication and runtime loading are wired in
+follow-up work.
 
 The document may describe identity, activation, public Actions/API/components,
 resources, public events, search, reports, and schema-free Outbox subscriptions. It must never
@@ -89,15 +94,16 @@ retried, and only a fully healthy result is cached for its immutable allowlist/c
 No persistent last-known-good contract is selected automatically. A subscription may name a
 producer that is not installed; it remains dormant until matching messages can exist.
 
-Core capabilities are implicit universal infrastructure, not per-module requirements. External
-system readiness and module-owned setup remain private implementation concerns and are not generic
-activation gates.
+Required Core capabilities and the Shell contribution ABI are explicit versioned compatibility
+claims in Application Composition. External system readiness and module-owned setup remain private
+implementation concerns and are not generic activation gates.
 
-## Accepted target architecture
+## Application Composition contract
 
-The following contract is accepted but is not represented by the current manifest/catalog schema.
-Implement it only by extending Codesmith, Effect Schemas, serialized contracts, topology validation,
-Customer Configuration resolution, and tests together.
+The provider-neutral Effect Schema and pure candidate validator are defined by
+[ADR-0020](../../../docs/adr/0020-governed-application-composition.md). Publication, promotion, and
+live Shell loading are separate follow-up slices; this contract alone does not change runtime
+loading.
 
 A continuously delivered Application Composition owns a dependency-closed DAG of Foundational and
 Business Module Contract Identities and their permitted implementations. Core validates that graph
@@ -106,11 +112,10 @@ dependency closure: a module activates only when one selected implementation and
 dependency are installed, compatible, healthy, and active. Customer Configurations select only
 modules and explicit implementations permitted by the composition.
 
-The target deployment record adds immutable build revision/digest, public-contract hash/version,
-migration-set identity, owner, health, and readiness to the current `buildMarker`. These fields
-support skew rejection, canary, audit, and rollback without customer-pinned whole-product versions.
-The target catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation
-identities.
+Each composition entry carries exact deployment identity, immutable artifact URLs plus digests,
+public-contract identity, allowed Shell contributions, required Core capabilities, Shell ABI, and
+shared-singleton requirements. The composition rejects missing, duplicate, incompatible, or
+unobserved identities before promotion.
 
 Dependency enforcement never authorizes private imports, shared repositories, shared business
 transactions, or direct table access. Typed API, public event, and Outbox communication preserves
