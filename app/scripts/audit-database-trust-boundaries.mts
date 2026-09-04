@@ -27,12 +27,14 @@ interface DefaultPrivilege {
 
 interface RoleMembership {
   readonly attributes: RoleAttributes;
+  readonly canAdministerRole: boolean;
   readonly canSetRole: boolean;
   readonly createSchemas: readonly string[];
   readonly databaseCreate: boolean;
   readonly ownedRelations: readonly string[];
   readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
+  readonly ownedTypes: readonly string[];
   readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
   readonly securityDefinerRoutines: readonly string[];
@@ -82,6 +84,7 @@ interface TablePrivilege {
   readonly privileges: {
     readonly delete: boolean;
     readonly insert: boolean;
+    readonly maintain: boolean;
     readonly references: boolean;
     readonly select: boolean;
     readonly trigger: boolean;
@@ -92,6 +95,13 @@ interface TablePrivilege {
   readonly rlsForced: boolean;
   readonly schema: string;
   readonly table: string;
+}
+
+interface TypePrivilege {
+  readonly kind: 'domain' | 'enum';
+  readonly owner: string;
+  readonly schema: string;
+  readonly type: string;
 }
 
 interface TrustedContextEvidence {
@@ -110,6 +120,11 @@ export interface DatabaseTargetIdentity {
   readonly serverPort: number | null;
 }
 
+export interface DatabaseSessionIdentity {
+  readonly currentRole: string;
+  readonly sessionRole: string;
+}
+
 export interface DatabaseTrustBoundarySnapshot {
   readonly administrativeRole: string;
   readonly database: string;
@@ -123,6 +138,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly sequences: readonly SequencePrivilege[];
   readonly tables: readonly TablePrivilege[];
   readonly trustedContext: TrustedContextEvidence;
+  readonly types: readonly TypePrivilege[];
 }
 
 interface DatabaseTrustBoundaryFinding {
@@ -155,6 +171,7 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly securityDefinerExecutableCount: number;
     readonly sequenceCount: number;
     readonly tableCount: number;
+    readonly typeCount: number;
   };
 }
 
@@ -164,6 +181,8 @@ export class DatabaseTrustBoundaryAuditError extends Schema.TaggedError<Database
 ) {}
 
 class DatabaseTargetMismatchError extends Error {}
+
+class DatabaseSessionIdentityError extends Error {}
 
 const hasDml = (table: TablePrivilege): boolean =>
   table.privileges.delete ||
@@ -196,6 +215,25 @@ export const assertSameDatabaseTarget = (
   }
 };
 
+export const assertDatabaseSessionIdentities = (
+  administrative: DatabaseSessionIdentity,
+  runtime: DatabaseSessionIdentity,
+): void => {
+  if (
+    administrative.currentRole !== administrative.sessionRole ||
+    runtime.currentRole !== runtime.sessionRole
+  ) {
+    throw new DatabaseSessionIdentityError(
+      'current_user must equal session_user for both database audit connections',
+    );
+  }
+  if (administrative.sessionRole === runtime.sessionRole) {
+    throw new DatabaseSessionIdentityError(
+      'DATABASE_ADMIN_URL and DATABASE_URL must authenticate as distinct authenticated PostgreSQL roles',
+    );
+  }
+};
+
 export const buildDatabaseTrustBoundaryReport = (
   snapshot: DatabaseTrustBoundarySnapshot,
 ): DatabaseTrustBoundaryReport => {
@@ -215,6 +253,9 @@ export const buildDatabaseTrustBoundaryReport = (
       left.schema.localeCompare(right.schema) ||
       left.routine.localeCompare(right.routine) ||
       left.identityArguments.localeCompare(right.identityArguments),
+  );
+  const types = [...snapshot.types].toSorted(
+    (left, right) => left.schema.localeCompare(right.schema) || left.type.localeCompare(right.type),
   );
   const defaultPrivileges = [...snapshot.defaultPrivileges].toSorted(
     (left, right) =>
@@ -237,17 +278,20 @@ export const buildDatabaseTrustBoundaryReport = (
     });
   }
   const administrativeMembership = memberships.some(
-    ({ canSetRole, role }) => canSetRole && role === snapshot.administrativeRole,
+    ({ canAdministerRole, canSetRole, role }) =>
+      (canSetRole || canAdministerRole) && role === snapshot.administrativeRole,
   );
   if (administrativeMembership) {
     findings.push({
       code: 'runtime_role_can_assume_administrative_role',
-      evidence: 'The runtime role can SET ROLE to the configured administrative identity.',
+      evidence:
+        'The runtime role can SET ROLE to, or has ADMIN OPTION on, the authenticated administrative identity.',
       severity: 'critical',
     });
   }
   const nonAdministrativeMemberships = memberships.filter(
-    ({ canSetRole, role }) => canSetRole && role !== snapshot.administrativeRole,
+    ({ canAdministerRole, canSetRole, role }) =>
+      (canSetRole || canAdministerRole) && role !== snapshot.administrativeRole,
   );
   const privilegedMemberships = nonAdministrativeMemberships.filter(
     ({
@@ -257,6 +301,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedRelations,
       ownedRoutines,
       ownedSchemas,
+      ownedTypes,
       relationPrivilegeSchemas,
       securityDefinerRoutines,
     }) =>
@@ -266,6 +311,7 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
+      ownedTypes.length > 0 ||
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerRoutines.length > 0,
   );
@@ -273,7 +319,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can SET ROLE to a non-administrative identity with cluster, database, schema, or relation authority.',
+        'The runtime role can reach a non-administrative identity with cluster, database, schema, relation, routine, or type authority through SET ROLE or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -288,26 +334,30 @@ export const buildDatabaseTrustBoundaryReport = (
     tables.some(({ owner }) => owner === snapshot.runtimeRole) ||
     sequences.some(({ owner }) => owner === snapshot.runtimeRole);
   const ownsRoutine = routines.some(({ owner }) => owner === snapshot.runtimeRole);
+  const ownsType = types.some(({ owner }) => owner === snapshot.runtimeRole);
   if (
     snapshot.databasePrivileges.create ||
     schemas.some(({ create }) => create) ||
     ownsRelation ||
-    ownsRoutine
+    ownsRoutine ||
+    ownsType
   ) {
     findings.push({
       code: 'runtime_role_has_ddl_authority',
-      evidence: 'The runtime role has database/schema CREATE or owns an audited relation/routine.',
+      evidence:
+        'The runtime role has database/schema CREATE or owns an audited relation, routine, enum, or domain.',
       severity: 'high',
     });
   }
   const relationControlTables = tables.filter(
-    ({ privileges }) => privileges.references || privileges.trigger || privileges.truncate,
+    ({ privileges }) =>
+      privileges.maintain || privileges.references || privileges.trigger || privileges.truncate,
   );
   if (relationControlTables.length > 0) {
     findings.push({
       code: 'runtime_role_has_relation_control_authority',
       evidence:
-        'The runtime role has TRUNCATE, REFERENCES, or TRIGGER on an audited table-like relation.',
+        'The runtime role has MAINTAIN, TRUNCATE, REFERENCES, or TRIGGER on an audited table-like relation.',
       severity: 'high',
     });
   }
@@ -378,8 +428,10 @@ export const buildDatabaseTrustBoundaryReport = (
       securityDefinerExecutableCount: executableSecurityDefiners.length,
       sequenceCount: sequences.length,
       tableCount: tables.length,
+      typeCount: types.length,
     },
     tables,
+    types,
   };
 };
 
@@ -395,6 +447,7 @@ interface RoleRow {
 
 interface MembershipRow {
   readonly bypass_rls: boolean;
+  readonly can_administer_role: boolean;
   readonly can_set_role: boolean;
   readonly can_create_databases: boolean;
   readonly can_create_roles: boolean;
@@ -405,6 +458,7 @@ interface MembershipRow {
   readonly owned_relations: string[];
   readonly owned_routines: string[];
   readonly owned_schemas: string[];
+  readonly owned_types: string[];
   readonly relation_privilege_schemas: string[];
   readonly replication: boolean;
   readonly role: string;
@@ -413,7 +467,9 @@ interface MembershipRow {
 }
 
 interface DatabaseTargetRow {
+  readonly current_role: string;
   readonly database: string;
+  readonly session_role: string;
   readonly server_address: string | null;
   readonly server_port: number | null;
 }
@@ -447,6 +503,7 @@ interface TablePrivilegeRow {
   readonly insert: boolean;
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
+  readonly maintain: boolean;
   readonly references: boolean;
   readonly rls_enabled: boolean;
   readonly rls_forced: boolean;
@@ -456,6 +513,13 @@ interface TablePrivilegeRow {
   readonly trigger: boolean;
   readonly truncate: boolean;
   readonly update: boolean;
+}
+
+interface TypePrivilegeRow {
+  readonly kind: 'domain' | 'enum';
+  readonly owner: string;
+  readonly schema: string;
+  readonly type: string;
 }
 
 interface SequencePrivilegeRow {
@@ -511,10 +575,10 @@ const collectSnapshot = async (
   administrativeConfig: DatabaseConfigValue,
   runtimeConfig: DatabaseConfigValue,
 ): Promise<DatabaseTrustBoundarySnapshot> => {
-  const administrativeRole = administrativeConfig.user;
-  const runtimeRole = runtimeConfig.user;
   const targetQuery = `select
+    current_user::text as current_role,
     current_database() as database,
+    session_user::text as session_role,
     inet_server_addr()::text as server_address,
     inet_server_port() as server_port`;
   const [administrativeTarget, runtimeTarget] = await Promise.all([
@@ -542,6 +606,18 @@ const collectSnapshot = async (
       serverPort: runtimeTargetRow.server_port,
     },
   );
+  assertDatabaseSessionIdentities(
+    {
+      currentRole: administrativeTargetRow.current_role,
+      sessionRole: administrativeTargetRow.session_role,
+    },
+    {
+      currentRole: runtimeTargetRow.current_role,
+      sessionRole: runtimeTargetRow.session_role,
+    },
+  );
+  const administrativeRole = administrativeTargetRow.session_role;
+  const runtimeRole = runtimeTargetRow.session_role;
 
   const role = await admin.query<RoleRow>(
     `select
@@ -563,6 +639,15 @@ const collectSnapshot = async (
     `select
        candidate.rolname as role,
        pg_has_role($1, candidate.oid, 'SET') as can_set_role,
+       exists (
+         select 1
+         from pg_catalog.pg_auth_members as direct_membership
+         join pg_catalog.pg_roles as direct_member
+           on direct_member.oid = direct_membership.member
+         where direct_membership.roleid = candidate.oid
+           and direct_member.rolname = $1
+           and direct_membership.admin_option
+       ) as can_administer_role,
        candidate.rolbypassrls as bypass_rls,
        candidate.rolcreatedb as can_create_databases,
        candidate.rolcreaterole as can_create_roles,
@@ -612,6 +697,16 @@ const collectSnapshot = async (
          order by namespace.nspname, routine.proname, routine.oid
        ) as owned_routines,
        array(
+         select format('%I.%I', namespace.nspname, owned_type.typname)
+         from pg_catalog.pg_type as owned_type
+         join pg_catalog.pg_namespace as namespace on namespace.oid = owned_type.typnamespace
+         where namespace.nspname !~ '^pg_'
+           and namespace.nspname <> 'information_schema'
+           and owned_type.typtype in ('d', 'e')
+           and owned_type.typowner = candidate.oid
+         order by namespace.nspname, owned_type.typname
+       ) as owned_types,
+       array(
          select distinct namespace.nspname
          from pg_catalog.pg_class as relation
          join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -635,6 +730,7 @@ const collectSnapshot = async (
                or has_table_privilege(candidate.oid, relation.oid, 'REFERENCES')
                or has_any_column_privilege(candidate.oid, relation.oid, 'REFERENCES')
                or has_table_privilege(candidate.oid, relation.oid, 'TRIGGER')
+               or has_table_privilege(candidate.oid, relation.oid, 'MAINTAIN')
            end
          order by namespace.nspname
        ) as relation_privilege_schemas,
@@ -737,7 +833,8 @@ const collectSnapshot = async (
          has_table_privilege($1, relation.oid, 'REFERENCES')
          or has_any_column_privilege($1, relation.oid, 'REFERENCES')
        ) as references,
-       has_table_privilege($1, relation.oid, 'TRIGGER') as trigger
+       has_table_privilege($1, relation.oid, 'TRIGGER') as trigger,
+       has_table_privilege($1, relation.oid, 'MAINTAIN') as maintain
      from pg_catalog.pg_class as relation
      join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
      join pg_catalog.pg_roles as owner on owner.oid = relation.relowner
@@ -745,6 +842,23 @@ const collectSnapshot = async (
        and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
     [runtimeRole, schemaNames],
+  );
+  const types = await admin.query<TypePrivilegeRow>(
+    `select
+       namespace.nspname as schema,
+       audited_type.typname as type,
+       case audited_type.typtype
+         when 'd' then 'domain'
+         when 'e' then 'enum'
+       end as kind,
+       owner.rolname as owner
+     from pg_catalog.pg_type as audited_type
+     join pg_catalog.pg_namespace as namespace on namespace.oid = audited_type.typnamespace
+     join pg_catalog.pg_roles as owner on owner.oid = audited_type.typowner
+     where audited_type.typtype in ('d', 'e')
+       and namespace.nspname = any($1::text[])
+     order by namespace.nspname, audited_type.typname`,
+    [schemaNames],
   );
   const sequences = await admin.query<SequencePrivilegeRow>(
     `select
@@ -860,6 +974,15 @@ const collectSnapshot = async (
          or grantee.rolname = $1
          or pg_has_role($1, grantee.oid, 'USAGE')
          or pg_has_role($1, grantee.oid, 'SET')
+         or exists (
+           select 1
+           from pg_catalog.pg_auth_members as direct_membership
+           join pg_catalog.pg_roles as direct_member
+             on direct_member.oid = direct_membership.member
+           where direct_membership.roleid = grantee.oid
+             and direct_member.rolname = $1
+             and direct_membership.admin_option
+         )
      order by expanded.schema nulls first, object_type, grantee, privilege`,
     [runtimeRole, schemaNames, administrativeRole],
   );
@@ -901,12 +1024,14 @@ const collectSnapshot = async (
         replication: membership.replication,
         superuser: membership.superuser,
       },
+      canAdministerRole: membership.can_administer_role,
       canSetRole: membership.can_set_role,
       createSchemas: membership.create_schemas,
       databaseCreate: membership.database_create,
       ownedRelations: membership.owned_relations,
       ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
+      ownedTypes: membership.owned_types,
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
       securityDefinerRoutines: membership.security_definer_routines,
@@ -947,6 +1072,7 @@ const collectSnapshot = async (
       privileges: {
         delete: table.delete,
         insert: table.insert,
+        maintain: table.maintain,
         references: table.references,
         select: table.select,
         trigger: table.trigger,
@@ -965,6 +1091,7 @@ const collectSnapshot = async (
       tenantSettingSettable: tenant.settable,
       transactionLocal: true,
     },
+    types: types.rows,
   };
 };
 
@@ -987,7 +1114,8 @@ export const auditDatabaseTrustBoundaries = (): Effect.Effect<
       catch: (error) =>
         new DatabaseTrustBoundaryAuditError({
           reason:
-            error instanceof DatabaseTargetMismatchError
+            error instanceof DatabaseTargetMismatchError ||
+            error instanceof DatabaseSessionIdentityError
               ? error.message
               : 'Database trust-boundary evidence could not be collected',
         }),
