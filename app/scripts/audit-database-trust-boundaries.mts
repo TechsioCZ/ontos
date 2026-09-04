@@ -906,6 +906,14 @@ stored_expression_dependencies(
     false,
     case
       when attribute.attgenerated = '' then array[attribute.attnum]
+      when exists (
+        select 1
+        from pg_catalog.pg_trigger as before_update_trigger
+        where before_update_trigger.tgrelid = expression.adrelid
+          and before_update_trigger.tgtype & 1 <> 0
+          and before_update_trigger.tgtype & 2 <> 0
+          and before_update_trigger.tgtype & 16 <> 0
+      ) then array[]::smallint[]
       else array(
         select distinct column_dependency.refobjsubid::smallint
         from pg_catalog.pg_depend as column_dependency
@@ -1432,7 +1440,17 @@ const collectSnapshot = async (
          join pg_catalog.pg_namespace as routine_namespace
            on routine_namespace.oid = routine.pronamespace
          where not audited_trigger.tgisinternal
-           and audited_trigger.tgenabled in ('O', 'A')
+           and (
+             audited_trigger.tgenabled in ('O', 'A')
+             or (
+               audited_trigger.tgenabled = 'R'
+               and has_parameter_privilege(
+                 candidate.oid,
+                 'session_replication_role',
+                 'SET'
+               )
+             )
+           )
            and relation_namespace.nspname !~ '^pg_'
            and relation_namespace.nspname <> 'information_schema'
            and routine_namespace.nspname !~ '^pg_'
@@ -1737,7 +1755,13 @@ const collectSnapshot = async (
            on relation_namespace.oid = relation.relnamespace
          where audited_trigger.tgfoid = routine.oid
            and not audited_trigger.tgisinternal
-           and audited_trigger.tgenabled in ('O', 'A')
+           and (
+             audited_trigger.tgenabled in ('O', 'A')
+             or (
+               audited_trigger.tgenabled = 'R'
+               and has_parameter_privilege($1, 'session_replication_role', 'SET')
+             )
+           )
            and relation_namespace.nspname = any($2::text[])
            and exists (
              select 1
