@@ -57,6 +57,7 @@ const snapshot = {
     },
   ],
   memberships: [],
+  parameterPrivileges: [],
   role: ordinaryRole,
   runtimeRole: 'ontos_runtime',
   schemas: [
@@ -168,6 +169,8 @@ test('builds deterministic current-state evidence and identifies the material tr
     dmlSchemaCount: 3,
     dmlTableCount: 3,
     findingCount: 2,
+    parameterPrivilegeCount: 0,
+    privilegedOwnerViewCount: 0,
     routineCount: 0,
     securityDefinerExecutableCount: 0,
     sequenceCount: 1,
@@ -292,6 +295,104 @@ test('flags database-level CREATE even when no existing schema is writable', () 
     report.findings.map(({ code }) => code),
     ['runtime_role_has_ddl_authority'],
   );
+});
+
+test('classifies reachable predefined PostgreSQL roles as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: true,
+        canSetRole: false,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        parameterPrivileges: [],
+        predefinedRole: true,
+        relationPrivilegeSchemas: [],
+        role: 'pg_execute_server_program',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
+test('flags effective configuration parameter authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    parameterPrivileges: [{ alterSystem: false, parameter: 'session_replication_role', set: true }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_parameter_authority'],
+  );
+  assert.equal(report.summary.parameterPrivilegeCount, 1);
+});
+
+test('flags selectable privileged owner-context views but accepts security invokers', () => {
+  const ownerContextView = {
+    ...snapshot.tables[0],
+    kind: 'view' as const,
+    owner: snapshot.administrativeRole,
+    ownerBypassRls: false,
+    ownerSuperuser: false,
+    privileges: {
+      delete: false,
+      insert: false,
+      maintain: false,
+      references: false,
+      select: true,
+      trigger: false,
+      truncate: false,
+      update: false,
+    },
+    securityInvoker: false,
+  };
+  const base = {
+    ...snapshot,
+    tables: [ownerContextView],
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  };
+
+  const ownerContextReport = buildDatabaseTrustBoundaryReport(base);
+  assert.deepEqual(
+    ownerContextReport.findings.map(({ code }) => code),
+    ['runtime_role_can_select_privileged_owner_view'],
+  );
+  assert.equal(ownerContextReport.summary.privilegedOwnerViewCount, 1);
+
+  const invokerReport = buildDatabaseTrustBoundaryReport({
+    ...base,
+    tables: [{ ...ownerContextView, securityInvoker: true }],
+  });
+  assert.deepEqual(invokerReport.findings, []);
 });
 
 test('flags ownership of an audited relation as DDL authority', () => {

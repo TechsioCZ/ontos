@@ -35,9 +35,17 @@ interface RoleMembership {
   readonly ownedRoutines: readonly string[];
   readonly ownedSchemas: readonly string[];
   readonly ownedTypes: readonly string[];
+  readonly parameterPrivileges?: readonly string[];
+  readonly predefinedRole?: boolean;
   readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
   readonly securityDefinerRoutines: readonly string[];
+}
+
+interface ParameterPrivilege {
+  readonly alterSystem: boolean;
+  readonly parameter: string;
+  readonly set: boolean;
 }
 
 interface RoleAttributes {
@@ -81,6 +89,8 @@ interface SequencePrivilege {
 interface TablePrivilege {
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
+  readonly ownerBypassRls?: boolean;
+  readonly ownerSuperuser?: boolean;
   readonly privileges: {
     readonly delete: boolean;
     readonly insert: boolean;
@@ -94,6 +104,7 @@ interface TablePrivilege {
   readonly rlsEnabled: boolean;
   readonly rlsForced: boolean;
   readonly schema: string;
+  readonly securityInvoker?: boolean;
   readonly table: string;
 }
 
@@ -131,6 +142,7 @@ export interface DatabaseTrustBoundarySnapshot {
   readonly databasePrivileges: DatabasePrivileges;
   readonly defaultPrivileges: readonly DefaultPrivilege[];
   readonly memberships: readonly RoleMembership[];
+  readonly parameterPrivileges: readonly ParameterPrivilege[];
   readonly role: RoleAttributes;
   readonly routines: readonly RoutinePrivilege[];
   readonly runtimeRole: string;
@@ -148,8 +160,10 @@ interface DatabaseTrustBoundaryFinding {
     | 'runtime_role_can_assume_privileged_role'
     | 'runtime_role_can_forge_trusted_context'
     | 'runtime_role_can_execute_security_definer'
+    | 'runtime_role_can_select_privileged_owner_view'
     | 'runtime_role_has_ddl_authority'
     | 'runtime_role_has_cross_schema_dml'
+    | 'runtime_role_has_parameter_authority'
     | 'runtime_role_has_relation_control_authority'
     | 'runtime_role_has_sequence_mutation_authority'
     | 'runtime_role_is_privileged'
@@ -167,6 +181,8 @@ export interface DatabaseTrustBoundaryReport extends DatabaseTrustBoundarySnapsh
     readonly dmlSchemaCount: number;
     readonly dmlTableCount: number;
     readonly findingCount: number;
+    readonly parameterPrivilegeCount: number;
+    readonly privilegedOwnerViewCount: number;
     readonly routineCount: number;
     readonly securityDefinerExecutableCount: number;
     readonly sequenceCount: number;
@@ -290,6 +306,9 @@ export const buildDatabaseTrustBoundaryReport = (
   const memberships = [...snapshot.memberships].toSorted((left, right) =>
     compareText(left.role, right.role),
   );
+  const parameterPrivileges = [...snapshot.parameterPrivileges].toSorted((left, right) =>
+    compareText(left.parameter, right.parameter),
+  );
   const findings: DatabaseTrustBoundaryFinding[] = [];
   const dmlTables = tables.filter(hasDml);
 
@@ -327,16 +346,20 @@ export const buildDatabaseTrustBoundaryReport = (
       ownedRoutines,
       ownedSchemas,
       ownedTypes,
+      parameterPrivileges = [],
+      predefinedRole,
       relationPrivilegeSchemas,
       securityDefinerRoutines,
     }) =>
       ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
+      predefinedRole === true ||
       databaseCreate ||
       createSchemas.length > 0 ||
       ownedRelations.length > 0 ||
       ownedRoutines.length > 0 ||
       ownedSchemas.length > 0 ||
       ownedTypes.length > 0 ||
+      parameterPrivileges.length > 0 ||
       relationPrivilegeSchemas.length > 0 ||
       securityDefinerRoutines.length > 0,
   );
@@ -344,7 +367,7 @@ export const buildDatabaseTrustBoundaryReport = (
     findings.push({
       code: 'runtime_role_can_assume_privileged_role',
       evidence:
-        'The runtime role can reach a non-administrative identity with cluster, database, schema, relation, routine, or type authority through inheritance, SET ROLE, or ADMIN OPTION.',
+        'The runtime role can reach a non-administrative identity with predefined-role, cluster, database, schema, relation, routine, type, or parameter authority through inheritance, SET ROLE, or ADMIN OPTION.',
       severity: 'critical',
     });
   }
@@ -408,6 +431,29 @@ export const buildDatabaseTrustBoundaryReport = (
       severity: 'high',
     });
   }
+  const privilegedOwnerViews = tables.filter(
+    ({ kind, owner, ownerBypassRls, ownerSuperuser, privileges, securityInvoker }) =>
+      kind === 'view' &&
+      privileges.select &&
+      securityInvoker !== true &&
+      (owner === snapshot.administrativeRole || ownerBypassRls === true || ownerSuperuser === true),
+  );
+  if (privilegedOwnerViews.length > 0) {
+    findings.push({
+      code: 'runtime_role_can_select_privileged_owner_view',
+      evidence:
+        'The runtime role can select an owner-context view whose owner is administrative, BYPASSRLS, or superuser.',
+      severity: 'high',
+    });
+  }
+  if (parameterPrivileges.length > 0) {
+    findings.push({
+      code: 'runtime_role_has_parameter_authority',
+      evidence:
+        'The runtime role has an explicit effective SET or ALTER SYSTEM privilege on a PostgreSQL configuration parameter.',
+      severity: 'critical',
+    });
+  }
   if (sequences.some(({ privileges }) => privileges.update)) {
     findings.push({
       code: 'runtime_role_has_sequence_mutation_authority',
@@ -450,6 +496,7 @@ export const buildDatabaseTrustBoundaryReport = (
     defaultPrivileges,
     findings,
     memberships,
+    parameterPrivileges,
     routines,
     schemaVersion: 1,
     schemas,
@@ -460,6 +507,8 @@ export const buildDatabaseTrustBoundaryReport = (
       dmlSchemaCount: dmlSchemas.size,
       dmlTableCount: dmlTables.length,
       findingCount: findings.length,
+      parameterPrivilegeCount: parameterPrivileges.length,
+      privilegedOwnerViewCount: privilegedOwnerViews.length,
       routineCount: routines.length,
       securityDefinerExecutableCount: executableSecurityDefiners.length,
       sequenceCount: sequences.length,
@@ -496,6 +545,8 @@ interface MembershipRow {
   readonly owned_routines: string[];
   readonly owned_schemas: string[];
   readonly owned_types: string[];
+  readonly parameter_privileges: string[];
+  readonly predefined_role: boolean;
   readonly relation_privilege_schemas: string[];
   readonly replication: boolean;
   readonly role: string;
@@ -540,16 +591,25 @@ interface TablePrivilegeRow {
   readonly insert: boolean;
   readonly kind: 'foreign-table' | 'materialized-view' | 'partitioned-table' | 'table' | 'view';
   readonly owner: string;
+  readonly owner_bypass_rls: boolean;
+  readonly owner_superuser: boolean;
   readonly maintain: boolean;
   readonly references: boolean;
   readonly rls_enabled: boolean;
   readonly rls_forced: boolean;
   readonly schema: string;
+  readonly security_invoker: boolean;
   readonly select: boolean;
   readonly table: string;
   readonly trigger: boolean;
   readonly truncate: boolean;
   readonly update: boolean;
+}
+
+interface ParameterPrivilegeRow {
+  readonly alter_system: boolean;
+  readonly parameter: string;
+  readonly set: boolean;
 }
 
 interface TypePrivilegeRow {
@@ -707,6 +767,16 @@ const collectSnapshot = async (
        candidate.rolinherit as inherit,
        candidate.rolreplication as replication,
        candidate.rolsuper as superuser,
+       candidate.rolname ~ '^pg_' as predefined_role,
+       array(
+         select format('%s:%s', parameter.parname, privilege.name)
+         from pg_catalog.pg_parameter_acl as parameter
+         cross join (
+           values ('ALTER SYSTEM'::text), ('SET'::text)
+         ) as privilege(name)
+         where has_parameter_privilege(candidate.oid, parameter.parname, privilege.name)
+         order by parameter.parname, privilege.name
+       ) as parameter_privileges,
        array(
          select namespace.nspname
          from pg_catalog.pg_namespace as namespace
@@ -885,8 +955,11 @@ const collectSnapshot = async (
          when 'f' then 'foreign-table'
        end as kind,
        owner.rolname as owner,
+       owner.rolbypassrls as owner_bypass_rls,
+       owner.rolsuper as owner_superuser,
        relation.relrowsecurity as rls_enabled,
        relation.relforcerowsecurity as rls_forced,
+       coalesce('security_invoker=true' = any(relation.reloptions), false) as security_invoker,
        (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and (
@@ -995,6 +1068,17 @@ const collectSnapshot = async (
      where relation.relkind = 'S' and namespace.nspname = any($2::text[])
      order by namespace.nspname, relation.relname`,
     [runtimeRole, schemaNames],
+  );
+  const parameterPrivileges = await admin.query<ParameterPrivilegeRow>(
+    `select
+       parameter.parname as parameter,
+       has_parameter_privilege($1, parameter.parname, 'ALTER SYSTEM') as alter_system,
+       has_parameter_privilege($1, parameter.parname, 'SET') as set
+     from pg_catalog.pg_parameter_acl as parameter
+     where has_parameter_privilege($1, parameter.parname, 'ALTER SYSTEM')
+        or has_parameter_privilege($1, parameter.parname, 'SET')
+     order by parameter.parname`,
+    [runtimeRole],
   );
   const defaultPrivileges = await admin.query<DefaultPrivilegeRow>(
     `with recursive reachable_roles(role_oid) as (
@@ -1177,9 +1261,16 @@ const collectSnapshot = async (
       ownedRoutines: membership.owned_routines,
       ownedSchemas: membership.owned_schemas,
       ownedTypes: membership.owned_types,
+      parameterPrivileges: membership.parameter_privileges,
+      predefinedRole: membership.predefined_role,
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
       securityDefinerRoutines: membership.security_definer_routines,
+    })),
+    parameterPrivileges: parameterPrivileges.rows.map((privilege) => ({
+      alterSystem: privilege.alter_system,
+      parameter: privilege.parameter,
+      set: privilege.set,
     })),
     role: {
       bypassRls: roleRow.bypass_rls,
@@ -1214,6 +1305,8 @@ const collectSnapshot = async (
     tables: tables.rows.map((table) => ({
       kind: table.kind,
       owner: table.owner,
+      ownerBypassRls: table.owner_bypass_rls,
+      ownerSuperuser: table.owner_superuser,
       privileges: {
         delete: table.delete,
         insert: table.insert,
@@ -1227,6 +1320,7 @@ const collectSnapshot = async (
       rlsEnabled: table.rls_enabled,
       rlsForced: table.rls_forced,
       schema: table.schema,
+      securityInvoker: table.security_invoker,
       table: table.table,
     })),
     trustedContext: {
