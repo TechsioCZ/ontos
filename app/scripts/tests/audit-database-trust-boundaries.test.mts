@@ -59,6 +59,7 @@ const snapshot = {
     },
   ],
   extensions: [],
+  foreignServers: [],
   grantOptions: [],
   memberships: [],
   parameterPrivileges: [],
@@ -174,6 +175,7 @@ test('builds deterministic current-state evidence and identifies the material tr
     dmlTableCount: 3,
     extensionCount: 0,
     findingCount: 2,
+    foreignServerCount: 0,
     grantOptionCount: 0,
     parameterPrivilegeCount: 0,
     privilegedOwnerViewCount: 0,
@@ -625,6 +627,7 @@ test('flags ownership of an audited routine as DDL authority', () => {
         routine: 'refresh_projection',
         schema: 'contacts',
         securityDefiner: false,
+        storedExpressionBindings: [],
         triggerBindings: [],
       },
     ],
@@ -696,6 +699,60 @@ test('classifies an assumable extension owner as privileged', () => {
   );
 });
 
+test('flags direct foreign-server ownership as DDL authority', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    foreignServers: [{ owner: snapshot.runtimeRole, server: 'customer_warehouse' }],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_has_ddl_authority'],
+  );
+  assert.equal(report.summary.foreignServerCount, 1);
+});
+
+test('classifies an assumable foreign-server owner as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedForeignServers: ['customer_warehouse'],
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'foreign_server_owner',
+        securityDefinerRoutines: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
+});
+
 test('flags ownership of an audited application type as DDL authority', () => {
   const report = buildDatabaseTrustBoundaryReport({
     ...snapshot,
@@ -735,6 +792,7 @@ test('flags direct relation control and executable security-definer authority', 
         routine: 'enter_trusted_scope',
         schema: 'contacts',
         securityDefiner: true,
+        storedExpressionBindings: [],
         triggerBindings: [],
       },
     ],
@@ -771,6 +829,7 @@ test('flags security-definer routines invocable only through table triggers', ()
         routine: 'capture_customer_change',
         schema: 'contacts',
         securityDefiner: true,
+        storedExpressionBindings: [],
         triggerBindings: ['contacts.customers:capture_customer_change'],
       },
     ],
@@ -802,6 +861,7 @@ test('flags security-definer routines invoked through applicable RLS policies', 
         routine: 'can_access_tenant',
         schema: 'private',
         securityDefiner: true,
+        storedExpressionBindings: [],
         triggerBindings: [],
       },
     ],
@@ -818,6 +878,78 @@ test('flags security-definer routines invoked through applicable RLS policies', 
     ['runtime_role_can_execute_security_definer'],
   );
   assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('flags security-definer routines invoked through stored expressions', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    routines: [
+      {
+        executable: false,
+        identityArguments: '',
+        kind: 'function',
+        owner: 'ontos_admin',
+        policyBindings: [],
+        routine: 'normalize_customer',
+        schema: 'private',
+        securityDefiner: true,
+        storedExpressionBindings: [
+          'contacts.customers:generated-column:normalized_name',
+          'contacts.customers:expression-index:customers_normalized_name_idx',
+        ],
+        triggerBindings: [],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_execute_security_definer'],
+  );
+  assert.equal(report.summary.securityDefinerExecutableCount, 1);
+});
+
+test('classifies reachable roles that invoke security-definer stored expressions as privileged', () => {
+  const report = buildDatabaseTrustBoundaryReport({
+    ...snapshot,
+    memberships: [
+      {
+        attributes: ordinaryRole,
+        canAdministerRole: false,
+        canInheritRole: false,
+        canSetRole: true,
+        createSchemas: [],
+        databaseCreate: false,
+        ownedRelations: [],
+        ownedRoutines: [],
+        ownedSchemas: [],
+        ownedTypes: [],
+        relationPrivilegeSchemas: [],
+        role: 'expression_writer',
+        securityDefinerRoutines: [],
+        securityDefinerStoredExpressionBindings: [
+          'contacts.customers:check-constraint:customers_valid->private.validate_customer()',
+        ],
+      },
+    ],
+    tables: snapshot.tables.slice(0, 1),
+    trustedContext: {
+      ...snapshot.trustedContext,
+      legalEntitySettingSettable: false,
+      tenantSettingSettable: false,
+    },
+  });
+
+  assert.deepEqual(
+    report.findings.map(({ code }) => code),
+    ['runtime_role_can_assume_privileged_role'],
+  );
 });
 
 test('classifies reachable roles that invoke security-definer RLS policies as privileged', () => {
@@ -1032,6 +1164,10 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     2,
   );
   assert.equal(source.match(/from pg_catalog\.pg_policy as policy/gu)?.length, 2);
+  assert.equal(source.match(/\$\{storedExpressionDependenciesCte\}/gu)?.length, 2);
+  assert.match(source, /from pg_catalog\.pg_attrdef as expression/u);
+  assert.match(source, /from pg_catalog\.pg_constraint as expression/u);
+  assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
     2,
@@ -1042,6 +1178,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     2,
   );
   assert.match(source, /from pg_catalog\.pg_extension as extension/u);
+  assert.match(source, /from pg_catalog\.pg_foreign_server as foreign_server/u);
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {
