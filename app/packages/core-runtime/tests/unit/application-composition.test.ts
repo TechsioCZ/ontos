@@ -8,8 +8,9 @@ import {
 } from '../../src/modules/application-composition.ts';
 
 const sha256 = (character: string) => character.repeat(64);
+const strings = (...values: string[]): string[] => values;
 
-const assertInvalid = (run: () => unknown, reason: RegExp): void => {
+const assertInvalid = <Value>(run: () => Value, reason: RegExp): void => {
   let thrown: unknown;
   try {
     run();
@@ -31,7 +32,7 @@ const candidate = () => ({
         sha256: sha256('a'),
         url: 'https://contacts.example/.well-known/ontos-module-manifest.json',
       },
-      dependencies: [] as string[],
+      dependencies: strings(),
       deployment: { appId: 'contacts', buildMarker: 'contacts-build-1' },
       federation: {
         execution: 'browser',
@@ -109,9 +110,9 @@ const federationManifest = (observations: Evidence) =>
 const addModuleCopy = (
   input: Candidate,
   overrides: Partial<ReturnType<typeof onlyModule>>,
-): void => {
+): number => {
   const module = onlyModule(input);
-  input.modules.push({
+  return input.modules.push({
     ...structuredClone(module),
     deployment: { appId: 'inventory', buildMarker: 'inventory-build-1' },
     federation: { ...module.federation, remoteName: 'inventory' },
@@ -128,10 +129,10 @@ test('accepts one provider-neutral composition and produces deterministic canoni
   assert.equal(
     canonicalizeApplicationComposition(composition),
     canonicalizeApplicationComposition({
-      schemaVersion: composition.schemaVersion,
-      revision: composition.revision,
-      shell: composition.shell,
       modules: composition.modules,
+      revision: composition.revision,
+      schemaVersion: composition.schemaVersion,
+      shell: composition.shell,
     }),
   );
   assert.doesNotMatch(
@@ -155,7 +156,7 @@ test('accepts one provider-neutral composition and produces deterministic canoni
 
 test('rejects candidate-wide ownership and compatibility contradictions', () => {
   const cases: readonly [
-    mutate: (input: Candidate, observations: Evidence) => unknown,
+    mutate: (input: Candidate, observations: Evidence) => number | readonly string[] | string,
     reason: RegExp,
   ][] = [
     [(input) => onlyModule(input).dependencies.push('billing.core'), /dependency billing\.core/u],
