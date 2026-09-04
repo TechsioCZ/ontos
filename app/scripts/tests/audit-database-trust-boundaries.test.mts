@@ -656,7 +656,7 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
 
   assert.equal(
     source.match(/where membership\.admin_option or membership\.set_option/gu)?.length,
-    2,
+    3,
   );
   assert.match(
     source,
@@ -667,6 +667,8 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
     /or pg_has_role\(\$1, grantee\.oid, 'SET'\)\s+or grantee\.oid in \(select role_oid from administrable_roles\)/u,
   );
   assert.match(source, /view_dependencies\(view_oid, referenced_oid, effective_owner_oid\)/u);
+  assert.match(source, /target_roles\(role_oid, role_name\)/u);
+  assert.match(source, /format\('role:%I:%s', target\.role_name, authority\.grant_option\)/u);
   assert.match(source, /effective_owner\.rolname = \$3/u);
   assert.match(
     source,
