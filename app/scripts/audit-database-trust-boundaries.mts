@@ -46,6 +46,7 @@ interface RoleMembership {
   readonly relationPrivilegeSchemas: readonly string[];
   readonly role: string;
   readonly securityDefinerRoutines: readonly string[];
+  readonly securityDefinerTriggerBindings?: readonly string[];
 }
 
 interface ParameterPrivilege {
@@ -80,6 +81,7 @@ interface RoutinePrivilege {
   readonly routine: string;
   readonly schema: string;
   readonly securityDefiner: boolean;
+  readonly triggerBindings: readonly string[];
 }
 
 interface SequencePrivilege {
@@ -385,6 +387,7 @@ export const buildDatabaseTrustBoundaryReport = (
       relationPrivilegeSchemas,
       role,
       securityDefinerRoutines,
+      securityDefinerTriggerBindings = [],
     }) =>
       ((canSetRole || canAdministerRole) && hasClusterPrivilege(attributes)) ||
       predefinedRole === true ||
@@ -397,7 +400,8 @@ export const buildDatabaseTrustBoundaryReport = (
       parameterPrivileges.length > 0 ||
       grantAuthorityRoles.has(role) ||
       relationPrivilegeSchemas.length > 0 ||
-      securityDefinerRoutines.length > 0,
+      securityDefinerRoutines.length > 0 ||
+      securityDefinerTriggerBindings.length > 0,
   );
   if (privilegedMemberships.length > 0) {
     findings.push({
@@ -456,14 +460,16 @@ export const buildDatabaseTrustBoundaryReport = (
     });
   }
   const executableSecurityDefiners = routines.filter(
-    ({ executable, owner, securityDefiner }) =>
-      executable && securityDefiner && owner !== snapshot.runtimeRole,
+    ({ executable, owner, securityDefiner, triggerBindings }) =>
+      (executable || triggerBindings.length > 0) &&
+      securityDefiner &&
+      owner !== snapshot.runtimeRole,
   );
   if (executableSecurityDefiners.length > 0) {
     findings.push({
       code: 'runtime_role_can_execute_security_definer',
       evidence:
-        'The runtime role can execute a SECURITY DEFINER routine owned by another role in an audited schema.',
+        'The runtime role can directly execute, or invoke through table DML and an enabled trigger, a SECURITY DEFINER routine owned by another role in an audited schema.',
       severity: 'high',
     });
   }
@@ -612,6 +618,7 @@ interface MembershipRow {
   readonly replication: boolean;
   readonly role: string;
   readonly security_definer_routines: string[];
+  readonly security_definer_trigger_bindings: string[];
   readonly superuser: boolean;
 }
 
@@ -645,6 +652,7 @@ interface RoutinePrivilegeRow {
   readonly routine: string;
   readonly schema: string;
   readonly security_definer: boolean;
+  readonly trigger_bindings: string[];
 }
 
 interface TablePrivilegeRow {
@@ -953,7 +961,59 @@ const collectSnapshot = async (
            and has_schema_privilege(candidate.oid, namespace.oid, 'USAGE')
            and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
          order by namespace.nspname, routine.proname, routine.oid
-       ) as security_definer_routines
+       ) as security_definer_routines,
+       array(
+         select distinct format(
+           '%I.%I:%I->%I.%I(%s)',
+           relation_namespace.nspname,
+           relation.relname,
+           audited_trigger.tgname,
+           routine_namespace.nspname,
+           routine.proname,
+           pg_get_function_identity_arguments(routine.oid)
+         )
+         from pg_catalog.pg_trigger as audited_trigger
+         join pg_catalog.pg_class as relation on relation.oid = audited_trigger.tgrelid
+         join pg_catalog.pg_namespace as relation_namespace
+           on relation_namespace.oid = relation.relnamespace
+         join pg_catalog.pg_proc as routine on routine.oid = audited_trigger.tgfoid
+         join pg_catalog.pg_namespace as routine_namespace
+           on routine_namespace.oid = routine.pronamespace
+         where not audited_trigger.tgisinternal
+           and audited_trigger.tgenabled in ('O', 'A')
+           and relation_namespace.nspname !~ '^pg_'
+           and relation_namespace.nspname <> 'information_schema'
+           and routine_namespace.nspname !~ '^pg_'
+           and routine_namespace.nspname <> 'information_schema'
+           and routine.prosecdef
+           and routine.proowner <> candidate.oid
+           and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
+           and (
+             (
+               audited_trigger.tgtype & 4 <> 0
+               and (
+                 has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                 or has_any_column_privilege(candidate.oid, relation.oid, 'INSERT')
+               )
+             )
+             or (
+               audited_trigger.tgtype & 8 <> 0
+               and has_table_privilege(candidate.oid, relation.oid, 'DELETE')
+             )
+             or (
+               audited_trigger.tgtype & 16 <> 0
+               and (
+                 has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                 or has_any_column_privilege(candidate.oid, relation.oid, 'UPDATE')
+               )
+             )
+             or (
+               audited_trigger.tgtype & 32 <> 0
+               and has_table_privilege(candidate.oid, relation.oid, 'TRUNCATE')
+             )
+           )
+         order by 1
+       ) as security_definer_trigger_bindings
      from pg_catalog.pg_roles as candidate
      where candidate.rolname <> $1
        and (
@@ -1004,7 +1064,49 @@ const collectSnapshot = async (
        (
          has_schema_privilege($1, namespace.oid, 'USAGE')
          and has_function_privilege($1, routine.oid, 'EXECUTE')
-       ) as executable
+       ) as executable,
+       array(
+         select distinct format(
+           '%I.%I:%I',
+           relation_namespace.nspname,
+           relation.relname,
+           audited_trigger.tgname
+         )
+         from pg_catalog.pg_trigger as audited_trigger
+         join pg_catalog.pg_class as relation on relation.oid = audited_trigger.tgrelid
+         join pg_catalog.pg_namespace as relation_namespace
+           on relation_namespace.oid = relation.relnamespace
+         where audited_trigger.tgfoid = routine.oid
+           and not audited_trigger.tgisinternal
+           and audited_trigger.tgenabled in ('O', 'A')
+           and relation_namespace.nspname = any($2::text[])
+           and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
+           and (
+             (
+               audited_trigger.tgtype & 4 <> 0
+               and (
+                 has_table_privilege($1, relation.oid, 'INSERT')
+                 or has_any_column_privilege($1, relation.oid, 'INSERT')
+               )
+             )
+             or (
+               audited_trigger.tgtype & 8 <> 0
+               and has_table_privilege($1, relation.oid, 'DELETE')
+             )
+             or (
+               audited_trigger.tgtype & 16 <> 0
+               and (
+                 has_table_privilege($1, relation.oid, 'UPDATE')
+                 or has_any_column_privilege($1, relation.oid, 'UPDATE')
+               )
+             )
+             or (
+               audited_trigger.tgtype & 32 <> 0
+               and has_table_privilege($1, relation.oid, 'TRUNCATE')
+             )
+           )
+         order by 1
+       ) as trigger_bindings
      from pg_catalog.pg_proc as routine
      join pg_catalog.pg_namespace as namespace on namespace.oid = routine.pronamespace
      join pg_catalog.pg_roles as owner on owner.oid = routine.proowner
@@ -1614,6 +1716,7 @@ const collectSnapshot = async (
       relationPrivilegeSchemas: membership.relation_privilege_schemas,
       role: membership.role,
       securityDefinerRoutines: membership.security_definer_routines,
+      securityDefinerTriggerBindings: membership.security_definer_trigger_bindings,
     })),
     parameterPrivileges: parameterPrivileges.rows.map((privilege) => ({
       alterSystem: privilege.alter_system,
@@ -1638,6 +1741,7 @@ const collectSnapshot = async (
       routine: routine.routine,
       schema: routine.schema,
       securityDefiner: routine.security_definer,
+      triggerBindings: routine.trigger_bindings,
     })),
     runtimeRole,
     schemas: schemas.rows,
