@@ -3,7 +3,6 @@ import { OntosDeploymentIdentitySchema, OntosModuleIdSchema } from './manifest.t
 
 export const ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION = '1' as const;
 
-const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const sha256 = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const version = Schema.String.check(Schema.isPattern(/^[0-9]+(?:\.[0-9]+){0,2}$/u));
 const artifactUrl = Schema.String.pipe(
@@ -36,13 +35,13 @@ export const ApplicationCompositionArtifactReferenceSchema = Schema.Struct({
 });
 
 export const ApplicationCompositionVersionedIdentitySchema = Schema.Struct({
-  id: nonEmptyString,
+  id: Schema.NonEmptyString,
   version,
 });
 
 export const ApplicationCompositionSingletonSchema = Schema.Struct({
-  packageName: nonEmptyString,
-  version: nonEmptyString,
+  packageName: Schema.NonEmptyString,
+  version: Schema.NonEmptyString,
 });
 
 export const ApplicationCompositionModuleSchema = Schema.Struct({
@@ -52,13 +51,13 @@ export const ApplicationCompositionModuleSchema = Schema.Struct({
   deployment: OntosDeploymentIdentitySchema,
   federation: Schema.Struct({
     execution: Schema.Literal('browser'),
-    exposes: Schema.Array(nonEmptyString),
+    exposes: Schema.Array(Schema.NonEmptyString),
     manifest: ApplicationCompositionArtifactReferenceSchema,
     remoteName: Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9]*$/u)),
   }),
   moduleId: OntosModuleIdSchema,
   publicContract: Schema.Struct({
-    id: nonEmptyString,
+    id: Schema.NonEmptyString,
     sha256,
     version,
   }),
