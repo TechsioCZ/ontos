@@ -894,8 +894,10 @@ test('flags security-definer routines invoked through stored expressions', () =>
         schema: 'private',
         securityDefiner: true,
         storedExpressionBindings: [
+          'contacts.customer_labels:domain-constraint:contacts.nonempty_text:nonempty_text_check',
           'contacts.customers:generated-column:normalized_name',
           'contacts.customers:expression-index:customers_normalized_name_idx',
+          'contacts.customer_overview:view-expression',
         ],
         triggerBindings: [],
       },
@@ -1168,6 +1170,9 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   assert.match(source, /from pg_catalog\.pg_attrdef as expression/u);
   assert.match(source, /from pg_catalog\.pg_constraint as expression/u);
   assert.match(source, /from pg_catalog\.pg_index as stored_index/u);
+  assert.match(source, /from pg_catalog\.pg_rewrite as expression/u);
+  assert.match(source, /expression\.contypid/u);
+  assert.equal(source.match(/stored_expression\.selectable/gu)?.length, 4);
   assert.equal(
     source.match(/cardinality\(audited_trigger\.tgattr::smallint\[\]\) = 0/gu)?.length,
     2,
@@ -1179,6 +1184,11 @@ test('traverses SET OPTION descendants after every ADMIN OPTION role', async () 
   );
   assert.match(source, /from pg_catalog\.pg_extension as extension/u);
   assert.match(source, /from pg_catalog\.pg_foreign_server as foreign_server/u);
+  assert.match(source, /join audit_owners as owner on owner\.oid = defaults\.defaclrole/u);
+  assert.match(
+    source,
+    /namespace\.nspowner = owner\.oid\s+or has_schema_privilege\(owner\.oid, namespace\.oid, 'CREATE'\)/u,
+  );
 });
 
 test('treats inherited owner-role authority as effective runtime DDL authority', () => {

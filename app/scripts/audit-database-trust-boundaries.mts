@@ -844,6 +844,7 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
   relation_oid,
   routine_oid,
   binding,
+  selectable,
   update_columns
 ) as (
   select
@@ -853,6 +854,7 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
       when attribute.attgenerated <> '' then format('generated-column:%I', attribute.attname)
       else format('column-default:%I', attribute.attname)
     end,
+    false,
     case
       when attribute.attgenerated = '' then array[attribute.attnum]
       else array(
@@ -885,6 +887,7 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
     expression.conrelid,
     routine_dependency.refobjid,
     format('check-constraint:%I', expression.conname),
+    false,
     coalesce(expression.conkey, array[]::smallint[])
   from pg_catalog.pg_constraint as expression
   join pg_catalog.pg_class as relation on relation.oid = expression.conrelid
@@ -900,9 +903,41 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
     and relation.relkind in ('r', 'p', 'f')
   union all
   select
+    attribute.attrelid,
+    routine_dependency.refobjid,
+    format(
+      'domain-constraint:%I.%I:%I',
+      domain_namespace.nspname,
+      domain_type.typname,
+      expression.conname
+    ),
+    false,
+    array[attribute.attnum]
+  from pg_catalog.pg_constraint as expression
+  join pg_catalog.pg_type as domain_type on domain_type.oid = expression.contypid
+  join pg_catalog.pg_namespace as domain_namespace
+    on domain_namespace.oid = domain_type.typnamespace
+  join pg_catalog.pg_attribute as attribute on attribute.atttypid = domain_type.oid
+  join pg_catalog.pg_class as relation on relation.oid = attribute.attrelid
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  join pg_catalog.pg_depend as routine_dependency
+    on routine_dependency.classid = 'pg_catalog.pg_constraint'::regclass
+   and routine_dependency.objid = expression.oid
+   and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and routine_dependency.deptype = 'n'
+  where expression.contype = 'c'
+    and expression.contypid <> 0
+    and attribute.attnum > 0
+    and not attribute.attisdropped
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+    and relation.relkind in ('r', 'p', 'f')
+  union all
+  select
     stored_index.indrelid,
     routine_dependency.refobjid,
     format('expression-index:%I', index_relation.relname),
+    false,
     array(
       select distinct column_dependency.refobjsubid::smallint
       from pg_catalog.pg_depend as column_dependency
@@ -923,6 +958,25 @@ export const storedExpressionDependenciesCte = `stored_expression_dependencies(
    and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
    and routine_dependency.deptype = 'n'
   where (stored_index.indexprs is not null or stored_index.indpred is not null)
+    and namespace.nspname !~ '^pg_'
+    and namespace.nspname <> 'information_schema'
+  union all
+  select
+    expression.ev_class,
+    routine_dependency.refobjid,
+    'view-expression',
+    true,
+    array[]::smallint[]
+  from pg_catalog.pg_rewrite as expression
+  join pg_catalog.pg_class as relation on relation.oid = expression.ev_class
+  join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+  join pg_catalog.pg_depend as routine_dependency
+    on routine_dependency.classid = 'pg_catalog.pg_rewrite'::regclass
+   and routine_dependency.objid = expression.oid
+   and routine_dependency.refclassid = 'pg_catalog.pg_proc'::regclass
+   and routine_dependency.deptype = 'n'
+  where expression.rulename = '_RETURN'
+    and relation.relkind = 'v'
     and namespace.nspname !~ '^pg_'
     and namespace.nspname <> 'information_schema'
 )`;
@@ -1223,47 +1277,59 @@ const collectSnapshot = async (
            and has_function_privilege(candidate.oid, routine.oid, 'EXECUTE')
            and has_schema_privilege(candidate.oid, relation_namespace.oid, 'USAGE')
            and (
-             has_table_privilege(candidate.oid, relation.oid, 'INSERT')
-             or exists (
-               select 1
-               from pg_catalog.pg_attribute as writable_column
-               where writable_column.attrelid = relation.oid
-                 and writable_column.attnum > 0
-                 and not writable_column.attisdropped
-                 and writable_column.attgenerated = ''
-                 and has_column_privilege(
-                   candidate.oid,
-                   relation.oid,
-                   writable_column.attnum,
-                   'INSERT'
-                 )
-             )
-             or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
-             or (
-               cardinality(stored_expression.update_columns) = 0
-               and exists (
-                 select 1
-                 from pg_catalog.pg_attribute as writable_column
-                 where writable_column.attrelid = relation.oid
-                   and writable_column.attnum > 0
-                   and not writable_column.attisdropped
-                   and writable_column.attgenerated = ''
-                   and has_column_privilege(
-                     candidate.oid,
-                     relation.oid,
-                     writable_column.attnum,
-                     'UPDATE'
-                   )
+             (
+               stored_expression.selectable
+               and (
+                 has_table_privilege(candidate.oid, relation.oid, 'SELECT')
+                 or has_any_column_privilege(candidate.oid, relation.oid, 'SELECT')
                )
              )
-             or exists (
-               select 1
-               from unnest(stored_expression.update_columns) as watched(attnum)
-               where has_column_privilege(
-                 candidate.oid,
-                 relation.oid,
-                 watched.attnum,
-                 'UPDATE'
+             or (
+               not stored_expression.selectable
+               and (
+                 has_table_privilege(candidate.oid, relation.oid, 'INSERT')
+                 or exists (
+                   select 1
+                   from pg_catalog.pg_attribute as writable_column
+                   where writable_column.attrelid = relation.oid
+                     and writable_column.attnum > 0
+                     and not writable_column.attisdropped
+                     and writable_column.attgenerated = ''
+                     and has_column_privilege(
+                       candidate.oid,
+                       relation.oid,
+                       writable_column.attnum,
+                       'INSERT'
+                     )
+                 )
+                 or has_table_privilege(candidate.oid, relation.oid, 'UPDATE')
+                 or (
+                   cardinality(stored_expression.update_columns) = 0
+                   and exists (
+                     select 1
+                     from pg_catalog.pg_attribute as writable_column
+                     where writable_column.attrelid = relation.oid
+                       and writable_column.attnum > 0
+                       and not writable_column.attisdropped
+                       and writable_column.attgenerated = ''
+                       and has_column_privilege(
+                         candidate.oid,
+                         relation.oid,
+                         writable_column.attnum,
+                         'UPDATE'
+                       )
+                   )
+                 )
+                 or exists (
+                   select 1
+                   from unnest(stored_expression.update_columns) as watched(attnum)
+                   where has_column_privilege(
+                     candidate.oid,
+                     relation.oid,
+                     watched.attnum,
+                     'UPDATE'
+                   )
+                 )
                )
              )
            )
@@ -1530,47 +1596,59 @@ const collectSnapshot = async (
            and has_function_privilege($1, routine.oid, 'EXECUTE')
            and has_schema_privilege($1, relation_namespace.oid, 'USAGE')
            and (
-             has_table_privilege($1, relation.oid, 'INSERT')
-             or exists (
-               select 1
-               from pg_catalog.pg_attribute as writable_column
-               where writable_column.attrelid = relation.oid
-                 and writable_column.attnum > 0
-                 and not writable_column.attisdropped
-                 and writable_column.attgenerated = ''
-                 and has_column_privilege(
-                   $1,
-                   relation.oid,
-                   writable_column.attnum,
-                   'INSERT'
-                 )
-             )
-             or has_table_privilege($1, relation.oid, 'UPDATE')
-             or (
-               cardinality(stored_expression.update_columns) = 0
-               and exists (
-                 select 1
-                 from pg_catalog.pg_attribute as writable_column
-                 where writable_column.attrelid = relation.oid
-                   and writable_column.attnum > 0
-                   and not writable_column.attisdropped
-                   and writable_column.attgenerated = ''
-                   and has_column_privilege(
-                     $1,
-                     relation.oid,
-                     writable_column.attnum,
-                     'UPDATE'
-                   )
+             (
+               stored_expression.selectable
+               and (
+                 has_table_privilege($1, relation.oid, 'SELECT')
+                 or has_any_column_privilege($1, relation.oid, 'SELECT')
                )
              )
-             or exists (
-               select 1
-               from unnest(stored_expression.update_columns) as watched(attnum)
-               where has_column_privilege(
-                 $1,
-                 relation.oid,
-                 watched.attnum,
-                 'UPDATE'
+             or (
+               not stored_expression.selectable
+               and (
+                 has_table_privilege($1, relation.oid, 'INSERT')
+                 or exists (
+                   select 1
+                   from pg_catalog.pg_attribute as writable_column
+                   where writable_column.attrelid = relation.oid
+                     and writable_column.attnum > 0
+                     and not writable_column.attisdropped
+                     and writable_column.attgenerated = ''
+                     and has_column_privilege(
+                       $1,
+                       relation.oid,
+                       writable_column.attnum,
+                       'INSERT'
+                     )
+                 )
+                 or has_table_privilege($1, relation.oid, 'UPDATE')
+                 or (
+                   cardinality(stored_expression.update_columns) = 0
+                   and exists (
+                     select 1
+                     from pg_catalog.pg_attribute as writable_column
+                     where writable_column.attrelid = relation.oid
+                       and writable_column.attnum > 0
+                       and not writable_column.attisdropped
+                       and writable_column.attgenerated = ''
+                       and has_column_privilege(
+                         $1,
+                         relation.oid,
+                         writable_column.attnum,
+                         'UPDATE'
+                       )
+                   )
+                 )
+                 or exists (
+                   select 1
+                   from unnest(stored_expression.update_columns) as watched(attnum)
+                   where has_column_privilege(
+                     $1,
+                     relation.oid,
+                     watched.attnum,
+                     'UPDATE'
+                   )
+                 )
                )
              )
            )
@@ -2071,11 +2149,7 @@ const collectSnapshot = async (
      audit_owners as (
        select candidate.oid, candidate.rolname
        from pg_catalog.pg_roles as candidate
-       where candidate.rolname = $3
-          or (
-            candidate.oid in (select role_oid from reachable_roles)
-            and has_database_privilege(candidate.oid, current_database(), 'CREATE')
-          )
+       where has_database_privilege(candidate.oid, current_database(), 'CREATE')
           or exists (
             select 1
             from pg_catalog.pg_namespace as namespace
@@ -2083,17 +2157,6 @@ const collectSnapshot = async (
               and (
                 namespace.nspowner = candidate.oid
                 or has_schema_privilege(candidate.oid, namespace.oid, 'CREATE')
-              )
-          )
-          or exists (
-            select 1
-            from pg_catalog.pg_default_acl as defaults
-            left join pg_catalog.pg_namespace as namespace
-              on namespace.oid = defaults.defaclnamespace
-            where defaults.defaclrole = candidate.oid
-              and (
-                defaults.defaclnamespace = 0
-                or namespace.nspname = any($2::text[])
               )
           )
      ),
@@ -2133,11 +2196,15 @@ const collectSnapshot = async (
            when 'n' then 'schema'
            else defaults.defaclobjtype::text
          end as object_type,
-         defaults.defaclacl as acl
+       defaults.defaclacl as acl
        from pg_catalog.pg_default_acl as defaults
        join pg_catalog.pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
-       join pg_catalog.pg_roles as owner on owner.oid = defaults.defaclrole
+       join audit_owners as owner on owner.oid = defaults.defaclrole
        where namespace.nspname = any($2::text[])
+         and (
+           namespace.nspowner = owner.oid
+           or has_schema_privilege(owner.oid, namespace.oid, 'CREATE')
+         )
      ),
      expanded as (
        select
@@ -2181,7 +2248,7 @@ const collectSnapshot = async (
        privilege,
        source,
        grantable`,
-    [runtimeRole, schemaNames, administrativeRole],
+    [runtimeRole, schemaNames],
   );
   const tenant = await probeSetting(
     runtime,
